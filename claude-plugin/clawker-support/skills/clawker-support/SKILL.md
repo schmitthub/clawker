@@ -41,7 +41,10 @@ in brief:
   `namespace.bundle.component` names like `acme.tools.node`). There is no path
   registry and no `register` command — a component is available because it is on
   the floor, in a convention dir, or in a declared+installed bundle. Manage
-  bundles with `clawker bundle install | list | remove | update | validate`.
+  bundles with `clawker bundle install | list | remove | update | validate`;
+  inventory the components themselves (with shadow markers and owning-bundle
+  provenance) via `clawker harness list`, `clawker stack list`, and
+  `clawker monitor extensions`.
 - **Images are per-project AND per-harness.** The image tag is the harness
   name; the built-in default harness (`claude`) also gets a `:default` alias.
   `clawker build -t <harness>` selects the harness at build time;

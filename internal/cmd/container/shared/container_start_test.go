@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,9 +16,9 @@ import (
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -473,23 +471,9 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 // it was built for). A bare floor harness always resolves.
 func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
 	testenv.New(t)
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	verRoot := filepath.Join(cacheRoot, "acme", "tools", "1.0.0")
-	require.NoError(t, os.MkdirAll(filepath.Join(verRoot, ".clawker-bundle"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(verRoot, ".clawker-bundle", "bundle.yaml"),
-		[]byte("namespace: acme\nname: tools\nversion: 1.0.0\n"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(verRoot, "harnesses", "claude"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(verRoot, "harnesses", "claude", "harness.yaml"),
-		[]byte("version:\n  resolver: none\nstacks: []\n"), 0o644))
 	const url = "https://example.com/acme/tools.git"
-	require.NoError(t, os.WriteFile(
-		filepath.Join(cacheRoot, "acme", "tools", "source.yaml"),
-		[]byte(
-			"url: "+url+"\nref: v1\nversions:\n  \"1.0.0\":\n    sha: \"\"\n    fetched_at: 2026-01-01T00:00:00Z\n",
-		),
-		0o644,
-	))
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url,
+		map[string]string{"harnesses/claude/harness.yaml": "version:\n  resolver: none\nstacks: []\n"})
 
 	undeclared := configmocks.NewBlankConfig()
 	resolveErr := assertHarnessResolvable(undeclared, "acme.tools.claude")

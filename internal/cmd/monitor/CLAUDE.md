@@ -13,6 +13,7 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 | `shared/stack.go` | `PrepareStack`, `ComposeUp`, `RemoveCollector`, `CollectorRunning`, `RunComposeCmd` — stack plumbing shared by up/reload |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show stack status |
+| `extensions/extensions.go` | `NewCmdExtensions(f, runF)` — read-only inventory of resolvable monitoring extensions (`cmdutil.NewInventoryListCommand` over `bundle.Manager.Inventory`) |
 
 ## Key Symbols
 
@@ -82,7 +83,17 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 
 Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named volumes). With `--volumes` it also deletes the seeded-unit ledger (`units-ledger.yaml`), since the REST state it tracked is wiped.
 
-Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them (`monitor reload` applies an edit to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `bundle list` shows monitoring-component provenance.
+### monitor extensions
+
+```go
+func NewCmdExtensions(f *cmdutil.Factory, runF func(context.Context, *cmdutil.InventoryOptions) error) *cobra.Command
+```
+
+Read-only inventory of every resolvable monitoring extension across the three
+tiers: `NAME/VERSION/SOURCE` with `!` shadow markers, bundle-sourced rows naming
+their owning bundle; `--json`/`--quiet`. Alias `ext`.
+
+Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them (`monitor reload` applies an edit to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `monitor extensions` shows monitoring-component provenance.
 
 ### monitor status
 

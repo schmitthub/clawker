@@ -3,7 +3,10 @@
 `clawker bundle` — the FINAL verb set for the bundle-distribution model, replacing
 the register-era `stack`/`harness`/`monitor units` commands (all deleted). A
 bundle is the single distribution unit; its components (harnesses, stacks,
-monitoring extensions) are peers, listed together with resolution provenance.
+monitoring extensions) are peers, inventoried by the per-type read-only listing
+commands (`clawker harness list`, `clawker stack list`,
+`clawker monitor extensions` — built on `cmdutil.NewInventoryListCommand` over
+`Manager.Inventory`), while `bundle list` shows the bundles themselves.
 
 ## Structure
 
@@ -11,7 +14,7 @@ monitoring extensions) are peers, listed together with resolution provenance.
 internal/cmd/bundle/
 ├── bundle.go          # Parent command; registers subcommands
 ├── install/           # install.go (arg/flag → source, write mechanics) + target.go (layer resolution)
-├── list/              # list.go — merged component table over Resolver.List
+├── list/              # list.go — per-identity bundle table over Manager.Statuses
 ├── remove/            # remove.go — purge a cached bundle
 ├── update/            # update.go — refetch on version change (stubbed)
 └── validate/          # validate.go — local manifest/convention validation
@@ -21,7 +24,7 @@ internal/cmd/bundle/
 
 | Command | Purpose |
 |---------|---------|
-| `bundle list` / `ls` | Every resolvable component (all three types) across floor/loose/bundle tiers: `ADDRESS/TYPE/VERSION/SOURCE/PROVENANCE`, `!`-marked shadow rows, `--json`. This is where monitoring-extension provenance is listed (the register-era `monitor units list` is gone). Below the component table, one honest per-identity bundle row (`BUNDLE/VERSION/SOURCE/STATUS` via `Manager.Statuses`): resolving (installed/in-place), declared-but-not-installed, cached-but-not-declared, and hand-placed (unmanaged) — the actionable states repeat as stderr hints in every output mode. |
+| `bundle list` / `ls` | Bundles ONLY — one honest per-identity row (`BUNDLE/VERSION/SOURCE/STATUS` via `Manager.Statuses`): resolving (installed/in-place), declared-but-not-installed, cached-but-not-declared, and hand-placed (unmanaged) — the actionable states repeat as stderr hints in every output mode; `--json`/`--quiet` (quiet emits the identity, or the canonical source for a never-fetched entry). Components are the per-type inventory commands' territory (`harness list`/`stack list`/`monitor extensions`), each row naming its owning bundle. |
 | `bundle install [source]` | Declare a source (`bundles:` entry) + prefetch into the host cache. Source = git URL, `owner/repo` shorthand (expands to a URL), or local dir. Flags `--ref/--sha/--subdir/--auto-update` + target `--user` (default, config-dir), `--project`, `--local`. No-arg form fetches every declared-but-uncached bundle. A prefetch failure leaves the yaml write in place (reported, not rolled back). |
 | `bundle remove <namespace.name>` / `rm` | Purge a cached bundle (all versions + metadata); warns when still declared. |
 | `bundle update [namespace.name]` | Refetch on version change: ref sources compare their tip and refetch on drift, sha-pinned sources are skipped, a failed refetch keeps the cached version. Prints one line per bundle considered. |

@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
+	harnesscmd "github.com/schmitthub/clawker/internal/cmd/harness"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
@@ -16,6 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
 	"github.com/schmitthub/clawker/internal/cmd/skill"
+	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
@@ -72,6 +74,8 @@ Workspace modes:
 	cmd.AddCommand(aliascmd.NewCmdAlias(f, func(name string) bool { return builtinCommandExists(cmd, name) }))
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
 	cmd.AddCommand(bundlecmd.NewCmdBundle(f))
+	cmd.AddCommand(harnesscmd.NewCmdHarness(f))
+	cmd.AddCommand(stackcmd.NewCmdStack(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))

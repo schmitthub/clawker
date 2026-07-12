@@ -4,7 +4,6 @@ package list
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,26 +22,15 @@ type ListOptions struct {
 	Format *cmdutil.FormatFlags
 }
 
-// componentRow is one row of `clawker bundle list` output: a resolvable
-// component of any type, with its resolution provenance. It is the shape
-// exposed to --json and --format templates.
-type componentRow struct {
-	Address    string `json:"address"`
-	Type       string `json:"type"`
-	Version    string `json:"version"`
-	Source     string `json:"source"`
-	Provenance string `json:"provenance"`
-	Shadowed   bool   `json:"shadowed"`
-}
-
-// allComponentTypes is the fixed enumeration order for the merged listing —
-// harnesses, then stacks, then monitoring extensions.
-func allComponentTypes() []bundle.ComponentType {
-	return []bundle.ComponentType{
-		bundle.ComponentHarness,
-		bundle.ComponentStack,
-		bundle.ComponentMonitoring,
-	}
+// bundleRow is one row of `clawker bundle list` output: a bundle identity (or
+// a never-fetched declared source) with its declaration↔cache state. It is the
+// shape exposed to --json and --format templates.
+type bundleRow struct {
+	Bundle  string `json:"bundle"`
+	Version string `json:"version"`
+	Source  string `json:"source"`
+	Status  string `json:"status"`
+	File    string `json:"file,omitempty"`
 }
 
 // NewCmdList creates the bundle list command.
@@ -57,16 +45,14 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List resolvable components and their provenance",
-		Long: `Lists every resolvable component — harnesses, stacks, and monitoring
-extensions — across all three tiers: the embedded floor, loose convention
-directories, and installed bundles.
+		Short:   "List bundles and their declaration↔cache state",
+		Long: `Lists every bundle the current configuration knows about, one row per
+identity: installed and in-place bundles that resolve, declared sources that
+were never fetched, and cached bundles no live declaration matches.
 
-Each row shows the component address (bare for floor/loose, qualified
-namespace.bundle.component for a bundle), its type, the owning bundle version
-where applicable, the resolution source, and — for a component that shadows a
-farther tier — the shadowed sources marked with '!'.`,
-		Example: `  # List all components
+The components a bundle ships are listed by the per-type inventory commands —
+'clawker harness list', 'clawker stack list', and 'clawker monitor extensions'.`,
+		Example: `  # List bundles
   clawker bundle list
 
   # Short form
@@ -95,102 +81,48 @@ func listRun(_ context.Context, opts *ListOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading bundle manager: %w", err)
 	}
-	resolver := mgr.Resolver()
 
-	// Bundles() surfaces the C1 identity-collision error and the bundle-load
-	// warnings once; List memoizes over the same scan, so version lookups and
-	// per-type listing below reuse it.
-	bundles, warnings, err := resolver.Bundles()
+	// Bundles() surfaces the bundle-load warnings; Statuses reuses its memoized
+	// scan (and propagates the same C1 identity-collision error).
+	_, warnings, err := mgr.Resolver().Bundles()
 	if err != nil {
 		return fmt.Errorf("resolving bundles: %w", err)
 	}
-
-	var rows []componentRow
-	for _, t := range allComponentTypes() {
-		components, _, listErr := resolver.List(t)
-		if listErr != nil {
-			return fmt.Errorf("listing %s components: %w", t, listErr)
-		}
-		for _, c := range components {
-			rows = append(rows, buildRow(c, bundles))
-		}
-	}
-
-	if rErr := renderRows(opts, rows); rErr != nil {
-		return rErr
-	}
-	printWarnings(ios, warnings)
-	return renderStatuses(opts, mgr)
-}
-
-// renderStatuses writes the per-identity declaration↔cache rows: a second
-// table in the default human output, plus stderr hints for the actionable
-// states in every output mode.
-func renderStatuses(opts *ListOptions, mgr *bundle.Manager) error {
 	statuses, err := mgr.Statuses()
 	if err != nil {
 		return fmt.Errorf("linking bundle declarations to the cache: %w", err)
 	}
-	if opts.Format.IsDefault() && !opts.Format.Quiet && len(statuses) > 0 {
-		if tErr := renderStatusTable(opts, statuses); tErr != nil {
-			return tErr
-		}
+
+	if rErr := renderRows(opts, statuses); rErr != nil {
+		return rErr
 	}
-	printStatusHints(opts.IOStreams, statuses)
+	printWarnings(ios, warnings)
+	printStatusHints(ios, statuses)
 	return nil
 }
 
-// buildRow projects one resolved component into a display row, looking up the
-// owning bundle's manifest version for a qualified component.
-func buildRow(c bundle.Component, bundles map[bundle.BundleID]*bundle.ResolvedBundle) componentRow {
-	provenance := ""
-	if c.Provenance.Shadowed() {
-		provenance = "! " + shadowClause(c.Provenance)
-	}
-	return componentRow{
-		Address:    c.Address.String(),
-		Type:       c.Type.String(),
-		Version:    componentVersion(c, bundles),
-		Source:     c.Provenance.Source(),
-		Provenance: provenance,
-		Shadowed:   c.Provenance.Shadowed(),
+// buildRow projects one status into a display row.
+func buildRow(s bundle.Status) bundleRow {
+	return bundleRow{
+		Bundle:  statusIdentity(s),
+		Version: orDash(s.Version),
+		Source:  orDash(s.Source),
+		Status:  statusText(s),
+		File:    s.File,
 	}
 }
 
-// shadowClause renders the "shadows a, b" clause listing the farther-tier
-// sources a component shadowed.
-func shadowClause(p bundle.Provenance) string {
-	sources := make([]string, 0, len(p.Shadows))
-	for _, s := range p.Shadows {
-		sources = append(sources, s.Source())
-	}
-	return "shadows " + strings.Join(sources, ", ")
-}
-
-// componentVersion returns the owning bundle's version for a qualified
-// component — the manifest version, falling back to the selected cache version
-// (the resolved sha for an unversioned bundle) — or "-" for a bare component.
-func componentVersion(c bundle.Component, bundles map[bundle.BundleID]*bundle.ResolvedBundle) string {
-	if !c.Address.Qualified() {
-		return "-"
-	}
-	rb, ok := bundles[c.Provenance.Bundle]
-	if !ok {
-		return "-"
-	}
-	if rb.Bundle.Manifest.Version != "" {
-		return rb.Bundle.Manifest.Version
-	}
-	return orDash(rb.Version)
-}
-
-// renderRows writes the component rows in the format the flags select.
-func renderRows(opts *ListOptions, rows []componentRow) error {
+// renderRows writes the bundle rows in the format the flags select.
+func renderRows(opts *ListOptions, statuses []bundle.Status) error {
 	ios := opts.IOStreams
+	rows := make([]bundleRow, 0, len(statuses))
+	for _, s := range statuses {
+		rows = append(rows, buildRow(s))
+	}
 	switch {
 	case opts.Format.Quiet:
 		for _, r := range rows {
-			fmt.Fprintln(ios.Out, r.Address)
+			fmt.Fprintln(ios.Out, quietIdentity(r))
 		}
 		return nil
 	case opts.Format.IsJSON():
@@ -208,14 +140,24 @@ func renderRows(opts *ListOptions, rows []componentRow) error {
 	}
 }
 
-func renderTable(opts *ListOptions, rows []componentRow) error {
+// quietIdentity returns the one usable token for a --quiet row: the bundle
+// identity, or the declared source for a never-fetched entry whose identity is
+// not yet known.
+func quietIdentity(r bundleRow) string {
+	if r.Bundle != "-" {
+		return r.Bundle
+	}
+	return r.Source
+}
+
+func renderTable(opts *ListOptions, rows []bundleRow) error {
 	if len(rows) == 0 {
-		fmt.Fprintln(opts.IOStreams.ErrOut, "No components resolvable.")
+		fmt.Fprintln(opts.IOStreams.ErrOut, "No bundles declared or cached.")
 		return nil
 	}
-	table := opts.TUI.NewTable("ADDRESS", "TYPE", "VERSION", "SOURCE", "PROVENANCE")
+	table := opts.TUI.NewTable("BUNDLE", "VERSION", "SOURCE", "STATUS")
 	for _, r := range rows {
-		table.AddRow(r.Address, r.Type, r.Version, r.Source, r.Provenance)
+		table.AddRow(r.Bundle, r.Version, r.Source, r.Status)
 	}
 	if err := table.Render(); err != nil {
 		return fmt.Errorf("rendering table: %w", err)
@@ -229,21 +171,6 @@ func printWarnings(ios *iostreams.IOStreams, warnings []bundle.Warning) {
 	for _, w := range warnings {
 		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w.Message)
 	}
-}
-
-// renderStatusTable writes the per-identity bundle rows — the declaration↔cache
-// linkage — under the component table in the default human output.
-func renderStatusTable(opts *ListOptions, statuses []bundle.Status) error {
-	ios := opts.IOStreams
-	fmt.Fprintln(ios.Out)
-	table := opts.TUI.NewTable("BUNDLE", "VERSION", "SOURCE", "STATUS")
-	for _, s := range statuses {
-		table.AddRow(statusIdentity(s), orDash(s.Version), orDash(s.Source), statusText(s))
-	}
-	if err := table.Render(); err != nil {
-		return fmt.Errorf("rendering bundle table: %w", err)
-	}
-	return nil
 }
 
 // statusIdentity renders a status row's identity, or a dash for a declared

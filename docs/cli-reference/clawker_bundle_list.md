@@ -4,18 +4,16 @@ title: "clawker bundle list"
 
 ## clawker bundle list
 
-List resolvable components and their provenance
+List bundles and their declaration↔cache state
 
 ### Synopsis
 
-Lists every resolvable component — harnesses, stacks, and monitoring
-extensions — across all three tiers: the embedded floor, loose convention
-directories, and installed bundles.
+Lists every bundle the current configuration knows about, one row per
+identity: installed and in-place bundles that resolve, declared sources that
+were never fetched, and cached bundles no live declaration matches.
 
-Each row shows the component address (bare for floor/loose, qualified
-namespace.bundle.component for a bundle), its type, the owning bundle version
-where applicable, the resolution source, and — for a component that shadows a
-farther tier — the shadowed sources marked with '!'.
+The components a bundle ships are listed by the per-type inventory commands —
+'clawker harness list', 'clawker stack list', and 'clawker monitor extensions'.
 
 ```
 clawker bundle list [flags]
@@ -28,7 +26,7 @@ clawker bundle list [flags]
 ### Examples
 
 ```
-  # List all components
+  # List bundles
   clawker bundle list
 
   # Short form

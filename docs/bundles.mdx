@@ -107,23 +107,31 @@ declared but not yet cached.
 
 ## Listing
 
-`clawker bundle list` shows every resolvable component across all three tiers,
-with its address, type, version, and where it resolved from. A component that
-**shadows** a farther tier (a loose directory overriding a built-in of the same
-name) is marked, and the shadowed source is shown so overrides are never
-silent:
+`clawker bundle list` shows one honest status row per bundle, linking your
+declarations to the cache: installed (resolving), declared but not installed
+yet, cached but no longer declared, or a hand-placed cache entry without source
+metadata (which never resolves). The actionable states also print as hints with
+their remedy:
 
 ```bash
-clawker bundle list          # every component and its provenance
+clawker bundle list          # every bundle and its declaration↔cache state
 clawker bundle ls            # short form
 clawker bundle list --json   # machine-readable
 ```
 
-Below the component table, each bundle gets an honest status row linking your
-declarations to the cache: installed (resolving), declared but not installed
-yet, cached but no longer declared, or a hand-placed cache entry without source
-metadata (which never resolves). The actionable states also print as hints with
-their remedy.
+The components bundles (and the other tiers) provide are listed by the
+per-type inventory commands — each row names its owning bundle so it traces
+back to a `bundle list` row:
+
+```bash
+clawker harness list         # every resolvable harness
+clawker stack list           # every resolvable stack
+clawker monitor extensions   # every resolvable monitoring extension
+```
+
+A component that **shadows** a farther tier (a loose directory overriding a
+built-in of the same name) is marked with `!` and the shadowed source is
+shown, so overrides are never silent.
 
 ## Updating
 

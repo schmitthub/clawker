@@ -36,7 +36,8 @@ name IS the component name. There is NO bare-manifest-at-root special case.
 | `loose.go` | Loose-tier resolution under a project/user base |
 | `installed.go` | Cache read side: `scanInstalled`/`scanNamespace`, `installedBundle`, `versionDirs` (keyed by identity; dot-prefixed entries skipped) |
 | `resolver.go` | `Resolver.Resolve(t, name)` (bare = user>project>floor, ≤2 lazy stats; qualified = installed/in-place), `List(t)` (eager, with shadow rows), `Bundles()` (memoized, C1, declaration-gated; returns `map[BundleID]*ResolvedBundle` carrying the declaring source/file/version) |
-| `status.go` | `Manager.Statuses()` — the declaration↔cache linkage view (`Status`/`StatusState`): resolving, declared-but-uncached, cached-but-undeclared, hand-placed (unmanaged). Backs the `bundle list` per-identity rows |
+| `status.go` | `Manager.Statuses()` — the declaration↔cache linkage view (`Status`/`StatusState`): resolving, declared-but-uncached, cached-but-undeclared, hand-placed (unmanaged). Backs the `bundle list` rows |
+| `inventory.go` | `Manager.Inventory(t)` (`InventoryItem`) — per-type component inventory: name/owning-bundle-version/BundleID/provenance join over `Resolver.List` + `Bundles()`. Backs the per-type listing commands (`harness list`/`stack list`/`monitor extensions` via `cmdutil.NewInventoryListCommand`) |
 | `provenance.go` | `Tier` + `Provenance` (source clause + shadow rendering) |
 | `warnings.go` | `Warning` + levenshtein typo suggestions for unknown convention dirs |
 | `errors.go` | `ErrNotCached`, `CollisionError` (C1), `SourceError`, `ManifestError` |

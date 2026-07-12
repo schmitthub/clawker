@@ -32,7 +32,7 @@ and loose convention directories provide bare-named components.
 ### Subcommands
 
 * [clawker bundle install](clawker_bundle_install) - Declare a bundle source and fetch its content
-* [clawker bundle list](clawker_bundle_list) - List resolvable components and their provenance
+* [clawker bundle list](clawker_bundle_list) - List bundles and their declaration↔cache state
 * [clawker bundle remove](clawker_bundle_remove) - Purge a cached bundle from the host cache
 * [clawker bundle update](clawker_bundle_update) - Refetch a cached bundle when its source version changed
 * [clawker bundle validate](clawker_bundle_validate) - Validate a bundle directory

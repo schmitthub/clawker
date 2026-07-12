@@ -270,7 +270,8 @@
               "cli-reference/clawker_monitor_up",
               "cli-reference/clawker_monitor_reload",
               "cli-reference/clawker_monitor_down",
-              "cli-reference/clawker_monitor_status"
+              "cli-reference/clawker_monitor_status",
+              "cli-reference/clawker_monitor_extensions"
             ]
           },
           {
@@ -282,6 +283,20 @@
               "cli-reference/clawker_bundle_remove",
               "cli-reference/clawker_bundle_update",
               "cli-reference/clawker_bundle_validate"
+            ]
+          },
+          {
+            "group": "Harness",
+            "pages": [
+              "cli-reference/clawker_harness",
+              "cli-reference/clawker_harness_list"
+            ]
+          },
+          {
+            "group": "Stack",
+            "pages": [
+              "cli-reference/clawker_stack",
+              "cli-reference/clawker_stack_list"
             ]
           },
           {
