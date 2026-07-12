@@ -1057,6 +1057,16 @@ func TestRenderProgressSummary_Success(t *testing.T) {
 	assert.Contains(t, output, "Built myproject:latest")
 }
 
+func TestRenderProgressSummary_NoStepsIsSilent(t *testing.T) {
+	tio, _, _, errOut := iostreams.Test()
+	cfg := testDisplayConfig()
+
+	renderProgressSummary(tio, &cfg, nil, time.Now())
+
+	assert.Empty(t, errOut.String(),
+		"zero steps means the producer failed before doing anything — a success line would be a lie")
+}
+
 func TestRenderProgressSummary_Error(t *testing.T) {
 	tio, _, _, errOut := iostreams.Test()
 	cfg := testDisplayConfig()

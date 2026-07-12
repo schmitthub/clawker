@@ -352,11 +352,10 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 			if result.Err != nil {
 				log.Warn().Err(result.Err).Msg("progress display error masked by build error")
 			}
-			printBuildNextSteps(ios, cs)
+			printBuildNextSteps(ios, cs, buildErr)
 			return buildErr
 		}
 		if result.Err != nil {
-			printBuildNextSteps(ios, cs)
 			return result.Err
 		}
 		return finishBuild(log, imageTag, imageDigest, opts.IIDFile)
@@ -366,7 +365,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	buildErr := builder.Build(ctx, imageTag, buildOpts)
 	printProvenance(ios, cs, builder.Provenance())
 	if buildErr != nil {
-		printBuildNextSteps(ios, cs)
+		printBuildNextSteps(ios, cs, buildErr)
 		return fmt.Errorf("building %s: %w", imageTag, buildErr)
 	}
 	return finishBuild(log, imageTag, imageDigest, opts.IIDFile)
@@ -448,8 +447,15 @@ func parseKeyValuePairs(pairs []string) (map[string]string, []string) {
 	return result, invalid
 }
 
-// printBuildNextSteps prints actionable guidance after a build failure.
-func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
+// printBuildNextSteps prints docker-debugging guidance after a build failure —
+// only when the docker build itself failed. Preparation failures (stack or
+// harness resolution, Dockerfile generation) carry their own remedy in the
+// error message; Dockerfile/base-image tips would just bury it.
+func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, buildErr error) {
+	var execErr *docker.BuildExecutionError
+	if !errors.As(buildErr, &execErr) {
+		return
+	}
 	fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
 	fmt.Fprintln(ios.ErrOut, "  1. Check your Dockerfile for syntax errors")
 	fmt.Fprintln(ios.ErrOut, "  2. Ensure the base image exists and is accessible")

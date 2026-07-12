@@ -88,6 +88,23 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 	}
 }
 
+// BuildExecutionError marks a failure of the docker build itself, as opposed
+// to clawker-side preparation (Dockerfile generation, freshness checks,
+// context staging). The command layer keys its docker-debugging guidance off
+// this type — preparation failures carry their own remedies.
+type BuildExecutionError struct{ Err error }
+
+func (e *BuildExecutionError) Error() string { return e.Err.Error() }
+func (e *BuildExecutionError) Unwrap() error { return e.Err }
+
+// wrapExec tags a docker-build failure as a BuildExecutionError; nil stays nil.
+func wrapExec(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &BuildExecutionError{Err: err}
+}
+
 // Build builds the project's harness image, first ensuring the per-project
 // shared base image (clawker-<project>:base) exists and is fresh. The base
 // carries the harness-agnostic layers (packages, user setup, project
@@ -171,7 +188,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 			return fmt.Errorf("failed to write build context: %w", writeErr)
 		}
 
-		return b.client.BuildImage(ctx, nil, opts.toBuildImageOpts(tags, "Dockerfile", tempDir))
+		return wrapExec(b.client.BuildImage(ctx, nil, opts.toBuildImageOpts(tags, "Dockerfile", tempDir)))
 	}
 
 	// Legacy path: tar stream build context
@@ -180,7 +197,9 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
-	return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, "Dockerfile", gen.GetBuildContext()))
+	return wrapExec(
+		b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, "Dockerfile", gen.GetBuildContext())),
+	)
 }
 
 // baseImageStale reports whether the shared base image must be (re)built:
@@ -240,11 +259,11 @@ func (b *Builder) buildBase(
 		// Absolute Dockerfile path + the project dir as context: BuildKit
 		// mounts them as separate locals, so the rendered Dockerfile never
 		// touches the user's project directory.
-		return b.client.BuildImage(
+		return wrapExec(b.client.BuildImage(
 			ctx,
 			nil,
 			baseOpts.toBuildImageOpts([]string{baseTag}, dockerfilePath, gen.GetBuildContext()),
-		)
+		))
 	}
 
 	buildCtx, err := gen.GenerateBaseBuildContext(dockerfile)
@@ -252,11 +271,11 @@ func (b *Builder) buildBase(
 		return fmt.Errorf("failed to generate base build context: %w", err)
 	}
 
-	return b.client.BuildImage(
+	return wrapExec(b.client.BuildImage(
 		ctx,
 		buildCtx,
 		baseOpts.toBuildImageOpts([]string{baseTag}, bundler.BaseDockerfileName, gen.GetBuildContext()),
-	)
+	))
 }
 
 // basePhasePrefix namespaces the base build's progress events.
