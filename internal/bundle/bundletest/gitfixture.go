@@ -190,6 +190,16 @@ func (s *Server) InitRepo(t *testing.T, name string) *Repo {
 	return &Repo{repo: repo, dir: dir}
 }
 
+// Remove deletes the repository from the fixture server, so subsequent
+// fetches and ref resolves against its URL fail — the upstream-vanished
+// scenario for cache-keeps-serving tests.
+func (r *Repo) Remove(t *testing.T) {
+	t.Helper()
+	if err := os.RemoveAll(r.dir); err != nil {
+		t.Fatalf("remove repo %s: %v", r.dir, err)
+	}
+}
+
 // Commit writes files (relative path → content) into the worktree, stages them,
 // and records one commit with the given message on the current branch. It
 // returns the new commit SHA.

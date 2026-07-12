@@ -109,9 +109,8 @@ declared but not yet cached.
 
 `clawker bundle list` shows one honest status row per bundle, linking your
 declarations to the cache: installed (resolving), declared but not installed
-yet, cached but no longer declared, or a hand-placed cache entry without source
-metadata (which never resolves). The actionable states also print as hints with
-their remedy:
+yet, cached but no longer declared, or a hand-placed cache entry (which never
+resolves). The actionable states also print as hints with their remedy:
 
 ```bash
 clawker bundle list          # every bundle and its declaration↔cache state
@@ -148,10 +147,12 @@ A `sha`-pinned or local `path:` source never moves. If a refetch fails — the
 source is unreachable, moved, or deleted — the already-cached version keeps
 serving; a failed fetch never purges your cache.
 
-To change a pin, edit the entry's `ref`/`sha` and run `clawker bundle install`:
-the same repository under a new pin is the same source, so the cached bundle
-adopts the new pin in place — no removal needed. Previously fetched versions
-stay in the cache until `clawker bundle remove`.
+To change a pin, edit the entry's `ref`/`sha` and run `clawker bundle install`.
+The cache is keyed by the declared source value in its entirety — url, pin, and
+subdirectory — so the edited entry fetches into its own fresh cache slot and a
+declaration can never pick up content fetched from a different value. Anything
+still declaring the old value (another project sharing the host cache) keeps
+resolving its own slot; stale slots stay on disk until `clawker bundle remove`.
 
 <Note>
   Clawker keeps no lockfile and never rewrites your `clawker.yaml`. A `ref`

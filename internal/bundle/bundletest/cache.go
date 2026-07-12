@@ -7,26 +7,37 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// PlantCachedBundle writes a bundle cache entry under [consts.BundlesSubdir]
-// exactly as an install would leave it: a version content root carrying the
-// identity manifest plus the given component files, and — unless url is empty
-// (a hand-placed, unmanaged entry) — the source.yaml linking the entry to url
-// at ref v1 with the version recorded under that pin. components maps
-// version-root-relative file paths to contents, e.g.
+// handPlacedKey is the entry directory used for a hand-placed (unmanaged)
+// cache entry — an arbitrary key no declared source value digests to.
+const handPlacedKey = "handplaced00"
+
+// PlantCachedBundle writes a value-keyed bundle cache entry under
+// [consts.BundlesSubdir] exactly as an install would leave it: the entry
+// directory <ns>/<name>/<sourceKey> carrying the identity manifest, the given
+// component files, and — unless url is empty (a hand-placed, unmanaged entry) —
+// the fetch receipt for the source url at ref v1. A test declaring
+// {URL: url, Ref: "v1"} therefore addresses the planted entry by exact value.
+// components maps entry-root-relative file paths to contents, e.g.
 // "stacks/x/stack.yaml" → "description: x\n".
 func PlantCachedBundle(t *testing.T, ns, name, version, url string, components map[string]string) {
 	t.Helper()
 	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	verRoot := filepath.Join(cacheRoot, ns, name, version)
-	require.NoError(t, os.MkdirAll(filepath.Join(verRoot, ".clawker-bundle"), 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(verRoot, ".clawker-bundle", "bundle.yaml"),
+	src := bundle.Source{URL: url, Ref: "v1", SHA: "", Path: ""}
+	key := handPlacedKey
+	if url != "" {
+		key = src.Key()
+	}
+	entryRoot := filepath.Join(cacheRoot, ns, name, key)
+	require.NoError(t, os.MkdirAll(filepath.Join(entryRoot, ".clawker-bundle"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(entryRoot, ".clawker-bundle", "bundle.yaml"),
 		[]byte("namespace: "+ns+"\nname: "+name+"\nversion: "+version+"\n"), 0o600))
 	for rel, content := range components {
-		path := filepath.Join(verRoot, filepath.FromSlash(rel))
+		path := filepath.Join(entryRoot, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	}
@@ -34,9 +45,9 @@ func PlantCachedBundle(t *testing.T, ns, name, version, url string, components m
 		return
 	}
 	require.NoError(t, os.WriteFile(
-		filepath.Join(cacheRoot, ns, name, "source.yaml"),
+		filepath.Join(entryRoot, bundle.ReceiptFile),
 		[]byte(
-			"url: "+url+"\nref: v1\nversions:\n  \""+version+"\":\n    sha: \"\"\n    fetched_at: 2026-01-01T00:00:00Z\n",
+			"canonical: \""+src.Canonical()+"\"\nsha: \"\"\nfetched_at: 2026-01-01T00:00:00Z\nversion: "+version+"\n",
 		),
 		0o600,
 	))

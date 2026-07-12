@@ -27,15 +27,14 @@ func TestResolveVersion(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	// A hostile manifest version must never become a path traversal, an
-	// invisible dot-entry, or a clobber of the cache metadata file.
+	// A hostile manifest version must never become a path traversal or a
+	// dot-entry — it flows into provenance labels and image-tag components.
 	rejects := []string{
 		"1.0/../../x", // separator
 		`a\b`,         // windows separator
 		"..",          // traversal
-		".tmp",        // dot-prefixed: invisible to the cache scan
+		".tmp",        // dot-prefixed
 		".hidden",     // dot-prefixed
-		"source.yaml", // would clobber the cache metadata on commit
 	}
 	for _, bad := range rejects {
 		t.Run("rejects/"+bad, func(t *testing.T) {

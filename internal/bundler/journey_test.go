@@ -111,14 +111,16 @@ func TestBundleJourney_InstallToRender(t *testing.T) {
 			}
 			require.NoError(t, mgr.Install(ctx, src))
 
-			// Cache layout: <data>/bundles/<ns>/<name>/<version>/<convention>/...,
-			// content roots only (the .git dir is stripped on commit).
+			// Cache layout: the value-keyed entry
+			// <data>/bundles/<ns>/<name>/<sourceKey>/<convention>/... — content
+			// root plus its fetch receipt, the .git dir stripped on commit.
 			cacheRoot, err := consts.BundlesSubdir()
 			require.NoError(t, err)
-			versionDir := filepath.Join(cacheRoot, "acme", "tools", "1.0.0")
-			assert.FileExists(t, filepath.Join(versionDir, "stacks", "node", bundler.StackManifestFile))
-			assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "source.yaml"))
-			assert.NoDirExists(t, filepath.Join(versionDir, ".git"))
+			entry := filepath.Join(cacheRoot, "acme", "tools",
+				bundle.SourceFromConfig(src).Key())
+			assert.FileExists(t, filepath.Join(entry, "stacks", "node", bundler.StackManifestFile))
+			assert.FileExists(t, filepath.Join(entry, bundle.ReceiptFile))
+			assert.NoDirExists(t, filepath.Join(entry, ".git"))
 
 			// Selection → render: build.stacks names the qualified address, so
 			// GenerateBase resolves it from the cache and composes its fragment.
@@ -148,10 +150,7 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	projectRoot := filepath.Join(env.Dirs.Base, "project")
 	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
-	// The declaration tracks the URL the cached source.yaml is repointed to
-	// below, so the cached bundle stays declared (and resolvable) while its
-	// upstream is unreachable — the exact keeps-serving scenario.
-	cfg := journeyConfig(t, projectRoot, srv.HTTPURL("gone"), "master")
+	cfg := journeyConfig(t, projectRoot, srv.HTTPURL("tools"), "master")
 	mgr := bundle.NewManager(cfg)
 	ctx := context.Background()
 
@@ -160,12 +159,9 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 		URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false,
 	}))
 
-	// Repoint the cached source at an unreachable repository, then update:
-	// the resolve fails but the fetched content is untouched.
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	repointJourneySource(t,
-		filepath.Join(cacheRoot, "acme", "tools", "source.yaml"), srv.HTTPURL("tools"), srv.HTTPURL("gone"))
+	// The upstream vanishes, then update: the tip resolve fails but the
+	// fetched content is untouched.
+	repo.Remove(t)
 
 	results, err := mgr.Update(ctx, bundle.BundleID{Namespace: "acme", Name: "tools"})
 	require.NoError(t, err)
@@ -178,16 +174,4 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(base), journeyStackMarker,
 		"a failed update must leave the cache serving, so the build still renders the stack")
-}
-
-// repointJourneySource rewrites the cache-internal source.yaml URL, swapping the
-// from URL for to so an update targets an unreachable repository without
-// disturbing the fetched content.
-func repointJourneySource(t *testing.T, path, from, to string) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	updated := strings.Replace(string(raw), from, to, 1)
-	require.NotEqual(t, string(raw), updated, "source url not found in %s", path)
-	require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
 }

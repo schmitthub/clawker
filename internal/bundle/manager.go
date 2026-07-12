@@ -77,8 +77,8 @@ func (m *Manager) Validate(dir string) Report {
 	return Report{Dir: dir, LoadErr: nil, Warnings: b.Warnings}
 }
 
-// Remove purges a cached bundle's entire cache entry — every version content
-// root plus the cache-internal metadata under <cacheRoot>/<namespace>/<name>/.
+// Remove purges every cache entry of a bundle identity — the whole
+// <cacheRoot>/<namespace>/<name>/ tree, covering every declared-value key.
 // It reports whether an entry existed to remove; a not-cached identity is a
 // no-op returning false. It never reads or writes the declaring config — a
 // still-declared bundle re-fetches on the next install (the caller warns).
@@ -103,8 +103,9 @@ func (m *Manager) Remove(id BundleID) (bool, error) {
 // Install fetches a declared bundle source into the host cache. A local in-place
 // (path-only) source is loaded directly from disk and never cached, so Install
 // is a no-op for it. A remote source is cloned, its manifest validated, and its
-// content committed atomically under <cacheRoot>/<namespace>/<name>/<version>/.
-// A fetch or validation failure leaves any previously cached version untouched.
+// content committed atomically into the value-keyed entry for the declared
+// source (<cacheRoot>/<namespace>/<name>/<sourceKey>/). A fetch or validation
+// failure leaves any previously cached entry untouched.
 func (m *Manager) Install(ctx context.Context, src config.BundleSource) error {
 	s := SourceFromConfig(src)
 	if s.IsLocal() {
@@ -118,14 +119,14 @@ func (m *Manager) Install(ctx context.Context, src config.BundleSource) error {
 // the identities freshly installed and the first error encountered (a failed
 // source leaves earlier successes in place).
 func (m *Manager) InstallDeclared(ctx context.Context) ([]BundleID, error) {
-	cached, err := cachedCanonicals()
+	cached, err := cachedKeys()
 	if err != nil {
 		return nil, err
 	}
 	var installed []BundleID
 	for _, decl := range m.cfg.BundleDeclarations() {
 		src := SourceFromConfig(decl.Source)
-		if src.IsLocal() || cached[src.Canonical()] {
+		if src.IsLocal() || cached[src.Key()] {
 			continue
 		}
 		id, _, fetchErr := m.fetchIntoCache(ctx, src)

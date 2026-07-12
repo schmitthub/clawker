@@ -1,9 +1,7 @@
 package bundle
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,15 +10,17 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// InstalledBundle is a bundle discovered in the host cache. The cache is keyed
-// by identity — <cacheRoot>/<namespace>/<name>/ — so a cached bundle's identity
-// is its directory position, and multiple versions coexist as sibling content
-// roots (<namespace>/<name>/<version>/). Cache-internal metadata files and
-// staging directories (dot-prefixed) are not versions.
-type InstalledBundle struct {
-	ID       BundleID
-	Root     string   // <cacheRoot>/<namespace>/<name>
-	Versions []string // content-root subdirectory names, sorted
+// InstalledEntry is one cache entry discovered in the host cache. The cache is
+// value-keyed under identity levels for browsability —
+// <cacheRoot>/<namespace>/<name>/<sourceKey>/ — where sourceKey is the digest
+// of the declared source value ([Source.Key]) and the directory is the content
+// root. Two declarations differing in any part of their value (url form, ref,
+// sha, subdir) occupy sibling entries; duplicated content across keys is
+// accepted.
+type InstalledEntry struct {
+	ID   BundleID
+	Key  string // source-digest directory name
+	Root string // <cacheRoot>/<namespace>/<name>/<key>
 }
 
 // cacheRoot resolves the installed-bundle cache directory (<data>/bundles),
@@ -33,28 +33,10 @@ func cacheRoot() (string, error) {
 	return root, nil
 }
 
-// installedBundle reads the cache entry for one identity, if present. It returns
-// false (no error) when the identity is not cached — the ordinary
-// declared-but-not-yet-installed condition.
-func installedBundle(root string, id BundleID) (InstalledBundle, bool, error) {
-	bundleDir := filepath.Join(root, id.Namespace, id.Name)
-	versions, err := versionDirs(bundleDir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return InstalledBundle{}, false, nil
-		}
-		return InstalledBundle{}, false, err
-	}
-	if len(versions) == 0 {
-		return InstalledBundle{}, false, nil
-	}
-	return InstalledBundle{ID: id, Root: bundleDir, Versions: versions}, true, nil
-}
-
-// scanInstalled enumerates every cached bundle under root: each
-// <namespace>/<name>/ directory with at least one version content root.
-// Dot-prefixed entries (staging, metadata) are skipped at every level.
-func scanInstalled(root string) ([]InstalledBundle, error) {
+// scanInstalled enumerates every cache entry under root:
+// <namespace>/<name>/<sourceKey>/ directories. Dot-prefixed entries (staging,
+// receipts) are skipped at every level.
+func scanInstalled(root string) ([]InstalledEntry, error) {
 	nsEntries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -62,69 +44,80 @@ func scanInstalled(root string) ([]InstalledBundle, error) {
 		}
 		return nil, fmt.Errorf("read bundle cache %s: %w", root, err)
 	}
-	var installed []InstalledBundle
+	var installed []InstalledEntry
 	for _, ns := range nsEntries {
 		if !ns.IsDir() || strings.HasPrefix(ns.Name(), ".") {
 			continue
 		}
-		nsBundles, nsErr := scanNamespace(root, ns.Name())
+		nsEntries, nsErr := scanNamespace(root, ns.Name())
 		if nsErr != nil {
 			return nil, nsErr
 		}
-		installed = append(installed, nsBundles...)
+		installed = append(installed, nsEntries...)
 	}
 	sort.Slice(installed, func(i, j int) bool {
-		if installed[i].ID.Namespace != installed[j].ID.Namespace {
-			return installed[i].ID.Namespace < installed[j].ID.Namespace
+		if installed[i].ID.String() != installed[j].ID.String() {
+			return installed[i].ID.String() < installed[j].ID.String()
 		}
-		return installed[i].ID.Name < installed[j].ID.Name
+		return installed[i].Key < installed[j].Key
 	})
 	return installed, nil
 }
 
-// scanNamespace enumerates one namespace directory's cached bundles.
-func scanNamespace(root, namespace string) ([]InstalledBundle, error) {
+// scanNamespace enumerates one namespace directory's cache entries.
+func scanNamespace(root, namespace string) ([]InstalledEntry, error) {
 	nameEntries, err := os.ReadDir(filepath.Join(root, namespace))
 	if err != nil {
 		return nil, fmt.Errorf("read bundle cache %s/%s: %w", root, namespace, err)
 	}
-	var bundles []InstalledBundle
+	var entries []InstalledEntry
 	for _, name := range nameEntries {
 		if !name.IsDir() || strings.HasPrefix(name.Name(), ".") {
 			continue
 		}
-		ib, ok, ibErr := installedBundle(root, BundleID{Namespace: namespace, Name: name.Name()})
-		if ibErr != nil {
-			return nil, ibErr
+		nameDir, nameErr := scanBundleName(root, namespace, name.Name())
+		if nameErr != nil {
+			return nil, nameErr
 		}
-		if ok {
-			bundles = append(bundles, ib)
-		}
+		entries = append(entries, nameDir...)
 	}
-	return bundles, nil
+	return entries, nil
 }
 
-// versionDirs lists the content-root subdirectory names of a cached bundle,
-// sorted. Dot-prefixed entries (e.g. staging) and cache-metadata files (e.g.
-// source.yaml) are skipped — only directories are versions.
-func versionDirs(bundleDir string) ([]string, error) {
-	entries, err := os.ReadDir(bundleDir)
+// scanBundleName enumerates one identity directory's value-keyed entries.
+func scanBundleName(root, namespace, name string) ([]InstalledEntry, error) {
+	keyEntries, err := os.ReadDir(filepath.Join(root, namespace, name))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", bundleDir, err)
+		return nil, fmt.Errorf("read bundle cache %s/%s/%s: %w", root, namespace, name, err)
 	}
-	var versions []string
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+	var entries []InstalledEntry
+	for _, key := range keyEntries {
+		if !key.IsDir() || strings.HasPrefix(key.Name(), ".") {
 			continue
 		}
-		versions = append(versions, e.Name())
+		entries = append(entries, InstalledEntry{
+			ID:   BundleID{Namespace: namespace, Name: name},
+			Key:  key.Name(),
+			Root: filepath.Join(root, namespace, name, key.Name()),
+		})
 	}
-	sort.Strings(versions)
-	return versions, nil
+	return entries, nil
 }
 
-// versionRoot returns the on-disk content root for a specific version of a
-// cached bundle.
-func (ib InstalledBundle) versionRoot(version string) string {
-	return filepath.Join(ib.Root, version)
+// cachedKeys scans the cache once and returns the set of present source keys,
+// so a batch of declarations can be tested for cache presence by exact value.
+func cachedKeys() (map[string]bool, error) {
+	root, err := cacheRoot()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := scanInstalled(root)
+	if err != nil {
+		return nil, err
+	}
+	keys := make(map[string]bool, len(installed))
+	for _, e := range installed {
+		keys[e.Key] = true
+	}
+	return keys, nil
 }

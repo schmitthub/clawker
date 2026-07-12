@@ -58,11 +58,11 @@ func TestUpdate_NoBundlesIsANoOp(t *testing.T) {
 	assert.Empty(t, errOut.String())
 }
 
-func TestUpdate_NamedNotCachedErrors(t *testing.T) {
+func TestUpdate_NamedUndeclaredErrors(t *testing.T) {
 	f, _ := newFactory(t)
 	err := run(t, f, "acme.tools")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, bundle.ErrNotCached)
+	assert.Contains(t, err.Error(), "no declared source")
 }
 
 func TestUpdate_InvalidIdentity(t *testing.T) {

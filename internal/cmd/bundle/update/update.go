@@ -90,15 +90,17 @@ func printUpdateResults(ios *iostreams.IOStreams, results []bundle.UpdateResult)
 	for _, r := range results {
 		switch r.Outcome {
 		case bundle.UpdateRefetched:
-			fmt.Fprintf(ios.Out, "%s %s updated to version %s\n", cs.SuccessIcon(), r.ID, r.NewVersion)
+			fmt.Fprintf(ios.Out, "%s %s updated to version %s\n", cs.SuccessIcon(), r.Subject(), r.NewVersion)
 		case bundle.UpdateUnchanged:
-			fmt.Fprintf(ios.ErrOut, "%s %s is up to date\n", cs.InfoIcon(), r.ID)
+			fmt.Fprintf(ios.ErrOut, "%s %s is up to date\n", cs.InfoIcon(), r.Subject())
 		case bundle.UpdateSkippedPinned:
-			fmt.Fprintf(ios.ErrOut, "%s %s is sha-pinned; not updated\n", cs.InfoIcon(), r.ID)
-		case bundle.UpdateSkippedUnmanaged:
-			fmt.Fprintf(ios.ErrOut, "%s %s has no updatable source metadata; skipped\n", cs.InfoIcon(), r.ID)
+			fmt.Fprintf(ios.ErrOut, "%s %s is sha-pinned; not updated\n", cs.InfoIcon(), r.Subject())
+		case bundle.UpdateSkippedNotInstalled:
+			fmt.Fprintf(ios.ErrOut, "%s %s is not installed; run `clawker bundle install`\n",
+				cs.InfoIcon(), r.Subject())
 		case bundle.UpdateFailed:
-			fmt.Fprintf(ios.ErrOut, "%s %s update failed: %v (cached version kept)\n", cs.WarningIcon(), r.ID, r.Err)
+			fmt.Fprintf(ios.ErrOut, "%s %s update failed: %v (cached version kept)\n",
+				cs.WarningIcon(), r.Subject(), r.Err)
 		}
 	}
 }

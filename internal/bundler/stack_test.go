@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -100,9 +101,9 @@ func writeLooseStack(t *testing.T, root, name, rootFragment string) {
 }
 
 // installedBundleURL is the remote source coordinate writeInstalledStack
-// records in the planted cache entry's source.yaml; a declaration of the same
-// url+ref (declareInstalledBundle, or a matching bundles: yaml entry) is what
-// makes the cached bundle resolvable.
+// plants the cache entry for; a declaration of the same url+ref
+// (declareInstalledBundle, or a matching bundles: yaml entry) addresses the
+// entry's value key and makes the cached bundle resolvable.
 func installedBundleURL(ns, name string) string {
 	return "https://example.com/" + ns + "/" + name + ".git"
 }
@@ -123,25 +124,15 @@ func declareInstalledBundle(cfg *configmocks.ConfigMock, ns, name string) {
 }
 
 // writeInstalledStack writes a cached bundle shipping one stack component into
-// the isolated bundle cache, with the source.yaml linking it to
-// installedBundleURL — a matching declaration makes the qualified address
-// resolve to it.
+// the isolated bundle cache via bundletest.PlantCachedBundle, keyed to
+// installedBundleURL at ref v1 — a matching declaration makes the qualified
+// address resolve to it.
 func writeInstalledStack(t *testing.T, ns, name, version, stack, rootFragment string) {
 	t.Helper()
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	verRoot := filepath.Join(cacheRoot, ns, name, version)
-	marker := filepath.Join(verRoot, bundle.MarkerDir)
-	require.NoError(t, os.MkdirAll(marker, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(marker, bundle.ManifestFile),
-		[]byte("namespace: "+ns+"\nname: "+name+"\nversion: "+version+"\n"), 0o644))
-	sdir := filepath.Join(verRoot, bundle.ComponentStack.Dir(), stack)
-	require.NoError(t, os.MkdirAll(sdir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackManifestFile), []byte("description: "+stack+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackRootFragmentFile), []byte(rootFragment), 0o644))
-	srcYAML := "url: " + installedBundleURL(ns, name) + "\nref: v1\nversions:\n" +
-		"  \"" + version + "\":\n    sha: \"\"\n    fetched_at: 2026-01-01T00:00:00Z\n"
-	require.NoError(t, os.WriteFile(filepath.Join(cacheRoot, ns, name, "source.yaml"), []byte(srcYAML), 0o644))
+	bundletest.PlantCachedBundle(t, ns, name, version, installedBundleURL(ns, name), map[string]string{
+		bundle.ComponentStack.Dir() + "/" + stack + "/" + StackManifestFile:     "description: " + stack + "\n",
+		bundle.ComponentStack.Dir() + "/" + stack + "/" + StackRootFragmentFile: rootFragment,
+	})
 }
 
 // A bare stack with no loose override resolves straight from the embedded

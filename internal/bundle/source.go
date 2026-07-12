@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -52,11 +54,23 @@ func (s Source) Canonical() string {
 	return "git:" + s.URL + "//" + s.Path + "@" + s.pin()
 }
 
+// sourceKeyLen is the hex length of a cache source key — 48 bits of sha256,
+// ample for the handful of sources a host ever declares.
+const sourceKeyLen = 12
+
+// Key returns the cache directory key for a REMOTE source: a short digest of
+// the declared value in totality (Canonical — url, subdir, ref/sha pin). The
+// cache is value-keyed: lookup is exact equality on this key, so any change to
+// the declared source — a ref edit, an ssh↔https url swap, a subdir move —
+// addresses a NEW cache entry and can never select content fetched from a
+// different value. Duplicate content across keys is accepted; it is just cache.
+func (s Source) Key() string {
+	sum := sha256.Sum256([]byte(s.Canonical()))
+	return hex.EncodeToString(sum[:])[:sourceKeyLen]
+}
+
 // pin returns the declared pin segment: "sha:<sha>" (sha beats ref),
-// "ref:<ref>", or "" for an unpinned source tracking the default branch. It is
-// the per-version fetch key recorded in source.yaml, so different projects
-// declaring the same repository at different pins each resolve the versions
-// fetched under THEIR pin.
+// "ref:<ref>", or "" for an unpinned source tracking the default branch.
 func (s Source) pin() string {
 	switch {
 	case s.SHA != "":
@@ -65,17 +79,4 @@ func (s Source) pin() string {
 		return "ref:" + s.Ref
 	}
 	return ""
-}
-
-// Repository returns the pin-stripped source identity: the clone URL plus the
-// subdir Path, without ref/sha. Two remote sources sharing it are the SAME
-// source at install time — re-declaring a different pin (ref edit, sha bump)
-// updates the cache entry in place rather than colliding, mirroring Claude
-// Code's "adding a second marketplace with the same name replaces the first".
-// Distinct subdirs of one repository remain distinct sources.
-func (s Source) Repository() string {
-	if s.IsLocal() {
-		return "path:" + filepath.Clean(s.Path)
-	}
-	return "git:" + s.URL + "//" + s.Path
 }

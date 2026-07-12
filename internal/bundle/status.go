@@ -6,17 +6,18 @@ import "sort"
 type StatusState int
 
 const (
-	// StatusResolving is a declared, loadable bundle (in-place, or a cached
-	// entry whose declaration is live) — its components resolve.
+	// StatusResolving is a declared, loadable bundle (in-place, or the cache
+	// entry keyed by a live declaration's value) — its components resolve.
 	StatusResolving StatusState = iota
-	// StatusNotInstalled is a declared remote source with no cache entry; its
-	// identity is unknown until `clawker bundle install` fetches it.
+	// StatusNotInstalled is a declared remote source with no cache entry for
+	// its exact value; its identity is unknown until `clawker bundle install`
+	// fetches it.
 	StatusNotInstalled
-	// StatusUndeclared is a cached bundle whose recorded source no live
-	// declaration matches — inert until re-declared or purged.
+	// StatusUndeclared is a cache entry no live declaration addresses — inert
+	// until re-declared or purged.
 	StatusUndeclared
-	// StatusUnmanaged is a cached bundle without source metadata (hand-placed);
-	// it traces to no declaration and never resolves.
+	// StatusUnmanaged is a cache entry without a fetch receipt (hand-placed);
+	// it displays no source coordinate.
 	StatusUnmanaged
 )
 
@@ -58,14 +59,14 @@ func (m *Manager) Statuses() ([]Status, error) {
 		return nil, err
 	}
 	remote := m.resolver.remoteDeclarations()
+	declaredKeys := make(map[string]bool, len(remote))
+	for _, d := range remote {
+		declaredKeys[d.src.Key()] = true
+	}
 
 	rows := resolvingStatuses(bundles)
-	cachedRows, matchedCanonicals, err := unresolvableCacheStatuses(installed, remote)
-	if err != nil {
-		return nil, err
-	}
-	rows = append(rows, cachedRows...)
-	rows = append(rows, uninstalledSourceStatuses(remote, matchedCanonicals)...)
+	rows = append(rows, unresolvableCacheStatuses(installed, declaredKeys)...)
+	rows = append(rows, uninstalledSourceStatuses(remote, cachedKeySet(installed))...)
 
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].ID.String() != rows[j].ID.String() {
@@ -74,6 +75,15 @@ func (m *Manager) Statuses() ([]Status, error) {
 		return rows[i].Source < rows[j].Source
 	})
 	return rows, nil
+}
+
+// cachedKeySet collects the source keys present in the cache scan.
+func cachedKeySet(installed []InstalledEntry) map[string]bool {
+	keys := make(map[string]bool, len(installed))
+	for _, e := range installed {
+		keys[e.Key] = true
+	}
+	return keys
 }
 
 // resolvingStatuses rows the resolved bundle set: in-place declarations and
@@ -94,54 +104,48 @@ func resolvingStatuses(bundles map[BundleID]*ResolvedBundle) []Status {
 }
 
 // unresolvableCacheStatuses rows the cache entries that do NOT resolve —
-// undeclared and hand-placed (unmanaged) — and reports which declaration
-// canonicals matched a cache entry so declared-but-uncached sources can be
-// derived by exclusion.
+// entries whose key no live declaration addresses. An entry with a readable
+// fetch receipt names its source (undeclared); one without — hand-placed, or
+// its receipt unreadable — has no source coordinate to show (unmanaged).
 func unresolvableCacheStatuses(
-	installed []InstalledBundle,
-	remote []remoteDecl,
-) ([]Status, map[string]bool, error) {
+	installed []InstalledEntry,
+	declaredKeys map[string]bool,
+) []Status {
 	var rows []Status
-	matchedCanonicals := map[string]bool{}
-	for _, ib := range installed {
-		meta, ok, err := readSourceMeta(ib.Root)
+	for _, e := range installed {
+		if declaredKeys[e.Key] {
+			continue
+		}
+		// A corrupt receipt degrades the row to unmanaged rather than failing
+		// the whole listing — the receipt is display-only.
+		receipt, ok, err := readReceipt(e.Root)
 		if err != nil {
-			return nil, nil, err
+			ok = false
 		}
 		if !ok {
 			rows = append(rows, Status{
-				ID: ib.ID, Source: "", File: "", Tier: TierInstalled, Version: "", State: StatusUnmanaged,
+				ID: e.ID, Source: "", File: "", Tier: TierInstalled, Version: "", State: StatusUnmanaged,
 			})
-			continue
-		}
-		declared := false
-		for _, d := range remote {
-			if _, matched := matchVersion(ib, meta, d.src); matched {
-				matchedCanonicals[d.src.Canonical()] = true
-				declared = true
-			}
-		}
-		if !declared {
-			rows = append(rows, Status{
-				ID: ib.ID, Source: meta.source().Canonical(), File: "",
-				Tier: TierInstalled, Version: "", State: StatusUndeclared,
-			})
-		}
-	}
-	return rows, matchedCanonicals, nil
-}
-
-// uninstalledSourceStatuses rows the declared remote sources matching no cache
-// entry — installable, identity unknown until fetched.
-func uninstalledSourceStatuses(remote []remoteDecl, matchedCanonicals map[string]bool) []Status {
-	var rows []Status
-	for _, d := range remote {
-		canonical := d.src.Canonical()
-		if matchedCanonicals[canonical] {
 			continue
 		}
 		rows = append(rows, Status{
-			ID: BundleID{Namespace: "", Name: ""}, Source: canonical, File: d.file,
+			ID: e.ID, Source: receipt.Canonical, File: "",
+			Tier: TierInstalled, Version: "", State: StatusUndeclared,
+		})
+	}
+	return rows
+}
+
+// uninstalledSourceStatuses rows the declared remote sources whose exact value
+// has no cache entry — installable, identity unknown until fetched.
+func uninstalledSourceStatuses(remote []remoteDecl, cachedKeys map[string]bool) []Status {
+	var rows []Status
+	for _, d := range remote {
+		if cachedKeys[d.src.Key()] {
+			continue
+		}
+		rows = append(rows, Status{
+			ID: BundleID{Namespace: "", Name: ""}, Source: d.src.Canonical(), File: d.file,
 			Tier: TierInstalled, Version: "", State: StatusNotInstalled,
 		})
 	}

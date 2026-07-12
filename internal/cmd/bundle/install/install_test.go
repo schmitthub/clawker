@@ -95,10 +95,11 @@ func TestInstall_WritesUserLayerAndFetches(t *testing.T) {
 	assert.Contains(t, body, url)
 	assert.Contains(t, body, "v1.0.0")
 
-	// The prefetch populated the cache.
+	// The prefetch populated the value-keyed cache entry for the declaration.
 	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+	key := bundle.Source{URL: url, Ref: "v1.0.0", SHA: "", Path: ""}.Key()
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", key, "stacks", "node", "stack.yaml"))
 }
 
 func TestInstall_Idempotent(t *testing.T) {
@@ -167,8 +168,9 @@ func TestInstall_RemoteUnpinned_TracksDefaultBranch(t *testing.T) {
 	}
 	assert.True(t, found, "the unpinned source is declared")
 
-	// The prefetch populated the cache from the default branch tip.
+	// The prefetch populated the value-keyed entry for the unpinned declaration.
 	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+	key := bundle.Source{URL: url, Ref: "", SHA: "", Path: ""}.Key()
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", key, "stacks", "node", "stack.yaml"))
 }

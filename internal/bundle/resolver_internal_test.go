@@ -74,30 +74,24 @@ func (f *resolverFixture) looseProjectComponent(t *testing.T, ct ComponentType, 
 	return dir
 }
 
-// cacheBundleStack writes a cached bundle shipping one stack component —
-// content root only, no source metadata (a hand-placed entry unless
-// cacheSourceMeta is also called).
-func (f *resolverFixture) cacheBundleStack(t *testing.T, ns, name, version, stack string) {
+// cacheBundleEntry writes a value-keyed cache entry — the content root at
+// <ns>/<name>/<key> shipping one stack component — and returns the entry root.
+// Without a receipt it models a hand-placed entry.
+func (f *resolverFixture) cacheBundleEntry(t *testing.T, ns, name, key, version, stack string) string {
 	t.Helper()
 	root, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	versionRoot := filepath.Join(root, ns, name, version)
-	writeManifest(t, versionRoot, "namespace: "+ns+"\nname: "+name+"\nversion: "+version+"\n")
-	writeFile(t, versionRoot, "stacks/"+stack+"/stack.yaml", "description: "+stack+"\n")
+	entryRoot := filepath.Join(root, ns, name, key)
+	writeManifest(t, entryRoot, "namespace: "+ns+"\nname: "+name+"\nversion: "+version+"\n")
+	writeFile(t, entryRoot, "stacks/"+stack+"/stack.yaml", "description: "+stack+"\n")
+	return entryRoot
 }
 
-// cacheSourceMeta writes the cache-internal source.yaml linking a cached bundle
-// to a remote ref source, with one recorded fetch per version.
-func (f *resolverFixture) cacheSourceMeta(t *testing.T, ns, name, url, ref string, fetched map[string]time.Time) {
+// cacheReceipt writes the fetch receipt an install leaves inside an entry.
+func (f *resolverFixture) cacheReceipt(t *testing.T, entryRoot string, src Source, version string) {
 	t.Helper()
-	root, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	versions := map[string]versionMeta{}
-	for v, at := range fetched {
-		versions[v] = versionMeta{SHA: "", FetchedAt: at, Pin: "ref:" + ref}
-	}
-	require.NoError(t, writeSourceMeta(filepath.Join(root, ns, name), sourceMeta{
-		URL: url, Ref: ref, SHA: "", Subdir: "", Versions: versions,
+	require.NoError(t, writeReceipt(entryRoot, fetchReceipt{
+		Canonical: src.Canonical(), SHA: "", FetchedAt: time.Now(), Version: version,
 	}))
 }
 
@@ -111,13 +105,15 @@ func (f *resolverFixture) declareRemote(t *testing.T, url, ref string) {
 }
 
 // installBundleStack writes the canonical fully-declared cached bundle
-// (acme.tools@1.0.0 shipping the node stack): content root, source.yaml, and a
-// live declaration matching it — the state `bundle install` leaves behind.
+// (acme.tools@1.0.0 shipping the node stack): the value-keyed entry with its
+// receipt, and a live declaration addressing it — the state `bundle install`
+// leaves behind.
 func (f *resolverFixture) installBundleStack(t *testing.T) {
 	t.Helper()
 	const url = "https://example.com/acme/tools.git"
-	f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
-	f.cacheSourceMeta(t, "acme", "tools", url, "v1", map[string]time.Time{"1.0.0": time.Now()})
+	src := Source{URL: url, Ref: "v1", SHA: "", Path: ""}
+	entry := f.cacheBundleEntry(t, "acme", "tools", src.Key(), "1.0.0", "node")
+	f.cacheReceipt(t, entry, src, "1.0.0")
 	f.declareRemote(t, url, "v1")
 }
 
@@ -236,10 +232,10 @@ func TestResolve_QualifiedInPlaceVsCacheCollides(t *testing.T) {
 // declaration for a path declaration — no purge needed, no collision.
 func TestResolve_InPlaceOverUndeclaredCache(t *testing.T) {
 	f := newResolverFixture(t)
-	// Cached with source metadata, but its declaration was removed.
-	f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
-	f.cacheSourceMeta(t, "acme", "tools", "https://example.com/acme/tools.git", "v1",
-		map[string]time.Time{"1.0.0": time.Now()})
+	// Cached with a receipt, but its declaration was removed.
+	src := Source{URL: "https://example.com/acme/tools.git", Ref: "v1", SHA: "", Path: ""}
+	entry := f.cacheBundleEntry(t, "acme", "tools", src.Key(), "1.0.0", "node")
+	f.cacheReceipt(t, entry, src, "1.0.0")
 	inPlace := filepath.Join(f.projectDir, "vendor", "tools")
 	writeManifest(t, inPlace, "namespace: acme\nname: tools\n")
 	writeFile(t, inPlace, "stacks/node/stack.yaml", "description: dev loop\n")
@@ -255,17 +251,18 @@ func TestResolve_InPlaceOverUndeclaredCache(t *testing.T) {
 	assert.Equal(t, TierInPlace, c.Provenance.Tier)
 }
 
-// Declaration-gating: a cached bundle resolves ONLY while a live declaration
-// matches the source recorded in its source.yaml. Deleting the `bundles:`
-// entry makes the cached copy unavailable; a hand-placed entry (no
-// source.yaml) traces to nothing and never resolves.
+// Declaration-gating: the cache is value-keyed, so a cache entry resolves ONLY
+// while a live declaration's exact value addresses its key. Deleting the
+// `bundles:` entry makes the cached copy inert; editing any part of the value
+// (the ref, the url form) addresses a different key.
 func TestBundles_CacheDeclarationGating(t *testing.T) {
 	const url = "https://example.com/acme/tools.git"
+	srcV1 := Source{URL: url, Ref: "v1", SHA: "", Path: ""}
 
 	t.Run("undeclared cache entry is inert", func(t *testing.T) {
 		f := newResolverFixture(t)
-		f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
-		f.cacheSourceMeta(t, "acme", "tools", url, "v1", map[string]time.Time{"1.0.0": time.Now()})
+		entry := f.cacheBundleEntry(t, "acme", "tools", srcV1.Key(), "1.0.0", "node")
+		f.cacheReceipt(t, entry, srcV1, "1.0.0")
 
 		_, err := f.r.Resolve(ComponentStack, "acme.tools.node")
 		assert.ErrorIs(t, err, ErrNotCached)
@@ -273,8 +270,8 @@ func TestBundles_CacheDeclarationGating(t *testing.T) {
 
 	t.Run("re-declaring reactivates without a refetch", func(t *testing.T) {
 		f := newResolverFixture(t)
-		f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
-		f.cacheSourceMeta(t, "acme", "tools", url, "v1", map[string]time.Time{"1.0.0": time.Now()})
+		entry := f.cacheBundleEntry(t, "acme", "tools", srcV1.Key(), "1.0.0", "node")
+		f.cacheReceipt(t, entry, srcV1, "1.0.0")
 		f.declareRemote(t, url, "v1")
 
 		c, err := f.r.Resolve(ComponentStack, "acme.tools.node")
@@ -282,19 +279,29 @@ func TestBundles_CacheDeclarationGating(t *testing.T) {
 		assert.Equal(t, TierInstalled, c.Provenance.Tier)
 	})
 
-	t.Run("a declaration with a different pin does not match", func(t *testing.T) {
+	t.Run("a declaration with a different pin addresses a different key", func(t *testing.T) {
 		f := newResolverFixture(t)
-		f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
-		f.cacheSourceMeta(t, "acme", "tools", url, "v1", map[string]time.Time{"1.0.0": time.Now()})
+		entry := f.cacheBundleEntry(t, "acme", "tools", srcV1.Key(), "1.0.0", "node")
+		f.cacheReceipt(t, entry, srcV1, "1.0.0")
 		f.declareRemote(t, url, "v2")
 
 		_, err := f.r.Resolve(ComponentStack, "acme.tools.node")
 		assert.ErrorIs(t, err, ErrNotCached)
 	})
 
-	t.Run("hand-placed cache entry never resolves", func(t *testing.T) {
+	t.Run("a different url form addresses a different key", func(t *testing.T) {
 		f := newResolverFixture(t)
-		f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node") // no source.yaml
+		entry := f.cacheBundleEntry(t, "acme", "tools", srcV1.Key(), "1.0.0", "node")
+		f.cacheReceipt(t, entry, srcV1, "1.0.0")
+		f.declareRemote(t, "git@example.com:acme/tools.git", "v1")
+
+		_, err := f.r.Resolve(ComponentStack, "acme.tools.node")
+		assert.ErrorIs(t, err, ErrNotCached)
+	})
+
+	t.Run("an entry at a key no value digests to never resolves", func(t *testing.T) {
+		f := newResolverFixture(t)
+		f.cacheBundleEntry(t, "acme", "tools", "handplaced00", "1.0.0", "node")
 		f.declareRemote(t, url, "v1")
 
 		_, err := f.r.Resolve(ComponentStack, "acme.tools.node")
@@ -302,27 +309,43 @@ func TestBundles_CacheDeclarationGating(t *testing.T) {
 	})
 }
 
-// Version selection follows the matched source's fetch history, not directory
-// sort order: the most recently fetched version wins even when an older fetch
-// sorts later lexically.
-func TestBundles_VersionPickLatestFetched(t *testing.T) {
+// The receipt is display-only: a corrupt .fetch.yaml degrades the version
+// column with a warning, never resolution.
+func TestBundles_CorruptReceiptStillResolves(t *testing.T) {
 	f := newResolverFixture(t)
 	const url = "https://example.com/acme/tools.git"
-	// "1.10.0" sorts BEFORE "1.9.0" lexically, so last-sorted would pick 1.9.0.
-	f.cacheBundleStack(t, "acme", "tools", "1.9.0", "node")
-	f.cacheBundleStack(t, "acme", "tools", "1.10.0", "node")
-	base := time.Now()
-	f.cacheSourceMeta(t, "acme", "tools", url, "master", map[string]time.Time{
-		"1.9.0":  base,
-		"1.10.0": base.Add(time.Hour),
-	})
-	f.declareRemote(t, url, "master")
+	src := Source{URL: url, Ref: "v1", SHA: "", Path: ""}
+	entry := f.cacheBundleEntry(t, "acme", "tools", src.Key(), "1.0.0", "node")
+	writeFile(t, entry, ReceiptFile, "canonical: [unclosed\n")
+	f.declareRemote(t, url, "v1")
 
-	bundles, _, err := f.r.Bundles()
+	bundles, warnings, err := f.r.Bundles()
 	require.NoError(t, err)
 	rb, ok := bundles[BundleID{Namespace: "acme", Name: "tools"}]
-	require.True(t, ok)
-	assert.Equal(t, "1.10.0", rb.Version, "the most recently fetched version wins")
+	require.True(t, ok, "a corrupt receipt must not block resolution")
+	assert.Empty(t, rb.Version)
+	require.NotEmpty(t, warnings)
+	assert.Contains(t, warnings[len(warnings)-1].Message, "unreadable fetch receipt")
+}
+
+// Two remote declarations resolving the same identity from different values in
+// one scope are a C1 collision — the resolver never silently picks a winner.
+func TestBundles_TwoRemoteDeclsSameIdentityCollide(t *testing.T) {
+	f := newResolverFixture(t)
+	const url = "https://example.com/acme/tools.git"
+	srcV1 := Source{URL: url, Ref: "v1", SHA: "", Path: ""}
+	srcV2 := Source{URL: url, Ref: "v2", SHA: "", Path: ""}
+	e1 := f.cacheBundleEntry(t, "acme", "tools", srcV1.Key(), "1.0.0", "node")
+	f.cacheReceipt(t, e1, srcV1, "1.0.0")
+	e2 := f.cacheBundleEntry(t, "acme", "tools", srcV2.Key(), "2.0.0", "node")
+	f.cacheReceipt(t, e2, srcV2, "2.0.0")
+	f.declareRemote(t, url, "v1")
+	f.declareRemote(t, url, "v2")
+
+	_, _, err := f.r.Bundles()
+	var ce *CollisionError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, BundleID{Namespace: "acme", Name: "tools"}, ce.Identity)
 }
 
 func TestResolve_QualifiedNotCached(t *testing.T) {
@@ -507,38 +530,5 @@ func TestResolveLocalPath(t *testing.T) {
 		_, err := resolveLocalPath(Source{URL: "", Ref: "", SHA: "", Path: "./rel"}, "")
 		var se *SourceError
 		require.ErrorAs(t, err, &se)
-	})
-}
-
-func TestSelectVersion(t *testing.T) {
-	base := time.Now()
-	ib := InstalledBundle{
-		ID:       BundleID{Namespace: "acme", Name: "tools"},
-		Root:     "",
-		Versions: []string{"1.10.0", "1.9.0"}, // sorted; last-sorted is 1.9.0
-	}
-	meta := func(fetched map[string]time.Time) sourceMeta {
-		versions := map[string]versionMeta{}
-		for v, at := range fetched {
-			// Legacy shape: no per-version pin recorded (selectVersion is the
-			// fallback path for exactly these entries).
-			versions[v] = versionMeta{SHA: "", FetchedAt: at, Pin: ""}
-		}
-		return sourceMeta{URL: "https://example.com/x.git", Ref: "master", SHA: "", Subdir: "", Versions: versions}
-	}
-
-	t.Run("most recently fetched wins over sort order", func(t *testing.T) {
-		m := meta(map[string]time.Time{"1.9.0": base, "1.10.0": base.Add(time.Hour)})
-		assert.Equal(t, "1.10.0", selectVersion(ib, m))
-	})
-
-	t.Run("FetchedAt tie settles on the later directory name", func(t *testing.T) {
-		m := meta(map[string]time.Time{"1.9.0": base, "1.10.0": base})
-		assert.Equal(t, "1.9.0", selectVersion(ib, m))
-	})
-
-	t.Run("no recorded fetches falls back to last-sorted", func(t *testing.T) {
-		m := meta(nil)
-		assert.Equal(t, "1.9.0", selectVersion(ib, m))
 	})
 }

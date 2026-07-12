@@ -32,11 +32,12 @@ const lockTimeout = 10 * time.Second
 const lockRetryInterval = 100 * time.Millisecond
 
 // fetchIntoCache clones a remote source into a staging area, validates its
-// manifest before any commit, C1-checks it against a previously cached source of
-// the same identity, and atomically commits the version content into the host
-// cache. It returns the resolved identity and version. A failure at any step
-// before the final rename leaves the cache untouched (SourceError/ManifestError
-// keep any previously cached version serving).
+// manifest before any commit, and atomically commits the content into the
+// value-keyed cache entry for the declared source
+// (<cacheRoot>/<ns>/<name>/<sourceKey>/). It returns the resolved identity and
+// display version. A failure at any step before the final rename leaves the
+// cache untouched (SourceError/ManifestError keep any previously cached entry
+// serving).
 func (m *Manager) fetchIntoCache(ctx context.Context, s Source) (BundleID, string, error) {
 	root, err := cacheRoot()
 	if err != nil {
@@ -82,10 +83,9 @@ func (m *Manager) fetchIntoCache(ctx context.Context, s Source) (BundleID, strin
 	}
 
 	c := commitInputs{
-		bundleDir:   filepath.Join(root, b.ID.Namespace, b.ID.Name),
+		entryDir:    filepath.Join(root, b.ID.Namespace, b.ID.Name, s.Key()),
 		stageBase:   stageBase,
 		bundleRoot:  bundleRoot,
-		id:          b.ID,
 		version:     version,
 		resolvedSHA: resolvedSHA,
 		source:      s,
@@ -98,81 +98,44 @@ func (m *Manager) fetchIntoCache(ctx context.Context, s Source) (BundleID, strin
 
 // commitInputs bundles the fields the cache-commit step needs.
 type commitInputs struct {
-	bundleDir   string
+	entryDir    string
 	stageBase   string
 	bundleRoot  string
-	id          BundleID
 	version     string
 	resolvedSHA string
 	source      Source
 }
 
-// commit takes the per-bundle lock and performs the cache commit under it.
+// commit takes the per-entry lock and performs the cache commit under it.
 func commit(ctx context.Context, c commitInputs) error {
-	if err := os.MkdirAll(filepath.Dir(c.bundleDir), cacheDirPerm); err != nil {
-		return fmt.Errorf("create namespace cache dir: %w", err)
+	if err := os.MkdirAll(filepath.Dir(c.entryDir), cacheDirPerm); err != nil {
+		return fmt.Errorf("create bundle cache dir: %w", err)
 	}
-	return withBundleLock(ctx, c.bundleDir, func() error {
+	return withBundleLock(ctx, c.entryDir, func() error {
 		return commitLocked(c)
 	})
 }
 
-// commitLocked enforces C1 against any prior cache entry, copies the validated
-// content into the version root, and records the fetch in source.yaml. It runs
-// under the per-bundle lock.
+// commitLocked stages the validated content plus its fetch receipt and renames
+// the tree onto the entry directory atomically — a re-fetch of the same
+// declared value (a moved ref, a forced update) replaces the entry in place. It
+// runs under the per-entry lock.
 func commitLocked(c commitInputs) error {
-	if err := os.MkdirAll(c.bundleDir, cacheDirPerm); err != nil {
-		return fmt.Errorf("create bundle cache dir: %w", err)
-	}
-	meta, exists, err := readSourceMeta(c.bundleDir)
-	if err != nil {
-		return err
-	}
-	if exists {
-		if collErr := checkCacheCollision(c.id, c.bundleDir, meta, c.source); collErr != nil {
-			return collErr
-		}
-		// Same repository, possibly a new pin: adopt the requested ref/sha so
-		// the cache entry tracks the live declaration (re-pinning updates in
-		// place, no purge ceremony).
-		meta.Ref = c.source.Ref
-		meta.SHA = c.source.SHA
-	} else {
-		meta = newSourceMeta(c.source)
-	}
-	if ccErr := commitContent(c.stageBase, c.bundleRoot, filepath.Join(c.bundleDir, c.version)); ccErr != nil {
-		return ccErr
-	}
-	meta.Versions[c.version] = versionMeta{
+	receipt := fetchReceipt{
+		Canonical: c.source.Canonical(),
 		SHA:       c.resolvedSHA,
 		FetchedAt: time.Now().UTC(),
-		Pin:       c.source.pin(),
+		Version:   c.version,
 	}
-	return writeSourceMeta(c.bundleDir, meta)
+	return commitContent(c.stageBase, c.bundleRoot, c.entryDir, receipt)
 }
 
-// checkCacheCollision is the C1 identity collision at the cache: a previously
-// cached bundle of the same identity fetched from a different repository.
-// The comparison is pin-stripped (Repository, not Canonical): the same
-// url+subdir under a different ref/sha is the same source being re-pinned,
-// not a collision.
-func checkCacheCollision(id BundleID, bundleDir string, meta sourceMeta, s Source) error {
-	if meta.source().Repository() == s.Repository() {
-		return nil
-	}
-	return &CollisionError{
-		Identity:   id,
-		AFile:      bundleDir,
-		BFile:      "(requested source)",
-		ACanonical: meta.source().Canonical(),
-		BCanonical: s.Canonical(),
-	}
-}
-
-// commitContent copies bundleRoot (excluding .git and escaping symlinks) into a
-// fresh staging tree on the cache filesystem, then atomically renames it into
-// the final version root. An already-present version is idempotently refreshed.
-func commitContent(stageBase, bundleRoot, finalDir string) error {
+// commitContent copies bundleRoot (excluding .git and escaping symlinks) plus
+// the fetch receipt into a fresh staging tree on the cache filesystem, then
+// atomically renames it onto the entry directory. An already-present entry is
+// replaced — a partial fetch can never appear cached, and an entry can never
+// exist without its receipt.
+func commitContent(stageBase, bundleRoot, entryDir string, receipt fetchReceipt) error {
 	contentStage, err := os.MkdirTemp(stageBase, "content-")
 	if err != nil {
 		return fmt.Errorf("stage content dir: %w", err)
@@ -188,12 +151,15 @@ func commitContent(stageBase, bundleRoot, finalDir string) error {
 	if copyErr := copyTree(bundleRoot, contentStage); copyErr != nil {
 		return fmt.Errorf("copy bundle content: %w", copyErr)
 	}
-	// Remove any prior (possibly partial) version root, then rename atomically.
-	if rmErr := os.RemoveAll(finalDir); rmErr != nil {
-		return fmt.Errorf("clear version root: %w", rmErr)
+	if receiptErr := writeReceipt(contentStage, receipt); receiptErr != nil {
+		return receiptErr
 	}
-	if renameErr := os.Rename(contentStage, finalDir); renameErr != nil {
-		return fmt.Errorf("commit version root: %w", renameErr)
+	// Remove any prior (possibly partial) entry, then rename atomically.
+	if rmErr := os.RemoveAll(entryDir); rmErr != nil {
+		return fmt.Errorf("clear cache entry: %w", rmErr)
+	}
+	if renameErr := os.Rename(contentStage, entryDir); renameErr != nil {
+		return fmt.Errorf("commit cache entry: %w", renameErr)
 	}
 	return nil
 }
@@ -232,9 +198,9 @@ func subdirRoot(cloneDir, subdir string) (string, error) {
 	return resolvedRoot, nil
 }
 
-// resolveVersion picks the version directory name: the manifest version when
-// present, else the full resolved commit SHA. The name must be a single safe
-// path segment (it becomes a directory and an image-tag component downstream).
+// resolveVersion picks the display version: the manifest version when present,
+// else the full resolved commit SHA. It stays a single safe path segment
+// because it flows into provenance labels and image-tag components downstream.
 func resolveVersion(manifestVersion, resolvedSHA string) (string, error) {
 	version := manifestVersion
 	if version == "" {
@@ -243,56 +209,25 @@ func resolveVersion(manifestVersion, resolvedSHA string) (string, error) {
 	if version == "" {
 		return "", errors.New("bundle has no version and no resolved commit")
 	}
-	if strings.ContainsAny(version, `/\`) || !filepath.IsLocal(version) {
+	if strings.ContainsAny(version, `/\`) || !filepath.IsLocal(version) || strings.HasPrefix(version, ".") {
 		return "", fmt.Errorf("bundle version %q is not a valid path segment", version)
-	}
-	// A dot-prefixed version would be invisible to the cache scan (dot entries
-	// are skipped), and a version named after the metadata file would clobber
-	// source.yaml on commit — reject both rather than corrupt the cache entry.
-	if strings.HasPrefix(version, ".") || version == sourceMetaFile {
-		return "", fmt.Errorf("bundle version %q is a reserved cache name", version)
 	}
 	return version, nil
 }
 
-// cachedCanonicals scans the cache once and returns the canonical source
-// coordinate of every cached bundle that carries source metadata, so a batch of
-// declarations can be tested for cache presence without re-scanning per entry.
-func cachedCanonicals() (map[string]bool, error) {
-	root, err := cacheRoot()
-	if err != nil {
-		return nil, err
-	}
-	installed, err := scanInstalled(root)
-	if err != nil {
-		return nil, err
-	}
-	cached := make(map[string]bool, len(installed))
-	for _, ib := range installed {
-		meta, ok, metaErr := readSourceMeta(ib.Root)
-		if metaErr != nil {
-			return nil, metaErr
-		}
-		if ok {
-			cached[meta.source().Canonical()] = true
-		}
-	}
-	return cached, nil
-}
-
-// withBundleLock runs fn under an advisory file lock scoped to one cached
-// bundle, mirroring the storage write lock so concurrent installs of the same
-// identity serialize.
-func withBundleLock(ctx context.Context, bundleDir string, fn func() error) error {
-	fl := flock.New(bundleDir + ".lock")
+// withBundleLock runs fn under an advisory file lock scoped to one cache
+// entry, mirroring the storage write lock so concurrent installs of the same
+// declared value serialize.
+func withBundleLock(ctx context.Context, entryDir string, fn func() error) error {
+	fl := flock.New(entryDir + ".lock")
 	lockCtx, cancel := context.WithTimeout(ctx, lockTimeout)
 	defer cancel()
 	locked, err := fl.TryLockContext(lockCtx, lockRetryInterval)
 	if err != nil {
-		return fmt.Errorf("acquire bundle lock for %s: %w", bundleDir, err)
+		return fmt.Errorf("acquire bundle lock for %s: %w", entryDir, err)
 	}
 	if !locked {
-		return fmt.Errorf("timed out acquiring bundle lock for %s", bundleDir)
+		return fmt.Errorf("timed out acquiring bundle lock for %s", entryDir)
 	}
 	defer func() {
 		// Unlock error is unactionable in deferred cleanup: the OS releases the

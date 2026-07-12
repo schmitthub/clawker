@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,6 +38,24 @@ func newManager(t *testing.T, decls []config.BundleSource) *bundle.Manager {
 	return managerForDecls(decls...)
 }
 
+// entryRoot resolves the value-keyed cache entry directory a declared source
+// addresses (all fixtures ship the acme.tools identity).
+func entryRoot(t *testing.T, src config.BundleSource) string {
+	t.Helper()
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	return filepath.Join(cacheRoot, "acme", "tools", bundle.SourceFromConfig(src).Key())
+}
+
+// entryManifest reads the identity manifest of a cache entry, for asserting
+// which content a refetch left behind.
+func entryManifest(t *testing.T, entry string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(entry, bundle.MarkerDir, bundle.ManifestFile))
+	require.NoError(t, err)
+	return string(raw)
+}
+
 func TestManager_Install_HTTPJourney(t *testing.T) {
 	srv := bundletest.New(t)
 	repo := srv.InitRepo(t, "tools")
@@ -51,12 +68,10 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 
 	require.NoError(t, mgr.Install(ctx, src))
 
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	versionDir := filepath.Join(cacheRoot, "acme", "tools", "1.0.0")
-	assert.FileExists(t, filepath.Join(versionDir, "stacks", "node", "stack.yaml"))
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "source.yaml"))
-	assert.NoDirExists(t, filepath.Join(versionDir, ".git"))
+	entry := entryRoot(t, src)
+	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
+	assert.FileExists(t, filepath.Join(entry, bundle.ReceiptFile))
+	assert.NoDirExists(t, filepath.Join(entry, ".git"))
 
 	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
 	require.NoError(t, err)
@@ -64,7 +79,7 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 
 	t.Run("reinstall of same source is idempotent", func(t *testing.T) {
 		require.NoError(t, mgr.Install(ctx, src))
-		assert.FileExists(t, filepath.Join(versionDir, "stacks", "node", "stack.yaml"))
+		assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
 	})
 }
 
@@ -94,17 +109,28 @@ func TestManager_Install_SHAPin(t *testing.T) {
 	repo := srv.InitRepo(t, "tools")
 	sha := repo.Commit(t, "v1", bundleFiles(""))
 
-	mgr := newManager(t, nil)
+	testenv.New(t)
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false}
+	mgr := managerForDecls(src)
 	require.NoError(t, mgr.Install(context.Background(), src))
 
-	// No manifest version → the version dir is the full 40-char sha.
-	cacheRoot, err := consts.BundlesSubdir()
+	entry := entryRoot(t, src)
+	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
+
+	// No manifest version → the receipt's display version is the resolved sha,
+	// and the resolved bundle reports it.
+	bundles, _, err := mgr.Resolver().Bundles()
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", sha, "stacks", "node", "stack.yaml"))
+	rb, ok := bundles[bundle.BundleID{Namespace: "acme", Name: "tools"}]
+	require.True(t, ok)
+	assert.Equal(t, sha, rb.Version)
 }
 
-func TestManager_Install_C1Collision(t *testing.T) {
+// Two different repositories shipping the same identity install side by side —
+// the cache is value-keyed, so install never blocks on identity. The collision
+// surfaces at RESOLVE, where two declared sources yielding one identity in one
+// scope are a C1 hard error.
+func TestManager_Install_SameIdentityTwoSources(t *testing.T) {
 	srv := bundletest.New(t)
 	a := srv.InitRepo(t, "a")
 	a.Commit(t, "v1", bundleFiles("1.0.0"))
@@ -113,24 +139,27 @@ func TestManager_Install_C1Collision(t *testing.T) {
 	b.Commit(t, "v1", bundleFiles("1.0.0"))
 	b.Tag(t, "v1.0.0")
 
-	mgr := newManager(t, nil)
+	srcA := config.BundleSource{URL: srv.HTTPURL("a"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	srcB := config.BundleSource{URL: srv.HTTPURL("b"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{srcA, srcB})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
-		URL: srv.HTTPURL("a"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
-	}))
 
-	err := mgr.Install(ctx, config.BundleSource{
-		URL: srv.HTTPURL("b"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
-	})
+	require.NoError(t, mgr.Install(ctx, srcA))
+	require.NoError(t, mgr.Install(ctx, srcB), "a second source of the same identity installs its own entry")
+	assert.DirExists(t, entryRoot(t, srcA))
+	assert.DirExists(t, entryRoot(t, srcB))
+
+	// Both declared in one scope → C1 at resolve.
+	_, _, err := mgr.Resolver().Bundles()
 	var collision *bundle.CollisionError
 	require.ErrorAs(t, err, &collision)
 	assert.Equal(t, "acme.tools", collision.Identity.String())
 }
 
-// TestManager_Install_RepinSameURLUpdatesInPlace pins the CC-mirrored re-pin
-// flow: editing a declaration's ref (v1→v2) and installing again is the SAME
-// source — the cache entry adopts the new pin in place, no purge ceremony.
-func TestManager_Install_RepinSameURLUpdatesInPlace(t *testing.T) {
+// TestManager_Install_RepinAddressesNewEntry pins the value-keyed re-pin flow:
+// editing a declaration's ref (v1→v2) and installing again addresses a NEW
+// cache entry; the v1 entry stays untouched for anything still declaring it.
+func TestManager_Install_RepinAddressesNewEntry(t *testing.T) {
 	srv := bundletest.New(t)
 	repo := srv.InitRepo(t, "tools")
 	repo.Commit(t, "v1", bundleFiles("1.0.0"))
@@ -139,26 +168,22 @@ func TestManager_Install_RepinSameURLUpdatesInPlace(t *testing.T) {
 	repo.Tag(t, "v2.0.0")
 
 	url := srv.HTTPURL("tools")
+	v1 := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	v2 := config.BundleSource{URL: url, Ref: "v2.0.0", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{v2})
 	ctx := context.Background()
 
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
-		URL: url, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
-	}))
-	require.NoError(t, mgr.Install(ctx, v2), "same url under a new ref must not collide")
+	require.NoError(t, mgr.Install(ctx, v1))
+	require.NoError(t, mgr.Install(ctx, v2))
 
-	// Both versions coexist in the cache; the entry's pin now tracks v2, so the
-	// live v2 declaration gates the bundle back in and resolves the new version.
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+	// Sibling entries; the live v2 declaration resolves its own entry's version.
+	assert.FileExists(t, filepath.Join(entryRoot(t, v1), "stacks", "node", "stack.yaml"))
+	assert.FileExists(t, filepath.Join(entryRoot(t, v2), "stacks", "node", "stack.yaml"))
 
 	bundles, _, err := mgr.Resolver().Bundles()
 	require.NoError(t, err)
 	rb, ok := bundles[bundle.BundleID{Namespace: "acme", Name: "tools"}]
-	require.True(t, ok, "the re-pinned declaration must resolve the cached bundle")
+	require.True(t, ok, "the re-pinned declaration must resolve its own cache entry")
 	assert.Equal(t, "2.0.0", rb.Version)
 }
 
@@ -201,8 +226,8 @@ func TestManager_MultiPinCoexistence(t *testing.T) {
 }
 
 // TestManager_Install_SubdirsAreDistinctSources: two subdirs of one repository
-// shipping the same identity are DIFFERENT sources — the pin-stripped install
-// key includes the subdir, so this stays a C1 collision, not a re-pin.
+// are DIFFERENT source values — each installs its own value-keyed entry, and
+// declaring both in one scope is a C1 collision when they ship one identity.
 func TestManager_Install_SubdirsAreDistinctSources(t *testing.T) {
 	srv := bundletest.New(t)
 	repo := srv.InitRepo(t, "mono")
@@ -214,18 +239,19 @@ func TestManager_Install_SubdirsAreDistinctSources(t *testing.T) {
 	repo.Commit(t, "v1", files)
 	repo.Tag(t, "v1.0.0")
 
-	mgr := newManager(t, nil)
-	ctx := context.Background()
 	url := srv.HTTPURL("mono")
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
-		URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/one", AutoUpdate: false,
-	}))
+	one := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/one", AutoUpdate: false}
+	two := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/two", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{one, two})
+	ctx := context.Background()
 
-	err := mgr.Install(ctx, config.BundleSource{
-		URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/two", AutoUpdate: false,
-	})
+	require.NoError(t, mgr.Install(ctx, one))
+	require.NoError(t, mgr.Install(ctx, two))
+	assert.NotEqual(t, entryRoot(t, one), entryRoot(t, two))
+
+	_, _, err := mgr.Resolver().Bundles()
 	var collision *bundle.CollisionError
-	require.ErrorAs(t, err, &collision, "a different subdir claiming the same identity must collide")
+	require.ErrorAs(t, err, &collision, "two declared subdirs shipping one identity must collide at resolve")
 }
 
 // managerForDecls wires a Manager over the CURRENT testenv (callers own the
@@ -249,12 +275,13 @@ func TestManager_Update_RefetchesOnDrift(t *testing.T) {
 	repo := srv.InitRepo(t, "tools")
 	repo.Commit(t, "v1", bundleFiles("1.0.0"))
 
-	mgr := newManager(t, nil)
-	ctx := context.Background()
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+	ctx := context.Background()
 	require.NoError(t, mgr.Install(ctx, src))
 
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
+	entry := entryRoot(t, src)
 
 	t.Run("no drift is a no-op", func(t *testing.T) {
 		results, err := mgr.Update(ctx, id)
@@ -266,45 +293,36 @@ func TestManager_Update_RefetchesOnDrift(t *testing.T) {
 	// Move the branch tip: a new commit bumps the manifest version.
 	repo.Commit(t, "v2", bundleFiles("2.0.0"))
 
-	t.Run("drift refetches a new version", func(t *testing.T) {
+	t.Run("drift refetches the entry in place", func(t *testing.T) {
 		results, err := mgr.Update(ctx, id)
 		require.NoError(t, err)
 		require.Len(t, results, 1)
 		assert.Equal(t, bundle.UpdateRefetched, results[0].Outcome)
-
-		cacheRoot, err := consts.BundlesSubdir()
-		require.NoError(t, err)
-		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+		assert.Equal(t, "2.0.0", results[0].NewVersion)
+		assert.Contains(t, entryManifest(t, entry), "version: 2.0.0")
 	})
 }
 
 func TestManager_Update_FailureKeepsCache(t *testing.T) {
 	srv := bundletest.New(t)
-	repo := srv.InitRepo(t, "tools")
-	repo.Commit(t, "v1", bundleFiles("1.0.0"))
-
-	mgr := newManager(t, nil)
-	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
-		URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false,
-	}))
-
-	// Rewrite source.yaml to point the cached bundle at an unreachable URL so
-	// the update resolve fails without disturbing the fetched content.
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	repointSource(t,
-		filepath.Join(cacheRoot, "acme", "tools", "source.yaml"), srv.HTTPURL("tools"), srv.HTTPURL("gone"))
+	// The declared repository does not exist on the server, so the update's
+	// tip resolve fails; the entry was planted at the declaration's exact key,
+	// exactly as a prior successful install would have left it.
+	src := config.BundleSource{URL: srv.HTTPURL("gone"), Ref: "v1", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", srv.HTTPURL("gone"),
+		map[string]string{"stacks/node/stack.yaml": "description: node stack\n"})
 
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
-	results, err := mgr.Update(ctx, id)
+	results, err := mgr.Update(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, bundle.UpdateFailed, results[0].Outcome)
 	require.Error(t, results[0].Err)
 
 	// Cache still serves the originally installed content.
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+	entry := entryRoot(t, src)
+	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
 }
 
 func TestManager_AutoUpdateCheck_OptInOnly(t *testing.T) {
@@ -327,10 +345,7 @@ func TestManager_AutoUpdateCheck_OptInOnly(t *testing.T) {
 		warnings := mgr.AutoUpdateCheck(ctx)
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0].Message, "auto-updated")
-
-		cacheRoot, err := consts.BundlesSubdir()
-		require.NoError(t, err)
-		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+		assert.Contains(t, entryManifest(t, entryRoot(t, src)), "version: 2.0.0")
 	})
 }
 
@@ -418,11 +433,10 @@ func TestManager_Update_SHAPinStays(t *testing.T) {
 	repo := srv.InitRepo(t, "tools")
 	sha := repo.Commit(t, "v1", bundleFiles(""))
 
-	mgr := newManager(t, nil)
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
-		URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false,
-	}))
+	require.NoError(t, mgr.Install(ctx, src))
 
 	// The upstream moves on, but a sha-pinned source is reproducible: update
 	// leaves the pin untouched and fetches nothing new.
@@ -433,18 +447,18 @@ func TestManager_Update_SHAPinStays(t *testing.T) {
 	require.Len(t, results, 1)
 	assert.Equal(t, bundle.UpdateSkippedPinned, results[0].Outcome)
 
+	// The pinned entry is the only cache entry — no drift was pulled in.
 	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	// The pinned sha version is the only version dir — no drift was pulled in.
 	entries, err := os.ReadDir(filepath.Join(cacheRoot, "acme", "tools"))
 	require.NoError(t, err)
-	var versions []string
+	var keys []string
 	for _, e := range entries {
 		if e.IsDir() {
-			versions = append(versions, e.Name())
+			keys = append(keys, e.Name())
 		}
 	}
-	assert.Equal(t, []string{sha}, versions)
+	assert.Equal(t, []string{bundle.SourceFromConfig(src).Key()}, keys)
 }
 
 func TestManager_Install_UnreachableSource(t *testing.T) {
@@ -463,17 +477,6 @@ func TestManager_Install_UnreachableSource(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(cacheRoot, "acme"))
 }
 
-// repointSource rewrites the cached source.yaml URL so an update targets an
-// unreachable repository without touching the fetched content.
-func repointSource(t *testing.T, path, from, to string) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	updated := strings.Replace(string(raw), from, to, 1)
-	require.NotEqual(t, string(raw), updated, "source url not found in %s", path)
-	require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
-}
-
 // An unpinned source (url with no ref/sha) tracks the repository's default
 // branch: install clones its tip, resolution passes the declaration gate, and
 // update/auto-update refetch when the branch moves — the CC-literal
@@ -490,9 +493,8 @@ func TestManager_UnpinnedTracksDefaultBranch(t *testing.T) {
 
 	require.NoError(t, mgr.Install(ctx, src))
 
-	cacheRoot, err := consts.BundlesSubdir()
-	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+	entry := entryRoot(t, src)
+	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
 
 	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
 	require.NoError(t, err, "an unpinned declaration gates its cache entry like any other")
@@ -513,7 +515,7 @@ func TestManager_UnpinnedTracksDefaultBranch(t *testing.T) {
 		require.NoError(t, uErr)
 		require.Len(t, results, 1)
 		assert.Equal(t, bundle.UpdateRefetched, results[0].Outcome)
-		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+		assert.Contains(t, entryManifest(t, entry), "version: 2.0.0")
 	})
 
 	repo.Commit(t, "v3", bundleFiles("3.0.0"))
@@ -522,6 +524,6 @@ func TestManager_UnpinnedTracksDefaultBranch(t *testing.T) {
 		warnings := mgr.AutoUpdateCheck(ctx)
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0].Message, "auto-updated")
-		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "3.0.0", "stacks", "node", "stack.yaml"))
+		assert.Contains(t, entryManifest(t, entry), "version: 3.0.0")
 	})
 }

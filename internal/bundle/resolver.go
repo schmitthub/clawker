@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -38,7 +37,8 @@ type ResolvedBundle struct {
 	Source string
 	// File is the config file whose declaration made this bundle resolvable.
 	File string
-	// Version is the selected cache version directory (empty for in-place).
+	// Version is the cached entry's display version from its fetch receipt
+	// (empty for in-place).
 	Version string
 }
 
@@ -128,13 +128,13 @@ func (r *Resolver) resolveQualified(t ComponentType, addr Address) (Component, e
 // bundle-load warnings for the command layer to print.
 //
 // Everything resolvable traces to an explicit declaration. An in-place (local
-// path) declaration loads directly from disk; a cached bundle resolves only
-// while a live remote declaration matches the source recorded in its
-// source.yaml — deleting the `bundles:` entry makes the cached copy inert until
-// it is re-declared (no refetch) or purged with `clawker bundle remove`. Two
-// sources claiming one identity from different coordinates are a C1 collision —
-// hard error naming both, never a silent winner (the author remedies it: drop
-// one declaration, `clawker bundle remove` the cached copy, or change the
+// path) declaration loads directly from disk; a remote declaration addresses
+// the value-keyed cache entry for its exact declared value — deleting the
+// `bundles:` entry makes the cached copy inert until it is re-declared (no
+// refetch) or purged with `clawker bundle remove`. Two declared sources
+// resolving one identity from different values are a C1 collision — hard error
+// naming both, never a silent winner (the author remedies it: drop one
+// declaration, `clawker bundle remove` the cached copy, or change the
 // namespace).
 func (r *Resolver) Bundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 	r.bundlesOnce.Do(func() {
@@ -147,11 +147,11 @@ func (r *Resolver) Bundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 // checked) and the declared subset of the on-disk cache.
 func (r *Resolver) scanBundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 	out := map[BundleID]*ResolvedBundle{}
-	claims, warnings, err := r.claimInPlaceBundles(out)
+	warnings, err := r.claimInPlaceBundles(out)
 	if err != nil {
 		return nil, nil, err
 	}
-	cacheWarnings, err := mergeCachedBundles(out, claims, r.remoteDeclarations())
+	cacheWarnings, err := mergeCachedBundles(out, r.remoteDeclarations())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -170,11 +170,10 @@ type bundleClaim struct {
 
 // claimInPlaceBundles loads every declared LOCAL (in-place) bundle source into
 // out, C1-checking identities as it goes. Remote declarations are skipped here —
-// they resolve via the cache scan, gated on their declaration matching the
-// cache entry's source.yaml (mergeCachedBundles).
+// they resolve via the value-keyed cache lookup (mergeCachedBundles).
 func (r *Resolver) claimInPlaceBundles(
 	out map[BundleID]*ResolvedBundle,
-) (map[BundleID]bundleClaim, []Warning, error) {
+) ([]Warning, error) {
 	claims := map[BundleID]bundleClaim{}
 	var warnings []Warning
 	for _, decl := range r.cfg.BundleDeclarations() {
@@ -184,7 +183,7 @@ func (r *Resolver) claimInPlaceBundles(
 		}
 		dir, err := resolveLocalPath(src, decl.File)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		// The claim key is the RESOLVED absolute directory, not the declared
 		// spelling — "./vendor/x" in a project layer and the equivalent
@@ -193,11 +192,11 @@ func (r *Resolver) claimInPlaceBundles(
 		canonical := "path:" + dir
 		b, loadErr := LoadBundleDir(os.DirFS(dir), dir)
 		if loadErr != nil {
-			return nil, nil, loadErr
+			return nil, loadErr
 		}
 		prev, seen := claims[b.ID]
 		if seen && prev.canonical != canonical {
-			return nil, nil, &CollisionError{
+			return nil, &CollisionError{
 				Identity:   b.ID,
 				AFile:      prev.file,
 				BFile:      decl.File,
@@ -214,7 +213,7 @@ func (r *Resolver) claimInPlaceBundles(
 		}
 		warnings = append(warnings, b.Warnings...)
 	}
-	return claims, warnings, nil
+	return warnings, nil
 }
 
 // remoteDecl is one live REMOTE bundle declaration: its parsed source plus the
@@ -226,8 +225,8 @@ type remoteDecl struct {
 
 // remoteDeclarations lists the live REMOTE bundle declarations in layer order
 // (highest-priority declaring layer first), deduplicated by canonical source
-// coordinate. This is the declaration side of the cache gate: a cached bundle
-// resolves only while a declaration here matches it.
+// coordinate. This is the declaration side of the cache gate: a cache entry
+// resolves only while a declaration here addresses its value key.
 func (r *Resolver) remoteDeclarations() []remoteDecl {
 	var decls []remoteDecl
 	seen := map[string]bool{}
@@ -244,53 +243,18 @@ func (r *Resolver) remoteDeclarations() []remoteDecl {
 	return decls
 }
 
-// matchVersion reports which cached version a declaration resolves, if any.
-// The declaration must share the entry's pin-stripped repository; within it,
-// the winner is the most recently fetched version recorded under the
-// declaration's exact pin — so projects pinning the same repository
-// differently each resolve their own pin's fetch, and a shared host cache
-// never lets one project's re-pin unresolve another's. A legacy entry whose
-// versions predate per-version pin records falls back to the entry-level
-// canonical match with the overall most-recent version.
-func matchVersion(ib InstalledBundle, meta sourceMeta, decl Source) (string, bool) {
-	if decl.Repository() != meta.source().Repository() {
-		return "", false
-	}
-	pin := decl.pin()
-	selected := ""
-	var newest time.Time
-	for _, v := range ib.Versions {
-		vm, recorded := meta.Versions[v]
-		if !recorded || vm.Pin != pin {
-			continue
-		}
-		if selected == "" || !vm.FetchedAt.Before(newest) {
-			newest = vm.FetchedAt
-			selected = v
-		}
-	}
-	if selected != "" {
-		return selected, true
-	}
-	if decl.Canonical() == meta.source().Canonical() {
-		return selectVersion(ib, meta), true
-	}
-	return "", false
-}
-
 // mergeCachedBundles folds the DECLARED subset of the on-disk cache into the
-// identity map. A cached bundle resolves only while a live declaration matches
-// the source recorded in its source.yaml; an undeclared entry is inert (it
-// stays on disk until `clawker bundle remove`, and re-declaring the same
-// source reactivates it instantly, no refetch). An entry with no source.yaml
-// at all (hand-placed) never resolves — there is no declared source it could
-// trace to. A declared cache entry whose identity is also claimed by an
-// in-place declaration is a C1 collision naming both declaring files — the
-// resolver cannot know the two are the same bundle and never silently picks a
+// identity map by exact value: each remote declaration addresses the cache
+// entry whose directory key is the digest of the declaration's canonical
+// source, so a declaration can never resolve content fetched from a different
+// value. An entry no live declaration addresses is inert (it stays on disk
+// until `clawker bundle remove`, and re-declaring the same value reactivates
+// it instantly, no refetch). Two declared sources resolving the same identity —
+// two remote values, or a remote value plus an in-place claim — are a C1
+// collision naming both declaring files; the resolver never silently picks a
 // winner.
 func mergeCachedBundles(
 	out map[BundleID]*ResolvedBundle,
-	claims map[BundleID]bundleClaim,
 	remoteDecls []remoteDecl,
 ) ([]Warning, error) {
 	root, err := cacheRoot()
@@ -301,101 +265,45 @@ func mergeCachedBundles(
 	if err != nil {
 		return nil, err
 	}
+	byKey := make(map[string]InstalledEntry, len(installed))
+	for _, e := range installed {
+		byKey[e.Key] = e
+	}
 	var warnings []Warning
-	for _, ib := range installed {
-		rb, resolvable, entryErr := resolveCachedBundle(ib, claims, remoteDecls)
-		if entryErr != nil {
-			return nil, entryErr
+	for _, d := range remoteDecls {
+		entry, cached := byKey[d.src.Key()]
+		if !cached {
+			continue // declared but not installed
 		}
-		if !resolvable {
-			continue
+		// Identity comes from the entry's manifest, never its directory position.
+		b, loadErr := LoadBundleDir(os.DirFS(entry.Root), entry.Root)
+		if loadErr != nil {
+			return nil, loadErr
 		}
-		out[ib.ID] = rb
-		warnings = append(warnings, rb.Bundle.Warnings...)
+		canonical := d.src.Canonical()
+		if prev, seen := out[b.ID]; seen {
+			return nil, &CollisionError{
+				Identity:   b.ID,
+				AFile:      prev.File,
+				BFile:      d.file,
+				ACanonical: prev.Source,
+				BCanonical: canonical,
+			}
+		}
+		// The receipt is display-only — a corrupt one degrades the version
+		// column, never resolution.
+		receipt, _, receiptErr := readReceipt(entry.Root)
+		if receiptErr != nil {
+			warnings = append(warnings, Warning{
+				Message: fmt.Sprintf("bundle %s: unreadable fetch receipt (%v); version unknown", b.ID, receiptErr),
+			})
+		}
+		out[b.ID] = &ResolvedBundle{
+			Bundle: b, Tier: TierInstalled, Source: canonical, File: d.file, Version: receipt.Version,
+		}
+		warnings = append(warnings, b.Warnings...)
 	}
 	return warnings, nil
-}
-
-// resolveCachedBundle applies the declaration gate to one cache entry: a
-// hand-placed entry (no source.yaml) or an entry no live declaration matches
-// reports resolvable=false; a matched entry whose identity an in-place
-// declaration already claims is a C1 collision; otherwise the matched
-// declaration's version is loaded. When several declarations match (the same
-// repository at different pins), the one whose matched version was fetched
-// most recently wins; a tie settles on the higher-priority declaring layer.
-func resolveCachedBundle(
-	ib InstalledBundle,
-	claims map[BundleID]bundleClaim,
-	remoteDecls []remoteDecl,
-) (*ResolvedBundle, bool, error) {
-	meta, ok, err := readSourceMeta(ib.Root)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok {
-		return nil, false, nil // hand-placed: no source record to trace to a declaration
-	}
-	var decl *remoteDecl
-	version := ""
-	var fetchedAt time.Time
-	for i := range remoteDecls {
-		v, matched := matchVersion(ib, meta, remoteDecls[i].src)
-		if !matched {
-			continue
-		}
-		at := meta.Versions[v].FetchedAt
-		if decl == nil || at.After(fetchedAt) {
-			decl = &remoteDecls[i]
-			version = v
-			fetchedAt = at
-		}
-	}
-	if decl == nil {
-		return nil, false, nil // undeclared: the cached copy is inert until re-declared
-	}
-	canonical := decl.src.Canonical()
-	if claim, claimed := claims[ib.ID]; claimed {
-		return nil, false, &CollisionError{
-			Identity:   ib.ID,
-			AFile:      claim.file,
-			BFile:      decl.file,
-			ACanonical: claim.canonical,
-			BCanonical: canonical,
-		}
-	}
-	versionRoot := ib.versionRoot(version)
-	b, loadErr := LoadBundleDir(os.DirFS(versionRoot), versionRoot)
-	if loadErr != nil {
-		return nil, false, loadErr
-	}
-	return &ResolvedBundle{
-		Bundle: b, Tier: TierInstalled, Source: canonical, File: decl.file, Version: version,
-	}, true, nil
-}
-
-// selectVersion picks the content root to resolve for a declared cached
-// bundle: the most recently fetched version per source.yaml. ib.Versions is
-// sorted, so a FetchedAt tie settles deterministically on the later directory
-// name; an on-disk version the metadata does not record cannot win, but when
-// NO version is recorded the last-sorted directory serves as a fallback so a
-// metadata gap never makes a cached bundle unresolvable.
-func selectVersion(ib InstalledBundle, meta sourceMeta) string {
-	selected := ""
-	var newest time.Time
-	for _, v := range ib.Versions {
-		vm, recorded := meta.Versions[v]
-		if !recorded {
-			continue
-		}
-		if selected == "" || !vm.FetchedAt.Before(newest) {
-			newest = vm.FetchedAt
-			selected = v
-		}
-	}
-	if selected == "" {
-		return ib.Versions[len(ib.Versions)-1]
-	}
-	return selected
 }
 
 // resolveLocalPath resolves a local in-place source path to an absolute

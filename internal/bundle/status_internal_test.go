@@ -3,7 +3,6 @@ package bundle
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,12 +18,12 @@ func TestManager_Statuses(t *testing.T) {
 
 	// Declared + cached → resolving (installed).
 	f.installBundleStack(t)
-	// Cached with metadata, declaration removed → undeclared.
-	f.cacheBundleStack(t, "other", "extra", "2.0.0", "go")
-	f.cacheSourceMeta(t, "other", "extra", "https://example.com/other/extra.git", "v2",
-		map[string]time.Time{"2.0.0": time.Now()})
-	// Cached without metadata → unmanaged.
-	f.cacheBundleStack(t, "hand", "placed", "0.1.0", "rust")
+	// Cached with a receipt, declaration removed → undeclared.
+	srcExtra := Source{URL: "https://example.com/other/extra.git", Ref: "v2", SHA: "", Path: ""}
+	extra := f.cacheBundleEntry(t, "other", "extra", srcExtra.Key(), "2.0.0", "go")
+	f.cacheReceipt(t, extra, srcExtra, "2.0.0")
+	// Cached without a receipt → unmanaged.
+	f.cacheBundleEntry(t, "hand", "placed", "handplaced00", "0.1.0", "rust")
 	// Declared, never fetched → not installed.
 	f.declareRemote(t, "https://example.com/acme/missing.git", "v9")
 	// In-place declaration → resolving (in-place).

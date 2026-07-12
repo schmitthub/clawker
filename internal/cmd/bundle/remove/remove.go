@@ -33,8 +33,8 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 		Use:     "remove <namespace.name>",
 		Aliases: []string{"rm"},
 		Short:   "Purge a cached bundle from the host cache",
-		Long: `Removes a cached bundle — every version content root plus the cache-internal
-metadata — from the host bundle cache, identified by its dotted namespace.name.
+		Long: `Removes a cached bundle — every cache entry of the identity — from the host
+bundle cache, identified by its dotted namespace.name.
 
 Removal only purges the cache; it does not edit any clawker.yaml. A bundle that
 is still declared in a 'bundles:' entry re-fetches on the next
