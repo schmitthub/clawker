@@ -27,7 +27,7 @@ func ParseImagePlaceholder(image string) (string, bool) {
 }
 
 // ResolvePlaceholderImage resolves the "@" / "@:tag" placeholder to a built
-// image reference. An explicit tag must name a registered harness; the bare
+// image reference. An explicit tag must name a known harness; the bare
 // placeholder prefers the :default alias and falls back to the legacy
 // :latest with a rebuild hint.
 func ResolvePlaceholderImage(

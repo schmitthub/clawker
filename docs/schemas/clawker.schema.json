@@ -134,6 +134,11 @@
     "build": {
       "additionalProperties": false,
       "properties": {
+        "harness": {
+          "description": "Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default",
+          "title": "Default Harness",
+          "type": "string"
+        },
         "harnesses": {
           "additionalProperties": {
             "additionalProperties": false,

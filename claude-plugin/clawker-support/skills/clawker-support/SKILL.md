@@ -46,7 +46,8 @@ in brief:
   provenance) via `clawker harness list`, `clawker stack list`, and
   `clawker monitor extensions`.
 - **Images are per-project AND per-harness.** The image tag is the harness
-  name; the built-in default harness (`claude`) also gets a `:default` alias.
+  name; the default harness (`claude` unless the `build.harness` config key
+  selects another) also gets a `:default` alias.
   `clawker build -t <harness>` selects the harness at build time;
   `clawker run @` resolves the default, and `@:<harness>` selects one
   explicitly. So "how do I run codex" is: `clawker build -t codex`, then

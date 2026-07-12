@@ -10,8 +10,8 @@ Build the project image
 
 Build the project image from its clawker configuration.
 
-Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
-adds an extra ref (tag part must name a registered harness). No -t builds the
+Tags are harness-keyed: -t NAME builds that harness; -t name:NAME
+adds an extra ref (tag part must name a known harness). No -t builds the
 default harness and adds the :default alias.
 
 A shared base image (clawker-`<project>`:base) holds the harness-agnostic
@@ -27,7 +27,7 @@ clawker build [OPTIONS] [flags]
   # Build the default harness image
   clawker build
 
-  # Build a specific registered harness
+  # Build a specific harness
   clawker build -t codex
 
   # Rebuild from scratch

@@ -322,7 +322,7 @@ func TestBuild_BuildsBaseThenHarness(t *testing.T) {
 	assert.Contains(t, harnessBuild.dockerfile, "FROM clawker-proj:base",
 		"harness image must build FROM the shared base")
 	assert.Contains(t, harnessBuild.dockerfile, "other-harness-marker",
-		"selected harness's blocks must render (not the registry default)")
+		"selected harness's blocks must render (not the configured default)")
 	assert.Equal(t, "other", harnessBuild.labels[consts.LabelHarness])
 	assert.Equal(t, wantHash, harnessBuild.labels[consts.LabelBaseContentHash],
 		"harness image records the base generation it was cut from")
@@ -476,7 +476,7 @@ func TestBuild_HarnessBuildNeverPulls(t *testing.T) {
 
 // TestBuild_SelectsHarnessFromOptions proves the harness selected at the
 // command layer (BuilderOptions.HarnessName) is the one whose template
-// blocks render into the generated Dockerfile — not the registry default.
+// blocks render into the generated Dockerfile — not the configured default.
 func TestBuild_SelectsHarnessFromOptions(t *testing.T) {
 	cfg := testHarnessCfg(t)
 	cli, fakeAPI := newTestClientWithConfig(cfg)

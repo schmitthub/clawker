@@ -421,7 +421,7 @@ func strPtr(s string) *string {
 }
 
 // TestHarnessSelectorFromTags pins the strict tag=harness scheme: bare names
-// select a registered harness, full refs must end in one (and keep riding as
+// select a known harness, full refs must end in one (and keep riding as
 // extra image tags), anything else is a flag error.
 func TestHarnessSelectorFromTags(t *testing.T) {
 	// Isolate the XDG dirs so IsKnownHarness resolves claude/codex from the
@@ -450,7 +450,7 @@ func TestHarnessSelectorFromTags(t *testing.T) {
 		require.Equal(t, []string{"myrepo/img:codex"}, extra)
 	})
 
-	t.Run("unregistered harness is a flag error", func(t *testing.T) {
+	t.Run("unknown harness is a flag error", func(t *testing.T) {
 		_, _, err := harnessSelectorFromTags(cfg, []string{"opencode"})
 		require.ErrorContains(t, err, "does not name a known harness")
 

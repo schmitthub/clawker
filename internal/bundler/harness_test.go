@@ -10,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -28,32 +29,73 @@ func looseHarnessEnv(t *testing.T) (*configmocks.ConfigMock, string) {
 	return cfg, root
 }
 
-// Harness selection is explicit; an empty selector resolves to the built-in
-// default (claude).
+// Harness selection is explicit; an empty selector resolves to the
+// build.harness selection key when set, else the built-in default (claude).
 func TestResolveHarnessName(t *testing.T) {
-	cfg := configmocks.NewFromString("", "")
+	blank := configmocks.NewFromString("", "")
 
 	t.Run("explicit wins", func(t *testing.T) {
-		name, err := bundler.ResolveHarnessName(cfg, "codex")
+		name, err := bundler.ResolveHarnessName(blank, "codex")
 		require.NoError(t, err)
 		assert.Equal(t, "codex", name)
 	})
 
 	t.Run("qualified selector wins", func(t *testing.T) {
-		name, err := bundler.ResolveHarnessName(cfg, "acme.tools.codex")
+		name, err := bundler.ResolveHarnessName(blank, "acme.tools.codex")
 		require.NoError(t, err)
 		assert.Equal(t, "acme.tools.codex", name)
 	})
 
 	t.Run("no selection falls back to the built-in default", func(t *testing.T) {
-		name, err := bundler.ResolveHarnessName(cfg, "")
+		name, err := bundler.ResolveHarnessName(blank, "")
 		require.NoError(t, err)
 		assert.Equal(t, bundler.DefaultHarnessName, name)
 	})
 
 	t.Run("explicit reserved alias is rejected", func(t *testing.T) {
-		_, err := bundler.ResolveHarnessName(cfg, consts.ImageTagBase)
+		_, err := bundler.ResolveHarnessName(blank, consts.ImageTagBase)
 		require.ErrorContains(t, err, "reserved")
+	})
+
+	t.Run("no selection resolves the configured default", func(t *testing.T) {
+		cfg := configmocks.NewFromString("build:\n  harness: opencode\n", "")
+		name, err := bundler.ResolveHarnessName(cfg, "")
+		require.NoError(t, err)
+		assert.Equal(t, "opencode", name)
+	})
+
+	t.Run("qualified configured default resolves", func(t *testing.T) {
+		cfg := configmocks.NewFromString("build:\n  harness: acme.tools.codex\n", "")
+		name, err := bundler.ResolveHarnessName(cfg, "")
+		require.NoError(t, err)
+		assert.Equal(t, "acme.tools.codex", name)
+	})
+
+	t.Run("explicit selection beats the configured default", func(t *testing.T) {
+		cfg := configmocks.NewFromString("build:\n  harness: opencode\n", "")
+		name, err := bundler.ResolveHarnessName(cfg, "codex")
+		require.NoError(t, err)
+		assert.Equal(t, "codex", name)
+	})
+
+	t.Run("nil project falls back to the built-in default", func(t *testing.T) {
+		cfg := configmocks.NewFromString("", "")
+		cfg.ProjectFunc = func() *config.Project { return nil }
+		name, err := bundler.ResolveHarnessName(cfg, "")
+		require.NoError(t, err)
+		assert.Equal(t, bundler.DefaultHarnessName, name)
+	})
+
+	t.Run("invalid configured default errors naming build.harness", func(t *testing.T) {
+		// The config front door rejects a bad name at load, so an invalid
+		// value can only arrive through an unvalidated in-memory mutation
+		// (store Set has no validation hook) — inject it the same way.
+		cfg := configmocks.NewFromString("", "")
+		proj := *cfg.Project()
+		proj.Build.Harness = "Bad_Name"
+		cfg.ProjectFunc = func() *config.Project { return &proj }
+		_, err := bundler.ResolveHarnessName(cfg, "")
+		require.ErrorContains(t, err, "build.harness")
 	})
 }
 

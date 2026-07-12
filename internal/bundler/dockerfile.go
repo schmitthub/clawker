@@ -209,9 +209,9 @@ type ProjectGenerator struct {
 	// Empty means use DefaultHarnessVersion ("latest") as a literal.
 	HarnessVersion string
 	// Harness selects the harness bundle whose template blocks and context
-	// files compose the rendered Dockerfile. Empty means the built-in
-	// DefaultHarnessName — harness selection is explicit; there is no
-	// registry default.
+	// files compose the rendered Dockerfile. Empty resolves through
+	// ResolveHarnessName — the build.harness selection key when set, else
+	// the built-in DefaultHarnessName.
 	Harness string
 	// BaseImageRef is the per-project shared base image reference the
 	// harness image builds FROM (clawker-<project>:base). Set by the

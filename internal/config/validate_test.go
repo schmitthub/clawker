@@ -72,6 +72,30 @@ build:
 	assert.Contains(t, err.Error(), "build.harnesses.Claude")
 }
 
+// The build.harness selection key takes the shared harness reference rule:
+// bare or qualified passes, a malformed name or non-string value fails the
+// whole config load naming the offending file and key.
+func TestValidateProjectNodes_BuildHarnessSelection(t *testing.T) {
+	t.Run("bare name passes", func(t *testing.T) {
+		_, err := config.NewFromString("build:\n  harness: opencode\n", "")
+		require.NoError(t, err)
+	})
+	t.Run("qualified address passes", func(t *testing.T) {
+		_, err := config.NewFromString("build:\n  harness: acme.tools.codex\n", "")
+		require.NoError(t, err)
+	})
+	t.Run("bad name fails naming the key", func(t *testing.T) {
+		_, err := config.NewFromString("build:\n  harness: Bad_Name\n", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build.harness")
+	})
+	t.Run("reserved alias fails", func(t *testing.T) {
+		_, err := config.NewFromString("build:\n  harness: default\n", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build.harness")
+	})
+}
+
 // Conformance: E21 — a bad build.stacks declared name fails the whole config load.
 func TestValidateProjectNodes_BuildStacksName(t *testing.T) {
 	_, err := config.NewFromString(`

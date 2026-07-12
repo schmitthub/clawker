@@ -150,6 +150,8 @@ The complete `.clawker.yaml` schema with all fields and nested object structures
 # Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)
 name: <string>  # default: n/a | required: false
 build:
+  # Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default
+  harness: <string>  # default: n/a | required: false
   # System packages (apt) needed by your project that the clawker base doesn't already install
   packages:  # default: ripgrep | required: false
     - <string>
@@ -335,6 +337,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `harness` | string | — | Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default |
 | `packages` | string list | `ripgrep` | System packages (apt) needed by your project that the clawker base doesn't already install |
 | `stacks` | string list | — | Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run |
 | `harnesses` | object map | — | Per-harness build additions (stacks, packages, inject), keyed by harness name |

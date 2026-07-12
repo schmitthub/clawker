@@ -31,7 +31,7 @@ clawker build              # Builds the default harness → clawker-myapp:<harne
 clawker build -t codex     # Builds the codex harness → clawker-myapp:codex
 ```
 
-Tags are harness-keyed: `-t NAME` builds that harness, and the resulting tag *is* the harness name. `NAME` is a bare name for a built-in or loose harness, or a qualified `namespace.bundle.component` address for a harness from an installed bundle (see [Harnesses](/harnesses)). Building the default harness also stamps the `:default` alias.
+Tags are harness-keyed: `-t NAME` builds that harness, and the resulting tag *is* the harness name. `NAME` is a bare name for a built-in or loose harness, or a qualified `namespace.bundle.component` address for a harness from an installed bundle (see [Harnesses](/harnesses)). Building the default harness also stamps the `:default` alias. The default is the built-in `claude` harness unless the `build.harness` key selects another (see [Setting the default harness](/harnesses#setting-the-default-harness)).
 
 The `@` shortcut in run/create commands resolves against these tags:
 

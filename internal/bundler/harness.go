@@ -18,15 +18,21 @@ func ShippedHarnessNames() []string {
 }
 
 // ResolveHarnessName returns the effective harness selection: the explicit
-// name when non-empty (validated), else the built-in DefaultHarnessName.
-// Harness selection is explicit — a build with no -t builds the default; there
-// is no registry default flag.
-func ResolveHarnessName(_ config.Config, explicit string) (string, error) {
+// name when non-empty (validated), else the build.harness selection key
+// (highest layer that sets it wins, like build.stacks), else the built-in
+// DefaultHarnessName.
+func ResolveHarnessName(cfg config.Config, explicit string) (string, error) {
 	if explicit != "" {
 		if err := ValidateHarnessSelector(explicit); err != nil {
 			return "", err
 		}
 		return explicit, nil
+	}
+	if proj := cfg.Project(); proj != nil && proj.Build.Harness != "" {
+		if err := consts.ValidateHarnessRef(proj.Build.Harness); err != nil {
+			return "", fmt.Errorf("build.harness: %w", err)
+		}
+		return proj.Build.Harness, nil
 	}
 	return DefaultHarnessName, nil
 }

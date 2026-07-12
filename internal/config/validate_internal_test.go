@@ -53,6 +53,7 @@ harnesses:
   claude:
     config: { strategy: copy }
 build:
+  harness: claude
   stacks: [go]
   harnesses:
     claude:
@@ -68,6 +69,7 @@ build:
 		{"harnesses node is a scalar", "harnesses: foo\n", "harnesses: must be a mapping"},
 		{"harness entry is a scalar", "harnesses:\n  codex: nope\n", "harnesses.codex: must be a mapping"},
 		{"build node is a scalar", "build: some-typo\n", "build: must be a mapping"},
+		{"build.harness is not a string", "build:\n  harness: [opencode]\n", "build.harness: must be a string"},
 		{"build.stacks is not a list", "build:\n  stacks: foo\n", "build.stacks: must be a list"},
 		{"build.stacks item is not a string", "build:\n  stacks: [123]\n", "build.stacks[0]: must be a string"},
 		{"build.harnesses node is a scalar", "build:\n  harnesses: foo\n", "build.harnesses: must be a mapping"},

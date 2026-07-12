@@ -28,7 +28,7 @@ var twoRules = []config.EgressRule{
 }
 
 // harnessFloor is the selected harness's required egress floor, resolved the
-// same way the command resolves it (registry default → embedded claude
+// same way the command resolves it (configured default → embedded claude
 // bundle; the config dir is isolated per test so no materialized bundle can
 // interfere). Floor content correctness is guarded by the bundler egress
 // tests — refresh tests only care that the floor is prepended.

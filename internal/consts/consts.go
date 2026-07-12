@@ -79,7 +79,7 @@ const (
 // Image tag aliases reserved by the harness-keyed tag scheme. Harness
 // registry keys may not collide with them.
 const (
-	// ImageTagDefaultAlias tags the registry-default harness's image.
+	// ImageTagDefaultAlias tags the default harness's image.
 	ImageTagDefaultAlias = "default"
 	// ImageTagLatest is the legacy pre-harness tag; resolution accepts it
 	// as a fallback for images built before harness tags existed.

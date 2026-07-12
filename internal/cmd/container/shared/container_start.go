@@ -157,7 +157,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 
 	// The container's harness label (stamped at create from the image) is
 	// the runtime identity — egress floor and pre_run compose against it,
-	// not against whatever the registry default happens to be today.
+	// not against whatever the configured default happens to be today.
 	harnessName, err := containerHarnessName(ctx, client, cfg, container)
 	if err != nil {
 		return fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
@@ -249,7 +249,7 @@ func assertHarnessResolvable(cfg config.Config, harnessName string) error {
 }
 
 // containerHarnessName reads the container's harness label — the identity
-// stamped at create from the image — falling back to the registry default
+// stamped at create from the image — falling back to the configured default
 // for containers created before the label existed.
 func containerHarnessName(
 	ctx context.Context,

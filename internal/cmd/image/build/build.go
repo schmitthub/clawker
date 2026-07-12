@@ -68,8 +68,8 @@ func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) e
 		Short: "Build the project image",
 		Long: `Build the project image from its clawker configuration.
 
-Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
-adds an extra ref (tag part must name a registered harness). No -t builds the
+Tags are harness-keyed: -t NAME builds that harness; -t name:NAME
+adds an extra ref (tag part must name a known harness). No -t builds the
 default harness and adds the :default alias.
 
 A shared base image (clawker-<project>:base) holds the harness-agnostic
@@ -77,7 +77,7 @@ layers and is built or reused automatically; harness images build FROM it.`,
 		Example: `  # Build the default harness image
   clawker image build
 
-  # Build a specific registered harness
+  # Build a specific harness
   clawker image build -t codex
 
   # Rebuild from scratch
@@ -214,9 +214,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// -t selects the harness: a bare NAME names a known harness; a full
 	// REF's tag part must equal one (strict tag=harness). No -t builds the
-	// default harness. Shipped bundles and project-registered ones resolve
-	// straight from the embedded FS / clawker.yaml registry — no build-time
-	// materialization step.
+	// default harness (build.harness when set, else the built-in default).
 	selector, extraTags, err := harnessSelectorFromTags(cfgGateway, opts.Tags)
 	if err != nil {
 		return err

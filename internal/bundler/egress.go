@@ -10,7 +10,7 @@ import (
 // expansions). Firewall sync paths must call this — cfg.ProjectEgressRules()
 // alone is missing the floor the harness needs to function.
 //
-// An empty name selects the built-in default harness (ResolveHarnessName); a
+// An empty name selects the configured default harness (ResolveHarnessName); a
 // non-empty name (bare or qualified) is the container's own harness selection,
 // resolved through the single algorithm by LoadHarness — so a container gets
 // exactly the egress floor its harness was built with.

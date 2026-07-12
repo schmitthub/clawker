@@ -152,7 +152,7 @@ func registerBuiltinAliases(root *cobra.Command, f *cmdutil.Factory) {
 const buildExample = `  # Build the default harness image
   clawker build
 
-  # Build a specific registered harness
+  # Build a specific harness
   clawker build -t codex
 
   # Rebuild from scratch

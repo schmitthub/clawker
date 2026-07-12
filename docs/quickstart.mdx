@@ -97,7 +97,7 @@ See the [Configuration](/configuration) guide for the full reference.
 clawker build
 ```
 
-This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language stacks, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. To build a specific harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
+This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language stacks, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. The default is `claude` out of the box; the `build.harness` config key picks another. To build a specific harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
 
 ## 4. Run Your First Agent
 

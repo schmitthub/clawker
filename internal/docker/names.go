@@ -222,7 +222,7 @@ func HarnessImageTag(project, harnessName string) string {
 	return imageRef(project, harnessName)
 }
 
-// DefaultAliasImageTag is the alias tag applied to the registry-default
+// DefaultAliasImageTag is the alias tag applied to the default
 // harness's image: clawker-<project>:default. Run/create resolve it when no
 // explicit tag is selected.
 func DefaultAliasImageTag(project string) string {

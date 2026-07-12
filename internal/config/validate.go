@@ -49,9 +49,9 @@ func knownBundleSourceFields() map[string]bool {
 // validateProjectNodes walks every discovered clawker.yaml layer —
 // never the merged tree, so an error names the actual offending file — and
 // validates the harnesses:, build:, and bundles: nodes: every harness and
-// overlay name must satisfy the shared reference rule
-// (consts.ValidateHarnessRef — bare or qualified, reserved aliases
-// bare-only), every stack-name reference (build.stacks,
+// overlay name — including the build.harness selection key — must satisfy
+// the shared reference rule (consts.ValidateHarnessRef — bare or qualified,
+// reserved aliases bare-only), every stack-name reference (build.stacks,
 // build.harnesses.<name>.stacks) must satisfy consts.ValidateComponentRef,
 // and every entry's fields must be a known subset.
 func validateProjectNodes(store *storage.Store[Project]) error {
@@ -111,6 +111,9 @@ func validateBuildNode(label string, data map[string]any) error {
 	if !isMap {
 		return fmt.Errorf("%s: build: must be a mapping", label)
 	}
+	if err := validateBuildHarness(label, build); err != nil {
+		return err
+	}
 	if stacks, hasStacks := build["stacks"]; hasStacks && stacks != nil {
 		if err := validateStackNameList(label, "build.stacks", stacks); err != nil {
 			return err
@@ -126,6 +129,23 @@ func validateBuildNode(label string, data map[string]any) error {
 	}
 	return validateEntryMap(label, "build.harnesses", harnesses, consts.ValidateHarnessRef,
 		"must be a mapping", knownHarnessOverlayFields(), validateOverlayEntry(label))
+}
+
+// validateBuildHarness checks the build.harness selection key: when present
+// it must be a string satisfying the shared harness reference rule.
+func validateBuildHarness(label string, build map[string]any) error {
+	harness, hasHarness := build["harness"]
+	if !hasHarness || harness == nil {
+		return nil
+	}
+	name, isString := harness.(string)
+	if !isString {
+		return fmt.Errorf("%s: build.harness: must be a string", label)
+	}
+	if err := consts.ValidateHarnessRef(name); err != nil {
+		return fmt.Errorf("%s: build.harness: %w", label, err)
+	}
+	return nil
 }
 
 // validateOverlayEntry returns the per-entry check for one

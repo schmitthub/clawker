@@ -72,7 +72,7 @@ Onboarding bypass is image-level -- CP's generic seed-apply step places the harn
 
 ### Image Placeholder Resolution (`image.go`)
 
-`ParseImagePlaceholder(image)` splits the `@` / `@:tag` image placeholder (ok=false for literal references). `ResolvePlaceholderImage(ctx, client, cfg, ios, projectName, harnessTag, commandVerb)` resolves the placeholder to a built image reference via `client.ResolveImageWithSource` — an explicit tag must name a registered harness; no built image prints next-steps guidance (`clawker build`) and returns `cmdutil.SilentError`.
+`ParseImagePlaceholder(image)` splits the `@` / `@:tag` image placeholder (ok=false for literal references). `ResolvePlaceholderImage(ctx, client, cfg, ios, projectName, harnessTag, commandVerb)` resolves the placeholder to a built image reference via `client.ResolveImageWithSource` — an explicit tag must name a known harness; no built image prints next-steps guidance (`clawker build`) and returns `cmdutil.SilentError`.
 
 ### Container Start Orchestration (`container_start.go`)
 

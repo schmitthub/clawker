@@ -1485,7 +1485,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 
 	// Resolve the container's harness identity ONCE, from the image's
 	// harness label — staging, hooks, env, egress, and the container label
-	// must all agree on it regardless of what the registry default is today.
+	// must all agree on it regardless of what the configured default is today.
 	harnessName, err := harnessForImage(ctx, opts.Client, opts.Config, opts.Options.Image)
 	if err != nil {
 		return nil, fmt.Errorf("resolving container harness identity: %w", err)
@@ -1919,7 +1919,7 @@ func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentNa
 
 // harnessForImage derives the container's harness identity from the image's
 // harness label — the image IS the built harness. Images built before
-// harness labels existed fall back to the registry default.
+// harness labels existed fall back to the configured default.
 func harnessForImage(
 	ctx context.Context,
 	client *docker.Client,
@@ -2050,7 +2050,7 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 
 	// Stamp the harness identity onto the container — the runtime join key
 	// start-time consumers (pre_run composition, egress refresh) read back
-	// instead of re-resolving the registry default.
+	// instead of re-resolving the configured default.
 	extraLabels[consts.LabelHarness] = opts.harnessBundle.Name
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
