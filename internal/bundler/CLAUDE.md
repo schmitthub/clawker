@@ -59,7 +59,7 @@ func (g *ProjectGenerator) GetBuildContext() string
 ```
 
 Fields: `BuildKitEnabled`, `HarnessVersion` (resolved npm version for the
-harness ARG), `Harness` (bundle selector; empty = the built-in default harness),
+harness ARG), `Harness` (bundle selector; empty = the configured default harness via `ResolveHarnessName`),
 `BaseImageRef` (FROM ref for the harness image, set by the docker Builder —
 bundler never derives project names; `GenerateHarness` errors
 `ErrNoBaseImageRef` without it).
@@ -154,7 +154,7 @@ type DockerfileContext struct {
 ```go
 const DefaultHarnessName = "claude"
 func ShippedHarnessNames() []string                                    // floor harness names (claude, codex) via bundle.FloorNames
-func ResolveHarnessName(cfg config.Config, explicit string) (string, error) // explicit selector (validated) else DefaultHarnessName — no default flag
+func ResolveHarnessName(cfg config.Config, explicit string) (string, error) // explicit selector (validated), else the build.harness selection key, else DefaultHarnessName; nil-project tolerant
 func ValidateHarnessSelector(name string) error                        // bare or qualified; reserved image-tag alias check is bare-only
 func KnownHarnessNames(cfg config.Config) []string                     // floor ∪ loose ∪ installed-bundle harnesses via resolver.List; IsKnownHarness(cfg, name) bool
 func LoadHarness(cfg config.Config, name string) (*Bundle, error)      // resolves via bundle.NewResolver(cfg).Resolve, then LoadBundle(comp.FS)
@@ -175,8 +175,10 @@ shadows it (surfaced in build output). Custom harness = drop a bundle dir into a
 loose convention dir (`.clawker/harnesses/<name>/` or the user config-dir
 equivalent), or install a bundle. Unresolvable name = hard "not found" error.
 
-Harness selection is explicit: `ResolveHarnessName(cfg, "")` returns the
-built-in `DefaultHarnessName` — there is no default flag. The reserved
+An empty selector resolves the default: `ResolveHarnessName(cfg, "")` returns
+the `build.harness` selection key when set (any layer, highest wins wholesale
+like `build.stacks`; validated, error names the key), else the built-in
+`DefaultHarnessName`. An explicit selector always beats the key. The reserved
 image-tag-alias check (`default`/`latest`/`base`) applies to bare names only; a
 dotted qualified address can never collide with a bare alias.
 
@@ -197,7 +199,7 @@ Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-ro
 func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error)
 ```
 
-Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = the built-in default harness.
+Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = the configured default harness (`ResolveHarnessName`).
 
 ### Asset Placement in the Harness Image (cache-locality + inject-lifetime invariants)
 
