@@ -8,7 +8,7 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 |------|---------|
 | `monitor.go` | `NewCmdMonitor(f)` — parent command |
 | `init/init.go` | `NewCmdInit(f, runF)` — scaffold the base stack config files (floor only — zero extensions; projection is up/reload territory) |
-| `up/up.go` | `NewCmdUp(f, runF)` — render + start observability stack (option-D: merges cwd projection into the host ledger, renders collector config over the seeded union; never restarts a running collector — warns and points at `monitor reload` when the rendered otel-config bytes changed) |
+| `up/up.go` | `NewCmdUp(f, runF)` — bring-up only: a fully-running stack short-circuits with an already-up notice (no render/seed); otherwise merges the cwd projection into the host ledger and renders the collector config over the seeded union (option-D) |
 | `reload/reload.go` | `NewCmdReload(f, runF)` — explicit disruptive apply: re-render over the seeded union + this project's projection, stop+remove the collector, compose up, seed ledger |
 | `shared/stack.go` | `PrepareStack`, `ComposeUp`, `RemoveCollector`, `CollectorRunning`, `RunComposeCmd` — stack plumbing shared by up/reload |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
@@ -52,7 +52,7 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
 ```
 
-Starts monitoring stack via Docker Compose. Ensures the clawker network exists. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. `up` NEVER restarts a running collector — when the rendered otel-config bytes changed and the collector was already running, it warns and points at `monitor reload`. Flags: `--detach` (default: true).
+Starts monitoring stack via Docker Compose. Bring-up ONLY: when every long-lived service is already running (`shared.StackRunning`) it short-circuits with an already-up notice pointing at `monitor reload` — no render, no seed, no ledger write. Otherwise it ensures the clawker network exists and brings the stack up. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. On a PARTIAL bring-up (collector alive, another service down) `up` never restarts the running collector — when the rendered otel-config bytes changed it warns and points at `monitor reload`. Flags: `--detach` (default: true).
 
 ### monitor reload
 
@@ -93,7 +93,7 @@ Read-only inventory of every resolvable monitoring extension across the three
 tiers: `NAME/VERSION/SOURCE` with `!` shadow markers, bundle-sourced rows naming
 their owning bundle; `--json`/`--quiet`. Alias `ext`.
 
-Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them (`monitor reload` applies an edit to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `monitor extensions` shows monitoring-component provenance.
+Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them at bring-up (`monitor reload` applies the selection to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `monitor extensions` shows monitoring-component provenance.
 
 ### monitor status
 

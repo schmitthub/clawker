@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -18,11 +19,12 @@ import (
 )
 
 // TestMonitorOptionD_SeedUnionAndC5_E2E proves the monitoring seed model across
-// two projects sharing one host: `monitor up` idempotently seeds each cwd's
-// projection into the host units ledger and regenerates the collector config
-// over the ledger union; a second project selecting a same-named bare extension
-// with DIFFERENT content is a C5 hard error (the seed is refused), while an
-// identical-content re-seed from another project is a no-op. `monitor down
+// two projects sharing one host: `monitor up` is bring-up only — it seeds the
+// cwd's projection on bring-up and short-circuits untouched when the stack is
+// already running; applying a projection to a running stack is `monitor
+// reload`'s job. A second project selecting a same-named bare extension with
+// DIFFERENT content is a C5 hard error at reload (the seed is refused), while
+// an identical-content re-seed from another project is a no-op. `monitor down
 // --volumes` resets the ledger.
 //
 // The two projects deliberately share ONE isolated data dir (the host ledger and
@@ -59,41 +61,70 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 	require.NoError(t, initB.Err, "init B failed\nstdout: %s\nstderr: %s", initB.Stdout, initB.Stderr)
 	selectClaudeCodeExtension(t, projB)
 
-	// C5: B's same-named, different-content claude-code refuses to seed — hard
-	// error naming both project roots, stack state untouched.
+	// up is bring-up only: against the running stack it short-circuits — B's
+	// divergent copy is invisible to bring-up. This is the strong variant of
+	// the assertion: were up to fall through and seed, B's projection would
+	// turn the accidental seed into a C5 collision error.
 	upB := h.Run("monitor", "up")
-	require.Error(t, upB.Err, "monitor up (B) must refuse a C5 collision")
-	assert.Contains(t, upB.Stderr, "collides with the same-named extension",
-		"the collision error must be user-visible")
+	require.NoError(t, upB.Err, "monitor up (B) on a running stack failed\nstdout: %s\nstderr: %s",
+		upB.Stdout, upB.Stderr)
+	assert.Contains(t, upB.Stdout, "already up",
+		"a running stack must short-circuit regardless of the cwd projection")
+
+	// C5: B's same-named, different-content claude-code refuses to seed at
+	// reload — typed hard error, collector untouched (the refusal fires
+	// before the disruptive apply).
+	beforeID := collectorContainerID(t)
+	require.NotEmpty(t, beforeID, "collector must be running before the refused reload")
+	reloadB := h.Run("monitor", "reload")
+	var collErr *internalmonitor.SeedCollisionError
+	require.ErrorAs(t, reloadB.Err, &collErr, "monitor reload (B) must refuse with a C5 collision error")
+	assert.NotEmpty(t, reloadB.Stderr, "the collision error must be user-visible")
+	assert.Equal(t, beforeID, collectorContainerID(t),
+		"a refused reload must not touch the running collector")
 
 	// Recovery: drop B's divergent loose copy — the selection falls back to the
 	// floor claude-code, whose content hash matches A's seed, so the re-seed
-	// from a different project root is an identical-content no-op.
+	// from a different project root is an identical-content no-op. The same
+	// reload is the explicit disruptive apply: it recreates the collector
+	// against the re-rendered union config while the rest of the stack stays up.
 	require.NoError(t, os.RemoveAll(
 		filepath.Join(projB, consts.DotClawkerDir, bundle.ComponentMonitoring.Dir(), "claude-code")))
-	upB = h.Run("monitor", "up")
-	require.NoError(t, upB.Err, "monitor up (B) after removing the divergent copy failed\nstdout: %s\nstderr: %s",
-		upB.Stdout, upB.Stderr)
-
-	// Union: the host collector config is regenerated over the ledger union and
-	// still serves the claude-code routing.
-	monitorDir, err := consts.MonitorSubdir()
-	require.NoError(t, err)
-	otelCfg, err := os.ReadFile(filepath.Join(monitorDir, internalmonitor.OtelConfigFileName))
-	require.NoError(t, err, "rendered collector config must exist after monitor up")
-	assert.Contains(t, string(otelCfg), "claude-code",
-		"the collector config must route the seeded claude-code extension")
-
-	// reload: the explicit disruptive apply — recreates the collector against
-	// the re-rendered config while the rest of the stack stays up.
-	beforeID := collectorContainerID(t)
-	require.NotEmpty(t, beforeID, "collector must be running before reload")
 	reloadRes := h.Run("monitor", "reload")
-	require.NoError(t, reloadRes.Err, "monitor reload failed\nstdout: %s\nstderr: %s",
-		reloadRes.Stdout, reloadRes.Stderr)
+	require.NoError(
+		t,
+		reloadRes.Err,
+		"monitor reload (B) after removing the divergent copy failed\nstdout: %s\nstderr: %s",
+		reloadRes.Stdout,
+		reloadRes.Stderr,
+	)
 	afterID := collectorContainerID(t)
 	require.NotEmpty(t, afterID, "collector must be running after reload")
 	assert.NotEqual(t, beforeID, afterID, "reload must recreate the collector container")
+
+	// Union: give B its OWN loose extension and select ONLY it — after this
+	// reload, claude-code routing in the rendered collector config can come
+	// from nothing but the ledger union (B's cwd projection never selects
+	// it). This is the option-D discriminator: one project's seed survives
+	// another project's reload.
+	materializeMinimalExtension(t, projB, "uatunion")
+	rewriteExtensionSelection(t, projB, "[claude-code]", "[uatunion]")
+	reloadUnion := h.Run("monitor", "reload")
+	require.NoError(t, reloadUnion.Err, "monitor reload (B, uatunion) failed\nstdout: %s\nstderr: %s",
+		reloadUnion.Stdout, reloadUnion.Stderr)
+
+	monitorDir, err := consts.MonitorSubdir()
+	require.NoError(t, err)
+	otelCfg, err := os.ReadFile(filepath.Join(monitorDir, internalmonitor.OtelConfigFileName))
+	require.NoError(t, err, "rendered collector config must exist after reload")
+	assert.Contains(t, string(otelCfg), "uatunion",
+		"the collector config must route the extension B just seeded")
+	assert.Contains(
+		t,
+		string(otelCfg),
+		"claude-code",
+		"the collector config must keep routing A's claude-code seed — the ledger union, not B's projection, is the render source",
+	)
 
 	// down --volumes resets the seeded-unit ledger.
 	downRes := h.Run("monitor", "down", "--volumes")
@@ -135,6 +166,49 @@ func materializeTweakedClaudeCodeExtension(t *testing.T, projectDir string) {
 		return os.WriteFile(target, content, 0o600)
 	})
 	require.NoError(t, walkErr, "materializing loose claude-code extension")
+
+	// Fail at the source if the tweak target drifted — an unapplied tweak
+	// makes the copy hash-identical to the floor and silently degrades the
+	// C5 leg into a no-op three commands later.
+	manifest, err := os.ReadFile(filepath.Join(dst, "monitoring.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(manifest), "Team-tweaked",
+		"the description tweak must have applied")
+}
+
+// materializeMinimalExtension writes a minimal valid loose monitoring
+// extension named name into projectDir's convention dir: one log lane plus
+// the lane's index template. The template carries mappings — the bootstrap
+// container hard-fails a template that leaves its pre-created index unmapped.
+func materializeMinimalExtension(t *testing.T, projectDir, name string) {
+	t.Helper()
+	dir := filepath.Join(projectDir, consts.DotClawkerDir, bundle.ComponentMonitoring.Dir(), name)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, internalmonitor.MonitoringDirIndexTemplates), 0o755))
+	manifest := fmt.Sprintf(
+		"description: e2e union extension\n\nlogs:\n  - index: %s\n    service_names: [%s]\n",
+		name, name,
+	)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, internalmonitor.MonitoringUnitManifestFile), []byte(manifest), 0o600))
+	tpl := fmt.Sprintf(
+		`{"index_patterns":[%q],"template":{"settings":{"number_of_shards":1},"mappings":{"properties":{"@timestamp":{"type":"date"},"message":{"type":"text"}}}}}`,
+		name,
+	)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, internalmonitor.MonitoringDirIndexTemplates, name+".json"), []byte(tpl), 0o600))
+}
+
+// rewriteExtensionSelection swaps the monitor.extensions value previously
+// appended by selectClaudeCodeExtension — appending a second monitor: block
+// would be a duplicate yaml key, so the selection is edited in place.
+func rewriteExtensionSelection(t *testing.T, projectDir, from, to string) {
+	t.Helper()
+	path := filepath.Join(projectDir, "."+consts.ProjectConfigFile)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err, "read project config for selection rewrite")
+	updated := strings.Replace(string(raw), "extensions: "+from, "extensions: "+to, 1)
+	require.NotEqual(t, string(raw), updated, "selection rewrite must change the config")
+	require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
 }
 
 // selectClaudeCodeExtension appends the opt-in claude-code selection to the
@@ -158,7 +232,7 @@ func selectClaudeCodeExtension(t *testing.T, projectDir string) {
 func collectorContainerID(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command(
-		"docker", "ps", "-q", "--filter", "name="+consts.MonitoringServiceOtelCollector,
+		"docker", "ps", "-q", "--filter", "name=^"+consts.MonitoringServiceOtelCollector+"$",
 	).Output()
 	require.NoError(t, err, "docker ps for otel-collector")
 	return strings.TrimSpace(string(out))

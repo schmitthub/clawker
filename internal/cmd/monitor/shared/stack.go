@@ -120,6 +120,38 @@ func CollectorRunning(ctx context.Context, composePath string) bool {
 	return strings.TrimSpace(out.String()) != ""
 }
 
+// StackRunning reports whether every long-lived monitoring service is
+// running. `monitor up` short-circuits on a fully-running stack (bring-up
+// only — extension changes apply via `monitor reload`); a partial stack
+// (e.g. a collector that never started because bootstrap failed) reports
+// false so bring-up can complete it.
+func StackRunning(ctx context.Context, composePath string) bool {
+	psArgs := []string{
+		composeCmd, "-f", composePath, "ps", "--services", "--status", "running",
+	}
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", psArgs...)
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	running := map[string]bool{}
+	for svc := range strings.FieldsSeq(out.String()) {
+		running[svc] = true
+	}
+	for _, svc := range []string{
+		consts.MonitoringServiceOtelCollector,
+		consts.MonitoringServicePrometheus,
+		consts.MonitoringServiceOpenSearchNode,
+		consts.MonitoringServiceOpenSearchDashboards,
+	} {
+		if !running[svc] {
+			return false
+		}
+	}
+	return true
+}
+
 // RunComposeCmd runs one docker compose invocation under a spinner. Errors are
 // returned raw — docker's own stderr already streamed to the user, and the
 // caller adds the one contextual wrap.

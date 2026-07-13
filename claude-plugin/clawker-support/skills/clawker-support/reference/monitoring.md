@@ -37,12 +37,13 @@ Beyond the core firewall/control-plane telemetry, what the stack observes is
 contributed by **monitoring extensions** a project selects under
 `monitor.extensions` in `clawker.yaml` (a whole-value selection — the highest
 config layer that sets it wins; empty by default, every extension is an
-explicit opt-in). Each `clawker monitor up` idempotently seeds the selected
-extensions (indices, ingest pipelines, dashboards) onto the running stack from
-the current project; there is no host-side enable registry, and the collector
-routes from the union of every extension ever seeded. `up` never restarts a
-running collector — apply a selection edit to a running stack with
-`clawker monitor reload` (re-renders the config and recreates the collector). An extension is a `harnesses`/`stacks`-peer component
+explicit opt-in). `clawker monitor up` is bring-up only: it seeds the current
+project's selected extensions (indices, ingest pipelines, dashboards) when it
+starts the stack, and exits untouched — with an already-up notice — when the
+stack is running; there is no host-side enable registry, and the collector
+routes from the union of every extension ever seeded. Apply a selection edit
+to a running stack with `clawker monitor reload` (seeds the selection,
+re-renders the config, and recreates the collector). An extension is a `harnesses`/`stacks`-peer component
 resolved across the same three tiers (built-in floor, loose
 `.clawker/monitoring/<name>/`, installed bundle `namespace.bundle.component`).
 Fetch `https://docs.clawker.dev/monitoring-extensions` (consume/select) and
@@ -169,7 +170,7 @@ container.
   ephemeral. Core index templates, ISM policies, and the Clawker
   workspace ride the bootstrap; extension assets (indices, pipelines,
   dashboards) are seeded from each project's `monitor.extensions`
-  selection on `monitor up`. The answer to almost every
+  selection at bring-up (or `monitor reload`). The answer to almost every
   state-management question is "regenerate with `clawker monitor down
   --volumes && clawker monitor init --force && clawker monitor up`" —
   `--volumes` clears both telemetry data and every seeded extension.

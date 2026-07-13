@@ -107,13 +107,13 @@ stack each `clawker monitor up`:
 
 ## How consumption works
 
-Everything an extension ships except collector routing is applied as an
-idempotent update against the running stack; collector routing is regenerated and
-the collector recreated only when the rendered configuration changes. A project
-selects the extension in `monitor.extensions`, and `clawker monitor up` seeds it.
-There is no host-side registry — the active set is a projection of the project
-you ran `up` from, and the collector routes from the union of every extension
-ever seeded. See [Monitoring Extensions](/monitoring-extensions).
+A project selects the extension in `monitor.extensions`. `clawker monitor up`
+seeds it when it brings the stack up; on a stack that is already running,
+`clawker monitor reload` is the apply — it seeds the selection, re-renders the
+collector config, and recreates the collector. There is no host-side registry —
+the active set is a projection of the project you seed from, and the collector
+routes from the union of every extension ever seeded. See
+[Monitoring Extensions](/monitoring-extensions).
 
 ## Validating
 

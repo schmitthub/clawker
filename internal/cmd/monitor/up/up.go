@@ -50,16 +50,16 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-'monitor up' renders the stack config from this project's selected monitoring
-extensions before starting, and idempotently seeds them onto the running stack:
-the collector config is regenerated over every extension ever seeded (across all
-projects) so a teammate's routings survive, while this project's OpenSearch
-artifacts are (re)applied by the bootstrap container. Agent containers send
+'monitor up' is bring-up only. When the stack is already running it prints so
+and exits without touching it. On bring-up it renders the stack config from
+this project's selected monitoring extensions over every extension ever seeded
+(across all projects) — a teammate's routings survive — and the bootstrap
+container applies this project's OpenSearch artifacts. Agent containers send
 telemetry to the stack automatically.
 
-'up' never restarts an already-running collector — when the rendered collector
-config differs from what a running collector loaded, it warns and points at
-'monitor reload', the explicit disruptive apply.`,
+To apply monitoring extension changes to a running stack, run
+'clawker monitor reload' — the explicit disruptive apply (recreates the
+collector).`,
 		Example: `  # Start the monitoring stack (detached)
   clawker monitor up
 
@@ -82,10 +82,6 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	// Opt-in bundle auto-update before the monitoring projection resolves its
-	// extensions against the cached bundle set. Warn and proceed.
-	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
-
 	log, err := opts.Logger()
 	if err != nil {
 		return fmt.Errorf("initializing logger: %w", err)
@@ -103,11 +99,30 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 	log.Debug().Str("monitor_dir", monitorDir).Msg("starting monitor stack")
 
+	// up is bring-up only: a fully-running stack short-circuits untouched —
+	// no re-render, no re-seed, no ledger write. Extension changes apply via
+	// 'monitor reload'. A partial stack (e.g. the collector never started
+	// because bootstrap failed) falls through so compose up can complete the
+	// bring-up.
+	composePath := filepath.Join(monitorDir, internalmonitor.ComposeFileName)
+	if shared.StackRunning(ctx, composePath) {
+		fmt.Fprintf(
+			ios.Out,
+			"%s Monitoring stack is already up — run 'clawker monitor reload' to apply monitoring extension changes.\n",
+			cs.SuccessIcon(),
+		)
+		printServiceURLs(ios, cfg)
+		return nil
+	}
+
+	// Opt-in bundle auto-update before the monitoring projection resolves its
+	// extensions against the cached bundle set. Warn and proceed.
+	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
+
 	// Resolve this project's projection, merge it into the host ledger, and
 	// render the stack config over the ledger union. The projection is persisted
 	// only after a successful compose up, so a failed bring-up never records a
 	// seed that did not apply.
-	composePath := filepath.Join(monitorDir, internalmonitor.ComposeFileName)
 	collectorWasRunning := shared.CollectorRunning(ctx, composePath)
 	cwdUnits, render, err := shared.PrepareStack(cfg, monitorDir)
 	if err != nil {
@@ -136,8 +151,10 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("record seeded monitoring units: %w", saveErr)
 	}
 
-	// A collector that was already running keeps the config it loaded at start;
-	// up is bring-up only and never bounces it. Point at the explicit apply.
+	// Reachable only on a partial bring-up (the running-stack case
+	// short-circuited above): a collector that was already running keeps the
+	// config it loaded at start; up never bounces it. Point at the explicit
+	// apply.
 	// One-shot by design: the signal compares this render against the previous
 	// on-disk render, not against what the running collector loaded — a second
 	// up before the reload re-renders identical bytes and stays quiet.
@@ -150,6 +167,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 
 	if opts.Detach {
+		fmt.Fprintf(ios.Out, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		printServiceURLs(ios, cfg)
 	}
 	return nil
@@ -159,8 +177,6 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 func printServiceURLs(ios *iostreams.IOStreams, cfg config.Config) {
 	cs := ios.ColorScheme()
 	mc := cfg.SettingsStore().Read().Monitoring
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	dashboards := fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)

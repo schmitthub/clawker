@@ -36,22 +36,21 @@ qualified `namespace.bundle.component` address for a bundled extension.
 
 ## How consumption works
 
-Monitoring is seeded, not registered. Each `clawker monitor up` reads the
-extensions your **current project** selects and idempotently applies them to the
-running stack — creating any missing indices, pipelines, and dashboards. Nothing
-is pinned in a host-side registry; the active set is simply a projection of the
-project you ran `up` from.
+Monitoring is seeded, not registered. Nothing is pinned in a host-side
+registry; the active set is a projection of the project you seed from.
 
-- If the stack is down, `monitor up` starts it and seeds your selection.
-- If the stack is already running, `monitor up` seeds any extensions it is
-  missing — but it never restarts the running collector. When the regenerated
-  collector config differs from what the collector loaded, `up` warns and
-  points at `clawker monitor reload`, the explicit disruptive apply: it
-  re-renders the config and recreates the collector so the new routing takes
-  effect (briefly interrupting telemetry ingestion).
+- `clawker monitor up` is bring-up only. When the stack is down it starts it
+  and seeds the extensions your **current project** selects — creating the
+  indices, pipelines, and dashboards. When the stack is already running, `up`
+  prints so and exits without touching it.
+- To apply extension changes — a new selection or edited content — to a
+  running stack, run `clawker monitor reload`, the explicit disruptive apply:
+  it seeds your project's selection, re-renders the collector config, and
+  recreates the collector so the new routing takes effect (briefly
+  interrupting telemetry ingestion).
 - Seeded artifacts persist in the stack's volumes until you prune them.
 - Collector routing is regenerated from the union of every extension ever seeded
-  into the stack, so running `up` from one project never drops another project's
+  into the stack, so seeding from one project never drops another project's
   routing.
 
 To reset the monitoring stack — clearing all seeded extensions along with the
@@ -63,7 +62,8 @@ clawker monitor down --volumes
 
 <Note>
   When two projects each ship a **loose** monitoring extension of the same bare
-  name with different content, the seed is refused — `monitor up` fails with an
+  name with different content, the seed is refused — the seeding command
+  (`monitor up` at bring-up, `monitor reload` on a running stack) fails with an
   error naming both project roots. Rename one of the extensions, or reset the
   seeded stack with `clawker monitor down --volumes`. An identical-content
   re-seed from another project is a harmless no-op, and bundled extensions

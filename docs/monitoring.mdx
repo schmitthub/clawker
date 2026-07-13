@@ -19,7 +19,7 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 
 ## Architecture
 
-The monitoring stack runs as four long-lived Docker Compose services on the `clawker-net` network, plus one short-lived bootstrap container that runs once per `monitor up` to preconfigure the cluster:
+The monitoring stack runs as four long-lived Docker Compose services on the `clawker-net` network, plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
 
 ```
 Claude Code (in container)                Control plane (host)
@@ -94,12 +94,12 @@ monitor:
 ```
 
 Extensions are opt-in — there is no default selection; select `claude-code` to
-capture Claude Code telemetry. Each `clawker monitor up` idempotently seeds the extensions the
-current project selects onto the running stack — there is no host-side registry,
-and the collector routes from the union of every extension ever seeded. `up`
-never restarts a running collector; to apply an extension edit to a running
-stack, run `clawker monitor reload` (re-renders the config and recreates the
-collector). See
+capture Claude Code telemetry. `clawker monitor up` is bring-up only: it seeds
+the current project's selection when it starts the stack, and exits untouched
+when the stack is already running — there is no host-side registry, and the
+collector routes from the union of every extension ever seeded. To apply an
+extension change to a running stack, run `clawker monitor reload` (seeds the
+selection, re-renders the config, and recreates the collector). See
 [Monitoring Extensions](/monitoring-extensions) for selection semantics and
 [Authoring monitoring extensions](/authoring-monitoring) for writing your own.
 
@@ -170,7 +170,7 @@ When writing your own PromQL or saved searches against these metrics, query with
 
 ## Bootstrap
 
-The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
+The stack is preconfigured at bring-up (and again on every `monitor reload`). A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
 
 - **Component templates** with shared mappings (`@timestamp` as date, `service.name` / `ingest_source` / `project` / `agent` as keyword)
 - **Index templates** with per-source field mappings for each log index plus the SS4O `traces` mapping (so dynamic mapping never locks the wrong type at first ingest)

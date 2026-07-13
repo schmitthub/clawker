@@ -17,16 +17,16 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-'monitor up' renders the stack config from this project's selected monitoring
-extensions before starting, and idempotently seeds them onto the running stack:
-the collector config is regenerated over every extension ever seeded (across all
-projects) so a teammate's routings survive, while this project's OpenSearch
-artifacts are (re)applied by the bootstrap container. Agent containers send
+'monitor up' is bring-up only. When the stack is already running it prints so
+and exits without touching it. On bring-up it renders the stack config from
+this project's selected monitoring extensions over every extension ever seeded
+(across all projects) — a teammate's routings survive — and the bootstrap
+container applies this project's OpenSearch artifacts. Agent containers send
 telemetry to the stack automatically.
 
-'up' never restarts an already-running collector — when the rendered collector
-config differs from what a running collector loaded, it warns and points at
-'monitor reload', the explicit disruptive apply.
+To apply monitoring extension changes to a running stack, run
+'clawker monitor reload' — the explicit disruptive apply (recreates the
+collector).
 
 ```
 clawker monitor up [flags]
