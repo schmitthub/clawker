@@ -53,4 +53,9 @@ Sources: deepwiki grounded in openai/codex, anomalyco/opencode, earendil-works/p
 3. codex lane: reuse claude marketplace verbatim via fallback (one live UAT) vs codex-native `.agents/plugins/marketplace.json` from day one.
 4. `clawker skill --harness X` wrapper = dispatch to native mechanism: claude/codex shell out to their plugin CLIs; pi shells `pi install/remove/update`; opencode writes/deletes the config entry.
 
+## Additional initiative work items (user-added)
+
+- **Restore an authoring skill (new model)**: the `harness-stack-dev` skill was deleted on-branch (32707187b) because it taught the rejected registry/walkup design; today authoring coverage = single clawker-support skill routing to live `docs.clawker.dev/authoring-*` pages. Initiative should add a rewritten bundle/harness/stack/monitoring-extension AUTHORING skill into the clawker-support plugin (plugins are skill collections — goes INTO the existing plugin, no sibling plugin). User ruled 2026-07-14: not this PR, requirement of this initiative.
+- Cosmetic: marketplace.json `description` is never synced by update-plugin.yml (only sha+version) — stale blurb vs plugin.json; hand-edit or teach the workflow during migration.
+
 Related: `multi-harness/harness-research-opencode-pi` (install/config/auth recon for the harness bundles themselves), auto-memory `project_multi_harness_initiative` (branch state + mandate verbatim).
