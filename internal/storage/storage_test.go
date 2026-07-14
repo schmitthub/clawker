@@ -3538,6 +3538,7 @@ func TestCloneNode_RemapsAliasPointers(t *testing.T) {
 // WriteTo requires an absolute path — a relative path would resolve against
 // whatever CWD the process happens to have.
 func TestWriteTo_RelativePathRejected(t *testing.T) {
+	t.Chdir(t.TempDir()) // a regressed guard writes here, not into the package dir
 	s, err := New[hardSchema]("name: alice")
 	require.NoError(t, err)
 	assert.Error(t, s.WriteTo("relative/cfg.yaml"), "WriteTo accepted a relative path")
@@ -3645,6 +3646,7 @@ func TestWriteFieldTo_CleanFieldNoOp(t *testing.T) {
 }
 
 func TestWriteFieldTo_RelativePathRejected(t *testing.T) {
+	t.Chdir(t.TempDir()) // a regressed guard writes here, not into the package dir
 	s, err := New[hardSchema]("name: alice")
 	require.NoError(t, err)
 	s.MarkSeedForWrite()
