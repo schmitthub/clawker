@@ -92,7 +92,7 @@ layers and is built or reused automatically; harness images build FROM it.`,
 
 	// Docker CLI-compatible flags
 	cmd.Flags().
-		StringArrayVarP(&opts.Tags, "tag", "t", nil, "Registered harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)")
+		StringArrayVarP(&opts.Tags, "tag", "t", nil, "Harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Do not use cache when building the image")
 	cmd.Flags().BoolVar(&opts.Pull, "pull", false, "Always attempt to pull a newer version of the base image")
 	cmd.Flags().StringArrayVar(&opts.BuildArgs, "build-arg", nil, "Set build-time variables (format: KEY=VALUE)")

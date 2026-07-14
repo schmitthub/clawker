@@ -54,7 +54,7 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 
 ## High-Level Feature Overview
 
-- **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle (a manifest + Dockerfile fragment + optional assets) and registering it in settings. Images are harness-keyed: `clawker build -t codex` builds a specific harness, `clawker run @:codex` runs it, and the default harness carries a `:default` alias so bare `@` just works
+- **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle (a manifest + Dockerfile fragment + optional assets) and declaring it in your project's `clawker.yaml`. Images are harness-keyed: `clawker build -t codex` builds a specific harness, `clawker run @:codex` runs it, and the default harness carries a `:default` alias so bare `@` just works
 - **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, language **stacks** (go, node, python, rust), and custom instructions, with a thin per-harness image layered on top. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `claude` user kernel-side, and supervises the harness for the container's lifetime
 - **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry (sqlite), mTLS auth, and the command channel to every agent's `clawkerd`. The CLI talks to it over mTLS gRPC + OAuth2; see `clawker controlplane status`, `clawker controlplane agents`
 - **Injectable build-time instructions** to customize images per project: packages, environment variables, root run commands, user run commands, and more
@@ -137,7 +137,7 @@ clawker go dev
 > - `-it` — interactive mode with a terminal attached
 > - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 > - `--agent dev` — names this container `clawker.<project>.dev`
-> - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific registered harness instead
+> - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific harness instead
 > - `--dangerously-skip-permissions` — the infamous Claude Code yolo flag (the shipped aliases assume the claude harness). Anything after the `@` is passed straight to the harness CLI — treat it as a normal `claude` invocation, including `-c` to continue your previous session. You can also pass arguments after an alias, like `clawker go dev -c`.
 >
 > The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
@@ -180,7 +180,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 
 ```bash
 clawker build           # Builds your project's default-harness image (referenced as "@" when within a project directory)
-clawker build -t codex  # Builds a specific registered harness instead; run it with @:codex
+clawker build -t codex  # Builds a specific harness instead; run it with @:codex
 ```
 
 Builds are two-stage: a shared `clawker-<project>:base` image holds your packages, stacks, and custom instructions, and each harness image (`clawker-<project>:claude`, `clawker-<project>:codex`, ...) layers on top of it. The default harness build also stamps the `:default` alias that bare `@` resolves.
@@ -302,7 +302,7 @@ Use `@` anywhere an image argument is expected to auto-resolve your project's im
 ```bash
 clawker run -it @                     # Uses clawker-<project>:default (the default harness)
 clawker run -it --agent dev @         # Same, with agent name
-clawker run -it --agent dev @:codex   # Pick a specific registered harness
+clawker run -it --agent dev @:codex   # Pick a specific harness
 clawker container create --agent test @
 ```
 
@@ -412,7 +412,7 @@ Once the stack is up:
 
 ## Roadmap / Known Issues
 
-- More shipped harness bundles are on the way (opencode, pi) — and you can register your own bundle today
+- More shipped harness bundles are on the way (opencode, pi) — and you can author your own bundle today
 - Linux works but hasn't been exercised as extensively as macOS
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen) for current known issues and limitations.

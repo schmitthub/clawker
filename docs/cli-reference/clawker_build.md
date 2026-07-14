@@ -46,7 +46,7 @@ clawker build [OPTIONS] [flags]
       --progress string         Set type of progress output (auto, plain, tty, none) (default "auto")
       --pull                    Always attempt to pull a newer version of the base image
   -q, --quiet                   Suppress the build output
-  -t, --tag stringArray         Registered harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)
+  -t, --tag stringArray         Harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)
       --target string           Set the target build stage to build
 ```
 

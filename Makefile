@@ -92,14 +92,14 @@ help:
 	@echo "  restart             Full rebuild + nuke firewall stack containers/images for clean restart"
 	@echo ""
 	@echo "Release targets:"
-	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
+	@echo "  release             Tag and push a release (VERSION=v2026.7.0 MESSAGE=\"...\" required)"
 	@echo "  release-embeds      Cross-compile linux/amd64+arm64 embed sets (go build; bpf2go"
 	@echo "                      native on Linux, Docker on macOS), staged under embeds/."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
 	@echo "  make test"
-	@echo "  make release VERSION=v0.7.6 MESSAGE=\"my release\""
+	@echo "  make release VERSION=v2026.7.0 MESSAGE=\"my release\""
 
 # ============================================================================
 # Clawker Build Targets
@@ -827,9 +827,9 @@ restart: clawker-clean clawker
 # ============================================================================
 
 # Create and push an annotated tag to trigger the release workflow.
-# Usage: make release VERSION=v0.7.6 MESSAGE="description of release"
+# Usage: make release VERSION=v2026.7.0 MESSAGE="description of release"
 release:
-	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=v0.7.6 MESSAGE=\"...\""; exit 1; fi
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=v2026.7.0 MESSAGE=\"...\""; exit 1; fi
 	@if [ -z "$(MESSAGE)" ]; then echo "MESSAGE is required"; exit 1; fi
 	@if ! echo "$(VERSION)" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?$$'; then echo "Invalid semver: $(VERSION)"; exit 1; fi
 	@if [ -n "$$(git status --porcelain)" ]; then echo "Working tree dirty — commit or stash first"; exit 1; fi

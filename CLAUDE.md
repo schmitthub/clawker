@@ -141,7 +141,7 @@ See `docs/cli-reference/` for auto-generated command reference.
 
 ```yaml
 build:
-  image: "buildpack-deps:bookworm-scm"
+  harness: "claude"
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
