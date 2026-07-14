@@ -247,6 +247,10 @@ security:
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /tekwizely/pre-commit-golang
+          - action: allow
+            path: ~/addyosmani/agent-skills(/.*)?
+          - action: allow
+            path: ~/obra/superpowers(/.*)?
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -280,6 +284,15 @@ security:
             path: /gists
           - action: deny
             path: /repos/
+        port: 443
+        proto: https
+      - action: allow
+        dst: learn.chatgpt.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /docs/
         port: 443
         proto: https
       - action: allow
@@ -327,6 +340,10 @@ security:
             path: /contributor-assistant/github-action/
           - action: allow
             path: /buildpacks/spec/
+          - action: allow
+            path: /addyosmani/agent-skills/
+          - action: allow
+            path: /obra/superpowers/
         port: 443
         proto: https
       - action: allow
