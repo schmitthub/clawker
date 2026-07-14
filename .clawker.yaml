@@ -143,6 +143,9 @@ build:
     - nghttp2-client
     - netcat-openbsd
     - cmake
+monitor:
+    extensions:
+      - claude-code
 security:
   docker_socket: false
   firewall:
