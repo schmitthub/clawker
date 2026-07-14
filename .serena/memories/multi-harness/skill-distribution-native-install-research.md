@@ -55,6 +55,8 @@ Sources: deepwiki grounded in openai/codex, anomalyco/opencode, earendil-works/p
 
 ## Additional initiative work items (user-added)
 
+- **Re-apply multi-harness plugin packaging** (reverted off the PR at 4b469931 + 28418ead to keep the plugin Claude Code-specific + marketplace-deployable): dir rename to a harness-neutral name, pi `package.json` manifest, multi-harness plugin-root CLAUDE.md/README wording, and per-harness manifests all belong to this initiative. NOTE: the restored Dockerfile-template drift enforcement (mirrored templates + plugin.yml CI + pre-commit hook) is a hard requirement the migration must carry forward — raw-URL fetching was rejected because it reads refs/heads/main and skews against the pinned plugin release.
+
 - **Restore an authoring skill (new model)**: the `harness-stack-dev` skill was deleted on-branch (32707187b) because it taught the rejected registry/walkup design; today authoring coverage = single clawker-support skill routing to live `docs.clawker.dev/authoring-*` pages. Initiative should add a rewritten bundle/harness/stack/monitoring-extension AUTHORING skill into the clawker-support plugin (plugins are skill collections — goes INTO the existing plugin, no sibling plugin). User ruled 2026-07-14: not this PR, requirement of this initiative.
 - Cosmetic: marketplace.json `description` is never synced by update-plugin.yml (only sha+version) — stale blurb vs plugin.json; hand-edit or teach the workflow during migration.
 
