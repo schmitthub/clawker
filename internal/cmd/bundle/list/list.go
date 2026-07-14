@@ -211,10 +211,14 @@ func orDash(s string) string {
 
 // printStatusHints writes the actionable declaration↔cache states to stderr in
 // every output mode: a declared-but-uncached source (install it), a cached
-// bundle with no live declaration (re-declare or purge), and a hand-placed
-// cache entry that can never resolve (purge).
+// entry no declaration addresses (prune, or re-declare — hinted once per
+// identity, since the identity may have several stranded values and may still
+// be installed via another one, which is why the hint never suggests
+// `bundle remove`: that purges the whole identity, serving entry included),
+// and a hand-placed cache entry that can never resolve (purge).
 func printStatusHints(ios *iostreams.IOStreams, statuses []bundle.Status) {
 	cs := ios.ColorScheme()
+	staleHinted := map[bundle.BundleID]bool{}
 	for _, s := range statuses {
 		switch s.State {
 		case bundle.StatusNotInstalled:
@@ -226,11 +230,14 @@ func printStatusHints(ios *iostreams.IOStreams, statuses []bundle.Status) {
 				s.File,
 			)
 		case bundle.StatusUndeclared:
+			if staleHinted[s.ID] {
+				continue
+			}
+			staleHinted[s.ID] = true
 			fmt.Fprintf(
 				ios.ErrOut,
-				"%s bundle %s is cached but no longer declared — re-declare it to reactivate, or `clawker bundle remove %s`\n",
+				"%s bundle %s has cached content no declaration addresses — run `clawker bundle prune` to clear it, or re-declare the source to reactivate it\n",
 				cs.WarningIcon(),
-				s.ID,
 				s.ID,
 			)
 		case bundle.StatusUnmanaged:

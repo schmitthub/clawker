@@ -130,7 +130,7 @@ func unresolvableCacheStatuses(
 		}
 		rows = append(rows, Status{
 			ID: e.ID, Source: receipt.Canonical, File: "",
-			Tier: TierInstalled, Version: "", State: StatusUndeclared,
+			Tier: TierInstalled, Version: receipt.Version, State: StatusUndeclared,
 		})
 	}
 	return rows

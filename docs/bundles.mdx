@@ -152,7 +152,9 @@ The cache is keyed by the declared source value in its entirety — url, pin, an
 subdirectory — so the edited entry fetches into its own fresh cache slot and a
 declaration can never pick up content fetched from a different value. Anything
 still declaring the old value (another project sharing the host cache) keeps
-resolving its own slot; stale slots stay on disk until `clawker bundle remove`.
+resolving its own slot; a slot no declaration addresses anymore is cleaned up
+automatically the next time that bundle is installed or updated (see
+[Pruning](#pruning)).
 
 <Note>
   Clawker keeps no lockfile and never rewrites your `clawker.yaml`. A `ref`
@@ -186,6 +188,40 @@ clawker bundle rm acme.tools      # short form
 Removal only purges the cache — it does not edit any `clawker.yaml`. A bundle
 that is still declared refetches on the next `clawker bundle install`; remove
 tells you when that is the case.
+
+## Pruning
+
+Because the cache is value-keyed, every declaration edit — a ref bump, an
+ssh↔https url swap, a removed `bundles:` entry — leaves the old slot behind.
+Clawker reclaims those slots against an exact liveness rule: a cache entry
+survives only while some declaration's exact source value addresses it, across
+the current project, the user config, and **every registered project**
+(worktrees included). There are no timeouts or size budgets — an entry another
+project still declares is never touched, and anything collected wrongly is
+just cache, restored by a single refetch.
+
+Reclamation happens in two ways:
+
+- **Automatically** — installing or updating a bundle reconciles that bundle's
+  own slots, so the routine flow never accumulates strays.
+- **`clawker bundle prune`** — sweeps the whole cache and reports every removed
+  entry:
+
+```bash
+clawker bundle prune
+```
+
+Hand-placed cache entries (content that was never fetched from a declared
+source) are never pruned — they are not refetchable; purge those explicitly
+with `clawker bundle remove`.
+
+<Warning>
+  When one bundle identity is cached from two or more **different
+  repositories** across your projects, prune lists them all with their
+  declaring files. That is legitimate during a fork migration, but it is also
+  what a look-alike repository shipping someone else's bundle identity looks
+  like — verify every listed repository is one you trust.
+</Warning>
 
 ## Enabling and disabling
 

@@ -31,6 +31,11 @@ const lockTimeout = 10 * time.Second
 // lockRetryInterval is the poll interval while waiting for the per-bundle lock.
 const lockRetryInterval = 100 * time.Millisecond
 
+// lockSuffix is appended to an entry directory path to name its advisory lock
+// file — shared by the commit path (withBundleLock) and the GC removal path,
+// which must address the same file.
+const lockSuffix = ".lock"
+
 // fetchIntoCache clones a remote source into a staging area, validates its
 // manifest before any commit, and atomically commits the content into the
 // value-keyed cache entry for the declared source
@@ -107,7 +112,20 @@ type commitInputs struct {
 }
 
 // commit takes the per-entry lock and performs the cache commit under it.
+// A concurrent GC of a SIBLING key can empty and remove the shared identity
+// directory between the MkdirAll and the lock/rename (cleanEmptyIdentityDirs
+// holds no identity-level lock), surfacing as a not-exist error — one retry
+// recreates the parent and commits cleanly.
 func commit(ctx context.Context, c commitInputs) error {
+	err := commitAttempt(ctx, c)
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
+		return commitAttempt(ctx, c)
+	}
+	return err
+}
+
+// commitAttempt is one parent-mkdir + lock + commit pass.
+func commitAttempt(ctx context.Context, c commitInputs) error {
 	if err := os.MkdirAll(filepath.Dir(c.entryDir), cacheDirPerm); err != nil {
 		return fmt.Errorf("create bundle cache dir: %w", err)
 	}
@@ -219,7 +237,7 @@ func resolveVersion(manifestVersion, resolvedSHA string) (string, error) {
 // entry, mirroring the storage write lock so concurrent installs of the same
 // declared value serialize.
 func withBundleLock(ctx context.Context, entryDir string, fn func() error) error {
-	fl := flock.New(entryDir + ".lock")
+	fl := flock.New(entryDir + lockSuffix)
 	lockCtx, cancel := context.WithTimeout(ctx, lockTimeout)
 	defer cancel()
 	locked, err := fl.TryLockContext(lockCtx, lockRetryInterval)

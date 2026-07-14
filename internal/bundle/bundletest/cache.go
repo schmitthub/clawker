@@ -25,11 +25,20 @@ const handPlacedKey = "handplaced00"
 // "stacks/x/stack.yaml" → "description: x\n".
 func PlantCachedBundle(t *testing.T, ns, name, version, url string, components map[string]string) {
 	t.Helper()
+	PlantCachedBundleSource(t, ns, name, version,
+		bundle.Source{URL: url, Ref: "v1", SHA: "", Path: ""}, components)
+}
+
+// PlantCachedBundleSource is PlantCachedBundle for an arbitrary source value:
+// the entry lands at the exact key the given source digests to, with a receipt
+// for its canonical form. An empty-URL source plants a hand-placed (unmanaged)
+// entry with no receipt.
+func PlantCachedBundleSource(t *testing.T, ns, name, version string, src bundle.Source, components map[string]string) {
+	t.Helper()
 	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	src := bundle.Source{URL: url, Ref: "v1", SHA: "", Path: ""}
 	key := handPlacedKey
-	if url != "" {
+	if src.URL != "" {
 		key = src.Key()
 	}
 	entryRoot := filepath.Join(cacheRoot, ns, name, key)
@@ -41,7 +50,7 @@ func PlantCachedBundle(t *testing.T, ns, name, version, url string, components m
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	}
-	if url == "" {
+	if src.URL == "" {
 		return
 	}
 	require.NoError(t, os.WriteFile(

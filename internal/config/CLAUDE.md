@@ -32,7 +32,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors. Also `BundleDeclarationsAt(root)` — bundle declarations of ONE project root without a full config load (dual-placement probe of the root's project + local files, bundles-node validation only): the loader behind the bundle cache's GC roots, which union every REGISTERED project's declared source values |
 | `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods; `EgressRule` + egress vocabulary consts |
 | `harness_schema.go` | Harness `harness.yaml` manifest shape (`Manifest`, `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`) + closed-vocabulary consts (resolvers, seed-apply tokens, JSON-rewrite kinds). Parsed here; loaded/validated/rendered by `internal/bundler` |

@@ -163,7 +163,18 @@ func installDeclared(ctx context.Context, opts *InstallOptions) error {
 	if len(installed) == 0 {
 		fmt.Fprintf(ios.ErrOut, "%s all declared bundles are already installed\n", ios.ColorScheme().InfoIcon())
 	}
+	// Installing is the moment a declaration edit strands its old entry —
+	// reconcile the touched identities' cache siblings against the roots.
+	printGCWarnings(ios, mgr.AutoGC(ctx, installed...))
 	return nil
+}
+
+// printGCWarnings writes the cache-maintenance advisories (removed stale
+// entries, skipped maintenance) to stderr.
+func printGCWarnings(ios *iostreams.IOStreams, warnings []bundle.Warning) {
+	for _, w := range warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", ios.ColorScheme().InfoIcon(), w.Message)
+	}
 }
 
 // prefetch fetches the just-declared source into the cache. A fetch failure
@@ -176,12 +187,14 @@ func prefetch(ctx context.Context, opts *InstallOptions, src config.BundleSource
 		fmt.Fprintf(ios.ErrOut, "%s loading bundle manager: %v\n", ios.ColorScheme().WarningIcon(), err)
 		return
 	}
-	if fetchErr := mgr.Install(ctx, src); fetchErr != nil {
+	id, fetchErr := mgr.Install(ctx, src)
+	if fetchErr != nil {
 		fmt.Fprintf(ios.ErrOut, "%s declared, but fetch failed: %v\n", ios.ColorScheme().WarningIcon(), fetchErr)
 		return
 	}
 	if !bundle.SourceFromConfig(src).IsLocal() {
-		fmt.Fprintf(ios.Out, "Fetched bundle content into the cache\n")
+		fmt.Fprintf(ios.Out, "Fetched %s into the cache\n", id)
+		printGCWarnings(ios, mgr.AutoGC(ctx, id))
 	}
 }
 

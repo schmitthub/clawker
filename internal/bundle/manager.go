@@ -21,11 +21,35 @@ type Manager struct {
 	cfg      config.Config
 	resolver *Resolver
 	fetcher  fetch.Fetcher
+	// registeredRoots lists every registered project root (and worktree
+	// path) whose declarations count as cache GC roots; nil disables GC
+	// entirely (see WithRegisteredRoots).
+	registeredRoots RegisteredRootsFn
+}
+
+// RegisteredRootsFn lists the project roots (including worktree paths) the
+// host registry knows, so the bundle cache's GC roots can union every
+// registered project's declarations — not just the current one's.
+type RegisteredRootsFn func(ctx context.Context) ([]string, error)
+
+// ManagerOption customizes a Manager at construction.
+type ManagerOption func(*Manager)
+
+// WithRegisteredRoots wires the registered-project-roots provider that makes
+// cache GC possible. A Manager constructed without it never collects anything:
+// AutoGC is a silent no-op and Prune refuses — fail-closed, since a roots
+// union missing registered projects would collect entries they still declare.
+func WithRegisteredRoots(fn RegisteredRootsFn) ManagerOption {
+	return func(m *Manager) { m.registeredRoots = fn }
 }
 
 // NewManager constructs a Manager bound to cfg with the production git fetcher.
-func NewManager(cfg config.Config) *Manager {
-	return &Manager{cfg: cfg, resolver: NewResolver(cfg), fetcher: fetch.NewFetcher()}
+func NewManager(cfg config.Config, opts ...ManagerOption) *Manager {
+	m := &Manager{cfg: cfg, resolver: NewResolver(cfg), fetcher: fetch.NewFetcher(), registeredRoots: nil}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // Resolver returns the manager's component resolver, used by listing surfaces
@@ -100,19 +124,20 @@ func (m *Manager) Remove(id BundleID) (bool, error) {
 	return true, nil
 }
 
-// Install fetches a declared bundle source into the host cache. A local in-place
-// (path-only) source is loaded directly from disk and never cached, so Install
-// is a no-op for it. A remote source is cloned, its manifest validated, and its
-// content committed atomically into the value-keyed entry for the declared
-// source (<cacheRoot>/<namespace>/<name>/<sourceKey>/). A fetch or validation
-// failure leaves any previously cached entry untouched.
-func (m *Manager) Install(ctx context.Context, src config.BundleSource) error {
+// Install fetches a declared bundle source into the host cache and returns the
+// fetched identity (zero for a local in-place source, which is loaded directly
+// from disk and never cached — Install is a no-op for it). A remote source is
+// cloned, its manifest validated, and its content committed atomically into
+// the value-keyed entry for the declared source
+// (<cacheRoot>/<namespace>/<name>/<sourceKey>/). A fetch or validation failure
+// leaves any previously cached entry untouched.
+func (m *Manager) Install(ctx context.Context, src config.BundleSource) (BundleID, error) {
 	s := SourceFromConfig(src)
 	if s.IsLocal() {
-		return nil
+		return BundleID{}, nil
 	}
-	_, _, err := m.fetchIntoCache(ctx, s)
-	return err
+	id, _, err := m.fetchIntoCache(ctx, s)
+	return id, err
 }
 
 // InstallDeclared fetches every declared-but-uncached remote bundle. It returns

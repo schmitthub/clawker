@@ -344,8 +344,14 @@ func (c *configImpl) ProjectEgressRules() []EgressRule {
 // load, so no per-layer decode can fail here. The union-merged
 // Project().Bundles snapshot cannot carry this per-entry file provenance.
 func (c *configImpl) BundleDeclarations() []BundleDeclaration {
+	return declarationsFromLayers(c.project.Layers())
+}
+
+// declarationsFromLayers projects the bundles: node of each layer (highest
+// priority first) into per-file declarations.
+func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
 	var decls []BundleDeclaration
-	for _, layer := range c.project.Layers() {
+	for _, layer := range layers {
 		raw, ok := layer.Data["bundles"]
 		if !ok || raw == nil {
 			continue
@@ -366,6 +372,32 @@ func (c *configImpl) BundleDeclarations() []BundleDeclaration {
 		}
 	}
 	return decls
+}
+
+// BundleDeclarationsAt loads the bundle declarations of one project root
+// WITHOUT a full config load: it probes root with the same dual placement a
+// walk-up level gets (.clawker/ dir form first, then flat dotted files) for
+// the project and local-override config files, validates only their bundles:
+// nodes, and projects the declarations. It exists for the bundle cache's GC
+// roots, which must union the declared source values of every REGISTERED
+// project — not just the one the current process runs in. A missing root or a
+// root with no config files contributes nothing; an unparseable file or a
+// malformed bundles: node is an error (roots must be computable before
+// anything is collected), while mistakes in unrelated keys are ignored.
+func BundleDeclarationsAt(root string) ([]BundleDeclaration, error) {
+	store, err := storage.New[Project]("",
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
+		storage.WithDirs(root),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("config: loading project config at %s: %w", root, err)
+	}
+	for _, layer := range store.Layers() {
+		if vErr := validateBundlesNode(layer); vErr != nil {
+			return nil, fmt.Errorf("config: validating bundles at %s: %w", root, vErr)
+		}
+	}
+	return declarationsFromLayers(store.Layers()), nil
 }
 
 // bundleSourceFromMap projects a decoded bundles[] map entry into a typed

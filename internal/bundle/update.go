@@ -145,16 +145,23 @@ func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
 	}
 
 	var warnings []Warning
+	var refetched []BundleID
 	for _, src := range m.autoUpdateSources() {
 		entry, cached := byKey[src.Key()]
 		if !cached {
 			continue
 		}
-		if w, emit := autoUpdateWarning(m.updateOne(ctx, src, entry, true)); emit {
+		result := m.updateOne(ctx, src, entry, true)
+		if w, emit := autoUpdateWarning(result); emit {
 			warnings = append(warnings, w)
 		}
+		if result.Outcome == UpdateRefetched {
+			refetched = append(refetched, result.ID)
+		}
 	}
-	return warnings
+	// A refetch means a declaration moved — reconcile the touched identities'
+	// stranded siblings against the roots while we're here (see AutoGC).
+	return append(warnings, m.AutoGC(ctx, refetched...)...)
 }
 
 // autoUpdateSources lists the declared sources eligible for auto-update —

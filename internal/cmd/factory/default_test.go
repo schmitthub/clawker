@@ -1,10 +1,15 @@
 package factory
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/connectivity"
+
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 )
 
 func TestNew(t *testing.T) {
@@ -53,5 +58,37 @@ func TestAdminClientKeepaliveParams(t *testing.T) {
 	}
 	if adminClientKeepalive.PermitWithoutStream {
 		t.Error("adminClientKeepalive.PermitWithoutStream = true, want false")
+	}
+}
+
+// TestRegisteredRootsFn pins the bundle-GC roots provider: every registered
+// project root AND every worktree path must be listed — dropping the worktree
+// loop would silently narrow the roots union, and a prune would collect cache
+// entries only a worktree checkout's clawker.yaml declares.
+func TestRegisteredRootsFn(t *testing.T) {
+	pm := projectmocks.NewMockProjectManager()
+	pm.ListFunc = func(context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
+			{Name: "alpha", Root: "/repos/alpha", Worktrees: map[string]project.WorktreeEntry{
+				"feature": {Path: "/worktrees/alpha-feature", Branch: "feature"},
+			}},
+			{Name: "beta", Root: "/repos/beta", Worktrees: nil},
+		}, nil
+	}
+	f := &cmdutil.Factory{} //nolint:exhaustruct // only ProjectManager is consulted
+	f.ProjectManager = func() (project.ProjectManager, error) { return pm, nil }
+
+	roots, err := registeredRootsFn(f)(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]bool{"/repos/alpha": true, "/worktrees/alpha-feature": true, "/repos/beta": true}
+	if len(roots) != len(want) {
+		t.Fatalf("expected %d roots, got %v", len(want), roots)
+	}
+	for _, r := range roots {
+		if !want[r] {
+			t.Errorf("unexpected root %q in %v", r, roots)
+		}
 	}
 }

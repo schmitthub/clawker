@@ -66,6 +66,11 @@ func TestBundleList_BundleStatusRows(t *testing.T) {
 	testenv.New(t)
 	plantCachedBundle(t, "acme", "tools", "1.0.0", "https://example.com/acme/tools.git")
 	plantCachedBundle(t, "acme", "extra", "2.0.0", "https://example.com/acme/extra.git")
+	// A second stranded value of the SAME identity — the hint must not repeat
+	// per entry.
+	bundletest.PlantCachedBundleSource(t, "acme", "extra", "2.1.0",
+		bundle.Source{URL: "https://example.com/acme/extra.git", Ref: "v2", SHA: "", Path: ""},
+		map[string]string{"stacks/x/stack.yaml": "description: x\n"})
 	plantCachedBundle(t, "hand", "placed", "0.1.0", "")
 
 	cfg := configmocks.NewBlankConfig()
@@ -87,13 +92,22 @@ func TestBundleList_BundleStatusRows(t *testing.T) {
 	assert.Contains(t, stdout, "cached, not declared")
 	assert.Contains(t, stdout, "cached, unmanaged (no source metadata)")
 	assert.Contains(t, stdout, "declared, not installed")
+	// Cached-but-undeclared rows show their receipt's display version.
+	assert.Contains(t, stdout, "2.0.0")
+	assert.Contains(t, stdout, "2.1.0")
 	// No component rows — components belong to the per-type inventory commands.
 	assert.NotContains(t, stdout, "acme.tools.x")
 	assert.NotContains(t, stdout, "built-in")
 
 	stderr := errOut.String()
 	assert.Contains(t, stderr, "is not installed — run `clawker bundle install`")
-	assert.Contains(t, stderr, "bundle acme.extra is cached but no longer declared")
+	// ONE stale hint per identity — not one per stranded entry — pointing at
+	// prune (the identity may still be installed via another value, so a
+	// `bundle remove` remedy would purge the serving entry too).
+	assert.Equal(t, 1, strings.Count(stderr, "acme.extra"),
+		"stale hint must be deduplicated per identity:\n%s", stderr)
+	assert.Contains(t, stderr, "bundle acme.extra has cached content no declaration addresses")
+	assert.Contains(t, stderr, "clawker bundle prune")
 	assert.Contains(t, stderr, "bundle hand.placed is cached without source metadata")
 }
 

@@ -2,6 +2,7 @@ package install_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,17 +21,17 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// seedBundle authors a minimal single-stack bundle in the fixture and returns
-// its http clone URL.
-func seedBundle(t *testing.T, srv *bundletest.Server, name string) string {
+// seedBundle authors a minimal single-stack acme.tools bundle in the fixture
+// and returns its http clone URL.
+func seedBundle(t *testing.T, srv *bundletest.Server) string {
 	t.Helper()
-	repo := srv.InitRepo(t, name)
+	repo := srv.InitRepo(t, "tools")
 	repo.Commit(t, "init", map[string]string{
-		".clawker-bundle/bundle.yaml": "namespace: acme\nname: " + name + "\nversion: 1.0.0\n",
+		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 1.0.0\n",
 		"stacks/node/stack.yaml":      "description: node\n",
 	})
 	repo.Tag(t, "v1.0.0")
-	return srv.HTTPURL(name)
+	return srv.HTTPURL("tools")
 }
 
 // newFactory builds a Factory whose Config and BundleManager load a fresh
@@ -63,7 +64,11 @@ func newFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 			if err != nil {
 				return nil, err
 			}
-			return bundle.NewManager(cfg), nil
+			// A no-registered-projects roots provider: GC is ON, rooted by the
+			// current (testenv-isolated) config's declarations alone — exactly
+			// the production wiring on a host with an empty registry.
+			return bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+				func(context.Context) ([]string, error) { return nil, nil })), nil
 		},
 	}
 	return f, out, errOut
@@ -79,13 +84,13 @@ func run(t *testing.T, f *cmdutil.Factory, args ...string) error {
 func TestInstall_WritesUserLayerAndFetches(t *testing.T) {
 	testenv.New(t)
 	srv := bundletest.New(t)
-	url := seedBundle(t, srv, "tools")
+	url := seedBundle(t, srv)
 	f, out, _ := newFactory(t)
 
 	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
 
 	assert.Contains(t, out.String(), "Declared bundle source")
-	assert.Contains(t, out.String(), "Fetched bundle content")
+	assert.Contains(t, out.String(), "Fetched acme.tools into the cache")
 
 	path, err := consts.UserProjectConfigFilePath()
 	require.NoError(t, err)
@@ -105,7 +110,7 @@ func TestInstall_WritesUserLayerAndFetches(t *testing.T) {
 func TestInstall_Idempotent(t *testing.T) {
 	testenv.New(t)
 	srv := bundletest.New(t)
-	url := seedBundle(t, srv, "tools")
+	url := seedBundle(t, srv)
 	f, _, errOut := newFactory(t)
 
 	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
@@ -148,12 +153,12 @@ func TestInstall_ProjectFlagOutsideProject_Errors(t *testing.T) {
 func TestInstall_RemoteUnpinned_TracksDefaultBranch(t *testing.T) {
 	testenv.New(t)
 	srv := bundletest.New(t)
-	url := seedBundle(t, srv, "tools")
+	url := seedBundle(t, srv)
 	f, out, _ := newFactory(t)
 
 	require.NoError(t, run(t, f, url))
 	assert.Contains(t, out.String(), "Declared bundle source")
-	assert.Contains(t, out.String(), "Fetched bundle content")
+	assert.Contains(t, out.String(), "Fetched acme.tools into the cache")
 
 	// The written entry carries the url and no pin.
 	cfg, err := config.NewConfig()
@@ -173,4 +178,32 @@ func TestInstall_RemoteUnpinned_TracksDefaultBranch(t *testing.T) {
 	require.NoError(t, err)
 	key := bundle.Source{URL: url, Ref: "", SHA: "", Path: ""}.Key()
 	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", key, "stacks", "node", "stack.yaml"))
+}
+
+// TestInstall_AutoGCReconcilesEditedDeclaration proves the install verb's
+// cache-maintenance half end to end: a declaration whose pin was edited leaves
+// its OLD value-keyed entry stranded, and installing the new value collects it
+// — the headline "edited ref no longer grows the cache forever" flow.
+func TestInstall_AutoGCReconcilesEditedDeclaration(t *testing.T) {
+	testenv.New(t)
+	srv := bundletest.New(t)
+	url := seedBundle(t, srv)
+
+	// The entry a pre-edit declaration ({url, ref v0}) left behind. Nothing
+	// declares this value anymore.
+	stranded := bundle.Source{URL: url, Ref: "v0", SHA: "", Path: ""}
+	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stranded,
+		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+
+	f, _, errOut := newFactory(t)
+	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
+
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(cacheRoot, "acme", "tools", stranded.Key()),
+		"install must reconcile the installed identity's stranded siblings")
+	live := bundle.Source{URL: url, Ref: "v1.0.0", SHA: "", Path: ""}
+	assert.DirExists(t, filepath.Join(cacheRoot, "acme", "tools", live.Key()))
+	assert.Contains(t, errOut.String(), "removed stale cache entry of acme.tools")
+	assert.Contains(t, errOut.String(), stranded.Key())
 }

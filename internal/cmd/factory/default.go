@@ -81,7 +81,8 @@ func New(version string) *cmdutil.Factory {
 // bundleManagerFunc returns a lazy constructor for the bundle-model facade. It
 // resolves the loaded config once (sync.Once-cached) and binds a Manager to it;
 // the Manager's resolver reads the embedded floor, the loose convention dirs,
-// and the host bundle cache on demand. Depends only on Config.
+// and the host bundle cache on demand. Depends on Config, plus ProjectManager
+// (lazily, per GC pass) for the cache GC roots.
 func bundleManagerFunc(f *cmdutil.Factory) func() (*bundle.Manager, error) {
 	var (
 		once sync.Once
@@ -96,9 +97,34 @@ func bundleManagerFunc(f *cmdutil.Factory) func() (*bundle.Manager, error) {
 				err = fmt.Errorf("bundle manager: loading config: %w", err)
 				return
 			}
-			mgr = bundle.NewManager(cfg)
+			mgr = bundle.NewManager(cfg, bundle.WithRegisteredRoots(registeredRootsFn(f)))
 		})
 		return mgr, err
+	}
+}
+
+// registeredRootsFn lists every registered project root and worktree path —
+// the directories whose declarations count as bundle cache GC roots. Resolved
+// lazily per GC pass so the registry read happens only when a prune or an
+// install/update auto-GC actually runs.
+func registeredRootsFn(f *cmdutil.Factory) bundle.RegisteredRootsFn {
+	return func(ctx context.Context) ([]string, error) {
+		pm, err := f.ProjectManager()
+		if err != nil {
+			return nil, fmt.Errorf("bundle GC roots: loading project manager: %w", err)
+		}
+		entries, err := pm.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("bundle GC roots: listing registered projects: %w", err)
+		}
+		var roots []string
+		for _, e := range entries {
+			roots = append(roots, e.Root)
+			for _, wt := range e.Worktrees {
+				roots = append(roots, wt.Path)
+			}
+		}
+		return roots, nil
 	}
 }
 

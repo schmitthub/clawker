@@ -174,3 +174,90 @@ func TestValidateBundles_NullNode(t *testing.T) {
 	_, err := config.NewFromString("bundles:\n", "")
 	require.NoError(t, err)
 }
+
+// TestBundleDeclarationsAt covers the roots-side declaration loader: reading
+// one registered project root's bundle declarations without a full config
+// load, using the same dual-placement discovery a walk-up level gets (a
+// .clawker/ dir form, or flat dotted files). It is what makes the bundle
+// cache's GC roots exact across projects the current process is not running
+// in.
+func TestBundleDeclarationsAt(t *testing.T) {
+	t.Run("flat dotted main and local files both contribute", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/main.git\n    ref: v1\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectLocalConfigFile),
+			[]byte("bundles:\n  - url: https://x/local.git\n"), 0o644))
+
+		decls, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		require.Len(t, decls, 2)
+		// Local override layer outranks the main file, mirroring config load
+		// order; each declaration names its actual declaring file.
+		assert.Equal(t, "https://x/local.git", decls[0].Source.URL)
+		assert.Equal(t, filepath.Join(root, "."+consts.ProjectLocalConfigFile), decls[0].File)
+		assert.Equal(t, "https://x/main.git", decls[1].Source.URL)
+		assert.Equal(t, "v1", decls[1].Source.Ref)
+	})
+
+	t.Run("dir-form .clawker/clawker.yaml contributes", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, consts.DotClawkerDir), 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(root, consts.DotClawkerDir, consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/dirform.git\n    auto_update: true\n"), 0o644))
+
+		decls, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		require.Len(t, decls, 1)
+		assert.Equal(t, "https://x/dirform.git", decls[0].Source.URL)
+		assert.True(t, decls[0].Source.AutoUpdate)
+	})
+
+	t.Run("missing root yields no declarations and no error", func(t *testing.T) {
+		decls, err := config.BundleDeclarationsAt(filepath.Join(t.TempDir(), "gone"))
+		require.NoError(t, err)
+		assert.Empty(t, decls)
+	})
+
+	t.Run("root without config files yields no declarations", func(t *testing.T) {
+		decls, err := config.BundleDeclarationsAt(t.TempDir())
+		require.NoError(t, err)
+		assert.Empty(t, decls)
+	})
+
+	t.Run("malformed bundles node fails naming the root", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
+			[]byte("bundles: notalist\n"), 0o644))
+
+		_, err := config.BundleDeclarationsAt(root)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), root)
+	})
+
+	t.Run("malformed bundle entry fails naming the file", func(t *testing.T) {
+		// A shape the struct decode tolerates but the bundles validator
+		// rejects — roots must be computable before anything is collected.
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - path: ./b\n    ref: main\n"), 0o644))
+
+		_, err := config.BundleDeclarationsAt(root)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ref and sha require a url")
+	})
+
+	t.Run("unrelated invalid keys elsewhere do not block declarations", func(t *testing.T) {
+		// GC roots need only the bundles node; a foreign project's mistake in
+		// an unrelated key must not make every prune fail.
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
+			[]byte("build:\n  harness: \"NOT/valid ref\"\nbundles:\n  - url: https://x/y.git\n"), 0o644))
+
+		decls, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		require.Len(t, decls, 1)
+		assert.Equal(t, "https://x/y.git", decls[0].Source.URL)
+	})
+}

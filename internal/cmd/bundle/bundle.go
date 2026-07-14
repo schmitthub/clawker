@@ -11,6 +11,7 @@ import (
 
 	installcmd "github.com/schmitthub/clawker/internal/cmd/bundle/install"
 	listcmd "github.com/schmitthub/clawker/internal/cmd/bundle/list"
+	prunecmd "github.com/schmitthub/clawker/internal/cmd/bundle/prune"
 	removecmd "github.com/schmitthub/clawker/internal/cmd/bundle/remove"
 	updatecmd "github.com/schmitthub/clawker/internal/cmd/bundle/update"
 	validatecmd "github.com/schmitthub/clawker/internal/cmd/bundle/validate"
@@ -41,6 +42,7 @@ and loose convention directories provide bare-named components.`,
 
 	cmd.AddCommand(installcmd.NewCmdInstall(f, nil))
 	cmd.AddCommand(listcmd.NewCmdList(f, nil))
+	cmd.AddCommand(prunecmd.NewCmdPrune(f, nil))
 	cmd.AddCommand(removecmd.NewCmdRemove(f, nil))
 	cmd.AddCommand(updatecmd.NewCmdUpdate(f, nil))
 	cmd.AddCommand(validatecmd.NewCmdValidate(f, nil))

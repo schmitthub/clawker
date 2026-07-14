@@ -69,6 +69,18 @@ func (s Source) Key() string {
 	return hex.EncodeToString(sum[:])[:sourceKeyLen]
 }
 
+// repository returns the pin-stripped repo coordinate of a remote source —
+// the clone URL, plus the subdir for a monorepo bundle. It is a DISPLAY
+// grouping for the prune multi-source report only (two pins of one repository
+// are one repository); cache addressing stays Key() over the value in
+// totality.
+func (s Source) repository() string {
+	if s.Path == "" {
+		return s.URL
+	}
+	return s.URL + "//" + s.Path
+}
+
 // pin returns the declared pin segment: "sha:<sha>" (sha beats ref),
 // "ref:<ref>", or "" for an unpinned source tracking the default branch.
 func (s Source) pin() string {

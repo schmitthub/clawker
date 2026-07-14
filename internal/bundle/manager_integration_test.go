@@ -64,9 +64,7 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
-	ctx := context.Background()
-
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	entry := entryRoot(t, src)
 	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
@@ -78,7 +76,7 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 	assert.Equal(t, "acme.tools.node", comp.Address.String())
 
 	t.Run("reinstall of same source is idempotent", func(t *testing.T) {
-		require.NoError(t, mgr.Install(ctx, src))
+		mustInstall(t, mgr, src)
 		assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
 	})
 }
@@ -97,7 +95,7 @@ func TestManager_Install_Subdir(t *testing.T) {
 		URL: srv.HTTPURL("mono"), Ref: "v1.0.0", SHA: "", Path: "bundles/tools", AutoUpdate: false,
 	}
 	mgr := newManager(t, []config.BundleSource{src})
-	require.NoError(t, mgr.Install(context.Background(), src))
+	mustInstall(t, mgr, src)
 
 	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
 	require.NoError(t, err)
@@ -112,7 +110,7 @@ func TestManager_Install_SHAPin(t *testing.T) {
 	testenv.New(t)
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false}
 	mgr := managerForDecls(src)
-	require.NoError(t, mgr.Install(context.Background(), src))
+	mustInstall(t, mgr, src)
 
 	entry := entryRoot(t, src)
 	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))
@@ -142,10 +140,8 @@ func TestManager_Install_SameIdentityTwoSources(t *testing.T) {
 	srcA := config.BundleSource{URL: srv.HTTPURL("a"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	srcB := config.BundleSource{URL: srv.HTTPURL("b"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{srcA, srcB})
-	ctx := context.Background()
-
-	require.NoError(t, mgr.Install(ctx, srcA))
-	require.NoError(t, mgr.Install(ctx, srcB), "a second source of the same identity installs its own entry")
+	mustInstall(t, mgr, srcA)
+	mustInstall(t, mgr, srcB, "a second source of the same identity installs its own entry")
 	assert.DirExists(t, entryRoot(t, srcA))
 	assert.DirExists(t, entryRoot(t, srcB))
 
@@ -171,10 +167,8 @@ func TestManager_Install_RepinAddressesNewEntry(t *testing.T) {
 	v1 := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	v2 := config.BundleSource{URL: url, Ref: "v2.0.0", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{v2})
-	ctx := context.Background()
-
-	require.NoError(t, mgr.Install(ctx, v1))
-	require.NoError(t, mgr.Install(ctx, v2))
+	mustInstall(t, mgr, v1)
+	mustInstall(t, mgr, v2)
 
 	// Sibling entries; the live v2 declaration resolves its own entry's version.
 	assert.FileExists(t, filepath.Join(entryRoot(t, v1), "stacks", "node", "stack.yaml"))
@@ -206,10 +200,8 @@ func TestManager_MultiPinCoexistence(t *testing.T) {
 	v2 := config.BundleSource{URL: url, Ref: "v2.0.0", SHA: "", Path: "", AutoUpdate: false}
 	projectA := managerForDecls(v1)
 	projectB := managerForDecls(v2)
-	ctx := context.Background()
-
-	require.NoError(t, projectA.Install(ctx, v1))
-	require.NoError(t, projectB.Install(ctx, v2), "B's re-pin of the shared entry must not collide")
+	mustInstall(t, projectA, v1)
+	mustInstall(t, projectB, v2, "B's re-pin of the shared entry must not collide")
 
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
 	bundlesA, _, err := projectA.Resolver().Bundles()
@@ -243,15 +235,21 @@ func TestManager_Install_SubdirsAreDistinctSources(t *testing.T) {
 	one := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/one", AutoUpdate: false}
 	two := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/two", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{one, two})
-	ctx := context.Background()
-
-	require.NoError(t, mgr.Install(ctx, one))
-	require.NoError(t, mgr.Install(ctx, two))
+	mustInstall(t, mgr, one)
+	mustInstall(t, mgr, two)
 	assert.NotEqual(t, entryRoot(t, one), entryRoot(t, two))
 
 	_, _, err := mgr.Resolver().Bundles()
 	var collision *bundle.CollisionError
 	require.ErrorAs(t, err, &collision, "two declared subdirs shipping one identity must collide at resolve")
+}
+
+// mustInstall installs src and fails the test on error, discarding the
+// returned identity (the fixtures all ship acme.tools).
+func mustInstall(t *testing.T, mgr *bundle.Manager, src config.BundleSource, msgAndArgs ...any) {
+	t.Helper()
+	_, err := mgr.Install(context.Background(), src)
+	require.NoError(t, err, msgAndArgs...)
 }
 
 // managerForDecls wires a Manager over the CURRENT testenv (callers own the
@@ -278,7 +276,7 @@ func TestManager_Update_RefetchesOnDrift(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
 	entry := entryRoot(t, src)
@@ -333,7 +331,7 @@ func TestManager_AutoUpdateCheck_OptInOnly(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: true}
 	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	t.Run("no drift yields no warnings", func(t *testing.T) {
 		assert.Empty(t, mgr.AutoUpdateCheck(ctx))
@@ -358,7 +356,7 @@ func TestManager_AutoUpdateCheck_IgnoresUndeclaredOptIn(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	repo.Commit(t, "v2", bundleFiles("2.0.0"))
 
@@ -415,7 +413,7 @@ func TestManager_Install_InvalidManifestNoCommit(t *testing.T) {
 			repo.Tag(t, "v1.0.0")
 
 			mgr := newManager(t, nil)
-			err := mgr.Install(context.Background(), config.BundleSource{
+			_, err := mgr.Install(context.Background(), config.BundleSource{
 				URL: srv.HTTPURL("bad"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 			})
 			var manifestErr *bundle.ManifestError
@@ -436,7 +434,7 @@ func TestManager_Update_SHAPinStays(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	// The upstream moves on, but a sha-pinned source is reproducible: update
 	// leaves the pin untouched and fetches nothing new.
@@ -465,7 +463,7 @@ func TestManager_Install_UnreachableSource(t *testing.T) {
 	srv := bundletest.New(t)
 	// A repository that was never initialized on the server: the clone fails.
 	mgr := newManager(t, nil)
-	err := mgr.Install(context.Background(), config.BundleSource{
+	_, err := mgr.Install(context.Background(), config.BundleSource{
 		URL: srv.HTTPURL("nonexistent"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 	})
 	var srcErr *bundle.SourceError
@@ -491,7 +489,7 @@ func TestManager_UnpinnedTracksDefaultBranch(t *testing.T) {
 	ctx := context.Background()
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
 
-	require.NoError(t, mgr.Install(ctx, src))
+	mustInstall(t, mgr, src)
 
 	entry := entryRoot(t, src)
 	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"))

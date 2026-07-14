@@ -109,7 +109,8 @@ func TestBundleJourney_InstallToRender(t *testing.T) {
 			src := config.BundleSource{
 				URL: tp.url(srv), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 			}
-			require.NoError(t, mgr.Install(ctx, src))
+			_, insErr := mgr.Install(ctx, src)
+			require.NoError(t, insErr)
 
 			// Cache layout: the value-keyed entry
 			// <data>/bundles/<ns>/<name>/<sourceKey>/<convention>/... — content
@@ -155,9 +156,10 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	ctx := context.Background()
 
 	// Track a moving branch so the source is a ref (updatable), not a sha-pin.
-	require.NoError(t, mgr.Install(ctx, config.BundleSource{
+	_, insErr := mgr.Install(ctx, config.BundleSource{
 		URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false,
-	}))
+	})
+	require.NoError(t, insErr)
 
 	// The upstream vanishes, then update: the tip resolve fails but the
 	// fetched content is untouched.

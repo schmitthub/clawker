@@ -35,7 +35,7 @@ func TestManager_Statuses(t *testing.T) {
 		File:   filepath.Join(f.projectDir, "clawker.yaml"),
 	})
 
-	m := &Manager{cfg: f.cfg, resolver: f.r, fetcher: nil}
+	m := &Manager{cfg: f.cfg, resolver: f.r, fetcher: nil, registeredRoots: nil}
 	rows, err := m.Statuses()
 	require.NoError(t, err)
 
@@ -54,6 +54,8 @@ func TestManager_Statuses(t *testing.T) {
 	undeclared := byKey["other.extra|git:https://example.com/other/extra.git//@ref:v2"]
 	assert.Equal(t, StatusUndeclared, undeclared.State)
 	assert.Empty(t, undeclared.File)
+	assert.Equal(t, "2.0.0", undeclared.Version,
+		"an undeclared entry reports its receipt's display version, not a blank")
 
 	unmanaged := byKey["hand.placed|"]
 	assert.Equal(t, StatusUnmanaged, unmanaged.State)

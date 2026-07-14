@@ -2,15 +2,20 @@ package update_test
 
 import (
 	"bytes"
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	updatecmd "github.com/schmitthub/clawker/internal/cmd/bundle/update"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -70,4 +75,53 @@ func TestUpdate_InvalidIdentity(t *testing.T) {
 	err := run(t, f, "acme.tools.node")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, cmdutil.SilentError)
+}
+
+// TestUpdate_AutoGCReconcilesRefetchedIdentity proves the update verb's
+// cache-maintenance half end to end: when the tracked tip moves and the entry
+// refetches, the identity's stranded siblings (values nothing declares) are
+// collected and reported.
+func TestUpdate_AutoGCReconcilesRefetchedIdentity(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", map[string]string{
+		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"stacks/node/stack.yaml":      "description: node\n",
+	})
+
+	testenv.New(t)
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false}
+	cfg := configmocks.NewBlankConfig()
+	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration {
+		return []config.BundleDeclaration{{Source: src, File: "clawker.yaml"}}
+	}
+	mgr := bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+		func(context.Context) ([]string, error) { return nil, nil }))
+	_, err := mgr.Install(context.Background(), src)
+	require.NoError(t, err)
+
+	// A stranded sibling of the same identity, no longer declared anywhere.
+	stranded := bundle.Source{URL: srv.HTTPURL("tools"), Ref: "v0", SHA: "", Path: ""}
+	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stranded,
+		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+
+	// The tracked tip moves, so the update refetches — the AutoGC trigger.
+	repo.Commit(t, "v2", map[string]string{
+		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 2.0.0\n",
+	})
+
+	ios, _, out, errOut := iostreams.Test()
+	//nolint:exhaustruct // test factory carries only the nouns update uses
+	f := &cmdutil.Factory{
+		IOStreams:     ios,
+		BundleManager: func() (*bundle.Manager, error) { return mgr, nil },
+	}
+	require.NoError(t, run(t, f))
+
+	assert.Contains(t, out.String(), "updated to version 2.0.0")
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(cacheRoot, "acme", "tools", stranded.Key()),
+		"a refetch must reconcile the identity's stranded siblings")
+	assert.Contains(t, errOut.String(), "removed stale cache entry of acme.tools")
 }

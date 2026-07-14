@@ -80,6 +80,18 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 		return fmt.Errorf("updating bundle: %w", err)
 	}
 	printUpdateResults(ios, results)
+
+	// A refetch means a declaration moved — reconcile the touched identities'
+	// stranded cache siblings against the roots.
+	var refetched []bundle.BundleID
+	for _, r := range results {
+		if r.Outcome == bundle.UpdateRefetched {
+			refetched = append(refetched, r.ID)
+		}
+	}
+	for _, w := range mgr.AutoGC(ctx, refetched...) {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", ios.ColorScheme().InfoIcon(), w.Message)
+	}
 	return nil
 }
 

@@ -280,6 +280,7 @@
               "cli-reference/clawker_bundle",
               "cli-reference/clawker_bundle_install",
               "cli-reference/clawker_bundle_list",
+              "cli-reference/clawker_bundle_prune",
               "cli-reference/clawker_bundle_remove",
               "cli-reference/clawker_bundle_update",
               "cli-reference/clawker_bundle_validate"
