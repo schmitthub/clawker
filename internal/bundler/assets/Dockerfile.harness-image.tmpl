@@ -31,8 +31,8 @@ FROM {{.HarnessBaseImage}} AS final
 
 # The base image's config ends at the zsh SHELL with the unprivileged user
 # active; ARGs do not survive FROM. Restore the standard per-block
-# semantics: blocks 1-3 run under /bin/sh, blocks 4-6 under zsh; blocks 1-2
-# run as root.
+# semantics: root_after_stacks and user_after_stacks run under /bin/sh,
+# user_after_shell_switch onward under zsh; root_after_stacks runs as root.
 SHELL ["/bin/sh", "-c"]
 ARG USERNAME={{.Username}}
 USER root
@@ -56,15 +56,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 {{- end}}
 
 {{/* Stack fragments (root scope) — harness-declared and not already in
-     the shared base, rendered before block_1 so every harness block can
+     the shared base, rendered before root_after_stacks so every harness block can
      rely on them */}}
 {{- range .StackRootSteps}}
 {{.}}
 {{- end}}
 
-{{block "block_1" .}}{{end}}
-
-{{block "block_2" .}}{{end}}
+{{block "root_after_stacks" .}}{{end}}
 {{- if .HarnessVolumeDirs}}
 
 # Harness config-volume directories, pre-created so the volume mounts
@@ -83,11 +81,11 @@ ARG ZSH_ENV=/home/${USERNAME}/.zshenv
 {{.}}
 {{- end}}
 
-{{block "block_3" .}}{{end}}
+{{block "user_after_stacks" .}}{{end}}
 
 SHELL ["/bin/zsh", "-o", "pipefail", "-c"]
 
-{{block "block_4" .}}{{end}}
+{{block "user_after_shell_switch" .}}{{end}}
 
 {{- if .HarnessSeeds}}
 
@@ -107,10 +105,10 @@ RUN cat > /home/${USERNAME}/.clawker/seed-manifest <<'EOF'
 EOF
 {{- end}}
 
-{{/* Injection point: after_harness_install (after_claude_install is its
+{{/* Injection point: user_commands (after_claude_install is its
      deprecated alias — both render here) */}}
 {{- if .Inject}}
-{{- range .Inject.AfterHarnessInstall}}
+{{- range .Inject.UserCommands}}
 {{.}}
 {{- end}}
 {{- end}}
@@ -135,10 +133,10 @@ USER root
 # Keeping them at end-of-stage means a clawker bump invalidates ONLY this
 # block — the harness install blocks and config seeds stay cached above,
 # and the shared base image's ID never changes. The seeds live in the
-# user-scope section (before USER root) so the after_harness_install inject
+# user-scope section (before USER root) so the user_commands inject
 # point can reference ~/.clawker/seed/ contents.
 
-{{block "block_5" .}}{{end}}
+{{block "root_before_entrypoint" .}}{{end}}
 {{- if .ManagedPrompt}}
 
 # Managed agent context — clawker's harness-agnostic environment briefing,
@@ -178,4 +176,4 @@ COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd
 # --- End clawker-managed assets ---
 
 ENTRYPOINT ["/usr/local/bin/clawkerd"]
-{{block "block_6" .}}{{end}}
+{{block "cmd" .}}{{end}}

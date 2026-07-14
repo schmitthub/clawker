@@ -58,7 +58,7 @@ build:
   harnesses:
     claude:
       stacks: [bun]
-      inject: { after_harness_install: ["echo x"] }
+      inject: { user_commands: ["echo x"] }
 `
 
 	cases := []struct {

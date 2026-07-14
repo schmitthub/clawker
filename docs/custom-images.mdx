@@ -173,7 +173,7 @@ build:
       - "RUN mkdir -p /home/claude/.config"
     after_user_switch:
       - "COPY --chown=claude:claude ./dotfiles/ /home/claude/"
-    after_harness_install:
+    user_commands:
       - "RUN claude mcp add memory -- npx -y @modelcontextprotocol/server-memory"
     before_entrypoint:
       - "RUN echo 'Final cleanup'"
@@ -197,10 +197,10 @@ build:
 *Harness image (`clawker-<project>:<harness>`, built `FROM` the base):*
 
 11. Harness-declared stacks + the harness's install steps (e.g. the harness CLI)
-12. `after_harness_install` — runs as the container user with the harness CLI available: add MCP servers, install plugins or extensions
+12. `user_commands` — runs as the container user, after the harness's fragment blocks and config seeds: add MCP servers, install plugins or extensions
 13. `before_entrypoint` — final tweaks before Clawker's runtime assets and `ENTRYPOINT`
 
-Because `after_harness_install` and `before_entrypoint` live in the harness image, they run once per harness you build — but the same `build.inject` applies project-wide, so a step that registers an MCP server with `claude` runs in **every** harness image you build. To scope an inject step to a single harness, use a per-harness overlay (below).
+Because `user_commands` and `before_entrypoint` live in the harness image, they run once per harness you build — but the same `build.inject` applies project-wide, so a step that registers an MCP server with `claude` runs in **every** harness image you build. To scope an inject step to a single harness, use a per-harness overlay (below).
 
 ## Per-Harness Overlays
 
@@ -217,7 +217,7 @@ build:
       packages:
         - libnss3             # apt install in the claude image only
       inject:
-        after_harness_install:
+        user_commands:
           - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"
         before_entrypoint:
           - "RUN echo 'claude-only tweak'"
@@ -225,7 +225,7 @@ build:
 
 - **`stacks`** render in that harness's image **after** the harness's own stacks (installer → overlay, declaration order). A name that appears in both the harness and the overlay renders once, at its installer position.
 - **`packages`** install as an apt step in that harness's image. They are **not** deduplicated against `build.packages` — apt idempotence handles any overlap.
-- **`inject`** exposes only the two harness-image points, `after_harness_install` and `before_entrypoint`. Overlay inject renders after any global `build.inject` at the same anchor, and **only** in that harness's image — this is how you scope a `claude mcp add` to the claude container instead of every harness.
+- **`inject`** exposes only the two harness-image points, `user_commands` and `before_entrypoint`. Overlay inject renders after any global `build.inject` at the same anchor, and **only** in that harness's image — this is how you scope a `claude mcp add` to the claude container instead of every harness.
 
 An overlay keyed to a harness that resolves nowhere — not a built-in, not a loose convention directory, and not an installed bundle — is a build error, so a typo'd overlay never silently does nothing.
 
@@ -250,6 +250,6 @@ build:
     user_run:
       - "npm install -g pnpm ts-node"
   inject:
-    after_harness_install:
+    user_commands:
       - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"
 ```

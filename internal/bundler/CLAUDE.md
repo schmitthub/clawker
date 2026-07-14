@@ -106,9 +106,16 @@ aligns with the repo's factory-DI pattern.
 **FROM-boundary invariants (harness-image template):** ARGs don't survive
 FROM — the final stage re-declares `ARG USERNAME` and `ARG ZSH_ENV`; SHELL
 carries over via image config, so the template resets `SHELL ["/bin/sh"]`
-after FROM (blocks 1–3 run under sh) and restores zsh before block_4.
-**block_1 contract change:** block_1 is the first root step of the harness
-image and runs AFTER user creation (which lives in the base image).
+after FROM (`root_after_stacks` and `user_after_stacks` run under sh) and
+restores zsh before `user_after_shell_switch`. `root_after_stacks` is the first root
+step of the harness image and runs AFTER user creation (which lives in the
+base image).
+
+**Block slots** (`DeclaredBlocks`, compose.go): `root_after_stacks`,
+`user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd` — named for
+the permission scope + the template event they render relative to, never for
+content (they are positional opportunities; a harness may put anything in
+any of them).
 
 ### Harness Version Resolution
 
@@ -126,7 +133,7 @@ func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *Bund
 
 The claude bundle's fragment declares `ARG CLAUDE_CODE_VERSION={{.HarnessVersion}}` — **not** `ENV`. Three properties this gives:
 
-1. **ARG-cache mechanic:** the ARG declaration sits **directly above its only consumer** (the install RUN in block_4), NOT near the top of the stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a harness release rolls the rendered default and invalidates only the install layer + everything below it, leaving the stack fragments and blocks 1–3 cached above (the shared base image is a separate image and never invalidates). `clawker build --no-cache` invalidates everything regardless of ARG positioning.
+1. **ARG-cache mechanic:** the ARG declaration sits **directly above its only consumer** (the install RUN in the claude fragment's user_after_shell_switch block), NOT near the top of the stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a harness release rolls the rendered default and invalidates only the install layer + everything below it, leaving the stack fragments and the blocks above user_after_shell_switch cached (the shared base image is a separate image and never invalidates). `clawker build --no-cache` invalidates everything regardless of ARG positioning.
 2. **Runtime invisibility:** ARG is build-only, so the version var is naturally absent from the running container (Claude Code does not read `CLAUDE_CODE_VERSION` at runtime).
 3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Wired through `internal/cmd/image/build/build.go`.
 
@@ -187,8 +194,8 @@ dotted qualified address can never collide with a bare alias.
 Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-root.tmpl` and/or `Dockerfile.stack-user.tmpl` (loaded via `LoadStackDefinition` into a `StackDefinition` — `stack_load.go`; the `stack.yaml` shape is `config.StackManifest`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
 - **Resolution** (`resolveStack`): a declared stack address resolves through the ONE algorithm in `internal/bundle` — a bare name resolves user loose > project loose > embedded floor; a qualified `namespace.bundle.component` address resolves from installed bundles. A closer bare tier wins **wholesale** — never merged. There is no `stacks:` path registry and no bundle-embedded sibling lane: a bundled harness references its shipped sibling stack by its qualified self-address (`acme.tools.node`) like any other bundle stack. Unresolvable address = hard "not found" error.
-- **Both strata always render (no cross-stratum dedup):** project `build.stacks: [go, node]` renders in the base image; a harness manifest's `stacks:` dependency list ALWAYS renders in the harness image with its resolved definition — even when the project also declared the same name in the base. Both render; fragment self-guards / apt idempotence / PATH shadowing own any interaction (design §2). `StackRootSteps` render before block_1 (root), `StackUserSteps` before block_3 (user).
-- **Per-harness build overlay (`build.harnesses.<name>.{stacks,packages,inject}`):** the same primitive trio as the base build fields, scoped to ONE harness's image and consumed by `GenerateHarness` keyed by the harness's exact selection spelling. Overlay stacks render AFTER the bundle's installer stacks (installer → overlay, one resolution — a name repeated across the two sources renders once, at its installer position). Overlay packages render as an early-root apt RUN in the harness-image template (`HarnessPackages`), never deduped against the base package list (apt idempotence). Overlay `inject.after_harness_install`/`before_entrypoint` render only in that harness's image, appended after the global project inject at the same anchors. An overlay keyed to a harness that resolves nowhere is a hard `GenerateHarness` error naming the known harnesses — dead overlay config never silently drops.
+- **Both strata always render (no cross-stratum dedup):** project `build.stacks: [go, node]` renders in the base image; a harness manifest's `stacks:` dependency list ALWAYS renders in the harness image with its resolved definition — even when the project also declared the same name in the base. Both render; fragment self-guards / apt idempotence / PATH shadowing own any interaction (design §2). `StackRootSteps` render before root_after_stacks (root), `StackUserSteps` before user_after_stacks (user).
+- **Per-harness build overlay (`build.harnesses.<name>.{stacks,packages,inject}`):** the same primitive trio as the base build fields, scoped to ONE harness's image and consumed by `GenerateHarness` keyed by the harness's exact selection spelling. Overlay stacks render AFTER the bundle's installer stacks (installer → overlay, one resolution — a name repeated across the two sources renders once, at its installer position). Overlay packages render as an early-root apt RUN in the harness-image template (`HarnessPackages`), never deduped against the base package list (apt idempotence). Overlay `inject.user_commands`/`before_entrypoint` render only in that harness's image, appended after the global project inject at the same anchors. An overlay keyed to a harness that resolves nowhere is a hard `GenerateHarness` error naming the known harnesses — dead overlay config never silently drops.
 - **Provenance:** a single `Resolve` reports only the winning tier, not the shadowed farther tiers (computing those requires scanning the installed-bundle set, which must never block a floor-only build — that full shadow listing is a `bundle list` concern). So the build records one line per **non-floor** stack resolution — a loose or bundled override — naming its source (`stack node ← project (…)`, `stack acme.tools.node ← bundle acme.tools`); the harness always names its source. The docker `Builder` collects `ProjectGenerator.Provenance()` and `clawker build` prints it to stderr.
 - Fragments are **self-guarded** — they skip when the image already provides the tool (e.g. the node fragment keeps an existing node ≥ its floor major).
 - Node specifics (node stack fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).
@@ -205,15 +212,15 @@ Composes the effective firewall rule set: the selected harness bundle's `egress:
 
 The rendered harness image splits content across three scopes, dictated by USER scope, build-time read dependencies, and inject-point lifetime contracts:
 
-**1. Early root scope (blocks 1–2, before `USER ${USERNAME}`):** bundle-fragment root steps. The claude fragment writes `/etc/claude-code/managed-settings.json` here — the highest-precedence Claude Code env override, whose PATH (`.local/bin` + inherited `${PATH}`) is what lets any build-time `claude` invocation in `after_harness_install` / `before_entrypoint` inject points find the `claude` binary and node. It must exist before any potential build-time session, so it can't sit in the late block. (Claude Code globs `$NVM_DIR/versions/node/*` itself; clawker never adds a `$NVM_DIR/current/bin` PATH entry — pre-creating `current` collides with Claude Code's `current/<ver>` bookkeeping.)
+**1. Early root scope (root_after_stacks, before `USER ${USERNAME}`):** bundle-fragment root steps. The claude fragment writes `/etc/claude-code/managed-settings.json` here — the highest-precedence Claude Code env override, whose PATH (`.local/bin` + inherited `${PATH}`) is what lets any build-time `claude` invocation in `user_commands` / `before_entrypoint` inject points find the `claude` binary and node. It must exist before any potential build-time session, so it can't sit in the late block. (Claude Code globs `$NVM_DIR/versions/node/*` itself; clawker never adds a `$NVM_DIR/current/bin` PATH entry — pre-creating `current` collides with Claude Code's `current/<ver>` bookkeeping.)
 
-**2. User scope (blocks 3–4 + generic seed staging):** the harness install (block_4) and the manifest `seeds:` staged to `/home/${USERNAME}/.clawker/seed/` plus a generated `seed-manifest` (apply tokens consumed by CP's generic first-boot seed-apply step). Seeds stay in the user-scope section because `after_harness_install` / `before_entrypoint` inject points and user `Instructions.Copy` may reference the staged contents at injection time.
+**2. User scope (user_after_stacks + user_after_shell_switch + generic seed staging):** the harness install (the claude fragment puts it in user_after_shell_switch) and the manifest `seeds:` staged to `/home/${USERNAME}/.clawker/seed/` plus a generated `seed-manifest` (apply tokens consumed by CP's generic first-boot seed-apply step). Seeds stay in the user-scope section because `user_commands` / `before_entrypoint` inject points and user `Instructions.Copy` may reference the staged contents at injection time.
 
 **3. Late root scope (trailing `USER root` → `ENTRYPOINT`), shared template:**
-1. block_5 (bundle late-root steps), then the managed-prompt COPY — the master template copies clawker's embedded `AgentPromptContent` (`assets/clawker-agent-prompt.md`, harness-agnostic) to the manifest-declared `managed_prompt.dest` with resolved `--chown`/`--chmod` (root:root 0644 defaults); rendered only when the manifest declares the block
+1. root_before_entrypoint (bundle late-root steps), then the managed-prompt COPY — the master template copies clawker's embedded `AgentPromptContent` (`assets/clawker-agent-prompt.md`, harness-agnostic) to the manifest-declared `managed_prompt.dest` with resolved `--chown`/`--chmod` (root:root 0644 defaults); rendered only when the manifest declares the block
 2. `{{if .HasFirewallCA}}` block: CA cert COPY + `update-ca-certificates` + `SSL_CERT_FILE` / `CURL_CA_BUNDLE` ENVs (runtime traffic only; `docker build` itself goes via host network, not through the in-container firewall)
 3. Host-proxy + socket-forwarder binaries (`host-open`, `git-credential-clawker`, `callback-forwarder`, `clawker-socket-server`) + single batched `chmod +x` (one layer, not four)
-4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`), then `ENTRYPOINT ["/usr/local/bin/clawkerd"]` + block_6 (CMD)
+4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`), then `ENTRYPOINT ["/usr/local/bin/clawkerd"]` + the cmd block (CMD)
 
 **Why this works for cache:** a clawker bump that only touches late-block assets (the common case — agent prompt edit, host-proxy script edit, clawkerd binary bump) invalidates ONLY the late block; the harness install, seeds, inject points, and the entire base image stay cached. A seed change invalidates from the seed COPYs downward, still cheap.
 
@@ -229,7 +236,7 @@ The rendered harness image splits content across three scopes, dictated by USER 
 
 ```go
 type DockerfileInstructions struct { Copy []CopyInstruction; Args []ArgInstruction; UserRun, RootRun []RunInstruction }
-type DockerfileInject struct { AfterFrom, AfterPackages, AfterUserSetup, AfterUserSwitch, AfterHarnessInstall, BeforeEntrypoint []string }  // yaml after_claude_install (deprecated alias) merges into AfterHarnessInstall
+type DockerfileInject struct { AfterFrom, AfterPackages, AfterUserSetup, AfterUserSwitch, UserCommands, BeforeEntrypoint []string }  // yaml after_claude_install (deprecated alias) merges into UserCommands
 type CopyInstruction struct { Src, Dest, Chown, Chmod string }
 type ArgInstruction struct { Name, Default string }
 type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware RUN

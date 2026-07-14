@@ -40,5 +40,5 @@ re-justification against the new model) keep:
 - Implement the new bundle/install model (see the brainstorm memory — decisions,
   testing mandate, open items).
 - Skills-plugin multi-agent packaging — merge blocker for the branch.
-- Harness template block names still placeholder `block_1..6` — final names undecided (user's call).
+- Harness template block names FINALIZED (user-ratified 2026-07-14): `root_after_stacks` (block_1+2 merged — they were adjacent), `user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd`. Naming convention: permission-scope prefix + flanking-event anchor, descriptive never prescriptive.
 - opencode/pi bundles (research memo ready) — after the new model lands.

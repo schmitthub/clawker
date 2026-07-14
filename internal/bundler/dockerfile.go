@@ -246,12 +246,12 @@ type DockerfileInstructions struct {
 
 // DockerfileInject contains raw instruction injection points.
 type DockerfileInject struct {
-	AfterFrom           []string
-	AfterPackages       []string
-	AfterUserSetup      []string
-	AfterUserSwitch     []string
-	AfterHarnessInstall []string
-	BeforeEntrypoint    []string
+	AfterFrom        []string
+	AfterPackages    []string
+	AfterUserSetup   []string
+	AfterUserSwitch  []string
+	UserCommands     []string
+	BeforeEntrypoint []string
 }
 
 // CopyInstruction represents a COPY instruction.
@@ -482,18 +482,18 @@ func applyHarnessOverlay(tctx *DockerfileContext, overlay config.HarnessBuildOve
 	}
 	if tctx.Inject == nil {
 		tctx.Inject = &DockerfileInject{
-			AfterFrom:           nil,
-			AfterPackages:       nil,
-			AfterUserSetup:      nil,
-			AfterUserSwitch:     nil,
-			AfterHarnessInstall: nil,
-			BeforeEntrypoint:    nil,
+			AfterFrom:        nil,
+			AfterPackages:    nil,
+			AfterUserSetup:   nil,
+			AfterUserSwitch:  nil,
+			UserCommands:     nil,
+			BeforeEntrypoint: nil,
 		}
 	}
 	// slices.Concat allocates fresh so the append never writes into a
 	// config-owned backing array (the global BeforeEntrypoint slice
 	// aliases the store).
-	tctx.Inject.AfterHarnessInstall = slices.Concat(tctx.Inject.AfterHarnessInstall, overlay.Inject.AfterHarnessInstall)
+	tctx.Inject.UserCommands = slices.Concat(tctx.Inject.UserCommands, overlay.Inject.UserCommands)
 	tctx.Inject.BeforeEntrypoint = slices.Concat(tctx.Inject.BeforeEntrypoint, overlay.Inject.BeforeEntrypoint)
 }
 
@@ -702,8 +702,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 			AfterUserSwitch: inj.AfterUserSwitch,
 			// Legacy after_claude_install entries render first, at the same
 			// position — the key is deprecated, not moved.
-			AfterHarnessInstall: append(append([]string{}, inj.AfterClaudeInstall...), inj.AfterHarnessInstall...),
-			BeforeEntrypoint:    inj.BeforeEntrypoint,
+			UserCommands:     append(append([]string{}, inj.AfterClaudeInstall...), inj.UserCommands...),
+			BeforeEntrypoint: inj.BeforeEntrypoint,
 		}
 	}
 

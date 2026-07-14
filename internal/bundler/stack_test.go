@@ -204,7 +204,7 @@ monitoring:
 
 // writeLooseHarness writes a loose project harness named "other" under
 // root/.clawker/harnesses/other/, with the given manifest verbatim and a
-// template carrying position markers for block_1 and block_3.
+// template carrying position markers for root_after_stacks and user_after_stacks.
 func writeLooseHarness(t *testing.T, root, manifest string) {
 	t.Helper()
 	dir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), "other")
@@ -212,8 +212,8 @@ func writeLooseHarness(t *testing.T, root, manifest string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, HarnessManifestFile), []byte(manifest), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, HarnessTemplateFile),
-		[]byte(`{{define "block_1"}}RUN echo B1MARK{{end}}
-{{define "block_3"}}RUN echo B3MARK{{end}}`),
+		[]byte(`{{define "root_after_stacks"}}RUN echo B1MARK{{end}}
+{{define "user_after_stacks"}}RUN echo B3MARK{{end}}`),
 		0o644,
 	))
 }
@@ -294,17 +294,17 @@ stacks: [node]
 	require.NoError(t, err)
 	content := string(harnessImg)
 
-	// Root-scope fragment renders in root scope, before block_1.
+	// Root-scope fragment renders in root scope, before root_after_stacks.
 	nodeIdx := strings.Index(content, nodeMarker)
 	b1Idx := strings.Index(content, "B1MARK")
 	userRootIdx := strings.Index(content, "USER root")
 	require.GreaterOrEqual(t, nodeIdx, 0)
 	require.GreaterOrEqual(t, b1Idx, 0)
 	assert.Less(t, userRootIdx, nodeIdx, "root stack anchors after USER root")
-	assert.Less(t, nodeIdx, b1Idx, "root stack must precede block_1")
+	assert.Less(t, nodeIdx, b1Idx, "root stack must precede root_after_stacks")
 
 	// User-scope fragment renders after the USER switch + ARG ZSH_ENV
-	// (fragments may reference ${ZSH_ENV}), before block_3.
+	// (fragments may reference ${ZSH_ENV}), before user_after_stacks.
 	nvmIdx := strings.Index(content, nvmMarker)
 	b3Idx := strings.Index(content, "B3MARK")
 	zshEnvIdx := strings.Index(content, "ARG ZSH_ENV")
@@ -312,7 +312,7 @@ stacks: [node]
 	require.GreaterOrEqual(t, b3Idx, 0)
 	require.GreaterOrEqual(t, zshEnvIdx, 0)
 	assert.Less(t, zshEnvIdx, nvmIdx, "ARG ZSH_ENV must be in scope for user fragments")
-	assert.Less(t, nvmIdx, b3Idx, "user stack must precede block_3")
+	assert.Less(t, nvmIdx, b3Idx, "user stack must precede user_after_stacks")
 }
 
 // A name declared in both build.stacks and the harness manifest renders in BOTH

@@ -21,8 +21,8 @@ FROM clawker-test:base AS final
 
 # The base image's config ends at the zsh SHELL with the unprivileged user
 # active; ARGs do not survive FROM. Restore the standard per-block
-# semantics: blocks 1-3 run under /bin/sh, blocks 4-6 under zsh; blocks 1-2
-# run as root.
+# semantics: root_after_stacks and user_after_stacks run under /bin/sh,
+# user_after_shell_switch onward under zsh; root_after_stacks runs as root.
 SHELL ["/bin/sh", "-c"]
 ARG USERNAME=claude
 USER root
@@ -100,8 +100,6 @@ RUN if command -v tsc >/dev/null 2>&1; then \
       npm install -g typescript && tsc --version; \
     fi
 
-
-
 # Managed enterprise settings (Linux managed path, highest precedence,
 # cannot be overridden by user/project settings). REQUIRED — do not
 # remove. Claude Code's Bash tool runs `/bin/zsh -c` and sources its own
@@ -113,7 +111,7 @@ RUN if command -v tsc >/dev/null 2>&1; then \
 # so `node` resolves for build-time `claude mcp add ...` (inject points,
 # post_init) and the agent's Bash tool.
 #
-# Stays in early root scope (not the late clawker block) because any
+# Stays in the root_after_stacks scope (not the late clawker block) because any
 # `claude` invocation in `after_claude_install` / `before_entrypoint`
 # inject points reads this at session start — without `.local/bin` here, the
 # user's build-time `claude mcp add ...` cannot find the `claude` binary. The
@@ -232,7 +230,7 @@ USER root
 # Keeping them at end-of-stage means a clawker bump invalidates ONLY this
 # block — the harness install blocks and config seeds stay cached above,
 # and the shared base image's ID never changes. The seeds live in the
-# user-scope section (before USER root) so the after_harness_install inject
+# user-scope section (before USER root) so the user_commands inject
 # point can reference ~/.clawker/seed/ contents.
 
 

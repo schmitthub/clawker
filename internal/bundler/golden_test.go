@@ -76,7 +76,7 @@ build:
       stacks: [go]
       packages: ["libnss3"]
       inject:
-        after_harness_install:
+        user_commands:
           - "RUN echo overlay-after-harness-install"
         before_entrypoint:
           - "RUN echo overlay-before-entrypoint"

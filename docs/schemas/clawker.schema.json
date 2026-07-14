@@ -147,20 +147,20 @@
               "inject": {
                 "additionalProperties": false,
                 "properties": {
-                  "after_harness_install": {
-                    "description": "Add Dockerfile instructions as the container user with the harness CLI available, for this harness's image only",
-                    "items": {
-                      "type": "string"
-                    },
-                    "title": "After Harness Install",
-                    "type": "array"
-                  },
                   "before_entrypoint": {
                     "description": "Add Dockerfile instructions at the very end, for this harness's image only",
                     "items": {
                       "type": "string"
                     },
                     "title": "Before Entrypoint",
+                    "type": "array"
+                  },
+                  "user_commands": {
+                    "description": "Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds, for this harness's image only",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "User Commands",
                     "type": "array"
                   }
                 },
@@ -193,7 +193,7 @@
           "additionalProperties": false,
           "properties": {
             "after_claude_install": {
-              "description": "Deprecated: use after_harness_install",
+              "description": "Deprecated: use user_commands",
               "items": {
                 "type": "string"
               },
@@ -206,14 +206,6 @@
                 "type": "string"
               },
               "title": "After FROM",
-              "type": "array"
-            },
-            "after_harness_install": {
-              "description": "Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions",
-              "items": {
-                "type": "string"
-              },
-              "title": "After Harness Install",
               "type": "array"
             },
             "after_packages": {
@@ -246,6 +238,14 @@
                 "type": "string"
               },
               "title": "Before Entrypoint",
+              "type": "array"
+            },
+            "user_commands": {
+              "description": "Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds — e.g. add MCP servers, install plugins, or extensions",
+              "items": {
+                "type": "string"
+              },
+              "title": "User Commands",
               "type": "array"
             }
           },

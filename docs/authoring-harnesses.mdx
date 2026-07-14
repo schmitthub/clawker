@@ -152,6 +152,24 @@ image. The resolved `version` and the harness's `stacks` are available to it.
 The shipped `claude` and `codex` harnesses are the best working reference for
 the fragment shape, the seed/staging manifests, and the egress floor.
 
+The fragment is a set of `{{define "<block>"}}` bodies filling slots the master
+template declares. Each slot is named for the permission scope it runs in and
+the template event around it — the name tells you where you are in the build
+timeline, not what to put there. A fragment may define any subset, and any
+instructions may go in any block:
+
+| Block | Runs as | Shell | Position in the build |
+|-------|---------|-------|-----------------------|
+| `root_after_stacks` | root | `sh` | Right after the harness's stack fragments render (root scope), before the volume directories are created and the build switches to the container user. |
+| `user_after_stacks` | user | `sh` | After the user switch and the user-scope stack fragments, before the shell switches to zsh. |
+| `user_after_shell_switch` | user | `zsh` | After the zsh shell switch, before config seeds are staged and the project's harness-image inject points render. The shipped harnesses install their agent CLI here. |
+| `root_before_entrypoint` | root | `zsh` | After the user-scope section ends and root is restored, before clawker stamps its own assets and the `ENTRYPOINT`. |
+| `cmd` | — | — | The final instruction — set the container's `CMD` here. |
+
+Defining any other template name is a validation error, and the project
+inject-point names (`user_commands`, `before_entrypoint`, ...) are
+reserved — a fragment can never override them.
+
 ## Validating
 
 Bundle a harness and validate it before publishing:

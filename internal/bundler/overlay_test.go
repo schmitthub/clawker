@@ -83,14 +83,14 @@ func TestGenerateHarness_OverlayInjectAfterGlobal(t *testing.T) {
 version: "1"
 build:
   inject:
-    after_harness_install:
+    user_commands:
       - "RUN echo GLOBAL_INSTALL"
     before_entrypoint:
       - "RUN echo GLOBAL_ENTRY"
   harnesses:
     claude:
       inject:
-        after_harness_install:
+        user_commands:
           - "RUN echo OVERLAY_INSTALL"
         before_entrypoint:
           - "RUN echo OVERLAY_ENTRY"
@@ -109,7 +109,7 @@ build:
 	require.GreaterOrEqual(t, overlayInstall, 0)
 	require.GreaterOrEqual(t, globalEntry, 0)
 	require.GreaterOrEqual(t, overlayEntry, 0)
-	assert.Less(t, globalInstall, overlayInstall, "overlay after_harness_install renders after the global one")
+	assert.Less(t, globalInstall, overlayInstall, "overlay user_commands renders after the global one")
 	assert.Less(t, globalEntry, overlayEntry, "overlay before_entrypoint renders after the global one")
 }
 
@@ -126,7 +126,7 @@ build:
       stacks: [go]
       packages: [`+overlayAptPkg+`]
       inject:
-        after_harness_install:
+        user_commands:
           - "RUN echo CLAUDE_ONLY_OVERLAY"
 `)
 

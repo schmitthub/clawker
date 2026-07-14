@@ -2,12 +2,12 @@
   Codex harness — fills the master Dockerfile.tmpl block slots.
 */}}
 
-{{define "block_3" -}}
+{{define "user_after_stacks" -}}
 # Tell codex where its config lives — must match the config volume mount.
 ENV CODEX_HOME=/home/${USERNAME}/.codex
 {{- end}}
 
-{{define "block_4" -}}
+{{define "user_after_shell_switch" -}}
 ARG CODEX_VERSION={{.HarnessVersion}}
 # Canonical standalone installer: sha256-verified GitHub release binary,
 # command lands in ~/.local/bin (already on the image ENV PATH — same
@@ -15,13 +15,13 @@ ARG CODEX_VERSION={{.HarnessVersion}}
 # under $CODEX_HOME/packages/standalone with ~/.local/bin/codex symlinked
 # into it, so install-time CODEX_HOME is redirected off ~/.codex: that dir
 # is a named volume at runtime, and an existing volume would shadow the
-# image payload and dangle the symlink. Runtime CODEX_HOME (block_3) still
-# points at the volume for codex state.
+# image payload and dangle the symlink. Runtime CODEX_HOME (user_after_stacks)
+# still points at the volume for codex state.
 RUN curl -fsSL https://chatgpt.com/codex/install.sh | \
       CODEX_NON_INTERACTIVE=1 CODEX_RELEASE=${CODEX_VERSION} \
       CODEX_HOME=/home/${USERNAME}/.local/share/codex-install sh
 {{- end}}
 
-{{define "block_6" -}}
+{{define "cmd" -}}
 CMD ["codex"]
 {{- end}}

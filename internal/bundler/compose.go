@@ -9,17 +9,16 @@ import (
 // DeclaredBlocks returns the slot names the master Dockerfile template
 // declares. A harness template may define any subset; defining any other
 // template name is a validation error. Names are positional opportunities
-// in the master's instruction ordering, never content-prescriptive.
-//
-// NOTE: placeholder generic names — final event-centric names TBD.
+// in the master's instruction ordering, never content-prescriptive: each
+// name states the permission scope (root_/user_) and the template event it
+// renders relative to, describing the timeline without prescribing content.
 func DeclaredBlocks() []string {
 	return []string{
-		"block_1", // root scope, after system packages + Docker CLI, before user context — heavy stack installs
-		"block_2", // root scope, after base tooling, before USER ${USERNAME}
-		"block_3", // user scope, after the master's static-env section
-		"block_4", // user scope, after user_run renders — version-ARG cache zone
-		"block_5", // root scope, after trailing USER root, before clawker assets
-		"block_6", // final instruction — CMD position
+		"root_after_stacks",       // root scope, right after the stack root fragments, before volume-dir creation + USER switch
+		"user_after_stacks",       // user scope (/bin/sh), right after the stack user fragments, before the zsh SHELL switch
+		"user_after_shell_switch", // user scope, right after the SHELL switch (zsh) — before seed staging and the harness-image inject points
+		"root_before_entrypoint",  // root restored after the user-scope section — before the clawker-managed root asset block + ENTRYPOINT
+		"cmd",                     // final instruction — CMD position, after ENTRYPOINT
 	}
 }
 
@@ -34,7 +33,7 @@ func isReservedDefine(name string) bool {
 		"after_user_setup",
 		"after_user_switch",
 		"after_claude_install",
-		"after_harness_install",
+		"user_commands",
 		"before_entrypoint":
 		return true
 	}

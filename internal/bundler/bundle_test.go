@@ -30,7 +30,7 @@ volumes: [{ name: config, path: .test }]
 func manifestFS(manifest string) fstest.MapFS {
 	return fstest.MapFS{
 		bundler.HarnessManifestFile: mapFile(manifest),
-		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+		bundler.HarnessTemplateFile: mapFile(`{{define "cmd"}}CMD ["x"]{{end}}`),
 	}
 }
 
@@ -190,12 +190,12 @@ managed_prompt: { dest: /home/claude/.acme/AGENTS.md }
 
 // Conformance: E14 — block slots are stable reserved surfaces. E20 — a bundle fragment fills declared slots without disturbing master ordering.
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {
-	b, err := bundler.LoadBundle("test", bundleFS(`{{define "block_6" -}}
+	b, err := bundler.LoadBundle("test", bundleFS(`{{define "cmd" -}}
 CMD ["testtool"]
 {{- end}}`))
 	require.NoError(t, err)
 
-	tmpl, err := bundler.Compose("FROM scratch\n{{block \"block_6\" .}}{{end}}\n", b)
+	tmpl, err := bundler.Compose("FROM scratch\n{{block \"cmd\" .}}{{end}}\n", b)
 	require.NoError(t, err)
 
 	var out strings.Builder
@@ -220,7 +220,7 @@ func TestCompose_RejectsUnknownAndReservedDefines(t *testing.T) {
 func seedBundleFS(manifest string) fstest.MapFS {
 	return fstest.MapFS{
 		bundler.HarnessManifestFile: mapFile(manifest),
-		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+		bundler.HarnessTemplateFile: mapFile(`{{define "cmd"}}CMD ["x"]{{end}}`),
 		"assets/statusline.sh":      mapFile("#!/bin/sh\n"),
 		"assets/cfg.json":           mapFile("{}\n"),
 		"assets/sub/nested.txt":     mapFile("n\n"),
@@ -258,7 +258,7 @@ func TestWalkAssets(t *testing.T) {
 
 	noAssets, err := bundler.LoadBundle("t", fstest.MapFS{
 		bundler.HarnessManifestFile: mapFile("version: { resolver: none }\n"),
-		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+		bundler.HarnessTemplateFile: mapFile(`{{define "cmd"}}CMD ["x"]{{end}}`),
 	})
 	require.NoError(t, err)
 	require.NoError(t, noAssets.WalkAssets(func(string, []byte) error {

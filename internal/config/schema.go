@@ -103,13 +103,13 @@ type ArgDefinition struct {
 
 // InjectConfig defines injection points for arbitrary Dockerfile instructions
 type InjectConfig struct {
-	AfterFrom           []string `yaml:"after_from,omitempty"            label:"After FROM"            desc:"Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on"`
-	AfterPackages       []string `yaml:"after_packages,omitempty"        label:"After Packages"        desc:"Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages"`
-	AfterUserSetup      []string `yaml:"after_user_setup,omitempty"      label:"After User Setup"      desc:"Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services"`
-	AfterUserSwitch     []string `yaml:"after_user_switch,omitempty"     label:"After User Switch"     desc:"Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools"`
-	AfterClaudeInstall  []string `yaml:"after_claude_install,omitempty"  label:"After Claude Install"  desc:"Deprecated: use after_harness_install"`
-	AfterHarnessInstall []string `yaml:"after_harness_install,omitempty" label:"After Harness Install" desc:"Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions"`
-	BeforeEntrypoint    []string `yaml:"before_entrypoint,omitempty"     label:"Before Entrypoint"     desc:"Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else"`
+	AfterFrom          []string `yaml:"after_from,omitempty"           label:"After FROM"           desc:"Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on"`
+	AfterPackages      []string `yaml:"after_packages,omitempty"       label:"After Packages"       desc:"Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages"`
+	AfterUserSetup     []string `yaml:"after_user_setup,omitempty"     label:"After User Setup"     desc:"Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services"`
+	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty"    label:"After User Switch"    desc:"Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools"`
+	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty" label:"After Claude Install" desc:"Deprecated: use user_commands"`
+	UserCommands       []string `yaml:"user_commands,omitempty"        label:"User Commands"        desc:"Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds — e.g. add MCP servers, install plugins, or extensions"`
+	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty"    label:"Before Entrypoint"    desc:"Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else"`
 }
 
 // HarnessBuildOverlay is one harness's build.harnesses.<name> entry: extra
@@ -124,12 +124,12 @@ type HarnessBuildOverlay struct {
 
 // HarnessOverlayInject defines injection points scoped to one harness's
 // image. It reuses the harness-image inject-point names from InjectConfig
-// (AfterHarnessInstall/BeforeEntrypoint) but renders only in the named
+// (UserCommands/BeforeEntrypoint) but renders only in the named
 // harness's image, never every harness image the way the top-level
 // build.inject block does.
 type HarnessOverlayInject struct {
-	AfterHarnessInstall []string `yaml:"after_harness_install,omitempty" label:"After Harness Install" desc:"Add Dockerfile instructions as the container user with the harness CLI available, for this harness's image only"`
-	BeforeEntrypoint    []string `yaml:"before_entrypoint,omitempty"     label:"Before Entrypoint"     desc:"Add Dockerfile instructions at the very end, for this harness's image only"`
+	UserCommands     []string `yaml:"user_commands,omitempty"     label:"User Commands"     desc:"Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds, for this harness's image only"`
+	BeforeEntrypoint []string `yaml:"before_entrypoint,omitempty" label:"Before Entrypoint" desc:"Add Dockerfile instructions at the very end, for this harness's image only"`
 }
 
 // Config strategy tokens for HarnessConfigOptions.Strategy.

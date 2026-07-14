@@ -176,5 +176,5 @@ func writeLooseHarness(t *testing.T, root, name, manifestYAML string) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessManifestFile), []byte(manifestYAML), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessTemplateFile),
-		[]byte("{{define \"block_5\"}}CMD [\"codex\"]\n{{end}}\n"), 0o644))
+		[]byte("{{define \"cmd\"}}CMD [\"codex\"]\n{{end}}\n"), 0o644))
 }

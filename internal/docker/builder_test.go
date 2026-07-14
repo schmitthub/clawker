@@ -167,7 +167,7 @@ func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
 	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"), []byte("{}\n"), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(bundleDir, "Dockerfile.harness.tmpl"),
-		[]byte(`{{define "block_4"}}RUN echo other-harness-marker{{end}}`),
+		[]byte(`{{define "user_after_shell_switch"}}RUN echo other-harness-marker{{end}}`),
 		0o644,
 	))
 

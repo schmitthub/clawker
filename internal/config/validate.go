@@ -37,7 +37,7 @@ func knownHarnessOverlayFields() map[string]bool {
 }
 
 func knownHarnessOverlayInjectFields() map[string]bool {
-	return map[string]bool{"after_harness_install": true, "before_entrypoint": true}
+	return map[string]bool{"user_commands": true, "before_entrypoint": true}
 }
 
 func knownHarnessConfigOptionsFields() map[string]bool { return map[string]bool{"strategy": true} }

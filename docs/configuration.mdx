@@ -200,11 +200,11 @@ build:
     # Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools
     after_user_switch:  # default: n/a | required: false
       - <string>
-    # Deprecated: use after_harness_install
+    # Deprecated: use user_commands
     after_claude_install:  # default: n/a | required: false
       - <string>
-    # Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions
-    after_harness_install:  # default: n/a | required: false
+    # Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds — e.g. add MCP servers, install plugins, or extensions
+    user_commands:  # default: n/a | required: false
       - <string>
     # Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else
     before_entrypoint:  # default: n/a | required: false
@@ -363,8 +363,8 @@ The following tables are auto-generated from the schema struct tags in `internal
 | `after_packages` | string list | — | Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages |
 | `after_user_setup` | string list | — | Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services |
 | `after_user_switch` | string list | — | Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools |
-| `after_claude_install` | string list | — | Deprecated: use after_harness_install |
-| `after_harness_install` | string list | — | Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions |
+| `after_claude_install` | string list | — | Deprecated: use user_commands |
+| `user_commands` | string list | — | Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds — e.g. add MCP servers, install plugins, or extensions |
 | `before_entrypoint` | string list | — | Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else |
 
 

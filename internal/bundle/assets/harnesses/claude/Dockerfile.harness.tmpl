@@ -4,7 +4,7 @@
   master; the master owns ordering and cache architecture.
 */}}
 
-{{define "block_2" -}}
+{{define "root_after_stacks" -}}
 # Managed enterprise settings (Linux managed path, highest precedence,
 # cannot be overridden by user/project settings). REQUIRED — do not
 # remove. Claude Code's Bash tool runs `/bin/zsh -c` and sources its own
@@ -16,7 +16,7 @@
 # so `node` resolves for build-time `claude mcp add ...` (inject points,
 # post_init) and the agent's Bash tool.
 #
-# Stays in early root scope (not the late clawker block) because any
+# Stays in the root_after_stacks scope (not the late clawker block) because any
 # `claude` invocation in `after_claude_install` / `before_entrypoint`
 # inject points reads this at session start — without `.local/bin` here, the
 # user's build-time `claude mcp add ...` cannot find the `claude` binary. The
@@ -31,7 +31,7 @@ RUN mkdir -p /etc/claude-code && cat > /etc/claude-code/managed-settings.json <<
 EOF
 {{- end}}
 
-{{define "block_3" -}}
+{{define "user_after_stacks" -}}
 # Tell Claude Code where its config lives — must match the config volume mount.
 # CP's generic seed-apply init step places the manifest seeds (statusline,
 # .config.json onboarding bypass, settings.json) here on first boot.
@@ -69,7 +69,7 @@ ENV OTEL_LOG_USER_PROMPTS=1
 {{- end}}
 {{- end}}
 
-{{define "block_4" -}}
+{{define "user_after_shell_switch" -}}
 # Claude Code version. Build-only ARG (not ENV — CC's runtime ignores it; only
 # the install RUN below consumes it). Default is resolved against the npm
 # registry at template-render time, so a fresh CC release (often several a week)
@@ -94,6 +94,6 @@ RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
 {{- end}}
 {{- end}}
 
-{{define "block_6" -}}
+{{define "cmd" -}}
 CMD ["claude"]
 {{- end}}

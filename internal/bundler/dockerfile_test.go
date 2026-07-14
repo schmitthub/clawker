@@ -573,10 +573,10 @@ func TestGenerateBase_ExcludesHarnessSurface(t *testing.T) {
 	content := string(dockerfile)
 
 	for _, marker := range []string{
-		"CLAUDE_CODE_VERSION",                 // harness version ARG (block_4)
+		"CLAUDE_CODE_VERSION",                 // harness version ARG (user_after_shell_switch block)
 		"/usr/local/bin/clawkerd",             // clawker root assets live harness-side
 		"ENTRYPOINT",                          // harness image owns the entrypoint
-		"CMD [",                               // block_6
+		"CMD [",                               // cmd block
 		"/.clawker/seed",                      // harness config seeds
 		"mkdir -p /home/${USERNAME}/.claude ", // harness volume dirs
 		"callback-forwarder-builder",          // builder stages
@@ -633,14 +633,14 @@ func TestGenerateHarness_FromBaseBoundary(t *testing.T) {
 	require.Positive(t, zshRestoreIdx, "zsh SHELL restore must exist for blocks 4-6")
 
 	// sh reset → root stack fragments (node, harness-declared) → zsh
-	// restore → block_4 content (claude install).
+	// restore → user_after_shell_switch content (claude install).
 	nodeIdx := strings.Index(content, "nodejs.org/dist")
 	installIdx := strings.Index(content, "claude.ai/install.sh")
 	require.Positive(t, nodeIdx)
 	require.Positive(t, installIdx)
-	assert.Less(t, shResetIdx, nodeIdx, "block_1 must run under sh")
+	assert.Less(t, shResetIdx, nodeIdx, "root_after_stacks must run under sh")
 	assert.Less(t, nodeIdx, zshRestoreIdx, "zsh restore comes after the root blocks")
-	assert.Less(t, zshRestoreIdx, installIdx, "block_4 must run under zsh")
+	assert.Less(t, zshRestoreIdx, installIdx, "user_after_shell_switch must run under zsh")
 
 	// Harness volume dirs are created harness-side, in root scope before
 	// the USER switch.

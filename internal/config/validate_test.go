@@ -21,7 +21,7 @@ build:
       stacks: [bun]
       packages: [libnss3]
       inject:
-        after_harness_install: ["echo hi"]
+        user_commands: ["echo hi"]
         before_entrypoint: ["echo bye"]
 `, "")
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ build:
 	assert.Equal(t, []string{"bun"}, overlay.Stacks)
 	assert.Equal(t, []string{"libnss3"}, overlay.Packages)
 	require.NotNil(t, overlay.Inject)
-	assert.Equal(t, []string{"echo hi"}, overlay.Inject.AfterHarnessInstall)
+	assert.Equal(t, []string{"echo hi"}, overlay.Inject.UserCommands)
 	assert.Equal(t, []string{"echo bye"}, overlay.Inject.BeforeEntrypoint)
 }
 
@@ -210,7 +210,7 @@ build:
       stacks: [bun]
       packages: [libnss3]
       inject:
-        after_harness_install: ["echo hi"]
+        user_commands: ["echo hi"]
 `, "")
 	require.NoError(t, err)
 }
