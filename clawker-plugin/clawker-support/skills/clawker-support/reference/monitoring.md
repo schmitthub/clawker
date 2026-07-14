@@ -36,8 +36,9 @@ bootstrap fails, the collector does not start.
 Beyond the core firewall/control-plane telemetry, what the stack observes is
 contributed by **monitoring extensions** a project selects under
 `monitor.extensions` in `clawker.yaml` (a whole-value selection — the highest
-config layer that sets it wins; empty by default, every extension is an
-explicit opt-in). `clawker monitor up` is bring-up only: it seeds the current
+config layer that sets it wins; the default selection is the built-in
+`claude-code` extension, and an explicit empty list opts out of all
+monitoring). `clawker monitor up` is bring-up only: it seeds the current
 project's selected extensions (indices, ingest pipelines, dashboards) when it
 starts the stack, and exits untouched — with an already-up notice — when the
 stack is running; there is no host-side enable registry, and the collector

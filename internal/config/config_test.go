@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -22,6 +23,12 @@ func TestNewBlankConfig(t *testing.T) {
 	assert.Equal(t, []string{"ripgrep"}, p.Build.Packages)
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 	assert.False(t, p.Security.DockerSocket)
+
+	// Virtual-layer defaults: absent keys resolve to the shipped harness and
+	// its monitoring extension, so no config migration is needed for either
+	// existing or fresh installs.
+	assert.Equal(t, consts.DefaultHarnessName, p.Build.Harness)
+	assert.Equal(t, []string{"claude-code"}, p.Monitor.Extensions)
 }
 
 func TestNewBlankConfig_settingsDefaults(t *testing.T) {
@@ -270,6 +277,42 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 
 	// Defaults for unset values should still be present
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+}
+
+func TestNewConfig_monitorExtensionsFileOverridesDefault(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{
+			name: "explicit empty list disables the default",
+			yaml: "monitor:\n  extensions: []\n",
+			want: []string{},
+		},
+		{
+			name: "explicit selection replaces the default wholesale",
+			yaml: "monitor:\n  extensions:\n    - custom-ext\n",
+			want: []string{"custom-ext"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			configDir := filepath.Join(base, "config")
+			t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+			t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
+			t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
+			require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+			require.NoError(t, os.WriteFile(
+				filepath.Join(configDir, "clawker.yaml"), []byte(tc.yaml), 0o644))
+
+			cfg, err := NewConfig()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.Project().Monitor.Extensions)
+		})
+	}
 }
 
 func TestSetProject_mutation(t *testing.T) {

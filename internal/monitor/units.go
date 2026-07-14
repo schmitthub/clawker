@@ -40,7 +40,8 @@ type ResolvedUnit struct {
 // ResolveUnits projects the current project's `monitor.extensions` selection
 // onto resolved monitoring units. Selection follows build.stacks semantics — the
 // highest config layer that sets `monitor.extensions` wins wholesale (the
-// default is empty — every extension is an explicit opt-in), so this reads the
+// virtual defaults layer ships the claude-code extension; an explicit empty
+// list opts out of all monitoring), so this reads the
 // merged selection off the project view. Each selected name resolves through the internal/bundle
 // three-tier resolver; a name that resolves nowhere, or a unit that fails its
 // front-door validation, is a hard error — a selected extension that cannot load

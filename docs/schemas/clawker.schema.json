@@ -135,7 +135,8 @@
       "additionalProperties": false,
       "properties": {
         "harness": {
-          "description": "Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default",
+          "default": "claude",
+          "description": "Harness used when a command doesn't select one (bare name or namespace.bundle.component address)",
           "title": "Default Harness",
           "type": "string"
         },
@@ -465,6 +466,9 @@
       "additionalProperties": false,
       "properties": {
         "extensions": {
+          "default": [
+            "claude-code"
+          ],
           "description": "Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins",
           "items": {
             "type": "string"

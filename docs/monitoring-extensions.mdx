@@ -28,8 +28,8 @@ monitor:
 
 `monitor.extensions` is a whole-value selection: the highest config layer that
 sets it wins, so a project can replace — or deselect — what a user-level config
-provides. There is no default selection — every extension, including the
-built-in `claude-code` one, is an explicit opt-in.
+provides. The default selection is the built-in `claude-code` extension; set an
+explicit empty list (`extensions: []`) to opt out of all monitoring.
 
 Each entry is a component name — bare for a built-in or loose extension, or a
 qualified `namespace.bundle.component` address for a bundled extension.

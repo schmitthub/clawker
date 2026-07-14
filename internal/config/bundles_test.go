@@ -40,13 +40,14 @@ bundles:
 	}, bundles[0])
 }
 
-// TestProjectDefaults_MonitorExtensions proves the defaults layer ships NO
-// monitoring extensions — every extension, including shipped ones like
-// claude-code, is an explicit opt-in.
+// TestProjectDefaults_MonitorExtensions proves the defaults layer ships the
+// claude-code monitoring extension, so a config that never sets
+// monitor.extensions keeps the shipped monitoring without any migration; an
+// explicit empty list opts out.
 func TestProjectDefaults_MonitorExtensions(t *testing.T) {
 	cfg, err := config.NewBlankConfig()
 	require.NoError(t, err)
-	assert.Empty(t, cfg.Project().Monitor.Extensions)
+	assert.Equal(t, []string{"claude-code"}, cfg.Project().Monitor.Extensions)
 }
 
 // TestMonitorExtensions_OverrideMergeNotUnion proves monitor.extensions is a

@@ -44,9 +44,10 @@ type MonitorConfig struct {
 	// the monitoring stack, by component reference (bare name for a
 	// floor/loose extension, or a qualified namespace.bundle.component address
 	// for a bundled one). A selection key like build.stacks: the highest
-	// config layer that sets it wins wholesale (no union). Empty by default —
-	// every extension, including the shipped ones, is an explicit opt-in.
-	Extensions []string `yaml:"extensions,omitempty" label:"Monitoring Extensions" desc:"Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins"`
+	// config layer that sets it wins wholesale (no union). Defaults to the
+	// shipped claude-code extension via the virtual defaults layer; an
+	// explicit empty list opts out of all monitoring.
+	Extensions []string `yaml:"extensions,omitempty" label:"Monitoring Extensions" desc:"Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins" default:"claude-code"`
 }
 
 // Fields implements [storage.Schema] for Project.
@@ -60,8 +61,9 @@ type BuildConfig struct {
 	// uses when it doesn't select one (`clawker build` with no -t, bare
 	// `@` refs). A selection key like Stacks — the highest layer that
 	// sets it wins wholesale; explicit -t / @:<harness> always beats it.
-	// Empty falls back to the built-in default.
-	Harness      string              `yaml:"harness,omitempty"      label:"Default Harness" desc:"Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default"`
+	// The virtual defaults layer supplies the built-in harness, so the
+	// resolved value is never empty.
+	Harness      string              `yaml:"harness,omitempty"      label:"Default Harness" desc:"Harness used when a command doesn't select one (bare name or namespace.bundle.component address)"                                     default:"claude"`
 	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"        desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                           default:"ripgrep"`
 	Stacks       []string            `yaml:"stacks,omitempty"       label:"Stacks"          desc:"Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`

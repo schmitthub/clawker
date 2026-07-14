@@ -93,7 +93,7 @@ Read-only inventory of every resolvable monitoring extension across the three
 tiers: `NAME/VERSION/SOURCE` with `!` shadow markers, bundle-sourced rows naming
 their owning bundle; `--json`/`--quiet`. Alias `ext`.
 
-Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them at bring-up (`monitor reload` applies the selection to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `monitor extensions` shows monitoring-component provenance.
+Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; the virtual defaults layer selects the floor claude-code unit — an explicit empty list opts out of all monitoring), and `monitor up` seeds them at bring-up (`monitor reload` applies the selection to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `monitor extensions` shows monitoring-component provenance.
 
 ### monitor status
 

@@ -150,8 +150,8 @@ The complete `.clawker.yaml` schema with all fields and nested object structures
 # Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)
 name: <string>  # default: n/a | required: false
 build:
-  # Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default
-  harness: <string>  # default: n/a | required: false
+  # Harness used when a command doesn't select one (bare name or namespace.bundle.component address)
+  harness: <string>  # default: claude | required: false
   # System packages (apt) needed by your project that the clawker base doesn't already install
   packages:  # default: ripgrep | required: false
     - <string>
@@ -317,7 +317,7 @@ bundles:
     auto_update: <boolean>  # default: n/a | required: false
 monitor:
   # Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins
-  extensions:  # default: n/a | required: false
+  extensions:  # default: claude-code | required: false
     - <string>
 
 ```
@@ -337,7 +337,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `harness` | string | — | Harness used when a command doesn't select one (bare name or namespace.bundle.component address); empty = built-in default |
+| `harness` | string | `claude` | Harness used when a command doesn't select one (bare name or namespace.bundle.component address) |
 | `packages` | string list | `ripgrep` | System packages (apt) needed by your project that the clawker base doesn't already install |
 | `stacks` | string list | — | Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run |
 | `harnesses` | object map | — | Per-harness build additions (stacks, packages, inject), keyed by harness name |
@@ -454,7 +454,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `extensions` | string list | — | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins |
+| `extensions` | string list | `claude-code` | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins |
 
 
 ## Interactive Editing
