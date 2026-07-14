@@ -226,7 +226,7 @@ func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string,
 // suffix stripped; everything else (JSON, NDJSON) is copied verbatim. Unit files
 // are always verbatim — units carry no templates.
 //
-// The overlaid units are the current project's projection (the option-D "seed
+// The overlaid units are the current project's projection (the "seed
 // from cwd" set), NOT the full ledger union: a foreign project's REST artifacts
 // were applied by its own `monitor up` and persist in the OpenSearch volume, so
 // re-materializing them here is unnecessary and their on-disk trees may not even

@@ -56,13 +56,13 @@ func TestLedger_SameRootDifferentHashUpdatesSilently(t *testing.T) {
 	assert.Equal(t, "h2", l.Union()[0].ContentHash)
 }
 
-func TestLedger_C5CollisionRefusesSeedAcrossProjects(t *testing.T) {
+func TestLedger_CollisionRefusesSeedAcrossProjects(t *testing.T) {
 	l := monitor.NewLedger()
 	now := time.Unix(1, 0).UTC()
 	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now))
 
 	// A different project ships a different-content bare unit of the same name:
-	// C5 is a hard error and the ledger keeps the prior seed untouched.
+	// Same-name/different-content seed is a hard error and the ledger keeps the prior seed untouched.
 	err := l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/b", "h2", false)}, now)
 	var collision *monitor.SeedCollisionError
 	require.ErrorAs(t, err, &collision)

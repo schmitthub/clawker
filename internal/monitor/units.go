@@ -21,7 +21,7 @@ type ResolvedUnit struct {
 	// ledger key and the collision key.
 	Name string
 	// Qualified reports whether Name is a bundled (qualified) address. Bare
-	// extensions can C5-collide across projects (refused at seed); qualified
+	// extensions can seed-collide across projects (refused at seed); qualified
 	// ones are collision-proof by construction.
 	Qualified bool
 	// Unit carries the loaded manifest and artifact filesystem.
@@ -30,7 +30,7 @@ type ResolvedUnit struct {
 	// `project (…)`, `user (…)`, `bundle acme.tools`).
 	Source string
 	// ProjectRoot is the current project's root at resolve time ("" when no
-	// project is anchored) — the C5 discriminator recorded in the ledger.
+	// project is anchored) — the collision discriminator recorded in the ledger.
 	ProjectRoot string
 	// ContentHash is a stable digest of the unit's manifest + artifacts, used
 	// to detect an identical re-seed (no-op) versus an edited unit (update).

@@ -18,20 +18,20 @@ import (
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
-// TestMonitorOptionD_SeedUnionAndC5_E2E proves the monitoring seed model across
+// TestMonitorSeedUnionAndCollision_E2E proves the monitoring seed model across
 // two projects sharing one host: `monitor up` is bring-up only — it seeds the
 // cwd's projection on bring-up and short-circuits untouched when the stack is
 // already running; applying a projection to a running stack is `monitor
 // reload`'s job. A second project selecting a same-named bare extension with
-// DIFFERENT content is a C5 hard error at reload (the seed is refused), while
+// DIFFERENT content is a hard seed-collision error at reload (the seed is refused), while
 // an identical-content re-seed from another project is a no-op. `monitor down
 // --volumes` resets the ledger.
 //
 // The two projects deliberately share ONE isolated data dir (the host ledger and
 // rendered collector config are host-global, not per-project) — that shared
-// state IS the option-D surface. Runs at host UAT only; excluded from
+// state IS the host-global seed-union surface. Runs at host UAT only; excluded from
 // `make test` by directory.
-func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
+func TestMonitorSeedUnionAndCollision_E2E(t *testing.T) {
 	h := &harness.Harness{
 		T:       t,
 		Opts:    bundleHarnessOpts(),
@@ -51,7 +51,7 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 
 	// Project B: a loose claude-code extension of DIFFERENT content (a tweaked
 	// copy of the floor) — a same bare name from a different project root with a
-	// different content hash, the exact C5 condition.
+	// different content hash — the exact seed-collision condition.
 	projB := filepath.Join(setup.Env.Dirs.Base, "monitor-proj-b")
 	require.NoError(t, os.MkdirAll(projB, 0o755))
 	materializeTweakedClaudeCodeExtension(t, projB)
@@ -64,21 +64,21 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 	// up is bring-up only: against the running stack it short-circuits — B's
 	// divergent copy is invisible to bring-up. This is the strong variant of
 	// the assertion: were up to fall through and seed, B's projection would
-	// turn the accidental seed into a C5 collision error.
+	// turn the accidental seed into a seed-collision error.
 	upB := h.Run("monitor", "up")
 	require.NoError(t, upB.Err, "monitor up (B) on a running stack failed\nstdout: %s\nstderr: %s",
 		upB.Stdout, upB.Stderr)
 	assert.Contains(t, upB.Stdout, "already up",
 		"a running stack must short-circuit regardless of the cwd projection")
 
-	// C5: B's same-named, different-content claude-code refuses to seed at
+	// Collision: B's same-named, different-content claude-code refuses to seed at
 	// reload — typed hard error, collector untouched (the refusal fires
 	// before the disruptive apply).
 	beforeID := collectorContainerID(t)
 	require.NotEmpty(t, beforeID, "collector must be running before the refused reload")
 	reloadB := h.Run("monitor", "reload")
 	var collErr *internalmonitor.SeedCollisionError
-	require.ErrorAs(t, reloadB.Err, &collErr, "monitor reload (B) must refuse with a C5 collision error")
+	require.ErrorAs(t, reloadB.Err, &collErr, "monitor reload (B) must refuse with a seed-collision error")
 	assert.NotEmpty(t, reloadB.Stderr, "the collision error must be user-visible")
 	assert.Equal(t, beforeID, collectorContainerID(t),
 		"a refused reload must not touch the running collector")
@@ -105,7 +105,7 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 	// Union: give B its OWN loose extension and select ONLY it — after this
 	// reload, claude-code routing in the rendered collector config can come
 	// from nothing but the ledger union (B's cwd projection never selects
-	// it). This is the option-D discriminator: one project's seed survives
+	// it). This is the seed-union discriminator: one project's seed survives
 	// another project's reload.
 	materializeMinimalExtension(t, projB, "uatunion")
 	rewriteExtensionSelection(t, projB, "[claude-code]", "[uatunion]")
@@ -136,7 +136,7 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 // materializeTweakedClaudeCodeExtension copies the embedded floor claude-code
 // monitoring extension into projectDir's loose convention dir, tweaking the
 // manifest description so its content hash differs from the floor's — making a
-// bare-name reseed from this project a genuine C5 clobber rather than an
+// bare-name reseed from this project a genuine same-name/different-content collision rather than an
 // identical no-op.
 func materializeTweakedClaudeCodeExtension(t *testing.T, projectDir string) {
 	t.Helper()
@@ -169,7 +169,7 @@ func materializeTweakedClaudeCodeExtension(t *testing.T, projectDir string) {
 
 	// Fail at the source if the tweak target drifted — an unapplied tweak
 	// makes the copy hash-identical to the floor and silently degrades the
-	// C5 leg into a no-op three commands later.
+	// collision leg into a no-op three commands later.
 	manifest, err := os.ReadFile(filepath.Join(dst, "monitoring.yaml"))
 	require.NoError(t, err)
 	require.Contains(t, string(manifest), "Team-tweaked",

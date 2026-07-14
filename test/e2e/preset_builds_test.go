@@ -90,7 +90,9 @@ func TestPresetBuilds_E2E(t *testing.T) {
 			// The two-image split must produce both the shared base and the
 			// harness image (tagged with the :default alias).
 			ctx := context.Background()
-			dc, err := docker.NewClient(ctx, nil, logger.Nop())
+			cfg, err := config.NewConfig()
+			require.NoError(t, err, "config for image assertions")
+			dc, err := docker.NewClient(ctx, cfg, logger.Nop())
 			require.NoError(t, err, "docker client for image assertions")
 			t.Cleanup(func() { _ = dc.Close() })
 

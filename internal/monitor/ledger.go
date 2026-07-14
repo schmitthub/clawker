@@ -53,7 +53,7 @@ type Ledger struct {
 	units map[string]SeededUnit
 }
 
-// SeedCollisionError reports a C5 monitoring collision: a bare-named loose
+// SeedCollisionError reports a monitoring seed collision: a bare-named loose
 // unit already seeded by one project is being re-seeded with different content
 // from another project. The seed is refused — a silent (or warned-but-taken)
 // overwrite would let one project's stack artifacts clobber another's.
@@ -145,7 +145,7 @@ func (l *Ledger) Union() []SeededUnit {
 // Merge semantics: an identical-content re-seed (same content hash) is a
 // no-op; a different-content re-seed from the SAME project root is an in-place
 // update (a project editing its own loose unit); a different-content re-seed
-// of a bare-named unit from a DIFFERENT project root is a C5 collision — the
+// of a bare-named unit from a DIFFERENT project root is a seed collision — the
 // seed is REFUSED with a *SeedCollisionError and the ledger is left
 // unmodified. Qualified (bundled) units are collision-proof by construction,
 // so they never collide.
@@ -190,7 +190,7 @@ const (
 // load-merge-save critical section. `monitor up` persists through this — not
 // through an in-memory Ledger held across the compose bring-up — so two
 // concurrent ups from different projects cannot lost-update each other's seeds
-// out of the union. A C5 collision from this authoritative merge (possible
+// out of the union. A seed collision from this authoritative merge (possible
 // when a concurrent up seeded between the caller's pre-render check and here)
 // refuses the seed and surfaces as an error.
 func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error {

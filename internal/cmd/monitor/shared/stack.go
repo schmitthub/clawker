@@ -19,7 +19,7 @@ import (
 )
 
 // PrepareStack resolves the current projection, merges it into an in-memory
-// view of the host ledger (a C5 collision is a hard error), validates the
+// view of the host ledger (a same-name/different-content extension collision across projects is a hard error), validates the
 // union, and renders the stack config over it. It returns the projection's
 // units — the set the caller persists via SeedLedger after a successful
 // compose up — and the render result. The in-memory merge here is
@@ -38,7 +38,7 @@ func PrepareStack(
 	if err != nil {
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("load monitoring units ledger: %w", err)
 	}
-	// C5 is a hard error: a same-named loose extension with different content
+	// Seed collision is a hard error: a same-named loose extension with different content
 	// from another project refuses to seed rather than clobbering the stack.
 	if mergeErr := ledger.Merge(cwdUnits, time.Now()); mergeErr != nil {
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("seed monitoring extensions: %w", mergeErr)

@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/bundler"
@@ -57,6 +59,10 @@ func TestBundledStackBuild_E2E(t *testing.T) {
 	}
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: projectName})
 
+	// The container-start leg bootstraps a CP; a leftover CP from another
+	// environment chains to a different CLI CA and fails every admin RPC.
+	harness.EnsureNoControlPlane(t, 30*time.Second)
+
 	// Register + scaffold the project, then rewrite its config to declare the
 	// bundle source and select the qualified stack in build.stacks.
 	initRes := h.Run("project", "init", projectName, "--yes", "--preset", "Bare", "--vcs", "github")
@@ -75,7 +81,9 @@ func TestBundledStackBuild_E2E(t *testing.T) {
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
 
 	ctx := context.Background()
-	dc, err := docker.NewClient(ctx, nil, logger.Nop())
+	cfg, err := config.NewConfig()
+	require.NoError(t, err, "config for image assertions")
+	dc, err := docker.NewClient(ctx, cfg, logger.Nop())
 	require.NoError(t, err, "docker client for image assertions")
 	t.Cleanup(func() { _ = dc.Close() })
 
@@ -93,18 +101,29 @@ func TestBundledStackBuild_E2E(t *testing.T) {
 }
 
 // bundleHarnessOpts returns FactoryOptions wired with the production
-// constructors the bundle/monitor E2E tests exercise; the CP/git/host-proxy
-// nouns default to the harness's fakes (nil).
+// constructors the bundle/monitor E2E tests exercise. Starting a real agent
+// container needs the real CP/firewall stack (clawkerd only spawns the user
+// CMD after the CP dispatches AgentReady), so the CP manager and admin
+// client are wired production-real — the same shape as the firewall E2E
+// tests. Git/host-proxy/socket-bridge nouns stay on the harness fakes.
 func bundleHarnessOpts() *harness.FactoryOptions {
 	return &harness.FactoryOptions{
-		Config:             config.NewConfig,
-		Client:             docker.NewClient,
-		ProjectManager:     project.NewProjectManager,
-		GitManager:         nil,
-		HostProxy:          nil,
-		SocketBridge:       nil,
-		UseRealAdminClient: false,
-		ControlPlane:       nil,
+		Config:         config.NewConfig,
+		Client:         docker.NewClient,
+		ProjectManager: project.NewProjectManager,
+		GitManager:     nil,
+		HostProxy:      nil,
+		SocketBridge:   nil,
+		ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+			return manager.NewManager(
+				func(ctx context.Context) (*docker.Client, error) {
+					return docker.NewClient(ctx, cfg, log)
+				},
+				func() (config.Config, error) { return cfg, nil },
+				func() (*logger.Logger, error) { return log, nil },
+			)
+		},
+		UseRealAdminClient: true,
 	}
 }
 
