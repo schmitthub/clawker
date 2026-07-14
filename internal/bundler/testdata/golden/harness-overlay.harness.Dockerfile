@@ -283,17 +283,22 @@ USER root
 
 # --- Begin clawker-managed root assets (consolidated for build-cache locality) ---
 # Every COPY/RUN in this block changes with clawker release cadence
-# (embedded scripts, harness block_5 assets such as a managed agent prompt,
-# firewall CA, clawkerd binary) and writes to root-owned paths
-# (/usr/local/bin, /usr/local/share, harness-managed /etc dirs).
+# (embedded scripts, the managed agent prompt, firewall CA, clawkerd
+# binary) and writes to root-owned paths (/usr/local/bin,
+# /usr/local/share, harness-managed /etc dirs).
 # Keeping them at end-of-stage means a clawker bump invalidates ONLY this
 # block — the harness install blocks and config seeds stay cached above,
 # and the shared base image's ID never changes. The seeds live in the
 # user-scope section (before USER root) so the after_harness_install inject
 # point can reference ~/.clawker/seed/ contents.
 
-# /etc/claude-code is created by the managed-settings.json RUN above; COPY auto-creates intermediates either way.
-COPY assets/clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+
+
+# Managed agent context — clawker's harness-agnostic environment briefing,
+# baked at build time to the location the harness manifest declares
+# (harness.yaml managed_prompt). The content is clawker-owned; the harness
+# only names where its agent reads managed context from.
+COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
 
 # Firewall CA cert for TLS inspection. docker build itself runs via host
 # network (not through the per-container eBPF firewall), so curl/wget

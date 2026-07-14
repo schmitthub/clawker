@@ -61,7 +61,7 @@ security:
 		"assets/statusline.sh",
 		"assets/claude-settings.json",
 		"assets/claude-config.json",
-		"assets/clawker-agent-prompt.md",
+		"clawker-agent-prompt.md",
 		"host-open.sh",
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",

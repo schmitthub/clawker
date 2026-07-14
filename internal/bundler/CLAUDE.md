@@ -23,7 +23,7 @@ Image-generation package: Dockerfile generation, harness bundle + stack/monitori
 | Package | Purpose |
 |---------|---------|
 | `registry/` | npm registry client (`NPMClient`), GitHub releases client (`GitHubReleaseClient`), version info types, fetcher interface |
-| `assets/` | Master Dockerfile templates ONLY (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`). The shipped floor — harnesses (`claude`, `codex`), stacks (`go`, `node`, `python`, `rust`), and the `claude-code` monitoring extension — relocated to `internal/bundle/assets/{harnesses,stacks,monitoring}/` and is loaded through `bundle.FloorNames`/`bundle.FloorFS`; `ShippedHarnessNames`/`ShippedStackNames` shim onto that floor API. The `claude-code` monitoring extension is loaded by `internal/monitor` (which owns the monitoring-unit loader now); the bundler package no longer touches monitoring. The clawkerd binary is imported from `clawkerd/embed`, not stored here. |
+| `assets/` | Master Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`) plus the managed agent prompt (`clawker-agent-prompt.md`, embedded as `AgentPromptContent`) — the harness-agnostic agent-context briefing copied at build time to a harness's `managed_prompt.dest`; it deliberately lives with the master machinery, NOT in any harness's assets. The shipped floor — harnesses (`claude`, `codex`), stacks (`go`, `node`, `python`, `rust`), and the `claude-code` monitoring extension — relocated to `internal/bundle/assets/{harnesses,stacks,monitoring}/` and is loaded through `bundle.FloorNames`/`bundle.FloorFS`; `ShippedHarnessNames`/`ShippedStackNames` shim onto that floor API. The `claude-code` monitoring extension is loaded by `internal/monitor` (which owns the monitoring-unit loader now); the bundler package no longer touches monitoring. The clawkerd binary is imported from `clawkerd/embed`, not stored here. |
 
 ## Build Cache Strategy
 
@@ -160,7 +160,7 @@ func KnownHarnessNames(cfg config.Config) []string                     // floor 
 func LoadHarness(cfg config.Config, name string) (*Bundle, error)      // resolves via bundle.NewResolver(cfg).Resolve, then LoadBundle(comp.FS)
 ```
 
-A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. The parsed manifest (`config.Manifest` and its nested schema types) lives in `internal/config`; `LoadBundle` (`bundle.go`) reads + validates it, and `Compose` (`compose.go`) renders the fragment against the master template.
+A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress, optional `managed_prompt` — the build-time copy target for clawker's managed agent context; absent = the harness doesn't take one) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. The parsed manifest (`config.Manifest` and its nested schema types) lives in `internal/config`; `LoadBundle` (`bundle.go`) reads + validates it, and `Compose` (`compose.go`) renders the fragment against the master template.
 
 **Resolution:** harness selection resolves through the ONE algorithm in
 `internal/bundle` — a bare name resolves user loose > project loose > embedded
@@ -210,7 +210,7 @@ The rendered harness image splits content across three scopes, dictated by USER 
 **2. User scope (blocks 3–4 + generic seed staging):** the harness install (block_4) and the manifest `seeds:` staged to `/home/${USERNAME}/.clawker/seed/` plus a generated `seed-manifest` (apply tokens consumed by CP's generic first-boot seed-apply step). Seeds stay in the user-scope section because `after_harness_install` / `before_entrypoint` inject points and user `Instructions.Copy` may reference the staged contents at injection time.
 
 **3. Late root scope (trailing `USER root` → `ENTRYPOINT`), shared template:**
-1. block_5 (bundle late-root steps, e.g. the claude fragment's agent-prompt COPY to `/etc/claude-code/CLAUDE.md`)
+1. block_5 (bundle late-root steps), then the managed-prompt COPY — the master template copies clawker's embedded `AgentPromptContent` (`assets/clawker-agent-prompt.md`, harness-agnostic) to the manifest-declared `managed_prompt.dest` with resolved `--chown`/`--chmod` (root:root 0644 defaults); rendered only when the manifest declares the block
 2. `{{if .HasFirewallCA}}` block: CA cert COPY + `update-ca-certificates` + `SSL_CERT_FILE` / `CURL_CA_BUNDLE` ENVs (runtime traffic only; `docker build` itself goes via host network, not through the in-container firewall)
 3. Host-proxy + socket-forwarder binaries (`host-open`, `git-credential-clawker`, `callback-forwarder`, `clawker-socket-server`) + single batched `chmod +x` (one layer, not four)
 4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`), then `ENTRYPOINT ["/usr/local/bin/clawkerd"]` + block_6 (CMD)

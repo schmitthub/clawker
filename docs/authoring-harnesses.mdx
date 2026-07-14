@@ -35,8 +35,8 @@ bundle:           <bundle>/harnesses/<name>/
 
 `harness.yaml` declares everything clawker's engine needs outside template
 rendering — how to resolve the agent's version, which stacks it needs, the
-volumes it keeps state in, what to seed and stage into those volumes, and the
-egress the firewall must allow.
+volumes it keeps state in, what to seed and stage into those volumes, where the
+agent reads managed context from, and the egress the firewall must allow.
 
 ```yaml
 # harness.yaml
@@ -46,6 +46,9 @@ version:
 
 stacks:
   - node
+
+managed_prompt:
+  dest: /etc/acme/AGENTS.md
 
 volumes:
   - name: config
@@ -83,6 +86,26 @@ algorithm as every selection surface: a bare name resolves user loose → projec
 loose → built-in floor; a qualified `namespace.bundle.component` address
 resolves from an installed bundle. A bundled harness that depends on a stack it
 ships alongside references it by its own qualified address.
+
+### `managed_prompt`
+
+Where the agent reads managed context from. Clawker ships a managed
+agent-context briefing — a harness-agnostic markdown file describing the
+container environment, the firewall, and how to ask for help when a domain is
+blocked. Declaring `managed_prompt` tells the build to bake that file into the
+image at the location your agent loads managed instructions from. The content
+is clawker's, not the harness's; the manifest only names the destination.
+Omit the block entirely if the agent has no managed-context location — nothing
+is copied.
+
+| Field | Purpose |
+|-------|---------|
+| `dest` | Absolute container path, including the filename (e.g. `/etc/claude-code/CLAUDE.md`). |
+| `owner` | `root` (default) or `user` — the unprivileged container user. |
+| `mode` | Octal permission value; defaults to `0644`. |
+
+The copy happens at **build time**, never at runtime, so the destination must
+not sit under a declared volume (a volume mount would shadow it).
 
 ### `volumes`
 

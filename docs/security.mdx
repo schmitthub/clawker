@@ -23,7 +23,7 @@ Everything below is either on by default or off for a deliberate safety reason. 
 
 ## Agent Awareness Prompt
 
-The claude harness bundle bakes an agent prompt file into its image at `/etc/claude-code/CLAUDE.md`, automatically loaded by Claude Code so the agent understands its containerized environment — what it can and cannot do, how to diagnose firewall blocks, and which `clawker firewall` commands unblock a domain. The payoff is self-service: when the agent hits a blocked domain, it explains the problem and suggests the right command without the user needing to know the details. See [Container Internals → Agent Awareness Prompt](/container-internals#agent-awareness-prompt) for the full prompt contract.
+Clawker bakes a managed agent prompt into the image at the location the harness declares (for the claude harness, `/etc/claude-code/CLAUDE.md`, automatically loaded by Claude Code) so the agent understands its containerized environment — what it can and cannot do, how to diagnose firewall blocks, and which `clawker firewall` commands unblock a domain. The payoff is self-service: when the agent hits a blocked domain, it explains the problem and suggests the right command without the user needing to know the details. See [Container Internals → Agent Awareness Prompt](/container-internals#agent-awareness-prompt) for the full prompt contract.
 
 ## Security Controls
 

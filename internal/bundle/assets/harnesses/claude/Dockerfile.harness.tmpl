@@ -94,11 +94,6 @@ RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
 {{- end}}
 {{- end}}
 
-{{define "block_5" -}}
-# /etc/claude-code is created by the managed-settings.json RUN above; COPY auto-creates intermediates either way.
-COPY assets/clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
-{{- end}}
-
 {{define "block_6" -}}
 CMD ["claude"]
 {{- end}}

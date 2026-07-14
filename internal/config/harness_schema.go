@@ -25,6 +25,28 @@ type Manifest struct {
 	// image, even when the project also declares the same name in the
 	// shared base (fragment self-guards own any interaction).
 	Stacks []string `yaml:"stacks,omitempty"`
+
+	// ManagedPrompt declares where clawker's managed agent-context briefing
+	// lands in the harness image. The content is a clawker-owned,
+	// harness-agnostic markdown file (embedded with the master templates,
+	// never part of any harness's assets); the harness only names the
+	// container path its agent reads managed context from. Baked at BUILD
+	// time — never seeded or staged at runtime. Absent = the harness has no
+	// managed-context location and gets no copy.
+	ManagedPrompt *ManagedPromptSpec `yaml:"managed_prompt,omitempty"`
+}
+
+// ManagedPromptSpec is the harness manifest's managed_prompt block: the
+// build-time copy target for clawker's managed agent-context file.
+type ManagedPromptSpec struct {
+	// Dest is the absolute container path the file is copied to,
+	// including the filename (e.g. /etc/claude-code/CLAUDE.md).
+	Dest string `yaml:"dest"`
+	// Owner is who owns the file in the image: PromptOwnerRoot (default)
+	// or PromptOwnerUser (the unprivileged container user).
+	Owner string `yaml:"owner,omitempty"`
+	// Mode is the octal permission value (e.g. "0644", the default).
+	Mode string `yaml:"mode,omitempty"`
 }
 
 // VolumeSpec declares one persisted directory: a named volume
@@ -130,4 +152,12 @@ const (
 const (
 	RewritePrefixSwap         = "prefix-swap"
 	RewriteReplaceWithWorkdir = "replace-with-workdir"
+)
+
+// Managed-prompt owners — the closed vocabulary a manifest's
+// managed_prompt.owner accepts. root is the default; user is the
+// unprivileged container user.
+const (
+	PromptOwnerRoot = "root"
+	PromptOwnerUser = "user"
 )

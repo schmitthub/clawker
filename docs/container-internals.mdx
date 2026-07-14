@@ -192,7 +192,13 @@ The container's `ENTRYPOINT` is `clawkerd`; the `CMD` is the harness command dec
 
 ## Agent Awareness Prompt
 
-The claude harness bundle bakes a prompt file into its image at `/etc/claude-code/CLAUDE.md`. Claude Code automatically loads this file, giving the agent awareness of its containerized environment without any user configuration.
+Clawker ships a managed agent-context prompt and bakes it into the image at
+build time, at the location the harness declares it reads managed context from
+(the harness manifest's `managed_prompt` — for the claude harness,
+`/etc/claude-code/CLAUDE.md`, which Claude Code loads automatically). The agent
+gains awareness of its containerized environment without any user
+configuration; a harness that declares no managed-context location gets no
+prompt.
 
 The prompt tells the agent:
 

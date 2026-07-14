@@ -71,6 +71,21 @@
       },
       "type": "array"
     },
+    "managed_prompt": {
+      "additionalProperties": false,
+      "properties": {
+        "dest": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "seeds": {
       "items": {
         "additionalProperties": false,

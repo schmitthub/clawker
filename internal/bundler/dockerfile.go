@@ -45,6 +45,16 @@ var DockerfileBaseTemplate string
 //go:embed assets/Dockerfile.harness-image.tmpl
 var DockerfileHarnessImageTemplate string
 
+// AgentPromptContent is clawker's managed agent-context briefing — a
+// harness-agnostic markdown file describing the container environment,
+// firewall semantics, and troubleshooting surface. It lives with the master
+// templates, not in any harness's assets: the content is clawker-owned; a
+// harness only declares WHERE its agent reads managed context from
+// (harness.yaml managed_prompt) and the build copies this file there.
+//
+//go:embed assets/clawker-agent-prompt.md
+var AgentPromptContent string
+
 // Build-context filenames for clawker-owned assets, referenced by COPY
 // instructions in the harness-image template.
 const (
@@ -57,6 +67,7 @@ const (
 	ctxFileGitCredential = "git-credential-clawker.sh" //nolint:gosec // filename, not a credential
 	ctxFileSocketServer  = "clawker-socket-server.go"
 	ctxFileClawkerd      = "clawkerd"
+	ctxFileAgentPrompt   = "clawker-agent-prompt.md"
 )
 
 // tarFileMode is the mode recorded for files streamed into the build-context
@@ -125,6 +136,12 @@ type DockerfileContext struct {
 	// baked seed manifest that CP's generic seed-apply step interprets on
 	// first boot.
 	HarnessSeeds []config.Seed
+	// ManagedPrompt drives the harness-image template's managed-prompt
+	// COPY: clawker's agent-context file is staged into the build context
+	// and copied at BUILD time to the harness-declared dest. Nil when the
+	// harness manifest declares no managed_prompt — absent means the
+	// harness has no managed-context location and nothing is copied.
+	ManagedPrompt *ManagedPromptContext
 	// StackRootSteps / StackUserSteps are pre-rendered stack
 	// fragments for THIS render's root/user anchor. The generator computes
 	// stage placement (project-declared → base image, harness-declared-only
@@ -160,6 +177,60 @@ type DockerfileContext struct {
 
 	HasFirewallCA  bool   // CA cert exists for MITM inspection
 	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.10-alpine@sha256:...")
+}
+
+// ManagedPromptContext is the resolved managed_prompt render data: Dest
+// verbatim from the harness manifest; Chown/Chmod resolved from the spec's
+// owner/mode vocabulary with root:root and 0644 defaults.
+type ManagedPromptContext struct {
+	Dest  string
+	Chown string
+	Chmod string
+}
+
+// ctxFile is one clawker-owned file staged into the harness build context.
+// content is []byte so the multi-MB clawkerdembed.Binary passes through
+// without a string<->[]byte round-trip copy.
+type ctxFile struct {
+	name    string
+	content []byte
+	mode    os.FileMode
+}
+
+// clawkerContextFiles returns the clawker-owned scripts and binaries staged
+// into every harness build context — host-open, the two Go sources compiled
+// by the builder stages, the git credential helper, and the pre-compiled
+// clawkerd binary — plus the managed agent prompt when (and only when) the
+// harness manifest declares a managed_prompt dest for it.
+func clawkerContextFiles(b *Bundle) []ctxFile {
+	files := []ctxFile{
+		{ctxFileHostOpen, []byte(HostOpenScript), 0o755},
+		{ctxFileCallbackFwd, []byte(CallbackForwarderSource), 0o644},
+		{ctxFileGitCredential, []byte(GitCredentialScript), 0o755},
+		{ctxFileSocketServer, []byte(SocketForwarderSource), 0o644},
+		{ctxFileClawkerd, clawkerdembed.Binary, 0o755},
+	}
+	if b.Manifest.ManagedPrompt != nil {
+		files = append(files, ctxFile{ctxFileAgentPrompt, []byte(AgentPromptContent), 0o644})
+	}
+	return files
+}
+
+// managedPromptContext resolves a manifest managed_prompt spec into render
+// data. Nil in, nil out — the template skips the copy entirely.
+func managedPromptContext(mp *config.ManagedPromptSpec) *ManagedPromptContext {
+	if mp == nil {
+		return nil
+	}
+	chown := "root:root"
+	if mp.Owner == config.PromptOwnerUser {
+		chown = "${USERNAME}:${USERNAME}"
+	}
+	chmod := mp.Mode
+	if chmod == "" {
+		chmod = "0644"
+	}
+	return &ManagedPromptContext{Dest: mp.Dest, Chown: chown, Chmod: chmod}
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -458,20 +529,7 @@ func (g *ProjectGenerator) GenerateHarnessBuildContext(dockerfile []byte) (io.Re
 		return nil, err
 	}
 
-	// Clawker-owned scripts and binaries: host-open, the two Go sources
-	// compiled by the builder stages, the git credential helper, and the
-	// pre-compiled clawkerd binary dropped at /usr/local/bin/clawkerd.
-	clawkerFiles := []struct {
-		name    string
-		content []byte
-	}{
-		{ctxFileHostOpen, []byte(HostOpenScript)},
-		{ctxFileCallbackFwd, []byte(CallbackForwarderSource)},
-		{ctxFileGitCredential, []byte(GitCredentialScript)},
-		{ctxFileSocketServer, []byte(SocketForwarderSource)},
-		{ctxFileClawkerd, clawkerdembed.Binary},
-	}
-	for _, f := range clawkerFiles {
+	for _, f := range clawkerContextFiles(bundle) {
 		if err := addFileToTar(tw, f.name, f.content); err != nil {
 			return nil, err
 		}
@@ -520,21 +578,7 @@ func (g *ProjectGenerator) WriteHarnessBuildContextToDir(dir string, dockerfile 
 	}
 
 	// Write all supporting scripts (mirrors GenerateHarnessBuildContext).
-	// content is []byte so the multi-MB clawkerdembed.Binary passes through
-	// without a string<->[]byte round-trip copy at WriteFile.
-	scripts := []struct {
-		name    string
-		content []byte
-		mode    os.FileMode
-	}{
-		{ctxFileHostOpen, []byte(HostOpenScript), 0o755},
-		{ctxFileCallbackFwd, []byte(CallbackForwarderSource), 0o644},
-		{ctxFileGitCredential, []byte(GitCredentialScript), 0o755},
-		{ctxFileSocketServer, []byte(SocketForwarderSource), 0o644},
-		{ctxFileClawkerd, clawkerdembed.Binary, 0o755},
-	}
-
-	for _, s := range scripts {
+	for _, s := range clawkerContextFiles(bundle) {
 		if err := os.WriteFile(filepath.Join(dir, s.name), s.content, s.mode); err != nil {
 			return fmt.Errorf("failed to write %s: %w", s.name, err)
 		}
@@ -624,6 +668,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		HarnessVersion:           harnessVersion,
 		HarnessVolumeDirs:        harnessVolumeDirs(bundle),
 		HarnessSeeds:             bundle.Manifest.Seeds,
+		ManagedPrompt:            managedPromptContext(bundle.Manifest.ManagedPrompt),
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
 		OtelEndpoint:             g.cfg.OtelCollectorURL(),

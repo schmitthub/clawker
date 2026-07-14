@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -87,6 +89,9 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	if egressErr := validateEgressFloor(name, m.Egress); egressErr != nil {
 		return nil, egressErr
 	}
+	if mpErr := validateManagedPrompt(name, m.Volumes, m.ManagedPrompt); mpErr != nil {
+		return nil, mpErr
+	}
 
 	rawTmpl, readErr := fs.ReadFile(fsys, HarnessTemplateFile)
 	if readErr != nil {
@@ -155,6 +160,52 @@ func validateEgressFloor(name string, rules []config.EgressRule) error {
 					"that knob is reserved for a project's own security.firewall.rules; "+
 					"a bundle floor may not lower the TLS trust bar",
 				name, r.Dst,
+			)
+		}
+	}
+	return nil
+}
+
+// validateManagedPrompt checks the managed_prompt block at the load front
+// door. Absent is valid — it means the harness has no managed-context
+// location. When present, dest must be an absolute container path outside
+// every declared volume (the copy is baked at build time; a volume mount
+// would shadow it), and owner/mode must come from their closed vocabularies.
+func validateManagedPrompt(name string, volumes []config.VolumeSpec, mp *config.ManagedPromptSpec) error {
+	if mp == nil {
+		return nil
+	}
+	if mp.Dest == "" {
+		return fmt.Errorf("harness %q: managed_prompt.dest is required", name)
+	}
+	if !path.IsAbs(mp.Dest) {
+		return fmt.Errorf("harness %q: managed_prompt.dest %q must be an absolute container path", name, mp.Dest)
+	}
+	for _, v := range volumes {
+		volPath := path.Join("/home", DefaultUsername, v.Path)
+		if mp.Dest == volPath || strings.HasPrefix(mp.Dest, volPath+"/") {
+			return fmt.Errorf(
+				"harness %q: managed_prompt.dest %q falls under declared volume %q (%s) — "+
+					"the managed prompt is baked at build time and a volume mount would shadow it",
+				name, mp.Dest, v.Name, volPath,
+			)
+		}
+	}
+	switch mp.Owner {
+	case "", config.PromptOwnerRoot, config.PromptOwnerUser:
+	default:
+		return fmt.Errorf(
+			"harness %q: managed_prompt.owner %q must be %q or %q",
+			name, mp.Owner, config.PromptOwnerRoot, config.PromptOwnerUser,
+		)
+	}
+	if mp.Mode != "" {
+		v, err := strconv.ParseUint(mp.Mode, 8, 32)
+		if err != nil || v > 0o7777 {
+			return fmt.Errorf(
+				"harness %q: managed_prompt.mode %q must be an octal permission value like 0644",
+				name,
+				mp.Mode,
 			)
 		}
 	}

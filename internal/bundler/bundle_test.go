@@ -98,6 +98,96 @@ stacks: [node, acme.tools.node]
 	assert.Equal(t, []string{"node", "acme.tools.node"}, b.Manifest.Stacks)
 }
 
+// managed_prompt is validated at the load front door: dest must be an
+// absolute container path, owner and mode come from closed vocabularies,
+// and an absent block simply means the harness doesn't take the managed
+// prompt.
+func TestLoadBundle_ManagedPromptValidation(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest string
+		wantErr  string
+	}{
+		{
+			name: "dest only is valid",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: /etc/claude-code/CLAUDE.md }
+`,
+			wantErr: "",
+		},
+		{
+			name: "full spec is valid",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: /etc/agent/AGENTS.md, owner: user, mode: "0600" }
+`,
+			wantErr: "",
+		},
+		{
+			name: "missing dest rejected",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { owner: root }
+`,
+			wantErr: "managed_prompt.dest",
+		},
+		{
+			name: "relative dest rejected",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: etc/CLAUDE.md }
+`,
+			wantErr: "absolute",
+		},
+		{
+			name: "unknown owner rejected",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: /etc/x.md, owner: nobody }
+`,
+			wantErr: "managed_prompt.owner",
+		},
+		{
+			name: "non-octal mode rejected",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: /etc/x.md, mode: "rw-r--r--" }
+`,
+			wantErr: "managed_prompt.mode",
+		},
+		{
+			name: "out-of-range mode rejected",
+			manifest: `
+version: { resolver: none }
+managed_prompt: { dest: /etc/x.md, mode: "77777" }
+`,
+			wantErr: "managed_prompt.mode",
+		},
+		{
+			name: "dest under a declared volume rejected",
+			manifest: `
+version: { resolver: none }
+volumes: [{ name: config, path: .acme }]
+managed_prompt: { dest: /home/claude/.acme/AGENTS.md }
+`,
+			wantErr: "volume",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := bundler.LoadBundle("test", manifestFS(tc.manifest))
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.ErrorContains(t, err, "test")
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, b.Manifest.ManagedPrompt)
+		})
+	}
+}
+
 // Conformance: E14 — block slots are stable reserved surfaces. E20 — a bundle fragment fills declared slots without disturbing master ordering.
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {
 	b, err := bundler.LoadBundle("test", bundleFS(`{{define "block_6" -}}

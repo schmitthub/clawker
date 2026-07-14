@@ -518,6 +518,28 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 		"COPY clawkerd must precede ENTRYPOINT")
 }
 
+// The managed prompt — clawker's harness-agnostic agent-context briefing — is
+// baked at BUILD time to the location the harness manifest declares
+// (managed_prompt), with root:root 0644 defaults. A harness that declares no
+// managed_prompt (codex) gets no copy at all: absent = unsupported.
+func TestGenerateHarness_ManagedPrompt(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	assert.Contains(t, string(dockerfile),
+		"COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/claude-code/CLAUDE.md",
+		"claude floor manifest declares the managed prompt dest")
+
+	gen = newTestProjectGenerator(cfg, t.TempDir())
+	gen.Harness = "codex"
+	dockerfile, err = gen.GenerateHarness()
+	require.NoError(t, err)
+	assert.NotContains(t, string(dockerfile), "clawker-agent-prompt.md",
+		"a harness without managed_prompt stages no prompt copy")
+}
+
 // TestBuildContext_CollapsedChmod pins the single-chmod-batching invariant:
 // host-proxy + socket-server binaries get one chmod RUN, not multiple. Two
 // separate chmod RUNs would create two layers and lose the "one block to

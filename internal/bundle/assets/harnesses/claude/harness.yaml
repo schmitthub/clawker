@@ -17,6 +17,12 @@ version:
 stacks:
   - node
 
+# Claude Code reads managed enterprise context from /etc/claude-code —
+# clawker's managed agent briefing is baked there at build time (content is
+# clawker-owned and harness-agnostic; this only names the location).
+managed_prompt:
+  dest: /etc/claude-code/CLAUDE.md
+
 # Persisted dirs: each becomes a named volume mounted at path under the
 # container home. Every staged/seeded dest must fall under one of these.
 volumes:
