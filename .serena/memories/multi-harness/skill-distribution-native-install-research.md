@@ -8,7 +8,7 @@ Sources: deepwiki grounded in openai/codex, anomalyco/opencode, earendil-works/p
 
 1. **Distribution unit = PLUGIN** (collection of skills). skills:plugins :: harnesses:bundles.
 2. **Plugin content lives in the clawker repo** (`clawker-plugin/clawker-support`) so drift against CLI/scheme changes is detected and the skill auto-updates with scheme changes. Marketplace/index pin lives in a separate repo (`schmitthub/claude-plugins`, `{url, path, sha}`, sha auto-bumped by pinned reusable workflow `update-plugin.yml` gated on `^clawker-plugin/` diffs in main.yml). Any migration must preserve this split — e.g. CI-synced content mirror in the distribution repo, source of truth stays clawker repo.
-3. At-merge (already documented elsewhere): marketplace `source.path` flip `claude-plugin/` → `clawker-plugin/` must be ATOMIC with the first post-merge sha bump — path+sha are read as a pair; flipping either alone breaks current claude-code installs.
+3. Dir name: the branch's `claude-plugin/`→`clawker-plugin/` rename was REVERTED (user order, commit 4b469931) because the live marketplace `{path, sha}` pin reads path+sha as a pair and the flip can't be atomic with the merge — dir stays `claude-plugin/` until this migration initiative, which owns any rename/move.
 
 ## Codex (openai/codex)
 
