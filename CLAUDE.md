@@ -217,7 +217,7 @@ All tests must pass before any change is complete. See `.claude/rules/testing.md
 ### Completion Gate
 
 After bug fixes or feature changes:
-- Check if fix addresses an issue in `clawker-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`
+- Check if fix addresses an issue in `claude-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`
 - Update relevant Mintlify docs in `docs/` if user-facing behavior changed
 
 ### Mintlify (docs.clawker.dev)

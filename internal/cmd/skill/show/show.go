@@ -77,7 +77,7 @@ func showRun(_ context.Context, opts *ShowOptions) error {
 		opts.Harness,
 	)
 	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("git clone --depth 1 https://github.com/schmitthub/clawker.git"))
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("cp -r clawker/clawker-plugin/clawker-support/skills/. "+dstDir+"/"))
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("cp -r clawker/claude-plugin/clawker-support/skills/. "+dstDir+"/"))
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintf(ios.ErrOut, "%s Or let clawker do it (installs the marketplace-pinned release):\n\n", cs.InfoIcon())
 	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("clawker skill install --harness "+opts.Harness))

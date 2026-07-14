@@ -134,7 +134,7 @@ func TestFetchPluginSkills_ResolvesMarketplacePin(t *testing.T) {
 			"name": shared.MarketplacePluginName,
 			"source": map[string]any{
 				"url":  "https://example.com/clawker.git",
-				"path": "clawker-plugin/clawker-support",
+				"path": "claude-plugin/clawker-support",
 				"sha":  "1234567890123456789012345678901234567890",
 			},
 		}},
@@ -145,7 +145,7 @@ func TestFetchPluginSkills_ResolvesMarketplacePin(t *testing.T) {
 	fetcher := &fakeFetcher{trees: map[string]func(string) error{
 		shared.MarketplaceGitURL: marketplaceTree(t, manifestJSON),
 		"https://example.com/clawker.git": func(dir string) error {
-			skills := filepath.Join(dir, "clawker-plugin", "clawker-support", "skills")
+			skills := filepath.Join(dir, "claude-plugin", "clawker-support", "skills")
 			writeSkill(t, skills, "clawker-support")
 			// A stray file at the skills root must not be reported as a skill.
 			return os.WriteFile(

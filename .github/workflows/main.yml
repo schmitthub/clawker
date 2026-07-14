@@ -57,7 +57,7 @@ jobs:
           fetch-depth: 2
       - id: diff
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -q '^clawker-plugin/'; then
+          if git diff --name-only HEAD~1 HEAD | grep -q '^claude-plugin/'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
