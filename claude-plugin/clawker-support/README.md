@@ -1,10 +1,10 @@
 # Clawker Support Plugin
 
-An agent skills plugin that acts as a clawker internals expert — helping you set up, configure, troubleshoot, and extend [clawker](https://github.com/schmitthub/clawker) environments.
+A Claude Code plugin that acts as a clawker internals expert — helping you set up, configure, and troubleshoot [clawker](https://github.com/schmitthub/clawker) environments.
 
 ## What it does
 
-When you invoke `/clawker-support`, your agent becomes a clawker configuration specialist that:
+When you invoke `/clawker-support`, Claude becomes a clawker configuration specialist that:
 
 - **Researches** what you're trying to add (packages, MCP servers, tools, runtimes)
 - **Reads** the actual Dockerfile template and config schema to understand how clawker works
@@ -31,7 +31,7 @@ claude plugin install clawker-support@schmitthub-plugins
 
 ## Usage
 
-In your agent session:
+In any Claude Code session:
 
 ```
 /clawker-support how do I add the GitHub MCP to my container?
@@ -45,7 +45,7 @@ In your agent session:
 /clawker-support help me set up a Rust project with clawker
 ```
 
-Or just ask about clawker — the skill triggers automatically on clawker-related questions.
+Or just ask about clawker — the skill triggers automatically when it detects clawker-related questions.
 
 ## Documentation
 

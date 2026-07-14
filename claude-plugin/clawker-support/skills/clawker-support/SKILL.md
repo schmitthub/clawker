@@ -340,12 +340,11 @@ integrates with.
    `https://docs.clawker.dev/configuration#user-settings-reference` for the
    current settings fields. See `reference/settings.md`.
 
-5. **Dockerfile templates** — Fetch the current Go templates that generate
-   the image Dockerfiles:
-   `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.base.tmpl`
-   (shared base image: packages, user setup, stacks, project instructions) and
-   `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.harness-image.tmpl`
-   (harness image built FROM the base). They show exactly what each config
+5. **Dockerfile templates** — Read `reference/Dockerfile.base.tmpl` (shared
+   base image: packages, user setup, stacks, project instructions) and
+   `reference/Dockerfile.harness-image.tmpl` (harness image built FROM the
+   base), both bundled with this skill. These are the actual Go templates
+   that generate the image Dockerfiles — they show exactly what each config
    section produces and in what order. Look for execution order, root vs
    user context, and injection points.
 

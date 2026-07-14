@@ -53,3 +53,8 @@ jobs:
     permissions:
       contents: read
 
+  plugin:
+    name: Plugin
+    uses: ./.github/workflows/plugin.yml
+    permissions:
+      contents: read

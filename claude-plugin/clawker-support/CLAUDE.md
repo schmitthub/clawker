@@ -16,6 +16,8 @@ claude-plugin/clawker-support/
 └── skills/clawker-support/
     ├── SKILL.md                  # Main skill definition and workflow
     └── reference/
+        ├── Dockerfile.base.tmpl          # Copy of the actual base-image template (drift-checked)
+        ├── Dockerfile.harness-image.tmpl # Copy of the actual harness-image template (drift-checked)
         ├── project-config.md     # Project config discovery, layering, troubleshooting
         ├── sample-go.yaml        # Reference config: Go project (clawker's own)
         ├── sample-node.yaml      # Reference config: Node.js project
@@ -88,14 +90,15 @@ follows the same structure:
 to domain-specific troubleshooting sections and keeps only global/cross-cutting
 diagnostics (clawker not found, firewall, credentials, container won't start).
 
-## Dockerfile Templates
+## Dockerfile Template Sync
 
-The skill does not bundle a copy of clawker's Dockerfile templates. When the
-skill needs to map config sections to generated Dockerfile steps, it fetches
-the current templates straight from the repo (see SKILL.md research steps).
+`Dockerfile.base.tmpl` and `Dockerfile.harness-image.tmpl` in `reference/` are
+copies of the actual templates from `internal/bundler/assets/`. If clawker's
+templates change, these copies must be updated to match. A pre-commit hook and
+the Plugin CI workflow (`Dockerfile template drift check`) catch drift.
 
-Never hardcode template field names into the skill — update methodology and
-docs URLs instead.
+When updating the templates, never hardcode new field names into the skill —
+update methodology and docs URLs instead.
 
 ## Versioning
 

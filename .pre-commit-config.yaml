@@ -85,3 +85,10 @@ repos:
         pass_filenames: false
         verbose: true
 
+      - id: plugin-drift
+        name: Plugin Dockerfile template drift check
+        entry: bash -c 'diff internal/bundler/assets/Dockerfile.base.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.base.tmpl && diff internal/bundler/assets/Dockerfile.harness-image.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.harness-image.tmpl'
+        language: system
+        files: (internal/bundler/assets/Dockerfile\.(base|harness-image)\.tmpl|claude-plugin/.*Dockerfile\.(base|harness-image)\.tmpl)
+        pass_filenames: false
+

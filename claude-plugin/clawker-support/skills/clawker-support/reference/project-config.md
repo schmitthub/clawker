@@ -121,8 +121,9 @@ triggers a build).
    where they belong, or remove them from user-level config entirely.
 
 2. **Identify which layer failed**: The build output shows which Dockerfile
-   step failed. Fetch the Dockerfile templates (see the SKILL.md research
-   steps for the raw URLs) to map the failing step to the config section
+   step failed. Read the bundled Dockerfile templates
+   (`reference/Dockerfile.base.tmpl`, `reference/Dockerfile.harness-image.tmpl`)
+   to map the failing step to the config section
    that produced it. Look at execution order and root vs user context.
    Note there are two images: a shared per-project base image (packages,
    project stacks, instructions/inject) and a per-harness image layered
