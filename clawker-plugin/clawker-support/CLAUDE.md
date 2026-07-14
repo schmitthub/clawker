@@ -9,7 +9,7 @@ philosophy is **minimal concrete details; point at live docs**.
 ## Plugin Structure
 
 ```
-claude-plugin/clawker-support/
+clawker-plugin/clawker-support/
 ├── .claude-plugin/plugin.json    # Plugin metadata and version
 ├── README.md                     # User-facing install and usage docs
 ├── CLAUDE.md                     # This file — development guide

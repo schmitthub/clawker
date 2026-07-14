@@ -1,0 +1,10 @@
+{
+  "name": "clawker-support",
+  "description": "Clawker support expert for setup, configuration, and troubleshooting",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "repository": "https://github.com/schmitthub/clawker",
+  "pi": {
+    "skills": ["./skills"]
+  }
+}
