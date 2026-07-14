@@ -142,6 +142,7 @@ func TestResolveStack_Floor(t *testing.T) {
 	def, comp, err := resolveStack(r, "node")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
+	assert.Contains(t, def.RootFragment, "npm install -g typescript", "the node stack bakes typescript root-global")
 	assert.Contains(t, def.UserFragment, "nvm-sh/nvm", "the node stack provisions nvm in user scope")
 	assert.Equal(t, bundle.TierFloor, comp.Provenance.Tier)
 }

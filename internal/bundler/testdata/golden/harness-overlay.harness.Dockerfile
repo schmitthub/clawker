@@ -101,6 +101,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ln -s /usr/local/bin/node /usr/local/bin/nodejs && \
     node --version && npm --version ; \
     fi
+
+# TypeScript, baked root-global into npm's system prefix. Root-global (not an
+# nvm-scope install) so `tsc` stays on PATH across nvm version switches — its
+# `env node` shebang runs whichever node is active. Floated to latest for the
+# same dep-rot rationale as the node install above. Guarded: an image that
+# already provides tsc keeps its own — a deliberate user pin is never
+# overwritten (users can also shadow it per-version via nvm's npm).
+RUN if command -v tsc >/dev/null 2>&1; then \
+      echo "clawker stack node: existing tsc $(tsc --version) — skipping typescript install"; \
+    else \
+      npm install -g typescript && tsc --version; \
+    fi
 # Go toolchain — official tarball onto /usr/local/go, sha256-verified
 # against the go.dev download index (the same TLS source that names the
 # release; Go publishes no detached signatures for tarballs). GO_VERSION

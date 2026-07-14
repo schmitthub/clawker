@@ -145,7 +145,7 @@ build:
       - "curl -fsSL https://example.com/setup.sh | bash"
     user_run:
       - "pip install --user poetry"
-      - "npm install -g typescript"
+      - "npm install -g pnpm"
 ```
 
 <Note>
@@ -248,7 +248,7 @@ build:
     root_run:
       - "apt-get install -y libsqlite3-dev"
     user_run:
-      - "npm install -g typescript ts-node"
+      - "npm install -g pnpm ts-node"
   inject:
     after_harness_install:
       - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"

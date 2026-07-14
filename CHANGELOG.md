@@ -25,6 +25,7 @@ Changed, Removed. Each release section lists those subsections directly.
 - **Changed:** The `agent.claude_code` block moved to the project-root harnesses map as `harnesses.claude`. Existing config is moved automatically with a notice on first load.
 - **Changed:** Host credentials are no longer copied into containers (the `agent.claude_code.use_host_auth` key is gone). Authenticate once inside the container — browser OAuth flows are proxied to your host browser — and the login persists in the harness config volume.
 - **Removed:** `build.image`, `build.dockerfile`, and `build.context` — custom base images and user-supplied Dockerfiles no longer apply; every image builds from clawker's pinned base. Customize the image with `build.stacks`, `build.packages`, `build.instructions`, and `build.inject`. Existing keys are removed automatically with a notice on first load.
+- **Changed:** The built-in `node` stack now bakes TypeScript (`tsc`) into the image alongside Node.js. Like the Node install itself, it skips when the image already provides one.
 - **Fixed:** `clawker build --build-arg` targeting a base-image build ARG now rebuilds the base when the value changes, instead of being silently dropped when the rest of the base was unchanged. Build args the base image doesn't declare (harness-only or unknown) never trigger a base rebuild.
 
 ## [0.12.11] - 2026-07-02
