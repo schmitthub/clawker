@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/storeui"
@@ -21,7 +22,7 @@ func TestOverrides_AllPathsMatchProjectFields(t *testing.T) {
 		fieldPaths[f.Path] = true
 	}
 
-	overrides := Overrides()
+	overrides := Overrides(configmocks.NewBlankConfig())
 	for _, ov := range overrides {
 		assert.True(t, fieldPaths[ov.Path],
 			"override path %q does not match any field in config.Project", ov.Path)
@@ -29,7 +30,7 @@ func TestOverrides_AllPathsMatchProjectFields(t *testing.T) {
 }
 
 func TestOverrides_NoOrphans(t *testing.T) {
-	overrides := Overrides()
+	overrides := Overrides(configmocks.NewBlankConfig())
 	seen := make(map[string]bool, len(overrides))
 	for _, ov := range overrides {
 		assert.False(t, seen[ov.Path],
@@ -39,7 +40,7 @@ func TestOverrides_NoOrphans(t *testing.T) {
 }
 
 func TestOverrides_NoHiddenFields(t *testing.T) {
-	overrides := Overrides()
+	overrides := Overrides(configmocks.NewBlankConfig())
 	for _, ov := range overrides {
 		assert.False(t, ov.Hidden,
 			"override %q should not be hidden — all fields must be editable", ov.Path)
@@ -47,7 +48,7 @@ func TestOverrides_NoHiddenFields(t *testing.T) {
 }
 
 func TestOverrides_SelectFields(t *testing.T) {
-	overrides := Overrides()
+	overrides := Overrides(configmocks.NewBlankConfig())
 	overrideMap := make(map[string]*storeui.Override, len(overrides))
 	for i := range overrides {
 		overrideMap[overrides[i].Path] = &overrides[i]
@@ -58,7 +59,10 @@ func TestOverrides_SelectFields(t *testing.T) {
 		options []string
 	}{
 		{"workspace.default_mode", []string{"bind", "snapshot"}},
+		{"build.harness", bundler.KnownHarnessNames(configmocks.NewBlankConfig())},
 	}
+	require.NotEmpty(t, bundler.KnownHarnessNames(configmocks.NewBlankConfig()),
+		"harness enumeration must not be empty — the select would render optionless")
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -90,7 +94,7 @@ func TestHarnessesMapEditableNatively(t *testing.T) {
 	require.NotNil(t, harnessesField, "harnesses map must walk as an editable field")
 	assert.Equal(t, storeui.KindStructMap, harnessesField.Kind)
 
-	for _, ov := range Overrides() {
+	for _, ov := range Overrides(configmocks.NewBlankConfig()) {
 		assert.NotContains(t, ov.Path, "agent.claude_code",
 			"deprecated agent.claude_code paths must not carry editor overrides")
 	}

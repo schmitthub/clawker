@@ -639,6 +639,102 @@ func (s *Store[T]) WriteTo(path string) error {
 	return s.write(path)
 }
 
+// WriteFieldTo persists a single dirty field (a staged Set or Remove on
+// fieldPath) to the given absolute path, leaving every other dirty field
+// staged for a later Write/WriteTo. This is the per-field save primitive:
+// a config editor routes each field to its user-chosen destination without
+// flushing unrelated staged state (a seed-marked preset store would
+// otherwise dump its whole seed into the first chosen file). A field that
+// is not dirty is a no-op. Other staged mutations survive the post-write
+// remerge: staged Set values are re-grafted and staged Removes re-applied,
+// since neither is layer-backed until its own flush.
+func (s *Store[T]) WriteFieldTo(path, fieldPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("storage: WriteFieldTo requires an absolute path, got %q", path)
+	}
+	op, ok := s.dirtyPaths[fieldPath]
+	if !ok {
+		return nil
+	}
+
+	var sets, deletes []string
+	switch op {
+	case dirtySet:
+		sets = []string{fieldPath}
+	case dirtyDeleted:
+		deletes = []string{fieldPath}
+	}
+
+	stagedSets, stagedDeletes := s.captureStaged(fieldPath)
+
+	if err := s.writeLayerFile(path, sets, deletes); err != nil {
+		return err
+	}
+	delete(s.dirtyPaths, fieldPath)
+
+	if err := s.refreshLayers(map[string]bool{path: true}); err != nil {
+		return err
+	}
+	if err := s.injectNewLayers([]string{path}); err != nil {
+		return err
+	}
+	if err := s.remerge(); err != nil {
+		return err
+	}
+	return s.restage(stagedSets, stagedDeletes)
+}
+
+// captureStaged snapshots the in-tree values of every dirty field except
+// exclude, so restage can re-apply them after a remerge rebuilds the tree
+// from layer data. Caller must hold s.mu.
+func (s *Store[T]) captureStaged(exclude string) (map[string]*yaml.Node, []string) {
+	var (
+		sets    map[string]*yaml.Node
+		deletes []string
+	)
+	for path, op := range s.dirtyPaths {
+		if path == exclude {
+			continue
+		}
+		switch op {
+		case dirtySet:
+			if n, ok := nodeValueAt(s.tree, strings.Split(path, ".")); ok {
+				if sets == nil {
+					sets = make(map[string]*yaml.Node)
+				}
+				sets[path] = cloneNode(n)
+			}
+		case dirtyDeleted:
+			deletes = append(deletes, path)
+		}
+	}
+	return sets, deletes
+}
+
+// restage re-applies captured staged mutations to the freshly remerged tree
+// and refreshes the typed snapshot. Caller must hold s.mu.
+func (s *Store[T]) restage(sets map[string]*yaml.Node, deletes []string) error {
+	if len(sets) == 0 && len(deletes) == 0 {
+		return nil
+	}
+	candidate := cloneNode(s.tree)
+	for path, node := range sets {
+		nodeGraftValue(candidate, strings.Split(path, "."), node)
+	}
+	for _, path := range deletes {
+		nodeDeletePath(candidate, strings.Split(path, "."))
+	}
+	decoded, err := decodeNode[T](candidate)
+	if err != nil {
+		return fmt.Errorf("storage: re-staging pending mutations after partial flush: %w", err)
+	}
+	s.tree = candidate
+	s.value.Store(decoded)
+	return nil
+}
+
 // write is the shared Write/WriteTo implementation. A non-empty target directs
 // every dirty field at that file; an empty target routes each field to its
 // provenance layer. Caller must hold s.mu.

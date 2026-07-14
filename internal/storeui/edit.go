@@ -229,7 +229,10 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 			}
 		}
 
-		if werr := store.WriteTo(target.Path); werr != nil {
+		// Flush ONLY this field: the store may carry other staged mutations
+		// (a preset store's seed marks, edits routed to other targets), and a
+		// whole-store WriteTo would dump them all into this field's target.
+		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
@@ -245,7 +248,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if werr := store.WriteTo(target.Path); werr != nil {
+		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil

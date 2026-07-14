@@ -104,11 +104,11 @@ Run()
 
 ### Customize Browser Fields
 
-When user selects "Customize this preset" or "Build from scratch", `storeui.BuildBrowser` runs with these field paths (`customizeFields()` + `customizeOverrides()`):
+When user selects "Customize this preset" or "Build from scratch", `storeui.BuildBrowser` runs with these field paths (`customizeFields()` + `customizeOverrides(cfg)`). Per-field save targets: the new project file ("Project") plus the user-level clawker.yaml candidates reported by `in.cfg`'s discovered store ("User") — each save flushes only that field (`storage.WriteFieldTo`), so the preset seed never bleeds into the user file:
 
 | Path | Kind | Override |
 |------|------|----------|
-| `build.image` | Text | — |
+| `build.harness` | Select | Options: `bundler.KnownHarnessNames(cfg)` |
 | `build.packages` | StringSlice | — |
 | `build.instructions.root_run` | StringSlice | — |
 | `build.instructions.user_run` | StringSlice | — |

@@ -105,6 +105,7 @@ func (s *Store[T]) Set(path string, value any) error      // Set in-memory value
 func (s *Store[T]) Remove(path string) (bool, error)      // Delete dotted path from the tree; mark dirty; refresh snapshot
 func (s *Store[T]) Write() error                          // Persist dirty fields, each routed to its provenance layer
 func (s *Store[T]) WriteTo(path string) error             // Persist all dirty fields to an explicit absolute path
+func (s *Store[T]) WriteFieldTo(path, fieldPath string) error // Persist ONE dirty field to an explicit absolute path; other dirty fields stay staged (per-field editor saves)
 func (s *Store[T]) MarkForWrite(path string) error        // Force path into write set (persist current value, no Set)
 func (s *Store[T]) MarkSeedForWrite()                     // Opt-in: mark every virtual-layer (seed/defaults) field dirty for the next Write/WriteTo (preset flow)
 func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot; discards pending mutations; errors on a corrupt layer
@@ -146,7 +147,7 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 ### Write (`write.go`)
 
-Two modes: `Write()` auto-routes each field to its provenance layer; `WriteTo(path)` sends all fields to one named file. Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
+Three modes: `Write()` auto-routes each field to its provenance layer; `WriteTo(path)` sends all dirty fields to one named file; `WriteFieldTo(path, fieldPath)` sends exactly one dirty field there, leaving the rest staged (staged Sets/Removes on other fields survive the post-write remerge). Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
 
 **Read-modify-write against disk.** `Store.writeLayerFile` re-reads the
 destination file's **current on-disk content** (missing file → empty mapping;

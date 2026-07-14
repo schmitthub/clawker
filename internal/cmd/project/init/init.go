@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -27,6 +28,10 @@ const (
 	actionSave      = "Save and get started"
 	actionCustomize = "Customize this preset"
 )
+
+// fieldPathHarness is the dotted config path of the default-harness selection
+// key shown in the customize browser.
+const fieldPathHarness = "build.harness"
 
 // VCS provider constants.
 const (
@@ -667,14 +672,37 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	}
 
 	if in.customize {
+		// Save destinations: the new project file, plus the user-level
+		// targets the discovered config store reports (config-dir
+		// clawker.yaml), so cross-project preferences (e.g. build.harness)
+		// can be routed there per field. The preset store itself is isolated
+		// (no discovery), so the user targets come from in.cfg's store; and
+		// per-field saves flush only the edited field
+		// (storage.WriteFieldTo), so the preset seed never bleeds into the
+		// user file.
+		targets := []storeui.LayerTarget{
+			{
+				Label:       storeui.LabelProject,
+				Description: storeui.ShortenHome(in.configPath),
+				Path:        in.configPath,
+				Filename:    configFileName,
+			},
+		}
+		userTargets, targetsErr := storeui.BuildLayerTargets(in.cfg.ProjectStore())
+		if targetsErr != nil {
+			return fmt.Errorf("resolving user-level config targets: %w", targetsErr)
+		}
+		for _, tgt := range userTargets {
+			if tgt.Label == storeui.LabelUser {
+				targets = append(targets, tgt)
+			}
+		}
 		browser, buildErr := storeui.BuildBrowser(
 			store,
 			storeui.WithTitle("Customize "+in.preset.Name),
 			storeui.WithOnlyPaths(customizeFields()...),
-			storeui.WithOverrides(customizeOverrides()),
-			storeui.WithLayerTargets([]storeui.LayerTarget{
-				{Label: "Project", Description: storeui.ShortenHome(in.configPath), Path: in.configPath},
-			}),
+			storeui.WithOverrides(customizeOverrides(in.cfg)),
+			storeui.WithLayerTargets(targets),
 		)
 		if buildErr != nil {
 			return fmt.Errorf("building customize browser: %w", buildErr)
@@ -864,7 +892,7 @@ func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 // customizeFields returns the dotted paths shown in the customize browser.
 func customizeFields() []string {
 	return []string{
-		"build.image",
+		fieldPathHarness,
 		"build.packages",
 		"build.instructions.root_run",
 		"build.instructions.user_run",
@@ -876,9 +904,16 @@ func customizeFields() []string {
 	}
 }
 
-// customizeOverrides returns overrides for the customize browser.
-func customizeOverrides() []storeui.Override {
+// customizeOverrides returns overrides for the customize browser. cfg supplies
+// the harness enumeration for the build.harness select.
+func customizeOverrides(cfg config.Config) []storeui.Override {
 	return []storeui.Override{
+		//nolint:exhaustruct // overrides are sparse by design — an unset field means "no override"
+		{
+			Path:    fieldPathHarness,
+			Kind:    storeui.Ptr(storeui.KindSelect),
+			Options: bundler.KnownHarnessNames(cfg),
+		},
 		{
 			Path:    "workspace.default_mode",
 			Kind:    storeui.Ptr(storeui.KindSelect),

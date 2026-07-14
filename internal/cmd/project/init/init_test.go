@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -18,6 +19,7 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -714,4 +716,38 @@ func TestRunNonInteractive_ExistingConfigNoForce(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "configuration already exists")
 	assert.Contains(t, errBuf.String(), "already exists")
+}
+
+// Every customize-browser path must name a real config.Project field —
+// a schema key that gets removed must be dropped here too, or the wizard
+// offers editing a field nothing reads (the build.image rot).
+func TestCustomizeFields_AllPathsExistInSchema(t *testing.T) {
+	var proj config.Project
+	fields := storeui.WalkFields(proj)
+	fieldPaths := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fieldPaths[f.Path] = true
+	}
+	for _, path := range customizeFields() {
+		assert.True(t, fieldPaths[path],
+			"customize field %q does not match any field in config.Project", path)
+	}
+}
+
+// The build.harness customize field renders as a select over the known
+// harness enumeration.
+func TestCustomizeOverrides_HarnessSelect(t *testing.T) {
+	cfg := configmocks.NewBlankConfig()
+	var harness *storeui.Override
+	for _, ov := range customizeOverrides(cfg) {
+		if ov.Path == fieldPathHarness {
+			harness = &ov
+			break
+		}
+	}
+	require.NotNil(t, harness, "missing build.harness override")
+	require.NotNil(t, harness.Kind)
+	assert.Equal(t, storeui.KindSelect, *harness.Kind)
+	assert.Equal(t, bundler.KnownHarnessNames(cfg), harness.Options)
+	assert.NotEmpty(t, harness.Options, "harness select would render optionless")
 }

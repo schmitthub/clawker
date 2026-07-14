@@ -63,8 +63,8 @@ type BuildConfig struct {
 	// sets it wins wholesale; explicit -t / @:<harness> always beats it.
 	// The virtual defaults layer supplies the built-in harness, so the
 	// resolved value is never empty.
-	Harness      string              `yaml:"harness,omitempty"      label:"Default Harness" desc:"Harness used when a command doesn't select one (bare name or namespace.bundle.component address)"                                     default:"claude"`
-	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"        desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                           default:"ripgrep"`
+	Harness      string              `yaml:"harness,omitempty"      label:"Default Harness" desc:"Default harness when a command doesn't select one; any other harness stays available per run (clawker build -t HARNESS). Bare name or namespace.bundle.component address" default:"claude"`
+	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"        desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                                                               default:"ripgrep"`
 	Stacks       []string            `yaml:"stacks,omitempty"       label:"Stacks"          desc:"Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
 	Inject       *InjectConfig       `yaml:"inject,omitempty"`

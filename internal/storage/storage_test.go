@@ -3543,6 +3543,114 @@ func TestWriteTo_RelativePathRejected(t *testing.T) {
 	assert.Error(t, s.WriteTo("relative/cfg.yaml"), "WriteTo accepted a relative path")
 }
 
+// WriteFieldTo flushes ONLY the named dirty field — every other dirty field
+// stays staged and routes to its own destination on a later Write/WriteTo.
+// This is the per-field save primitive: a seed-marked preset store (project
+// init) must never dump its full seed into a user-chosen destination file.
+func TestWriteFieldTo_FlushesOnlyThatField(t *testing.T) {
+	dir := t.TempDir()
+	userFile := filepath.Join(dir, "user.yaml")
+	projFile := filepath.Join(dir, "proj.yaml")
+
+	s, err := New[hardSchema]("name: alice\nmode: snapshot")
+	require.NoError(t, err)
+	s.MarkSeedForWrite()
+
+	require.NoError(t, s.WriteFieldTo(userFile, "mode"))
+
+	userData, err := os.ReadFile(userFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(userData), "mode: snapshot", "flushed field missing from target")
+	assert.NotContains(t, string(userData), "name:", "unrelated dirty field dumped into target")
+
+	// The rest of the seed is still dirty and lands in the project file.
+	require.NoError(t, s.WriteTo(projFile))
+	projData, err := os.ReadFile(projFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(projData), "name: alice", "remaining dirty field lost")
+	assert.NotContains(t, string(projData), "mode:", "already-flushed field re-routed to project file")
+}
+
+// A staged Set on another field must survive WriteFieldTo's post-write
+// remerge (the tree is rebuilt from layer data; a bare staged value is in no
+// layer) and still persist on the next Write.
+func TestWriteFieldTo_StagedSetSurvives(t *testing.T) {
+	dir := t.TempDir()
+	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode: snapshot\n")
+	other := filepath.Join(dir, "other.yaml")
+
+	s := newHardStore(t, dir)
+	require.NoError(t, s.Set("name", "staged-value"))
+	require.NoError(t, s.Set("mode", "bind"))
+
+	require.NoError(t, s.WriteFieldTo(other, "mode"))
+	assert.Equal(t, "staged-value", s.Read().Name, "staged Set reverted by remerge")
+
+	require.NoError(t, s.Write())
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "name: staged-value", "staged Set not persisted after partial flush")
+}
+
+// A staged Remove on another field must also survive the remerge: Read()
+// keeps showing the field as gone and the next Write still deletes it.
+func TestWriteFieldTo_StagedRemoveSurvives(t *testing.T) {
+	dir := t.TempDir()
+	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode: snapshot\n")
+	other := filepath.Join(dir, "other.yaml")
+
+	s := newHardStore(t, dir)
+	removed, err := s.Remove("name")
+	require.NoError(t, err)
+	require.True(t, removed)
+	require.NoError(t, s.Set("mode", "bind"))
+
+	require.NoError(t, s.WriteFieldTo(other, "mode"))
+	assert.Empty(t, s.Read().Name, "staged Remove resurrected by remerge")
+
+	require.NoError(t, s.Write())
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "name:", "staged Remove not persisted after partial flush")
+}
+
+// WriteFieldTo with a staged delete removes the field from the target file
+// and leaves the file's other keys intact.
+func TestWriteFieldTo_Delete(t *testing.T) {
+	dir := t.TempDir()
+	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode: snapshot\n")
+
+	s := newHardStore(t, dir)
+	removed, err := s.Remove("mode")
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	require.NoError(t, s.WriteFieldTo(file, "mode"))
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "mode:", "deleted field still in file")
+	assert.Contains(t, string(data), "name: alice", "unrelated key clobbered")
+}
+
+// A clean field is a no-op: no file is created, no error returned.
+func TestWriteFieldTo_CleanFieldNoOp(t *testing.T) {
+	dir := t.TempDir()
+	writeHardFile(t, dir, "cfg.yaml", "name: alice\n")
+	target := filepath.Join(dir, "target.yaml")
+
+	s := newHardStore(t, dir)
+	require.NoError(t, s.WriteFieldTo(target, "name"))
+	_, statErr := os.Stat(target)
+	assert.True(t, os.IsNotExist(statErr), "no-op WriteFieldTo created the target file")
+}
+
+func TestWriteFieldTo_RelativePathRejected(t *testing.T) {
+	s, err := New[hardSchema]("name: alice")
+	require.NoError(t, err)
+	s.MarkSeedForWrite()
+	assert.Error(t, s.WriteFieldTo("relative/cfg.yaml", "name"), "WriteFieldTo accepted a relative path")
+}
+
 // MarkForWrite validates the path like every other mutator.
 func TestMarkForWrite_InvalidPathRejected(t *testing.T) {
 	dir := t.TempDir()

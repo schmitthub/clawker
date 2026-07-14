@@ -136,7 +136,7 @@
       "properties": {
         "harness": {
           "default": "claude",
-          "description": "Harness used when a command doesn't select one (bare name or namespace.bundle.component address)",
+          "description": "Default harness when a command doesn't select one; any other harness stays available per run (clawker build -t HARNESS). Bare name or namespace.bundle.component address",
           "title": "Default Harness",
           "type": "string"
         },
