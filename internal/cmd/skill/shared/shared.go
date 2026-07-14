@@ -17,6 +17,31 @@ const (
 	PluginName        = "clawker-support@schmitthub-plugins"
 )
 
+// Harness names accepted by --harness. Claude installs through the Claude CLI
+// marketplace; the others install by copying the plugin's skills into the
+// harness's native skills directory.
+const (
+	HarnessClaude   = "claude"
+	HarnessCodex    = "codex"
+	HarnessOpencode = "opencode"
+	HarnessPi       = "pi"
+)
+
+// ValidHarnesses returns the set of harnesses skill commands can target.
+func ValidHarnesses() []string {
+	return []string{HarnessClaude, HarnessCodex, HarnessOpencode, HarnessPi}
+}
+
+// ValidateHarness returns a FlagError if harness is not a supported target.
+func ValidateHarness(harness string) error {
+	valid := ValidHarnesses()
+	if slices.Contains(valid, harness) {
+		return nil
+	}
+	//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
+	return cmdutil.FlagErrorf("--harness must be one of %s; got %q", strings.Join(valid, ", "), harness)
+}
+
 // ValidScopes is the set of scopes the Claude CLI accepts for plugin operations.
 var ValidScopes = []string{"user", "project", "local"}
 
@@ -35,7 +60,9 @@ func CheckClaudeCLI() error {
 		return nil
 	}
 	if errors.Is(err, exec.ErrNotFound) {
-		return fmt.Errorf("claude CLI not found in PATH — install it from https://docs.anthropic.com/en/docs/claude-code")
+		return errors.New(
+			"claude CLI not found in PATH — install it from https://docs.anthropic.com/en/docs/claude-code",
+		)
 	}
 	return fmt.Errorf("claude CLI not usable: %w", err)
 }

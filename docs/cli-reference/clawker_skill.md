@@ -15,11 +15,18 @@ clawker internals — configuration, Dockerfile generation, firewall rules,
 MCP wiring, and troubleshooting. It reads the real config schema and
 templates so the advice it gives is always accurate.
 
+The claude harness installs through the Claude CLI marketplace; codex,
+opencode, and pi install by copying the plugin's skills into the harness's
+native skills directory at the marketplace-pinned release.
+
 ### Examples
 
 ```
-  # Install the clawker skill plugin
+  # Install the clawker skill plugin for Claude Code
   clawker skill install
+
+  # Install for another harness
+  clawker skill install --harness codex
 
   # Show the manual install commands
   clawker skill show
