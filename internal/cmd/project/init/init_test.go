@@ -746,6 +746,8 @@ func TestCustomizeOverrides_HarnessSelect(t *testing.T) {
 		}
 	}
 	require.NotNil(t, harness, "missing build.harness override")
+	assert.Contains(t, customizeFields(), fieldPathHarness,
+		"override targets a field the browser does not show")
 	require.NotNil(t, harness.Kind)
 	assert.Equal(t, storeui.KindSelect, *harness.Kind)
 	assert.Equal(t, bundler.KnownHarnessNames(cfg), harness.Options)
