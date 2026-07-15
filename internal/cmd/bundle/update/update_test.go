@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	updatecmd "github.com/schmitthub/clawker/internal/cmd/bundle/update"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -24,7 +25,7 @@ func newFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer) {
 	t.Helper()
 	testenv.New(t)
 	ios, _, _, errOut := iostreams.Test()
-	mgr := bundle.NewManager(configmocks.NewBlankConfig())
+	mgr := bundle.NewManager(configmocks.NewBlankConfig(), componentcheck.Validate)
 	f := &cmdutil.Factory{
 		Version:         "",
 		IOStreams:       ios,
@@ -86,7 +87,7 @@ func TestUpdate_AutoGCReconcilesRefetchedIdentity(t *testing.T) {
 	repo := srv.InitRepo(t, "tools")
 	repo.Commit(t, "v1", map[string]string{
 		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 1.0.0\n",
-		"stacks/node/stack.yaml":      "description: node\n",
+		"stacks/node/stack.yaml":      "description: node\n", "stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
 	})
 
 	testenv.New(t)
@@ -95,15 +96,24 @@ func TestUpdate_AutoGCReconcilesRefetchedIdentity(t *testing.T) {
 	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration {
 		return []config.BundleDeclaration{{Source: src, File: "clawker.yaml"}}
 	}
-	mgr := bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+	mgr := bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 		func(context.Context) ([]string, error) { return nil, nil }))
 	_, err := mgr.Install(context.Background(), src)
 	require.NoError(t, err)
 
 	// A stranded sibling of the same identity, no longer declared anywhere.
 	stranded := bundle.Source{URL: srv.HTTPURL("tools"), Ref: "v0", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stranded,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		stranded,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	// The tracked tip moves, so the update refetches — the AutoGC trigger.
 	repo.Commit(t, "v2", map[string]string{

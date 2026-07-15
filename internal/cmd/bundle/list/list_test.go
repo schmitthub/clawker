@@ -10,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	listcmd "github.com/schmitthub/clawker/internal/cmd/bundle/list"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -22,7 +23,7 @@ import (
 func newFactory(t *testing.T, cfg config.Config) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	ios, _, out, errOut := iostreams.Test()
-	mgr := bundle.NewManager(cfg)
+	mgr := bundle.NewManager(cfg, componentcheck.Validate)
 	f := &cmdutil.Factory{
 		Version:         "",
 		IOStreams:       ios,

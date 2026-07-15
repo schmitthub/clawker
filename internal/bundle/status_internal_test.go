@@ -35,7 +35,13 @@ func TestManager_Statuses(t *testing.T) {
 		File:   filepath.Join(f.projectDir, "clawker.yaml"),
 	})
 
-	m := &Manager{cfg: f.cfg, resolver: f.r, fetcher: nil, registeredRoots: nil}
+	m := &Manager{
+		cfg:             f.cfg,
+		resolver:        f.r,
+		fetcher:         nil,
+		registeredRoots: nil,
+		validate:        func(Component) error { return nil },
+	}
 	rows, err := m.Statuses()
 	require.NoError(t, err)
 

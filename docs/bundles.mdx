@@ -105,6 +105,10 @@ flag:
 changes. Run `clawker bundle install` with no source to fetch any bundle that is
 declared but not yet cached.
 
+A fetched bundle is validated before it is cached — its manifest and every
+component get the same checks `clawker bundle validate` runs — so a broken
+bundle fails the install instead of surfacing later at build time.
+
 ## Listing
 
 `clawker bundle list` shows one honest status row per bundle, linking your

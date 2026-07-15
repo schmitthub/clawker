@@ -42,3 +42,7 @@ re-justification against the new model) keep:
 - Skills-plugin multi-agent packaging — merge blocker for the branch.
 - Harness template block names FINALIZED (user-ratified 2026-07-14): `root_after_stacks` (block_1+2 merged — they were adjacent), `user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd`. Naming convention: permission-scope prefix + flanking-event anchor, descriptive never prescriptive.
 - opencode/pi bundles (research memo ready) — after the new model lands.
+
+## 2026-07-15: bundle validate deep-loads components (9c8bfd3d)
+
+`clawker bundle validate` now runs every enumerated component through its consumption-time loader (`bundler.LoadBundle`, `bundler.LoadStackDefinition`, `monitor.LoadMonitoringUnit`) after the structural pass — an invalid component manifest is a hard failure at publish time instead of surfacing on the consumer's `clawker build` / `monitor up`. `bundle.Report` gained a `Bundle *Bundle` field (nil on LoadErr) so the command layer can walk components. Same-day docs accuracy sweep (8 Opus reviewers over the Bundles & extensions group) fixed reserved-namespace list, `.clawker.yaml`→`clawker.yaml`, datapoint_renames copy→move (incl. schema-source struct tags), and completed the auto-update trigger list.

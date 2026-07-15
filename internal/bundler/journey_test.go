@@ -12,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -102,7 +103,7 @@ func TestBundleJourney_InstallToRender(t *testing.T) {
 			require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
 			cfg := journeyConfig(t, projectRoot, tp.url(srv), "v1.0.0")
-			mgr := bundle.NewManager(cfg)
+			mgr := bundle.NewManager(cfg, componentcheck.Validate)
 			ctx := context.Background()
 
 			// Declare → install: a real clone of the tagged ref into the cache.
@@ -152,7 +153,7 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
 	cfg := journeyConfig(t, projectRoot, srv.HTTPURL("tools"), "master")
-	mgr := bundle.NewManager(cfg)
+	mgr := bundle.NewManager(cfg, componentcheck.Validate)
 	ctx := context.Background()
 
 	// Track a moving branch so the source is a ref (updatable), not a sha-pin.

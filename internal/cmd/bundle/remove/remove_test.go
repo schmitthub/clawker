@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	removecmd "github.com/schmitthub/clawker/internal/cmd/bundle/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -21,7 +22,7 @@ import (
 func newFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	ios, _, out, errOut := iostreams.Test()
-	mgr := bundle.NewManager(configmocks.NewBlankConfig())
+	mgr := bundle.NewManager(configmocks.NewBlankConfig(), componentcheck.Validate)
 	f := &cmdutil.Factory{
 		Version:         "",
 		IOStreams:       ios,

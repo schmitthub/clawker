@@ -37,7 +37,7 @@ const lockRetryInterval = 100 * time.Millisecond
 const lockSuffix = ".lock"
 
 // fetchIntoCache clones a remote source into a staging area, validates its
-// manifest before any commit, and atomically commits the content into the
+// manifest and every component before any commit, and atomically commits the content into the
 // value-keyed cache entry for the declared source
 // (<cacheRoot>/<ns>/<name>/<sourceKey>/). It returns the resolved identity and
 // display version. A failure at any step before the final rename leaves the
@@ -80,6 +80,9 @@ func (m *Manager) fetchIntoCache(ctx context.Context, s Source) (BundleID, strin
 	b, err := LoadBundleDir(os.DirFS(bundleRoot), bundleRoot)
 	if err != nil {
 		return BundleID{}, "", err
+	}
+	if compErrs := m.validateComponents(b); len(compErrs) > 0 {
+		return BundleID{}, "", &ManifestError{Dir: bundleRoot, Err: errors.Join(compErrs...)}
 	}
 
 	version, err := resolveVersion(b.Manifest.Version, resolvedSHA)

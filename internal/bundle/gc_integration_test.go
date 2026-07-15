@@ -13,6 +13,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -42,7 +43,7 @@ func managerWithRoots(decls []config.BundleSource, rootDirs ...string) *bundle.M
 		return out
 	}
 	cfg.ProjectRootFunc = func() string { return "" }
-	return bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+	return bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 		func(context.Context) ([]string, error) { return rootDirs, nil }))
 }
 
@@ -59,14 +60,41 @@ func TestManager_Prune_CollectsUndeclaredValues(t *testing.T) {
 	testenv.New(t)
 	live := bundle.Source{URL: "https://x/tools.git", Ref: "v1", SHA: "", Path: ""}
 	stale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "1.0.0", live,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stale,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		live,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		stale,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 	// A hand-placed (receipt-less) entry is not refetchable, so GC must never
 	// collect it — it is a user artifact, not cache.
-	bundletest.PlantCachedBundle(t, "acme", "tools", "0.0.1", "",
-		map[string]string{"stacks/hand/stack.yaml": "description: hand\n"})
+	bundletest.PlantCachedBundle(
+		t,
+		"acme",
+		"tools",
+		"0.0.1",
+		"",
+		map[string]string{
+			"stacks/hand/stack.yaml":                 "description: hand\n",
+			"stacks/hand/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	mgr := managerWithRoots([]config.BundleSource{
 		{URL: live.URL, Ref: live.Ref, SHA: "", Path: "", AutoUpdate: false},
@@ -91,10 +119,28 @@ func TestManager_Prune_CrossProjectRootsKeepEntries(t *testing.T) {
 	testenv.New(t)
 	mine := bundle.Source{URL: "https://x/tools.git", Ref: "v1", SHA: "", Path: ""}
 	theirs := bundle.Source{URL: "git@github.com:fork/tools.git", Ref: "v1", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "1.0.0", mine,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "1.0.0", theirs,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		mine,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		theirs,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	otherRoot := declRoot(t, "bundles:\n  - url: git@github.com:fork/tools.git\n    ref: v1\n")
 	mgr := managerWithRoots([]config.BundleSource{
@@ -133,10 +179,28 @@ func TestManager_Prune_SameRepoTwoPinsIsNotMultiSource(t *testing.T) {
 	testenv.New(t)
 	v1 := bundle.Source{URL: "https://x/tools.git", Ref: "v1", SHA: "", Path: ""}
 	v2 := bundle.Source{URL: "https://x/tools.git", Ref: "v2", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "1.0.0", v1,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "2.0.0", v2,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		v1,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"2.0.0",
+		v2,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	otherRoot := declRoot(t, "bundles:\n  - url: https://x/tools.git\n    ref: v2\n")
 	mgr := managerWithRoots([]config.BundleSource{
@@ -154,8 +218,17 @@ func TestManager_Prune_SameRepoTwoPinsIsNotMultiSource(t *testing.T) {
 func TestManager_Prune_DropsWholeIdentityAndCleansDirs(t *testing.T) {
 	testenv.New(t)
 	gone := bundle.Source{URL: "https://x/gone.git", Ref: "v1", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "beta", "gone", "1.0.0", gone,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"beta",
+		"gone",
+		"1.0.0",
+		gone,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	mgr := managerWithRoots(nil)
 	report, err := mgr.Prune(context.Background())
@@ -174,8 +247,17 @@ func TestManager_Prune_RootsUnavailable(t *testing.T) {
 	t.Run("no roots provider", func(t *testing.T) {
 		testenv.New(t)
 		stale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
-		bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stale,
-			map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+		bundletest.PlantCachedBundleSource(
+			t,
+			"acme",
+			"tools",
+			"0.9.0",
+			stale,
+			map[string]string{
+				"stacks/node/stack.yaml":                 "description: node\n",
+				"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+			},
+		)
 
 		mgr := managerForDecls()
 		_, err := mgr.Prune(context.Background())
@@ -186,13 +268,22 @@ func TestManager_Prune_RootsUnavailable(t *testing.T) {
 	t.Run("provider error collects nothing", func(t *testing.T) {
 		testenv.New(t)
 		stale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
-		bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stale,
-			map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+		bundletest.PlantCachedBundleSource(
+			t,
+			"acme",
+			"tools",
+			"0.9.0",
+			stale,
+			map[string]string{
+				"stacks/node/stack.yaml":                 "description: node\n",
+				"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+			},
+		)
 
 		cfg := configmocks.NewBlankConfig()
 		cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration { return nil }
 		cfg.ProjectRootFunc = func() string { return "" }
-		mgr := bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+		mgr := bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 			func(context.Context) ([]string, error) { return nil, errors.New("registry unreadable") }))
 
 		_, err := mgr.Prune(context.Background())
@@ -203,8 +294,17 @@ func TestManager_Prune_RootsUnavailable(t *testing.T) {
 	t.Run("malformed registered root collects nothing", func(t *testing.T) {
 		testenv.New(t)
 		stale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
-		bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stale,
-			map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+		bundletest.PlantCachedBundleSource(
+			t,
+			"acme",
+			"tools",
+			"0.9.0",
+			stale,
+			map[string]string{
+				"stacks/node/stack.yaml":                 "description: node\n",
+				"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+			},
+		)
 
 		badRoot := declRoot(t, "bundles: notalist\n")
 		mgr := managerWithRoots(nil, badRoot)
@@ -218,10 +318,28 @@ func TestManager_AutoGC_IdentityScoped(t *testing.T) {
 	testenv.New(t)
 	toolsStale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
 	extraStale := bundle.Source{URL: "https://x/extra.git", Ref: "v0", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", toolsStale,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
-	bundletest.PlantCachedBundleSource(t, "acme", "extra", "0.9.0", extraStale,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		toolsStale,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"extra",
+		"0.9.0",
+		extraStale,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	mgr := managerWithRoots(nil)
 	warnings := mgr.AutoGC(context.Background(), bundle.BundleID{Namespace: "acme", Name: "tools"})
@@ -260,8 +378,17 @@ func TestManager_AutoUpdateCheck_PrunesRefetchedIdentity(t *testing.T) {
 
 	// A stranded sibling of the SAME identity, no longer declared anywhere.
 	stale := bundle.Source{URL: srv.HTTPURL("tools"), Ref: "v0", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stale,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		stale,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	repo.Commit(t, "v2", bundleFiles("2.0.0"))
 	warnings := mgr.AutoUpdateCheck(ctx)

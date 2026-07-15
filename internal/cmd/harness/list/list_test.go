@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	listcmd "github.com/schmitthub/clawker/internal/cmd/harness/list"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -19,7 +20,7 @@ import (
 func TestHarnessList_FloorHarnesses(t *testing.T) {
 	testenv.New(t)
 	ios, _, out, _ := iostreams.Test()
-	mgr := bundle.NewManager(configmocks.NewBlankConfig())
+	mgr := bundle.NewManager(configmocks.NewBlankConfig(), componentcheck.Validate)
 	f := &cmdutil.Factory{
 		Version:         "",
 		IOStreams:       ios,

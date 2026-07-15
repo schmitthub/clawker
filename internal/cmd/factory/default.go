@@ -8,10 +8,15 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -24,9 +29,6 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
 )
 
 // adminClientKeepalive is the keepalive policy the CLI applies to the
@@ -97,7 +99,7 @@ func bundleManagerFunc(f *cmdutil.Factory) func() (*bundle.Manager, error) {
 				err = fmt.Errorf("bundle manager: loading config: %w", err)
 				return
 			}
-			mgr = bundle.NewManager(cfg, bundle.WithRegisteredRoots(registeredRootsFn(f)))
+			mgr = bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(registeredRootsFn(f)))
 		})
 		return mgr, err
 	}
@@ -248,7 +250,6 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 	return l, nil
-
 }
 
 func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {

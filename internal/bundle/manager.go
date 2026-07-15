@@ -25,12 +25,22 @@ type Manager struct {
 	// path) whose declarations count as cache GC roots; nil disables GC
 	// entirely (see WithRegisteredRoots).
 	registeredRoots RegisteredRootsFn
+	// validate loads a component through its consumption-time front door;
+	// required at construction, applied by Validate and the install prefetch.
+	validate ComponentValidator
 }
 
 // RegisteredRootsFn lists the project roots (including worktree paths) the
 // host registry knows, so the bundle cache's GC roots can union every
 // registered project's declarations — not just the current one's.
 type RegisteredRootsFn func(ctx context.Context) ([]string, error)
+
+// ComponentValidator loads one enumerated component through its
+// consumption-time front door, returning the error the consuming command
+// would surface. componentcheck.Validate is the production implementation;
+// it is a required Manager dependency (not defaulted here) because the
+// per-type loaders live in packages that import this one.
+type ComponentValidator func(Component) error
 
 // ManagerOption customizes a Manager at construction.
 type ManagerOption func(*Manager)
@@ -43,9 +53,17 @@ func WithRegisteredRoots(fn RegisteredRootsFn) ManagerOption {
 	return func(m *Manager) { m.registeredRoots = fn }
 }
 
-// NewManager constructs a Manager bound to cfg with the production git fetcher.
-func NewManager(cfg config.Config, opts ...ManagerOption) *Manager {
-	m := &Manager{cfg: cfg, resolver: NewResolver(cfg), fetcher: fetch.NewFetcher(), registeredRoots: nil}
+// NewManager constructs a Manager bound to cfg with the production git
+// fetcher. validate must be non-nil (componentcheck.Validate in production) —
+// every Manager surface that loads a bundle applies the same component check.
+func NewManager(cfg config.Config, validate ComponentValidator, opts ...ManagerOption) *Manager {
+	m := &Manager{
+		cfg:             cfg,
+		resolver:        NewResolver(cfg),
+		fetcher:         fetch.NewFetcher(),
+		registeredRoots: nil,
+		validate:        validate,
+	}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -78,30 +96,45 @@ type Report struct {
 	// Warnings are the advisory findings (unknown dirs, empty convention dirs)
 	// raised during a successful load.
 	Warnings []Warning
-	// Bundle is the structurally-loaded bundle (nil when LoadErr is set),
-	// exposing the enumerated components for deeper per-type validation.
-	Bundle *Bundle
+	// ComponentErrs are the hard failures from loading each enumerated
+	// component through its consumption-time front door.
+	ComponentErrs []error
 }
 
 // OK reports whether the bundle passes validation at the requested strictness.
-// A load error always fails; under strict, any warning also fails.
+// A load error or an invalid component always fails; under strict, any
+// warning also fails.
 func (r Report) OK(strict bool) bool {
-	if r.LoadErr != nil {
+	if r.LoadErr != nil || len(r.ComponentErrs) > 0 {
 		return false
 	}
 	return !strict || len(r.Warnings) == 0
 }
 
 // Validate loads and validates the bundle directory at dir, collecting the
-// hard-fail load error (if any) and the advisory warnings into a Report. It
-// never touches the network — enumeration is a local filesystem walk. Strict
-// elevation of warnings is the caller's decision (see Report.OK).
+// hard-fail load error (if any), each component's consumption-time load
+// failure, and the advisory warnings into a Report. It never touches the
+// network — enumeration is a local filesystem walk. Strict elevation of
+// warnings is the caller's decision (see Report.OK).
 func (m *Manager) Validate(dir string) Report {
 	b, err := LoadBundleDir(os.DirFS(dir), dir)
 	if err != nil {
-		return Report{Dir: dir, LoadErr: err, Warnings: nil, Bundle: nil}
+		return Report{Dir: dir, LoadErr: err, Warnings: nil, ComponentErrs: nil}
 	}
-	return Report{Dir: dir, LoadErr: nil, Warnings: b.Warnings, Bundle: b}
+	return Report{Dir: dir, LoadErr: nil, Warnings: b.Warnings, ComponentErrs: m.validateComponents(b)}
+}
+
+// validateComponents runs every enumerated component through the manager's
+// consumption-time loader, collecting the failures. It is the single deep
+// component check — Validate and the install prefetch both apply it.
+func (m *Manager) validateComponents(b *Bundle) []error {
+	var errs []error
+	for _, c := range b.Components {
+		if err := m.validate(c); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // Remove purges every cache entry of a bundle identity — the whole

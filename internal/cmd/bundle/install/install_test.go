@@ -12,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	installcmd "github.com/schmitthub/clawker/internal/cmd/bundle/install"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -28,7 +29,7 @@ func seedBundle(t *testing.T, srv *bundletest.Server) string {
 	repo := srv.InitRepo(t, "tools")
 	repo.Commit(t, "init", map[string]string{
 		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 1.0.0\n",
-		"stacks/node/stack.yaml":      "description: node\n",
+		"stacks/node/stack.yaml":      "description: node\n", "stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
 	})
 	repo.Tag(t, "v1.0.0")
 	return srv.HTTPURL("tools")
@@ -67,7 +68,7 @@ func newFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 			// A no-registered-projects roots provider: GC is ON, rooted by the
 			// current (testenv-isolated) config's declarations alone — exactly
 			// the production wiring on a host with an empty registry.
-			return bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+			return bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 				func(context.Context) ([]string, error) { return nil, nil })), nil
 		},
 	}
@@ -192,8 +193,17 @@ func TestInstall_AutoGCReconcilesEditedDeclaration(t *testing.T) {
 	// The entry a pre-edit declaration ({url, ref v0}) left behind. Nothing
 	// declares this value anymore.
 	stranded := bundle.Source{URL: url, Ref: "v0", SHA: "", Path: ""}
-	bundletest.PlantCachedBundleSource(t, "acme", "tools", "0.9.0", stranded,
-		map[string]string{"stacks/node/stack.yaml": "description: node\n"})
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		stranded,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	f, _, errOut := newFactory(t)
 	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))

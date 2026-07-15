@@ -8,10 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/bundle"
-	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/monitor"
 )
 
 // ValidateOptions holds the options for the bundle validate command.
@@ -87,16 +85,12 @@ func validateRun(_ context.Context, opts *ValidateOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w.Message)
 	}
 
-	componentFailures := 0
-	for _, c := range report.Bundle.Components {
-		if compErr := loadComponent(c); compErr != nil {
-			fmt.Fprintf(ios.ErrOut, "%s %v\n", cs.FailureIcon(), compErr)
-			componentFailures++
-		}
+	for _, compErr := range report.ComponentErrs {
+		fmt.Fprintf(ios.ErrOut, "%s %v\n", cs.FailureIcon(), compErr)
 	}
-	if componentFailures > 0 {
+	if len(report.ComponentErrs) > 0 {
 		fmt.Fprintf(ios.ErrOut, "%s bundle %s has %d invalid component(s)\n",
-			cs.FailureIcon(), opts.Dir, componentFailures)
+			cs.FailureIcon(), opts.Dir, len(report.ComponentErrs))
 		return cmdutil.SilentError
 	}
 
@@ -111,28 +105,6 @@ func validateRun(_ context.Context, opts *ValidateOptions) error {
 			cs.SuccessIcon(), opts.Dir, len(report.Warnings))
 	} else {
 		fmt.Fprintf(ios.Out, "%s bundle %s is valid\n", cs.SuccessIcon(), opts.Dir)
-	}
-	return nil
-}
-
-// loadComponent runs the component's consumption-time loader — the same
-// front door `clawker build` / `clawker monitor up` go through — so an
-// author catches a manifest that parses structurally but breaks at
-// consumption before publishing.
-func loadComponent(c bundle.Component) error {
-	var err error
-	switch c.Type {
-	case bundle.ComponentHarness:
-		_, err = bundler.LoadBundle(c.Address.Name, c.FS)
-	case bundle.ComponentStack:
-		_, err = bundler.LoadStackDefinition(c.Address.Name, c.FS)
-	case bundle.ComponentMonitoring:
-		_, err = monitor.LoadMonitoringUnit(c.Address.Name, c.FS)
-	default:
-		return fmt.Errorf("component %s: unknown component type", c.Address.Name)
-	}
-	if err != nil {
-		return fmt.Errorf("%s: %w", c.Dir, err)
 	}
 	return nil
 }

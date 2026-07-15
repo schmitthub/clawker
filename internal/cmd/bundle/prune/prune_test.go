@@ -12,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	prunecmd "github.com/schmitthub/clawker/internal/cmd/bundle/prune"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -31,7 +32,7 @@ func newFactory(
 	ios, _, out, errOut := iostreams.Test()
 	cfg := configmocks.NewBlankConfig()
 	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration { return decls }
-	mgr := bundle.NewManager(cfg, bundle.WithRegisteredRoots(
+	mgr := bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 		func(context.Context) ([]string, error) { return rootDirs, nil }))
 	//nolint:exhaustruct // test factory carries only the nouns prune uses
 	f := &cmdutil.Factory{
@@ -131,7 +132,7 @@ func TestBundlePrune_RootsUnavailableFails(t *testing.T) {
 
 	ios, _, _, errOut := iostreams.Test()
 	cfg := configmocks.NewBlankConfig()
-	mgr := bundle.NewManager(cfg) // no roots provider — GC must refuse
+	mgr := bundle.NewManager(cfg, componentcheck.Validate) // no roots provider — GC must refuse
 	//nolint:exhaustruct // test factory carries only the nouns prune uses
 	f := &cmdutil.Factory{
 		IOStreams:     ios,

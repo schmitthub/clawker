@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -25,8 +26,9 @@ func bundleFiles(version string) map[string]string {
 		manifest += "version: " + version + "\n"
 	}
 	return map[string]string{
-		".clawker-bundle/bundle.yaml": manifest,
-		"stacks/node/stack.yaml":      "description: node stack\n",
+		".clawker-bundle/bundle.yaml":            manifest,
+		"stacks/node/stack.yaml":                 "description: node stack\n",
+		"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
 	}
 }
 
@@ -81,13 +83,33 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 	})
 }
 
+func TestManager_Install_RejectsInvalidComponent(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	// A stack with no Dockerfile fragment loads structurally but breaks at
+	// consumption — install must reject it before anything hits the cache.
+	repo.Commit(t, "v1", map[string]string{
+		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\n",
+		"stacks/node/stack.yaml":      "description: node stack\n",
+	})
+	repo.Tag(t, "v1.0.0")
+
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+
+	_, err := mgr.Install(context.Background(), src)
+	require.ErrorContains(t, err, "no fragment found")
+	assert.NoDirExists(t, entryRoot(t, src), "a rejected bundle must not be committed to the cache")
+}
+
 func TestManager_Install_Subdir(t *testing.T) {
 	srv := bundletest.New(t)
 	repo := srv.InitRepo(t, "mono")
 	repo.Commit(t, "monorepo", map[string]string{
-		"bundles/tools/.clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 1.0.0\n",
-		"bundles/tools/stacks/node/stack.yaml":      "description: node\n",
-		"unrelated/readme.md":                       "ignore me\n",
+		"bundles/tools/.clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"bundles/tools/stacks/node/stack.yaml":                 "description: node\n",
+		"bundles/tools/stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		"unrelated/readme.md":                                  "ignore me\n",
 	})
 	repo.Tag(t, "v1.0.0")
 
@@ -265,7 +287,7 @@ func managerForDecls(decls ...config.BundleSource) *bundle.Manager {
 		return out
 	}
 	cfg.ProjectRootFunc = func() string { return "" }
-	return bundle.NewManager(cfg)
+	return bundle.NewManager(cfg, componentcheck.Validate)
 }
 
 func TestManager_Update_RefetchesOnDrift(t *testing.T) {
@@ -308,8 +330,17 @@ func TestManager_Update_FailureKeepsCache(t *testing.T) {
 	// exactly as a prior successful install would have left it.
 	src := config.BundleSource{URL: srv.HTTPURL("gone"), Ref: "v1", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
-	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", srv.HTTPURL("gone"),
-		map[string]string{"stacks/node/stack.yaml": "description: node stack\n"})
+	bundletest.PlantCachedBundle(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		srv.HTTPURL("gone"),
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node stack\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
 
 	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
 	results, err := mgr.Update(context.Background(), id)
@@ -409,6 +440,7 @@ func TestManager_Install_InvalidManifestNoCommit(t *testing.T) {
 			repo.Commit(t, "v1", map[string]string{
 				filepath.Join(bundle.MarkerDir, bundle.ManifestFile): tc.manifest,
 				"stacks/node/stack.yaml":                             "description: node\n",
+				"stacks/node/Dockerfile.stack-root.tmpl":             "RUN true\n",
 			})
 			repo.Tag(t, "v1.0.0")
 

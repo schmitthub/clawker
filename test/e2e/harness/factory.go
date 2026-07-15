@@ -10,12 +10,17 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -31,9 +36,6 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
 )
 
 // harnessAdminKeepalive mirrors the production adminClientKeepalive in
@@ -238,27 +240,31 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				return
 			}
 			if opts.ProjectManager == nil {
-				bm = bundle.NewManager(c)
+				bm = bundle.NewManager(c, componentcheck.Validate)
 				return
 			}
-			bm = bundle.NewManager(c, bundle.WithRegisteredRoots(func(ctx context.Context) ([]string, error) {
-				pmgr, mgrErr := f.ProjectManager()
-				if mgrErr != nil {
-					return nil, fmt.Errorf("bundle GC roots: loading project manager: %w", mgrErr)
-				}
-				entries, listErr := pmgr.List(ctx)
-				if listErr != nil {
-					return nil, fmt.Errorf("bundle GC roots: listing registered projects: %w", listErr)
-				}
-				var roots []string
-				for _, e := range entries {
-					roots = append(roots, e.Root)
-					for _, wt := range e.Worktrees {
-						roots = append(roots, wt.Path)
+			bm = bundle.NewManager(
+				c,
+				componentcheck.Validate,
+				bundle.WithRegisteredRoots(func(ctx context.Context) ([]string, error) {
+					pmgr, mgrErr := f.ProjectManager()
+					if mgrErr != nil {
+						return nil, fmt.Errorf("bundle GC roots: loading project manager: %w", mgrErr)
 					}
-				}
-				return roots, nil
-			}))
+					entries, listErr := pmgr.List(ctx)
+					if listErr != nil {
+						return nil, fmt.Errorf("bundle GC roots: listing registered projects: %w", listErr)
+					}
+					var roots []string
+					for _, e := range entries {
+						roots = append(roots, e.Root)
+						for _, wt := range e.Worktrees {
+							roots = append(roots, wt.Path)
+						}
+					}
+					return roots, nil
+				}),
+			)
 		})
 		return bm, bmErr
 	}
