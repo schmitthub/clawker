@@ -43,6 +43,9 @@ re-justification against the new model) keep:
 - Harness template block names FINALIZED (user-ratified 2026-07-14): `root_after_stacks` (block_1+2 merged — they were adjacent), `user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd`. Naming convention: permission-scope prefix + flanking-event anchor, descriptive never prescriptive.
 - opencode/pi bundles (research memo ready) — after the new model lands.
 
-## 2026-07-15: bundle validate deep-loads components (9c8bfd3d)
+## 2026-07-15: bundle validate deep-loads components (9c8bfd3d, restructured 27a6bd91)
+
+**27a6bd91 (supersedes the cmd-layer shape below, user: "divergent validation = sloppy"):** component validation is a required `bundle.Manager` dependency — `NewManager(cfg, validate, opts...)`; production validator = new composing package `internal/bundle/componentcheck.Validate` (exists because the consumption loaders' packages import internal/bundle). BOTH `Manager.Validate` and the install prefetch (`fetchIntoCache`, pre-commit) run it: broken bundle now fails install before caching. `Report` carries `ComponentErrs` (the short-lived `Report.Bundle` field is gone). Repo-wide forbidigo bans `panic` — no nil-guard in constructor, doc contract only.
+
 
 `clawker bundle validate` now runs every enumerated component through its consumption-time loader (`bundler.LoadBundle`, `bundler.LoadStackDefinition`, `monitor.LoadMonitoringUnit`) after the structural pass — an invalid component manifest is a hard failure at publish time instead of surfacing on the consumer's `clawker build` / `monitor up`. `bundle.Report` gained a `Bundle *Bundle` field (nil on LoadErr) so the command layer can walk components. Same-day docs accuracy sweep (8 Opus reviewers over the Bundles & extensions group) fixed reserved-namespace list, `.clawker.yaml`→`clawker.yaml`, datapoint_renames copy→move (incl. schema-source struct tags), and completed the auto-update trigger list.
