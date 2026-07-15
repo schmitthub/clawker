@@ -92,6 +92,16 @@ func compactMarkdownStyle(theme string, colorEnabled bool) ansi.StyleConfig {
 	cfg.H5.Prefix = ""
 	cfg.H6.Prefix = ""
 
+	// Blockquote: glamour v1 reserves Indent columns (1) when wrapping quote
+	// content but then prefixes each line with the two-column "│ " token and
+	// repeats the token Indent times, so full-width lines overflow by one
+	// column and the trailing reflow orphans their last word onto a bare,
+	// unprefixed line. A single-column token makes the reserved width match
+	// the rendered width exactly. "▌" occupies the left half of its cell, so
+	// the quote bar keeps a visual gap without costing a second column.
+	blockQuoteToken := "▌"
+	cfg.BlockQuote.IndentToken = &blockQuoteToken
+
 	// Inline code: the built-in style pads with a leading/trailing space and a
 	// background block, which renders as stray spaces around each `code` span.
 	// Drop the padding and background; the foreground color alone marks it.
