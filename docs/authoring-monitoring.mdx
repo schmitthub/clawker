@@ -122,3 +122,6 @@ Bundle an extension and validate it before publishing:
 ```bash
 clawker bundle validate ./my-bundle --strict
 ```
+
+Validation loads each extension the same way `clawker monitor up` does, so a
+malformed `monitoring.yaml` fails here instead of at seed time.

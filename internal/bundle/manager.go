@@ -78,6 +78,9 @@ type Report struct {
 	// Warnings are the advisory findings (unknown dirs, empty convention dirs)
 	// raised during a successful load.
 	Warnings []Warning
+	// Bundle is the structurally-loaded bundle (nil when LoadErr is set),
+	// exposing the enumerated components for deeper per-type validation.
+	Bundle *Bundle
 }
 
 // OK reports whether the bundle passes validation at the requested strictness.
@@ -96,9 +99,9 @@ func (r Report) OK(strict bool) bool {
 func (m *Manager) Validate(dir string) Report {
 	b, err := LoadBundleDir(os.DirFS(dir), dir)
 	if err != nil {
-		return Report{Dir: dir, LoadErr: err, Warnings: nil}
+		return Report{Dir: dir, LoadErr: err, Warnings: nil, Bundle: nil}
 	}
-	return Report{Dir: dir, LoadErr: nil, Warnings: b.Warnings}
+	return Report{Dir: dir, LoadErr: nil, Warnings: b.Warnings, Bundle: b}
 }
 
 // Remove purges every cache entry of a bundle identity — the whole

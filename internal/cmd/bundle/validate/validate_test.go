@@ -62,6 +62,8 @@ func TestValidate_Valid(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "stacks", "node"), 0o755))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, "stacks", "node", "stack.yaml"), []byte("description: n\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "stacks", "node", "Dockerfile.stack-root.tmpl"), []byte("RUN true\n"), 0o644))
 
 	f, out, _ := newFactory(t)
 	require.NoError(t, run(t, f, dir))
@@ -93,4 +95,47 @@ func TestValidate_StrictWarningsFail(t *testing.T) {
 	err := run(t, f2, dir, "--strict")
 	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Contains(t, errOut2.String(), "warning")
+}
+
+func TestValidate_BrokenStackComponentFails(t *testing.T) {
+	dir := t.TempDir()
+	writeBundleDir(t, dir, "namespace: acme\nname: tools\n")
+	// stack.yaml present but no Dockerfile fragment — loads structurally,
+	// breaks at consumption. Deep validation must catch it here.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "stacks", "node"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "stacks", "node", "stack.yaml"), []byte("description: n\n"), 0o644))
+
+	f, _, errOut := newFactory(t)
+	err := run(t, f, dir)
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	assert.Contains(t, errOut.String(), "no fragment found")
+}
+
+func TestValidate_BrokenHarnessComponentFails(t *testing.T) {
+	dir := t.TempDir()
+	writeBundleDir(t, dir, "namespace: acme\nname: tools\n")
+	// harness.yaml present but the Dockerfile template is missing.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "harnesses", "mycli"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "harnesses", "mycli", "harness.yaml"), []byte("description: h\n"), 0o644))
+
+	f, _, errOut := newFactory(t)
+	err := run(t, f, dir)
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	assert.Contains(t, errOut.String(), "mycli")
+}
+
+func TestValidate_BrokenMonitoringComponentFails(t *testing.T) {
+	dir := t.TempDir()
+	writeBundleDir(t, dir, "namespace: acme\nname: tools\n")
+	// monitoring.yaml with no log lanes — invalid at consumption time.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "monitoring", "myext"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "monitoring", "myext", "monitoring.yaml"), []byte("description: m\n"), 0o644))
+
+	f, _, errOut := newFactory(t)
+	err := run(t, f, dir)
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	assert.Contains(t, errOut.String(), "myext")
 }

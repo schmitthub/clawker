@@ -177,3 +177,6 @@ Bundle a harness and validate it before publishing:
 ```bash
 clawker bundle validate ./my-bundle --strict
 ```
+
+Validation loads each harness the same way `clawker build` does, so a
+`harness.yaml` that would fail at build time fails here instead.

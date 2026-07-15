@@ -30,7 +30,7 @@ internal/cmd/bundle/
 | `bundle prune` | Roots-based cache GC: removes every cache entry whose exact source value no declaration addresses (current config layers + user layer + every registered project incl. worktrees, via `Manager.Prune`). Reports drops on stdout; hand-placed (receipt-less) entries never collected; warns when one identity is cached from ≥2 distinct repositories (mirror-attack anomaly surface), naming each repo + declaring files. The install/update verbs run the same reconciliation identity-scoped via `Manager.AutoGC`. |
 | `bundle remove <namespace.name>` / `rm` | Purge a cached bundle (every cache entry of the identity); warns when still declared. |
 | `bundle update [namespace.name]` | Declaration-driven refetch on version change: each declared ref/unpinned source compares its own value-keyed entry's receipt against the remote tip and refetches in place on drift; sha-pinned skipped, never-installed skipped with an install hint, a failed refetch keeps the cached version. Prints one line per source considered. |
-| `bundle validate <dir> [--strict]` | Local validation: hard-fail on malformed manifest / missing fields / reserved namespace; advisory warnings (typo suggestions, empty dirs) that `--strict` promotes to failures. |
+| `bundle validate <dir> [--strict]` | Local validation: hard-fail on malformed manifest / missing fields / reserved namespace / invalid component (each component runs its consumption-time loader — `bundler.LoadBundle`, `bundler.LoadStackDefinition`, `monitor.LoadMonitoringUnit`); advisory warnings (typo suggestions, empty dirs) that `--strict` promotes to failures. |
 
 ## Access pattern
 

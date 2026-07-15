@@ -102,5 +102,8 @@ Bundle a stack and validate it before publishing:
 clawker bundle validate ./my-bundle --strict
 ```
 
+Validation loads each stack the same way `clawker build` does, so a missing
+fragment or malformed `stack.yaml` fails here instead of at build time.
+
 Validation checks the bundle envelope and component naming; the fragments prove
 out at `clawker build` time.

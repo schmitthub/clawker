@@ -105,8 +105,11 @@ clawker bundle validate ./my-bundle --strict   # for CI: warnings become failure
 Validation is split:
 
 - **Hard failures** — a missing or malformed `bundle.yaml`, a missing required
-  field (`namespace`/`name`), a reserved namespace, or a malformed component
-  name.
+  field (`namespace`/`name`), a reserved namespace, a malformed component
+  name, or an invalid component: every harness, stack, and monitoring
+  extension is loaded through the same front door the consuming commands use,
+  so a manifest that would break at `clawker build` or `clawker monitor up`
+  fails here instead.
 - **Advisory warnings** — unknown top-level directories (with typo suggestions)
   and empty convention directories.
 

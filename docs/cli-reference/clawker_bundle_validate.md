@@ -10,12 +10,16 @@ Validate a bundle directory
 
 Validates a bundle directory before publishing: the .clawker-bundle/bundle.yaml
 manifest must be present and well-formed with the required namespace and name,
-and its component convention directories are checked.
+its component convention directories are checked, and every component is
+loaded through the same front door the consuming commands use — a harness,
+stack, or monitoring manifest that would break at build or monitor time fails
+here instead.
 
-A malformed or missing manifest, a missing required field, or a reserved
-namespace is a hard failure. Unknown top-level directories (with typo
-suggestions) and empty convention directories are advisory warnings; --strict
-turns every warning into a failure. Validation is local — it never fetches.
+A malformed or missing manifest, a missing required field, a reserved
+namespace, or an invalid component is a hard failure. Unknown top-level
+directories (with typo suggestions) and empty convention directories are
+advisory warnings; --strict turns every warning into a failure. Validation is
+local — it never fetches.
 
 ```
 clawker bundle validate <dir> [flags]
