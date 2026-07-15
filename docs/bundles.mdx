@@ -166,8 +166,9 @@ automatically the next time that bundle is installed or updated (see
 
 Auto-update is opt-in per entry (`auto_update: true`, or `--auto-update` on
 install) and **off by default**. When enabled, the check runs at the start of
-bundle-consuming commands — `clawker build`, `clawker run`, and `clawker monitor
-up` — and only for entries that opted in. It compares the source version and
+bundle-consuming commands — `clawker build`, `clawker run`, `clawker container
+create`, `clawker monitor up`, and `clawker monitor reload` — and only for
+entries that opted in. It compares the source version and
 refetches on a change; a failed check warns and proceeds with the cached
 version, never blocking the command.
 
