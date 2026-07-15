@@ -82,7 +82,7 @@ metrics pipeline. Omit it entirely when your metrics need no reshaping.
 | Field | Purpose |
 |-------|---------|
 | `service_names` | The metric `service.name` values the renames apply to; empty defaults to the union of the log lanes' service names. |
-| `datapoint_renames` | Datapoint attribute copies — each `from`/`to` pair copies a datapoint attribute to a new key. |
+| `datapoint_renames` | Datapoint attribute renames — each `from`/`to` pair moves a datapoint attribute to a new key (the source key is removed). |
 
 <Note>
   The OpenSearch SQL plugin's direct-query Prometheus connector errors on any

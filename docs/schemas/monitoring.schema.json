@@ -42,12 +42,12 @@
       "description": "Optional collector-side shaping for this extension's metrics on the shared untrusted metrics pipeline; omit when no reshaping is needed.",
       "properties": {
         "datapoint_renames": {
-          "description": "Datapoint attribute copies applied to this extension's metrics, scoped to its service names.",
+          "description": "Datapoint attribute renames applied to this extension's metrics, scoped to its service names; each from/to pair moves the attribute (the source key is removed).",
           "items": {
             "additionalProperties": false,
             "properties": {
               "from": {
-                "description": "Source datapoint attribute key to copy.",
+                "description": "Source datapoint attribute key to rename; removed after its value moves to the target key.",
                 "title": "From",
                 "type": "string"
               },

@@ -42,7 +42,7 @@ clawker run -it --agent dev @:acme.tools.codex
 Out of the box the default is the built-in `claude` harness. Set the
 `build.harness` key to make any harness the default — in your user-level
 `clawker.yaml` to apply across every project, or in a project's
-`.clawker.yaml` to override it there. The highest layer that sets it wins;
+`clawker.yaml` to override it there. The highest layer that sets it wins;
 an explicit `-t` or `@:<harness>` always beats it.
 
 ```yaml

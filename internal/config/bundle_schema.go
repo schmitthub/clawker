@@ -37,8 +37,8 @@ type BundleSource struct {
 // a Store, only parsed from a bundle repository. It exists here so gen-docs can
 // emit its JSON Schema from the same struct tags as every other config type.
 type BundleManifest struct {
-	Namespace   string `yaml:"namespace"             label:"Namespace"   desc:"Maintainer branding for the bundle (org, handle, or umbrella); lowercase letters, digits, and internal hyphens. Combines with name to form the bundle's identity. Reserved namespaces (clawker and impersonation forms) are rejected." required:"true"`
-	Name        string `yaml:"name"                  label:"Name"        desc:"Bundle name; lowercase letters, digits, and internal hyphens. Combines with namespace to form the bundle's identity — never derived from the source URL."                                                                              required:"true"`
+	Namespace   string `yaml:"namespace"             label:"Namespace"   desc:"Maintainer branding for the bundle (org, handle, or umbrella); lowercase letters, digits, and internal hyphens. Combines with name to form the bundle's identity. Reserved namespaces (clawker, impersonation forms clawker-*/*-clawker, and official) are rejected." required:"true"`
+	Name        string `yaml:"name"                  label:"Name"        desc:"Bundle name; lowercase letters, digits, and internal hyphens. Combines with namespace to form the bundle's identity — never derived from the source URL."                                                                                                             required:"true"`
 	Version     string `yaml:"version,omitempty"     label:"Version"     desc:"Bundle version used only for update change-detection (no compatibility semantics); when absent, the resolved source commit SHA is the version."`
 	Description string `yaml:"description,omitempty" label:"Description" desc:"Human-readable summary of what the bundle ships."`
 	Author      string `yaml:"author,omitempty"      label:"Author"      desc:"Bundle author or maintainer."`

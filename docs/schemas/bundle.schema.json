@@ -24,7 +24,7 @@
       "type": "string"
     },
     "namespace": {
-      "description": "Maintainer branding for the bundle (org, handle, or umbrella); lowercase letters, digits, and internal hyphens. Combines with name to form the bundle's identity. Reserved namespaces (clawker and impersonation forms) are rejected.",
+      "description": "Maintainer branding for the bundle (org, handle, or umbrella); lowercase letters, digits, and internal hyphens. Combines with name to form the bundle's identity. Reserved namespaces (clawker, impersonation forms clawker-*/*-clawker, and official) are rejected.",
       "title": "Namespace",
       "type": "string"
     },

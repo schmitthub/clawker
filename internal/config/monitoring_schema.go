@@ -51,15 +51,15 @@ type MonitoringUnitMetrics struct {
 	// to the union of the unit's log-lane service names.
 	ServiceNames []string `yaml:"service_names,omitempty" label:"Service Names" desc:"Metric service.name values the renames below apply to; empty defaults to the union of the extension's log-lane service names."`
 
-	// DatapointRenames copies a datapoint attribute to a new key when
+	// DatapointRenames moves a datapoint attribute to a new key when
 	// present, scoped to the unit's service names. Rendered as OTTL
 	// transform statements by the collector-config generator.
-	DatapointRenames []MetricRename `yaml:"datapoint_renames,omitempty" label:"Datapoint Renames" desc:"Datapoint attribute copies applied to this extension's metrics, scoped to its service names."`
+	DatapointRenames []MetricRename `yaml:"datapoint_renames,omitempty" label:"Datapoint Renames" desc:"Datapoint attribute renames applied to this extension's metrics, scoped to its service names; each from/to pair moves the attribute (the source key is removed)."`
 }
 
-// MetricRename is one datapoint attribute copy: From's value lands on To.
+// MetricRename is one datapoint attribute rename: From's value lands on To and From is removed.
 type MetricRename struct {
-	From string `yaml:"from" label:"From" desc:"Source datapoint attribute key to copy."`
+	From string `yaml:"from" label:"From" desc:"Source datapoint attribute key to rename; removed after its value moves to the target key."`
 	To   string `yaml:"to"   label:"To"   desc:"Destination datapoint attribute key the source value lands on."`
 }
 
