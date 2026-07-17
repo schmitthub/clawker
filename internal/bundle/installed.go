@@ -104,6 +104,56 @@ func scanBundleName(root, namespace, name string) ([]InstalledEntry, error) {
 	return entries, nil
 }
 
+// entriesByKey flattens a cache scan into the entry each source key
+// addresses. One key normally maps to one entry, but the identity levels come
+// from the fetched manifest while the key comes from the declared value — an
+// upstream rename of namespace/name leaves the same key under two identities
+// until the superseded twin is collected. Every consumer that resolves a
+// declaration to an entry goes through this map, so the winner here IS the
+// entry a declared value addresses; the GC keeps exactly this winner and
+// condemns rooted duplicates it loses (see gcEntries) — the two must never
+// disagree.
+func entriesByKey(installed []InstalledEntry) map[string]InstalledEntry {
+	byKey := make(map[string]InstalledEntry, len(installed))
+	for _, e := range installed {
+		prev, seen := byKey[e.Key]
+		if !seen {
+			byKey[e.Key] = e
+			continue
+		}
+		byKey[e.Key] = fresherEntry(prev, e)
+	}
+	return byKey
+}
+
+// fresherEntry picks which of two same-key entries the key addresses: the one
+// whose receipt records the later fetch. A rename-refetch of one declared
+// value is the only writer that produces receipted same-key twins, so the
+// later fetched_at is the identity the value currently resolves to. A
+// readable receipt beats a missing or corrupt one (a fetched entry outranks
+// one that cannot prove its fetch); with neither readable the choice is
+// arbitrary and only needs to be deterministic — lower identity wins.
+func fresherEntry(a, b InstalledEntry) InstalledEntry {
+	ra, aOK, aErr := readReceipt(a.Root)
+	rb, bOK, bErr := readReceipt(b.Root)
+	aReadable := aErr == nil && aOK
+	bReadable := bErr == nil && bOK
+	switch {
+	case aReadable && !bReadable:
+		return a
+	case bReadable && !aReadable:
+		return b
+	case aReadable && bReadable && ra.FetchedAt.After(rb.FetchedAt):
+		return a
+	case aReadable && bReadable && rb.FetchedAt.After(ra.FetchedAt):
+		return b
+	}
+	if a.ID.String() <= b.ID.String() {
+		return a
+	}
+	return b
+}
+
 // cachedKeys scans the cache once and returns the set of present source keys,
 // so a batch of declarations can be tested for cache presence by exact value.
 func cachedKeys() (map[string]bool, error) {

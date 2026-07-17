@@ -98,7 +98,7 @@ func TestUpdate_AutoGCReconcilesRefetchedIdentity(t *testing.T) {
 	}
 	mgr := bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(
 		func(context.Context) ([]string, error) { return nil, nil }))
-	_, err := mgr.Install(context.Background(), src)
+	_, _, err := mgr.Install(context.Background(), src)
 	require.NoError(t, err)
 
 	// A stranded sibling of the same identity, no longer declared anywhere.

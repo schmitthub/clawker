@@ -396,9 +396,35 @@ volumes: [{ name: clawker, path: .test }]
 			wantErr: "reserved for clawker infrastructure",
 		},
 		{
+			name: "volume name reserved for workspace volume",
+			manifest: `
+volumes: [{ name: workspace, path: .test }]
+`,
+			wantErr: "reserved for clawker infrastructure",
+		},
+		{
 			name: "volume name invalid for docker",
 			manifest: `
 volumes: [{ name: "bad name", path: .test }]
+`,
+			wantErr: "must match",
+		},
+		{
+			// A dotted volume name could alias a qualified harness's volume
+			// in the composed clawker.<project>.<agent>-<harness>.<name>
+			// identity (bare harness "a" + volume "b.c.d" vs qualified
+			// harness "a.b.c" + volume "d") — dots are rejected at the load
+			// front door to keep that composition injective.
+			name: "dotted volume name rejected",
+			manifest: `
+volumes: [{ name: "b.c", path: .test }]
+`,
+			wantErr: "must match",
+		},
+		{
+			name: "uppercase volume name rejected",
+			manifest: `
+volumes: [{ name: "Config", path: .test }]
 `,
 			wantErr: "must match",
 		},

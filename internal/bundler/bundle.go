@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -212,11 +211,7 @@ func validateManagedPrompt(name string, volumes []config.VolumeSpec, mp *config.
 	return nil
 }
 
-// volumeNameRe constrains a volume name to the docker-volume-safe suffix
-// grammar (it is embedded verbatim in the composed volume name).
-var volumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,40}$`)
-
-// validateVolumes checks the declared persisted-dir list: docker-safe
+// validateVolumes checks the declared persisted-dir list: unified-rule
 // unique names (infra suffixes reserved), valid unique home-relative paths.
 func validateVolumes(name string, volumes []config.VolumeSpec) error {
 	seenNames := map[string]bool{}
@@ -239,8 +234,14 @@ func validateVolumes(name string, volumes []config.VolumeSpec) error {
 }
 
 func validateVolumeSpec(name string, v config.VolumeSpec) error {
-	if !volumeNameRe.MatchString(v.Name) {
-		return fmt.Errorf("harness %q: volume name %q must match %s", name, v.Name, volumeNameRe)
+	// The unified naming rule (lowercase kebab, dot-free) — not a looser
+	// docker-charset grammar — because the name is embedded verbatim in the
+	// composed clawker.<project>.<agent>-<harness>.<name> volume identity: a
+	// dotted volume name could alias a qualified harness's volume (bare
+	// harness "a" + volume "b.c.d" vs qualified harness "a.b.c" + volume
+	// "d"). Dot-free names keep that composition injective.
+	if err := consts.ValidateName(v.Name); err != nil {
+		return fmt.Errorf("harness %q: volume name: %w", name, err)
 	}
 	switch v.Name {
 	case consts.VolumePurposeHistory, consts.VolumePurposeWorkspace, consts.VolumePurposeClawker:

@@ -35,6 +35,10 @@ type InitConfigOpts struct {
 	ProjectName string
 	// AgentName is the agent name for volume naming.
 	AgentName string
+	// HarnessName is the selected harness bundle's registry name — the
+	// discriminator in the harness-scoped volume identities the staged
+	// subtrees are copied into.
+	HarnessName string
 	// ContainerWorkDir is the workspace directory inside the container (e.g. "/Users/dev/my-app").
 	// Used to rewrite projectPath values in installed_plugins.json.
 	ContainerWorkDir string
@@ -94,7 +98,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 		if !opts.FreshVolumes[v.Name] {
 			continue
 		}
-		volName, err := docker.VolumeName(opts.ProjectName, opts.AgentName, v.Name)
+		volName, err := docker.HarnessVolumeName(opts.ProjectName, opts.AgentName, opts.HarnessName, v.Name)
 		if err != nil {
 			return fmt.Errorf("volume name for %q: %w", v.Name, err)
 		}

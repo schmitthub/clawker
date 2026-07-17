@@ -1486,7 +1486,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 	// Resolve the container's harness identity ONCE, from the image's
 	// harness label — staging, hooks, env, egress, and the container label
 	// must all agree on it regardless of what the configured default is today.
-	harnessName, err := harnessForImage(ctx, opts.Client, opts.Config, opts.Options.Image)
+	harnessName, err := harnessForImage(ctx, opts.Client, opts.Config, opts.Options.Image, opts.Log)
 	if err != nil {
 		return nil, fmt.Errorf("resolving container harness identity: %w", err)
 	}
@@ -1505,7 +1505,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 	// during this call are tracked — pre-existing volumes (with user session
 	// data) are never touched.
 	scope := &createScope{client: opts.Client, log: log}
-	trackCreatedVolumes(scope, ws.result, opts.ProjectName, agentName)
+	trackCreatedVolumes(scope, ws.result, opts.ProjectName, agentName, opts.harnessBundle.Name)
 
 	// On any error past this point, reclaim created resources — container first
 	// (frees its volumes), then volumes. scope.containerID stays empty until the
@@ -1723,30 +1723,35 @@ func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, projectCfg *co
 // reclaim scope so a later failure tears them down. Pre-existing volumes (with
 // user session data) are never tracked. A name-resolution failure is logged and
 // the volume is skipped — cleanup is best-effort and must not abort creation.
-func trackCreatedVolumes(scope *createScope, wsResult *workspace.SetupMountsResult, projectName, agentName string) {
+func trackCreatedVolumes(
+	scope *createScope,
+	wsResult *workspace.SetupMountsResult,
+	projectName, agentName, harnessName string,
+) {
+	// track appends a resolved volume name to the reclaim scope; a
+	// name-resolution failure is logged and skipped (best-effort cleanup).
+	track := func(vn string, vnErr error, volName string) {
+		if vnErr != nil {
+			scope.log.Error().Err(vnErr).Str("volume", volName).Msg("cannot determine volume name for cleanup tracking")
+			return
+		}
+		scope.volumes = append(scope.volumes, vn)
+	}
+
 	for volName, created := range wsResult.ConfigVolumeResult.CreatedByName {
 		if !created {
 			continue
 		}
-		if vn, vnErr := docker.VolumeName(projectName, agentName, volName); vnErr != nil {
-			scope.log.Error().Err(vnErr).Str("volume", volName).Msg("cannot determine volume name for cleanup tracking")
-		} else {
-			scope.volumes = append(scope.volumes, vn)
-		}
+		vn, vnErr := docker.HarnessVolumeName(projectName, agentName, harnessName, volName)
+		track(vn, vnErr, volName)
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory); vnErr != nil {
-			scope.log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
-		} else {
-			scope.volumes = append(scope.volumes, vn)
-		}
+		vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory)
+		track(vn, vnErr, docker.VolumePurposeHistory)
 	}
 	if wsResult.ConfigVolumeResult.ClawkerCreated {
-		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker); vnErr != nil {
-			scope.log.Error().Err(vnErr).Msg("cannot determine clawker volume name for cleanup tracking")
-		} else {
-			scope.volumes = append(scope.volumes, vn)
-		}
+		vn, vnErr := docker.HarnessVolumeName(projectName, agentName, harnessName, docker.VolumePurposeClawker)
+		track(vn, vnErr, docker.VolumePurposeClawker)
 	}
 	if wsResult.WorkspaceVolumeName != "" {
 		scope.volumes = append(scope.volumes, wsResult.WorkspaceVolumeName)
@@ -1884,6 +1889,7 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 		ContainerPath:  wd, // Mount at host absolute path for harness session /resume compatibility
 		IgnoreFile:     ignoreFile,
 		Harness:        bundle.Manifest.Staging,
+		HarnessName:    bundle.Name,
 		HarnessVolumes: bundle.Manifest.Volumes,
 		HarnessConfig:  opts.Config.Project().HarnessConfigFor(bundle.Name),
 		Log:            log,
@@ -1903,6 +1909,7 @@ func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentNa
 	if err := InitContainerConfig(ctx, InitConfigOpts{
 		ProjectName:      opts.ProjectName,
 		AgentName:        agentName,
+		HarnessName:      bundle.Name,
 		ContainerWorkDir: ws.result.ContainerPath,
 		Harness:          opts.Config.Project().HarnessConfigFor(bundle.Name),
 		Staging:          bundle.Manifest.Staging,
@@ -1918,25 +1925,51 @@ func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentNa
 }
 
 // harnessForImage derives the container's harness identity from the image's
-// harness label — the image IS the built harness. Images built before
-// harness labels existed fall back to the configured default.
+// harness label — the image IS the built harness, so create composes against
+// what the image contains, not whatever build.harness says today (that
+// stability is what keeps recreation on the same volume namespace).
+//
+// Fallback to the configured default happens in exactly two benign cases,
+// each logged with its reason: the image carries no harness label (legacy
+// image built before harness labels; the base image deliberately carries
+// none), or the image is not found / not clawker-managed (whail's
+// label-scoped inspect cannot see external images). Any other inspect
+// failure surfaces — a daemon error must not silently resolve to a harness
+// the image may not contain.
 func harnessForImage(
 	ctx context.Context,
 	client *docker.Client,
 	cfg config.Config,
 	imageRef string,
+	log *logger.Logger,
 ) (string, error) {
-	if inspect, err := client.ImageInspect(ctx, imageRef); err == nil {
+	if log == nil {
+		log = logger.Nop()
+	}
+	reason := "image carries no harness label"
+	inspect, err := client.ImageInspect(ctx, imageRef)
+	switch {
+	case err == nil:
 		if inspect.Config != nil {
 			if name := inspect.Config.Labels[consts.LabelHarness]; name != "" {
 				return name, nil
 			}
 		}
+	case docker.IsNotFound(err):
+		reason = "image not found or not clawker-managed"
+	default:
+		return "", fmt.Errorf("resolving harness identity: inspect image %s: %w", imageRef, err)
 	}
-	name, err := bundler.ResolveHarnessName(cfg, "")
-	if err != nil {
-		return "", fmt.Errorf("image %s carries no harness label and default resolution failed: %w", imageRef, err)
+	name, resolveErr := bundler.ResolveHarnessName(cfg, "")
+	if resolveErr != nil {
+		return "", fmt.Errorf(
+			"image %s carries no harness label and default resolution failed: %w", imageRef, resolveErr)
 	}
+	log.Warn().
+		Str("image", imageRef).
+		Str("harness", name).
+		Str("reason", reason).
+		Msg("falling back to the configured default harness")
 	return name, nil
 }
 

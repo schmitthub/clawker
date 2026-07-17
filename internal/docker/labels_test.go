@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -129,6 +130,28 @@ func TestAgentVolumeLabels(t *testing.T) {
 			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
 	})
+}
+
+func TestHarnessVolumeLabels(t *testing.T) {
+	c, _ := testClient(t)
+
+	labels := c.HarnessVolumeLabels("myproject", "myagent", "codex")
+
+	// Superset of AgentVolumeLabels — label-based cleanup by agent must
+	// keep finding harness-scoped volumes.
+	for key, want := range c.AgentVolumeLabels("myproject", "myagent") {
+		if got := labels[key]; got != want {
+			t.Errorf("labels[%q] = %q, want %q", key, got, want)
+		}
+	}
+	if got := labels[consts.LabelHarness]; got != "codex" {
+		t.Errorf("labels[%q] = %q, want %q", consts.LabelHarness, got, "codex")
+	}
+
+	// The receiver's own label map must be untouched.
+	if _, ok := c.AgentVolumeLabels("myproject", "myagent")[consts.LabelHarness]; ok {
+		t.Error("AgentVolumeLabels must not carry the harness label")
+	}
 }
 
 func TestImageLabels(t *testing.T) {

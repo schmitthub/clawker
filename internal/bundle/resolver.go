@@ -265,10 +265,7 @@ func mergeCachedBundles(
 	if err != nil {
 		return nil, err
 	}
-	byKey := make(map[string]InstalledEntry, len(installed))
-	for _, e := range installed {
-		byKey[e.Key] = e
-	}
+	byKey := entriesByKey(installed)
 	var warnings []Warning
 	for _, d := range remoteDecls {
 		entry, cached := byKey[d.src.Key()]
@@ -276,6 +273,17 @@ func mergeCachedBundles(
 			continue // declared but not installed
 		}
 		// Identity comes from the entry's manifest, never its directory position.
+		//
+		// Readers hold no lock, by design. A concurrent refetch of this same
+		// declared value replaces the entry via retire→rename-in (see
+		// commitContent), so this load — and any later read through the
+		// returned Component.FS — can observe ENOENT in the instant between
+		// the two renames. That window is left OPEN deliberately: closing it
+		// would require holding a per-entry lock for the entire lifetime of
+		// every consumer (bundler reads component files throughout a build),
+		// serializing builds against updates. The failure is a loud transient
+		// error, never wrong content (value-keying guarantees a replacement
+		// was fetched from the same declared value), and a retry self-heals.
 		b, loadErr := LoadBundleDir(os.DirFS(entry.Root), entry.Root)
 		if loadErr != nil {
 			return nil, loadErr

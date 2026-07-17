@@ -153,10 +153,11 @@ func installDeclared(ctx context.Context, opts *InstallOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading bundle manager: %w", err)
 	}
-	installed, err := mgr.InstallDeclared(ctx)
+	installed, warnings, err := mgr.InstallDeclared(ctx)
 	for _, id := range installed {
 		fmt.Fprintf(ios.Out, "Installed %s\n", id)
 	}
+	printInstallWarnings(ios, warnings)
 	if err != nil {
 		return fmt.Errorf("installing declared bundles: %w", err)
 	}
@@ -177,6 +178,14 @@ func printGCWarnings(ios *iostreams.IOStreams, warnings []bundle.Warning) {
 	}
 }
 
+// printInstallWarnings writes the fetch advisories (content the entry could
+// not carry) to stderr.
+func printInstallWarnings(ios *iostreams.IOStreams, warnings []bundle.Warning) {
+	for _, w := range warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", ios.ColorScheme().WarningIcon(), w.Message)
+	}
+}
+
 // prefetch fetches the just-declared source into the cache. A fetch failure
 // never undoes the successful declaration write — it is reported so the user
 // knows to retry the fetch (the yaml entry stands).
@@ -187,7 +196,8 @@ func prefetch(ctx context.Context, opts *InstallOptions, src config.BundleSource
 		fmt.Fprintf(ios.ErrOut, "%s loading bundle manager: %v\n", ios.ColorScheme().WarningIcon(), err)
 		return
 	}
-	id, fetchErr := mgr.Install(ctx, src)
+	id, warnings, fetchErr := mgr.Install(ctx, src)
+	printInstallWarnings(ios, warnings)
 	if fetchErr != nil {
 		fmt.Fprintf(ios.ErrOut, "%s declared, but fetch failed: %v\n", ios.ColorScheme().WarningIcon(), fetchErr)
 		return

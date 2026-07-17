@@ -119,6 +119,14 @@ func encodeNode(node *yaml.Node, header string) ([]byte, error) {
 	if header != "" {
 		node.HeadComment = header
 	}
+	// A root mapping emptied of every key (e.g. a file whose entire content
+	// was migrated away, or whose last key was removed) would encode as a
+	// literal "{}" — which reads as the file having been eaten. Emit just the
+	// header comment block (or nothing) instead; an empty or comments-only
+	// document round-trips as an empty mapping on the next load.
+	if node.Kind == yaml.MappingNode && len(node.Content) == 0 {
+		return encodeCommentOnly(header), nil
+	}
 	setLiteralStyle(node)
 
 	var buf bytes.Buffer
@@ -131,6 +139,28 @@ func encodeNode(node *yaml.Node, header string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// encodeCommentOnly renders a keyless document: the header as "# "-prefixed
+// comment lines, or no bytes at all without one. It is the empty-mapping
+// branch of encodeNode — yaml.v3 has no way to emit a document that is only a
+// comment, so the lines are composed by hand in the same style the encoder
+// uses for comments.
+func encodeCommentOnly(header string) []byte {
+	if header == "" {
+		return nil
+	}
+	var b strings.Builder
+	for line := range strings.SplitSeq(header, "\n") {
+		if line == "" {
+			b.WriteString("#\n")
+			continue
+		}
+		b.WriteString("# ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
 }
 
 // stripHeaderLines removes comment lines superseded by the configured header

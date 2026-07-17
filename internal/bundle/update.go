@@ -33,6 +33,9 @@ type UpdateResult struct {
 	Outcome    UpdateOutcome
 	NewVersion string
 	Err        error
+	// Warnings are the advisories a successful refetch accumulated (content
+	// the entry could not carry).
+	Warnings []Warning
 }
 
 // Subject is the display label for a result row: the cached identity when
@@ -62,10 +65,7 @@ func (m *Manager) Update(ctx context.Context, id BundleID) ([]UpdateResult, erro
 	if err != nil {
 		return nil, err
 	}
-	byKey := make(map[string]InstalledEntry, len(installed))
-	for _, e := range installed {
-		byKey[e.Key] = e
-	}
+	byKey := entriesByKey(installed)
 
 	var results []UpdateResult
 	for _, d := range m.resolver.remoteDeclarations() {
@@ -86,10 +86,13 @@ func (m *Manager) Update(ctx context.Context, id BundleID) ([]UpdateResult, erro
 // remote's default branch for an unpinned source — and refetches its cache
 // entry in place when the tip has moved since the last fetch. A sha-pinned
 // source is a skip; a resolve or fetch error is captured on the result,
-// leaving the cache intact.
+// leaving the cache intact. A refetch whose fresh manifest resolves a
+// DIFFERENT identity (an upstream namespace/name rename) reports the new
+// identity on the result, warns, and removes the old identity's superseded
+// same-key entry.
 func (m *Manager) updateOne(ctx context.Context, src Source, entry InstalledEntry, cached bool) UpdateResult {
 	result := UpdateResult{
-		ID: entry.ID, Source: src.Canonical(), Outcome: UpdateFailed, NewVersion: "", Err: nil,
+		ID: entry.ID, Source: src.Canonical(), Outcome: UpdateFailed, NewVersion: "", Err: nil, Warnings: nil,
 	}
 	switch {
 	case !cached:
@@ -113,13 +116,32 @@ func (m *Manager) updateOne(ctx context.Context, src Source, entry InstalledEntr
 		return result
 	}
 
-	_, version, err := m.fetchIntoCache(ctx, src)
+	newID, version, warnings, err := m.fetchIntoCache(ctx, src)
 	if err != nil {
 		result.Err = err
 		return result
 	}
 	result.Outcome = UpdateRefetched
 	result.NewVersion = version
+	result.Warnings = warnings
+	// The refetch resolves identity from the fresh manifest, so an upstream
+	// namespace/name rename moves this value's entry to a NEW identity dir,
+	// leaving the old identity's same-key entry superseded. Surface the rename
+	// (it is also what a hijacked repository shipping a new identity looks
+	// like) and remove the superseded twin so it cannot linger; the result
+	// carries the identity the value now resolves to, so the caller's AutoGC
+	// pass reconciles the right entries even if the removal here fails.
+	if newID != entry.ID {
+		result.Warnings = append(result.Warnings, Warning{Message: fmt.Sprintf(
+			"bundle %s was renamed upstream to %s; verify the source repository is still the one you trust",
+			entry.ID, newID)})
+		if rmErr := removeSupersededEntry(ctx, entry); rmErr != nil {
+			result.Warnings = append(result.Warnings, Warning{Message: fmt.Sprintf(
+				"superseded cache entry of %s could not be removed (%v); `clawker bundle prune` will retry",
+				entry.ID, rmErr)})
+		}
+	}
+	result.ID = newID
 	return result
 }
 
@@ -139,10 +161,7 @@ func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
 	if err != nil {
 		return []Warning{{Message: fmt.Sprintf("bundle auto-update skipped: %v", err)}}
 	}
-	byKey := make(map[string]InstalledEntry, len(installed))
-	for _, e := range installed {
-		byKey[e.Key] = e
-	}
+	byKey := entriesByKey(installed)
 
 	var warnings []Warning
 	var refetched []BundleID
@@ -155,6 +174,7 @@ func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
 		if w, emit := autoUpdateWarning(result); emit {
 			warnings = append(warnings, w)
 		}
+		warnings = append(warnings, result.Warnings...)
 		if result.Outcome == UpdateRefetched {
 			refetched = append(refetched, result.ID)
 		}

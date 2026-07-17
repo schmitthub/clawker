@@ -365,13 +365,13 @@ func validateSavedObjectIDs(destDir string, written map[string]string) error {
 	for rel, provenance := range written {
 		dir := path.Dir(rel)
 		switch {
-		case dir == MonitoringDirSavedObjects && strings.HasSuffix(rel, ".ndjson"):
+		case dir == MonitoringDirSavedObjects && strings.HasSuffix(rel, ndjsonExt):
 			if err := scanNDJSONIDs(destDir, rel, provenance, claim); err != nil {
 				return err
 			}
 		case dir == path.Join(MonitoringDirSavedObjects, MonitoringDirExplore):
-			id := strings.TrimSuffix(path.Base(rel), ".json")
-			if err := claim("explore", id, provenance); err != nil {
+			id := strings.TrimSuffix(path.Base(rel), jsonExt)
+			if err := claim(savedObjectTypeExplore, id, provenance); err != nil {
 				return err
 			}
 		}

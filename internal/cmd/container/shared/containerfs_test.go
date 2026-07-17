@@ -70,6 +70,7 @@ func TestInitContainerConfig_FreshStrategy_NoCopy(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("fresh"),
 		Staging:          testClaudeStaging(),
@@ -93,6 +94,7 @@ func TestInitContainerConfig_CopyStrategy(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("copy"),
 		Staging:          testClaudeStaging(),
@@ -109,7 +111,7 @@ func TestInitContainerConfig_CopyStrategy(t *testing.T) {
 	require.Equal(t, 1, tracker.callCount(), "should call CopyToVolume once for config")
 
 	call := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.dev-config", call.volumeName)
+	assert.Equal(t, "clawker.myapp.dev-claude.config", call.volumeName)
 	assert.Equal(t, "/home/claude/.claude", call.destPath)
 
 	// Verify the source directory contained staged content at call time
@@ -126,6 +128,7 @@ func TestInitContainerConfig_NilHarnessCfg_Defaults(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          nil, // defaults: copy strategy
 		Staging:          testClaudeStaging(),
@@ -149,6 +152,7 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "", // empty project
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg(""),
 		Staging:          testClaudeStaging(),
@@ -162,8 +166,8 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 1, tracker.callCount())
-	// 2-segment: clawker.dev-config (no project segment)
-	assert.Equal(t, "clawker.dev-config", tracker.calls()[0].volumeName)
+	// 2-segment: clawker.dev-claude.config (no project segment)
+	assert.Equal(t, "clawker.dev-claude.config", tracker.calls()[0].volumeName)
 }
 
 func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
@@ -174,6 +178,7 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg(""),
 		Staging:          testClaudeStaging(),
@@ -200,6 +205,7 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
+		HarnessName:      "claude",
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("copy"),
 		Staging:          testClaudeStaging(),

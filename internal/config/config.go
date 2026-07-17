@@ -4,7 +4,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -375,19 +379,40 @@ func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
 }
 
 // BundleDeclarationsAt loads the bundle declarations of one project root
-// WITHOUT a full config load: it probes root with the same dual placement a
-// walk-up level gets (.clawker/ dir form first, then flat dotted files) for
-// the project and local-override config files, validates only their bundles:
-// nodes, and projects the declarations. It exists for the bundle cache's GC
-// roots, which must union the declared source values of every REGISTERED
-// project — not just the one the current process runs in. A missing root or a
-// root with no config files contributes nothing; an unparseable file or a
-// malformed bundles: node is an error (roots must be computable before
-// anything is collected), while mistakes in unrelated keys are ignored.
+// WITHOUT a full config load: it probes EVERY directory under root (walk-up
+// discovery makes any directory between a working directory and the project
+// root a declaring layer, so a nested clawker.yaml is a first-class root)
+// with the same dual placement a walk-up level gets (.clawker/ dir form
+// first, then flat dotted files) for the project and local-override config
+// files, validates only their bundles: nodes, and projects the declarations.
+// It exists for the bundle cache's GC roots, which must union the declared
+// source values of every REGISTERED project — not just the one the current
+// process runs in.
+//
+// A missing root or a tree with no config files contributes nothing; an
+// unreadable directory, an unparseable file, or a malformed bundles: node is
+// an error (roots must be computable before anything is collected), while
+// mistakes in unrelated keys are ignored. The walk does not descend into
+// dot-directories (each level's .clawker/ dir form is probed from its parent
+// via dual placement) and does not follow directory symlinks — a layer
+// reachable only through one of those is not counted as a root; a wrong
+// collect on such a pathological layout self-heals with one refetch.
+//
+// Deliberately wired with NO migrations and NO writes: this loader runs
+// against OTHER projects' files during GC, and it must never rewrite them —
+// storage.applyMigrations is a no-op without WithMigrations, and nothing here
+// calls Set/Write.
 func BundleDeclarationsAt(root string) ([]BundleDeclaration, error) {
+	dirs, err := projectLayerDirs(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(dirs) == 0 {
+		return nil, nil
+	}
 	store, err := storage.New[Project]("",
 		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
-		storage.WithDirs(root),
+		storage.WithDirs(dirs...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config at %s: %w", root, err)
@@ -398,6 +423,39 @@ func BundleDeclarationsAt(root string) ([]BundleDeclaration, error) {
 		}
 	}
 	return declarationsFromLayers(store.Layers()), nil
+}
+
+// projectLayerDirs enumerates every directory under root that walk-up
+// discovery could probe as a config layer for some working directory inside
+// the project — root itself and every non-dot descendant directory. Dot-named
+// directories are not descended into (their own .clawker/ dir-form files are
+// probed from the parent level's dual placement), and symlinks are not
+// followed (WalkDir never traverses them), so the walk cannot cycle or escape
+// the root. A missing root yields no directories; any other walk error is
+// surfaced — an unreadable subtree could hide a declaring layer, and the GC
+// roots this feeds must be computable before anything is collected.
+func projectLayerDirs(root string) ([]string, error) {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if path == root && errors.Is(walkErr, fs.ErrNotExist) {
+				return filepath.SkipAll // missing root contributes nothing
+			}
+			return walkErr
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("config: enumerating config layer dirs under %s: %w", root, err)
+	}
+	return dirs, nil
 }
 
 // bundleSourceFromMap projects a decoded bundles[] map entry into a typed

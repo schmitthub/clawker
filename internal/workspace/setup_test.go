@@ -387,6 +387,7 @@ func setupMountsForBindBranch(t *testing.T, projectYAML string) (cfg SetupMounts
 		WorkDir:        wd,
 		ContainerPath:  wd,
 		Harness:        claudeTestStaging(),
+		HarnessName:    consts.DefaultHarnessName,
 		HarnessVolumes: []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		// Resolved the way the command layer does — exercises the legacy
 		// agent.claude_code shim for the built-in default harness.

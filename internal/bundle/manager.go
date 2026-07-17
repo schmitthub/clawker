@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
 	"github.com/schmitthub/clawker/internal/config"
@@ -137,64 +136,91 @@ func (m *Manager) validateComponents(b *Bundle) []error {
 	return errs
 }
 
-// Remove purges every cache entry of a bundle identity — the whole
-// <cacheRoot>/<namespace>/<name>/ tree, covering every declared-value key.
-// It reports whether an entry existed to remove; a not-cached identity is a
-// no-op returning false. It never reads or writes the declaring config — a
-// still-declared bundle re-fetches on the next install (the caller warns).
-func (m *Manager) Remove(id BundleID) (bool, error) {
+// Remove purges every cache entry of a bundle identity, covering every
+// declared-value key. It reports whether an entry existed to remove; a
+// not-cached identity is a no-op returning false. It never reads or writes the
+// declaring config — a still-declared bundle re-fetches on the next install
+// (the caller warns).
+//
+// Each entry is removed under its per-entry lock, and — unlike the GC removal
+// path, whose entries are condemned precisely because nothing legitimately
+// writes them — the lock FILE is left in place. Remove targets identities that
+// may still be declared, so a concurrent install of the same value is a
+// legitimate writer; unlinking the lock would hand the next writer a fresh
+// inode at the same path, granting instantly alongside anyone holding the old
+// one. The leftover lock files are invisible to the dir-only cache scan and
+// reused by any future write; they also keep the identity directory non-empty,
+// which is why Remove does not sweep the empty parents the way GC does.
+//
+// A true return means the entries found at scan time were removed — not that
+// the identity is absent afterwards: with no identity-level lock, a concurrent
+// install of a still-declared value can legitimately commit a fresh entry
+// while Remove runs.
+func (m *Manager) Remove(ctx context.Context, id BundleID) (bool, error) {
 	root, err := cacheRoot()
 	if err != nil {
 		return false, err
 	}
-	bundleDir := filepath.Join(root, id.Namespace, id.Name)
-	if _, statErr := os.Stat(bundleDir); statErr != nil {
-		if os.IsNotExist(statErr) {
-			return false, nil
-		}
-		return false, fmt.Errorf("stat bundle cache %s: %w", bundleDir, statErr)
+	entries, err := identityEntries(root, id)
+	if err != nil {
+		return false, err
 	}
-	if rmErr := os.RemoveAll(bundleDir); rmErr != nil {
-		return false, fmt.Errorf("purge bundle cache %s: %w", bundleDir, rmErr)
+	if len(entries) == 0 {
+		return false, nil
+	}
+	for _, e := range entries {
+		lockErr := withBundleLock(ctx, e.Root, func() error {
+			if rmErr := os.RemoveAll(e.Root); rmErr != nil {
+				return fmt.Errorf("remove cache entry %s/%s: %w", e.ID, e.Key, rmErr)
+			}
+			return nil
+		})
+		if lockErr != nil {
+			return false, fmt.Errorf("purge bundle cache %s: %w", id, lockErr)
+		}
 	}
 	return true, nil
 }
 
 // Install fetches a declared bundle source into the host cache and returns the
 // fetched identity (zero for a local in-place source, which is loaded directly
-// from disk and never cached — Install is a no-op for it). A remote source is
-// cloned, its manifest validated, and its content committed atomically into
-// the value-keyed entry for the declared source
+// from disk and never cached — Install is a no-op for it) plus the advisory
+// warnings a successful fetch accumulated (content the entry could not carry).
+// A remote source is cloned, its content staged and validated, and the staged
+// tree committed atomically into the value-keyed entry for the declared source
 // (<cacheRoot>/<namespace>/<name>/<sourceKey>/). A fetch or validation failure
 // leaves any previously cached entry untouched.
-func (m *Manager) Install(ctx context.Context, src config.BundleSource) (BundleID, error) {
+func (m *Manager) Install(ctx context.Context, src config.BundleSource) (BundleID, []Warning, error) {
 	s := SourceFromConfig(src)
 	if s.IsLocal() {
-		return BundleID{}, nil
+		return BundleID{}, nil, nil
 	}
-	id, _, err := m.fetchIntoCache(ctx, s)
-	return id, err
+	id, _, warnings, err := m.fetchIntoCache(ctx, s)
+	return id, warnings, err
 }
 
 // InstallDeclared fetches every declared-but-uncached remote bundle. It returns
-// the identities freshly installed and the first error encountered (a failed
-// source leaves earlier successes in place).
-func (m *Manager) InstallDeclared(ctx context.Context) ([]BundleID, error) {
+// the identities freshly installed, the advisory warnings the fetches
+// accumulated, and the first error encountered (a failed source leaves earlier
+// successes in place).
+func (m *Manager) InstallDeclared(ctx context.Context) ([]BundleID, []Warning, error) {
 	cached, err := cachedKeys()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var installed []BundleID
+	var warnings []Warning
 	for _, decl := range m.cfg.BundleDeclarations() {
 		src := SourceFromConfig(decl.Source)
 		if src.IsLocal() || cached[src.Key()] {
 			continue
 		}
-		id, _, fetchErr := m.fetchIntoCache(ctx, src)
+		id, _, fetchWarnings, fetchErr := m.fetchIntoCache(ctx, src)
+		warnings = append(warnings, fetchWarnings...)
 		if fetchErr != nil {
-			return installed, fetchErr
+			return installed, warnings, fetchErr
 		}
 		installed = append(installed, id)
 	}
-	return installed, nil
+	return installed, warnings, nil
 }

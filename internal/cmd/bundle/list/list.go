@@ -88,10 +88,11 @@ func listRun(_ context.Context, opts *ListOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolving bundles: %w", err)
 	}
-	statuses, err := mgr.Statuses()
+	statuses, statusWarnings, err := mgr.Statuses()
 	if err != nil {
 		return fmt.Errorf("linking bundle declarations to the cache: %w", err)
 	}
+	warnings = append(warnings, statusWarnings...)
 
 	if rErr := renderRows(opts, statuses); rErr != nil {
 		return rErr

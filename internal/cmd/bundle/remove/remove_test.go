@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,8 +63,19 @@ func TestRemove_PurgesCache(t *testing.T) {
 	require.NoError(t, run(t, f, "acme.tools"))
 
 	assert.Contains(t, out.String(), "Removed cached bundle acme.tools")
-	_, statErr := os.Stat(filepath.Join(root, "acme", "tools"))
-	assert.True(t, os.IsNotExist(statErr))
+	assert.NoDirExists(t, filepath.Join(root, "acme", "tools", "1.0.0"),
+		"the cache entry itself must be purged")
+	// The identity directory may remain: Remove leaves the per-entry lock
+	// files in place (a still-declared identity has legitimate concurrent
+	// writers, which must keep locking the same inode), and lock files are
+	// invisible to the dir-only cache scan. Only lock files may survive.
+	leftovers, readErr := os.ReadDir(filepath.Join(root, "acme", "tools"))
+	require.NoError(t, readErr)
+	for _, e := range leftovers {
+		assert.False(t, e.IsDir(), "no entry directory may survive a purge: %s", e.Name())
+		assert.True(t, strings.HasSuffix(e.Name(), ".lock"),
+			"only per-entry lock files may remain after a purge: %s", e.Name())
+	}
 }
 
 func TestRemove_NotCached(t *testing.T) {

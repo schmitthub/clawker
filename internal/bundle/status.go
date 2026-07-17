@@ -1,6 +1,9 @@
 package bundle
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // StatusState classifies one row of the declaration↔cache linkage.
 type StatusState int
@@ -43,20 +46,22 @@ type Status struct {
 
 // Statuses links the declaration side to the cache side, one row per bundle
 // identity or never-fetched declared source: what resolves, what is declared
-// but not installed, and what sits in the cache without a live declaration.
-// It propagates the resolver's C1 collision error.
-func (m *Manager) Statuses() ([]Status, error) {
+// but not installed, and what sits in the cache without a live declaration. It
+// propagates the resolver's C1 collision error, and returns the advisories a
+// row could not carry — an unreadable receipt names itself here rather than
+// silently degrading a row into a wrong diagnosis.
+func (m *Manager) Statuses() ([]Status, []Warning, error) {
 	bundles, _, err := m.resolver.Bundles()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	root, err := cacheRoot()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	installed, err := scanInstalled(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	remote := m.resolver.remoteDeclarations()
 	declaredKeys := make(map[string]bool, len(remote))
@@ -64,8 +69,8 @@ func (m *Manager) Statuses() ([]Status, error) {
 		declaredKeys[d.src.Key()] = true
 	}
 
-	rows := resolvingStatuses(bundles)
-	rows = append(rows, unresolvableCacheStatuses(installed, declaredKeys)...)
+	rows, warnings := unresolvableCacheStatuses(installed, declaredKeys)
+	rows = append(rows, resolvingStatuses(bundles)...)
 	rows = append(rows, uninstalledSourceStatuses(remote, cachedKeySet(installed))...)
 
 	sort.Slice(rows, func(i, j int) bool {
@@ -74,7 +79,7 @@ func (m *Manager) Statuses() ([]Status, error) {
 		}
 		return rows[i].Source < rows[j].Source
 	})
-	return rows, nil
+	return rows, warnings, nil
 }
 
 // cachedKeySet collects the source keys present in the cache scan.
@@ -105,22 +110,34 @@ func resolvingStatuses(bundles map[BundleID]*ResolvedBundle) []Status {
 
 // unresolvableCacheStatuses rows the cache entries that do NOT resolve —
 // entries whose key no live declaration addresses. An entry with a readable
-// fetch receipt names its source (undeclared); one without — hand-placed, or
-// its receipt unreadable — has no source coordinate to show (unmanaged).
+// fetch receipt names its source (undeclared); one without is hand-placed and
+// has no source coordinate to show (unmanaged).
+//
+// An entry whose receipt exists but cannot be read is neither: it was fetched,
+// its receipt broke, and the row can only fall back to the unmanaged shape for
+// want of a source to print. That fallback is a display concession, not a
+// diagnosis — "hand-placed" would be a false claim about how the entry got
+// there and would point the operator away from the corrupt receipt — so the
+// read error is surfaced as a warning naming the entry, the way the resolver
+// reports the same condition. A corrupt receipt never fails the listing; the
+// receipt is display-only.
 func unresolvableCacheStatuses(
 	installed []InstalledEntry,
 	declaredKeys map[string]bool,
-) []Status {
+) ([]Status, []Warning) {
 	var rows []Status
+	var warnings []Warning
 	for _, e := range installed {
 		if declaredKeys[e.Key] {
 			continue
 		}
-		// A corrupt receipt degrades the row to unmanaged rather than failing
-		// the whole listing — the receipt is display-only.
 		receipt, ok, err := readReceipt(e.Root)
 		if err != nil {
-			ok = false
+			warnings = append(warnings, Warning{Message: fmt.Sprintf(
+				"bundle %s: cache entry %s has an unreadable fetch receipt (%v); "+
+					"it is listed without a source — `clawker bundle prune` collects it once no "+
+					"declaration addresses it",
+				e.ID, e.Key, err)})
 		}
 		if !ok {
 			rows = append(rows, Status{
@@ -133,7 +150,7 @@ func unresolvableCacheStatuses(
 			Tier: TierInstalled, Version: receipt.Version, State: StatusUndeclared,
 		})
 	}
-	return rows
+	return rows, warnings
 }
 
 // uninstalledSourceStatuses rows the declared remote sources whose exact value

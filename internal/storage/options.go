@@ -11,6 +11,13 @@ type Option func(*Options)
 // store's own node tree, comments on untouched fields are carried along by the
 // tree — they survive the re-save without any extra work.
 //
+// User-visible messages go through Store.Noticef (naming the owning file via
+// Store.MigratingLayerPath), never straight to stderr: notices are flushed
+// only after the layer's rewrite commits, so a migration cannot announce a
+// file change that then fails to land. A rewrite that cannot be persisted
+// degrades (in-memory migration + retry next load) instead of failing
+// construction.
+//
 //	func dropLegacyKey(s *storage.Store[Settings]) (bool, error) {
 //	    return s.Remove("monitoring.legacy_port")
 //	}

@@ -16,6 +16,10 @@ import (
 // `--build-arg KEY=VALUE` yields (a bare `--build-arg KEY` yields nil).
 func strptr(s string) *string { return &s }
 
+// httpsProxyArg is the canonical Docker predefined build arg exercised by the
+// predefined-arg tests.
+const httpsProxyArg = "HTTPS_PROXY"
+
 func copyInstructionsYAML() string {
 	return `
 version: "1"
@@ -235,4 +239,308 @@ func TestBaseDeclaredArgNames(t *testing.T) {
 		assert.Falsef(t, ok, "did not expect %q among declared ARGs", absent)
 	}
 	assert.Len(t, got, 5, "exactly the five real ARG declarations")
+}
+
+// TestBaseContentHash_PredefinedProxyArgChangesHash: Docker honors a fixed set
+// of predefined build args (the proxy variables) without any ARG declaration in
+// the Dockerfile, and they change what every network-bound RUN step does — so a
+// --build-arg targeting one must fold into the freshness hash exactly like a
+// declared ARG, or the base skip silently eats the proxy setting.
+func TestBaseContentHash_PredefinedProxyArgChangesHash(t *testing.T) {
+	gen := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), t.TempDir())
+	// No ARG lines at all — the proxy args are honored regardless.
+	df := []byte("FROM x\nRUN apt-get update\n")
+
+	h0, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	hProxy, err := gen.BaseContentHash(df, map[string]*string{httpsProxyArg: strptr("http://proxy:3128")})
+	require.NoError(t, err)
+	assert.NotEqual(t, h0, hProxy, "a predefined proxy build-arg must change the hash despite no ARG declaration")
+
+	hProxy2, err := gen.BaseContentHash(df, map[string]*string{httpsProxyArg: strptr("http://proxy2:3128")})
+	require.NoError(t, err)
+	assert.NotEqual(t, hProxy, hProxy2, "differing proxy values must differ")
+
+	hLower, err := gen.BaseContentHash(df, map[string]*string{"no_proxy": strptr("internal.example")})
+	require.NoError(t, err)
+	assert.NotEqual(t, h0, hLower, "lowercase predefined variants are honored by Docker and must count")
+
+	// An arg that is neither declared nor predefined still writes nothing.
+	hIrrelevant, err := gen.BaseContentHash(df, map[string]*string{"NOT_A_PROXY": strptr("x")})
+	require.NoError(t, err)
+	assert.Equal(t, h0, hIrrelevant, "undeclared non-predefined args must not touch the hash")
+}
+
+// TestBaseContentHash_ChangesOnCopySrcModeChange: with no chmod declared on the
+// copy instruction, Docker COPY preserves the source file's permission bits, so
+// a mode-only change (same bytes) produces a different image and must flip the
+// hash — BuildKit's own COPY cache key includes mode.
+func TestBaseContentHash_ChangesOnCopySrcModeChange(t *testing.T) {
+	workDir := t.TempDir()
+	writeCopyFixtures(t, workDir)
+	gen := newTestProjectGenerator(testConfig(t, copyInstructionsYAML()), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	// Same bytes, different permission bits (fixture writes run.sh 0755).
+	require.NoError(t, os.Chmod(filepath.Join(workDir, "scripts", "run.sh"), 0o644))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2, "a copy-src mode change must flip the hash")
+}
+
+// TestBaseContentHash_SymlinkCopySrc: a copy src that IS a symlink bakes its
+// dereferenced content into the image (BuildKit context transfer), so both
+// editing the target's content and repointing the link must flip the hash.
+func TestBaseContentHash_SymlinkCopySrc(t *testing.T) {
+	workDir := t.TempDir()
+	target := filepath.Join(workDir, "shared", "settings.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, os.WriteFile(target, []byte(`{"a":1}`), 0o644))
+	link := filepath.Join(workDir, "settings.json")
+	require.NoError(t, os.Symlink(target, link))
+
+	yaml := `
+version: "1"
+build:
+  instructions:
+    copy:
+      - src: "settings.json"
+        dst: "/opt/settings.json"
+`
+	gen := newTestProjectGenerator(testConfig(t, yaml), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	h1b, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h1b, "symlink src hashing must stay deterministic")
+
+	// Editing the symlink's target must flip the hash.
+	require.NoError(t, os.WriteFile(target, []byte(`{"a":2}`), 0o644))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2, "editing a symlinked copy src's target must flip the hash")
+
+	// Repointing the link (even to a byte-identical target) must flip it.
+	other := filepath.Join(workDir, "shared", "other.json")
+	require.NoError(t, os.WriteFile(other, []byte(`{"a":2}`), 0o644))
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(other, link))
+	h3, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h2, h3, "repointing a symlinked copy src must flip the hash")
+}
+
+// TestBaseContentHash_DanglingSymlinkCopySrc: a dangling symlink src hashes
+// deterministically without error (the build itself surfaces the failure), and
+// the target later appearing must flip the hash.
+func TestBaseContentHash_DanglingSymlinkCopySrc(t *testing.T) {
+	workDir := t.TempDir()
+	target := filepath.Join(workDir, "nowhere.json")
+	require.NoError(t, os.Symlink(target, filepath.Join(workDir, "settings.json")))
+
+	yaml := `
+version: "1"
+build:
+  instructions:
+    copy:
+      - src: "settings.json"
+        dst: "/opt/settings.json"
+`
+	gen := newTestProjectGenerator(testConfig(t, yaml), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "a dangling symlink src must hash deterministically, no error")
+
+	require.NoError(t, os.WriteFile(target, []byte(`{"a":1}`), 0o644))
+	h3, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h3, "the target appearing must flip the hash")
+}
+
+// TestBaseContentHash_NestedSymlinkRepoint: a symlink INSIDE a copied directory
+// transfers as a symlink, so its target string is image content — repointing it
+// must flip the hash even when old and new targets hold identical bytes.
+func TestBaseContentHash_NestedSymlinkRepoint(t *testing.T) {
+	workDir := t.TempDir()
+	writeCopyFixtures(t, workDir)
+	scripts := filepath.Join(workDir, "scripts")
+	require.NoError(t, os.WriteFile(filepath.Join(scripts, "a.txt"), []byte("same"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(scripts, "b.txt"), []byte("same"), 0o644))
+	link := filepath.Join(scripts, "current")
+	require.NoError(t, os.Symlink("a.txt", link))
+
+	gen := newTestProjectGenerator(testConfig(t, copyInstructionsYAML()), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink("b.txt", link))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2, "repointing a nested symlink must flip the hash")
+}
+
+// TestBaseContentHash_ChangesOnDockerignoreChange: the BuildKit base build uses
+// the project dir as its local context and loads .dockerignore from it, so an
+// ignore edit changes what COPY can see (and bake) without touching a single
+// copy-src byte on disk — it is a base input and must flip the hash.
+func TestBaseContentHash_ChangesOnDockerignoreChange(t *testing.T) {
+	workDir := t.TempDir()
+	writeCopyFixtures(t, workDir)
+	gen := newTestProjectGenerator(testConfig(t, copyInstructionsYAML()), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workDir, ".dockerignore"), []byte("scripts/run.sh\n"), 0o644))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2, "adding a .dockerignore must flip the hash")
+
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(workDir, ".dockerignore"), []byte("scripts/run.sh\nconfig-a.yaml\n"), 0o644),
+	)
+	h3, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h2, h3, "editing .dockerignore must flip the hash")
+
+	h3b, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h3, h3b, "unchanged .dockerignore must hash deterministically")
+}
+
+// TestBaseContentHash_DockerignoreIrrelevantWithoutCopySrcs: with no copy
+// instructions nothing reaches the image from the build context, so
+// .dockerignore is not a base input — the hash stays byte-identical to the
+// plain dockerfile-only hash.
+func TestBaseContentHash_DockerignoreIrrelevantWithoutCopySrcs(t *testing.T) {
+	workDir := t.TempDir()
+	gen := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), workDir)
+	df := []byte("FROM x\n")
+
+	sum := sha256.Sum256(df)
+	want := hex.EncodeToString(sum[:])
+
+	require.NoError(t, os.WriteFile(filepath.Join(workDir, ".dockerignore"), []byte("*\n"), 0o644))
+	h, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, h, "no copy srcs → .dockerignore must not touch the hash")
+}
+
+// TestBaseContentHash_UnresolvableSymlinkCopySrcDoesNotAbort: a copy-src link
+// that cannot be resolved (here a symlink loop) must never abort the freshness
+// gate — the gate's contract is "spurious rebuild at worst, never a blocked
+// build"; the Docker build itself surfaces the real, actionable error. The
+// hash must stay deterministic, and the link becoming resolvable must flip it.
+func TestBaseContentHash_UnresolvableSymlinkCopySrcDoesNotAbort(t *testing.T) {
+	workDir := t.TempDir()
+	link := filepath.Join(workDir, "settings.json")
+	other := filepath.Join(workDir, "b")
+	// settings.json -> b -> settings.json: EvalSymlinks fails with ELOOP.
+	require.NoError(t, os.Symlink(other, link))
+	require.NoError(t, os.Symlink(link, other))
+
+	yaml := `
+version: "1"
+build:
+  instructions:
+    copy:
+      - src: "settings.json"
+        dst: "/opt/settings.json"
+`
+	gen := newTestProjectGenerator(testConfig(t, yaml), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err, "an unresolvable copy-src link must not abort the freshness gate")
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "an unresolvable link must hash deterministically")
+
+	// Breaking the loop by giving the link real content must flip the hash.
+	require.NoError(t, os.Remove(other))
+	require.NoError(t, os.WriteFile(other, []byte(`{"a":1}`), 0o644))
+	h3, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h3, "the link becoming resolvable must flip the hash")
+}
+
+// TestBaseContentHash_DereferencedSymlinkPrunesGit: when a copy src is a
+// symlink into a sibling checkout, the sibling's .git tree must stay outside
+// the hash — git state is never a freshness input — or every commit/fetch in
+// the sibling defeats the base cache (and the walk crawls its object store).
+func TestBaseContentHash_DereferencedSymlinkPrunesGit(t *testing.T) {
+	parent := t.TempDir()
+	workDir := filepath.Join(parent, "project")
+	sibling := filepath.Join(parent, "sibling")
+	require.NoError(t, os.MkdirAll(workDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(sibling, ".git"), 0o755))
+	gitHead := filepath.Join(sibling, ".git", "HEAD")
+	require.NoError(t, os.WriteFile(gitHead, []byte("ref: refs/heads/main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, "file.txt"), []byte("v1"), 0o644))
+	require.NoError(t, os.Symlink(sibling, filepath.Join(workDir, "shared")))
+
+	yaml := `
+version: "1"
+build:
+  instructions:
+    copy:
+      - src: "shared"
+        dst: "/opt/shared"
+`
+	gen := newTestProjectGenerator(testConfig(t, yaml), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	// Mutating ONLY the sibling's git state must not move the hash.
+	require.NoError(t, os.WriteFile(gitHead, []byte("ref: refs/heads/other\n"), 0o644))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "sibling .git churn must not flip the hash")
+
+	// Real content under the dereferenced root still counts.
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, "file.txt"), []byte("v2"), 0o644))
+	h3, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h2, h3, "content edits under the dereferenced root must flip the hash")
+}
+
+// TestBaseContentHash_ChangesOnCopySrcDirModeChange: Docker COPY preserves a
+// directory's own permission bits exactly as it preserves file modes, so a
+// mode-only change to the DIRECTORY (no file bytes touched) is a different
+// image and must flip the hash.
+func TestBaseContentHash_ChangesOnCopySrcDirModeChange(t *testing.T) {
+	workDir := t.TempDir()
+	writeCopyFixtures(t, workDir)
+	gen := newTestProjectGenerator(testConfig(t, copyInstructionsYAML()), workDir)
+	df := []byte("FROM x\n")
+
+	h1, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+
+	// Fixture creates scripts/ 0755; flip only the directory's bits.
+	require.NoError(t, os.Chmod(filepath.Join(workDir, "scripts"), 0o700))
+	h2, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2, "a copy-src directory mode change must flip the hash")
+
+	h2b, err := gen.BaseContentHash(df, nil)
+	require.NoError(t, err)
+	assert.Equal(t, h2, h2b, "directory records must hash deterministically")
 }

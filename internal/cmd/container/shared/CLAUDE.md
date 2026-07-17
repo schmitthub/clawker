@@ -110,7 +110,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
-| `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn, Log |
+| `InitConfigOpts` | Project/agent/harness names (harness name keys the harness-scoped volume identities), ContainerWorkDir, Harness+Staging+Volumes+FreshVolumes, CopyToVolumeFn, Log |
 | `InjectPostInitOpts` | Container ID, Script, Cfg, CopyToContainerFn, Log |
 | `InjectHookOpts` | Container ID, Script, Name, Cfg, CopyToContainerFn, Log |
 | `AgentBootstrap` | CertPEM, KeyPEM, CACertPEM, Assertion |

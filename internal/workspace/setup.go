@@ -71,6 +71,11 @@ type SetupMountsConfig struct {
 	// caller — workspace receives the data and never resolves the harness
 	// itself.
 	Harness config.Staging
+	// HarnessName is the selected harness bundle's registry name. It is the
+	// discriminator in every harness-scoped volume identity — required so
+	// two harnesses that declare the same volume name never land on one
+	// volume.
+	HarnessName string
 	// HarnessVolumes are the bundle's declared persisted dirs; each becomes
 	// a named volume mounted under the container home.
 	HarnessVolumes []config.VolumeSpec
@@ -192,11 +197,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure harness + history volumes (returns creation state for init orchestration)
-	configResult, err := EnsureConfigVolumes(ctx, client, cfg.ProjectName, cfg.AgentName, cfg.HarnessVolumes)
+	configResult, err := EnsureConfigVolumes(
+		ctx, client, cfg.ProjectName, cfg.AgentName, cfg.HarnessName, cfg.HarnessVolumes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	configMounts, err := GetConfigVolumeMounts(cfg.ProjectName, cfg.AgentName, cfg.HarnessVolumes)
+	configMounts, err := GetConfigVolumeMounts(cfg.ProjectName, cfg.AgentName, cfg.HarnessName, cfg.HarnessVolumes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}

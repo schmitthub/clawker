@@ -57,7 +57,7 @@ is still declared in a 'bundles:' entry re-fetches on the next
 	return cmd
 }
 
-func removeRun(_ context.Context, opts *RemoveOptions) error {
+func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -72,7 +72,7 @@ func removeRun(_ context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("loading bundle manager: %w", err)
 	}
 
-	removed, err := mgr.Remove(id)
+	removed, err := mgr.Remove(ctx, id)
 	if err != nil {
 		return fmt.Errorf("removing bundle %s: %w", id, err)
 	}

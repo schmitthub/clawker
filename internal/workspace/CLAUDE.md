@@ -60,7 +60,8 @@ type SetupMountsConfig struct {
     ContainerPath  string        // Container-side mount destination (host absolute path so in-container paths mirror the host, e.g. for the claude harness's /resume)
     IgnoreFile     string        // Caller-resolved ignore file path (empty = no patterns)
     Harness        config.Staging      // Selected bundle's staging manifest (host-state mounts); resolved by the caller
-    HarnessVolumes []config.VolumeSpec // Bundle-declared persisted dirs; each becomes a named volume under the container home
+    HarnessName    string              // Selected bundle's registry name; discriminator in every harness-scoped volume identity
+    HarnessVolumes []config.VolumeSpec // Bundle-declared persisted dirs; each becomes a harness-scoped named volume under the container home
     HarnessConfig  *config.HarnessConfig // Per-harness init config (nil = defaults); gates the host-state binds
 }
 
@@ -74,15 +75,15 @@ type SetupMountsResult struct {
 func ResolveMode(override, defaultMode string) (config.Mode, error)  // mode precedence: CLI --mode override wins, else config default; empty resolves to ModeBind (ParseMode default), only unrecognized non-empty errors
 var ErrWorktreeSnapshot error  // sentinel: worktree + snapshot rejected. SetupMounts keys on ProjectRootDir != ""; CreateContainer fail-fast keys on the --worktree flag — equivalent because resolveWorkDir sets ProjectRootDir iff a worktree is requested
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
-func GetConfigVolumeMounts(projectName, agentName string, volumes []config.VolumeSpec) ([]mount.Mount, error)
+func GetConfigVolumeMounts(projectName, agentName, harnessName string, volumes []config.VolumeSpec) ([]mount.Mount, error)
 func GetHostStateMount(hostDir, dest string) (mount.Mount, error)  // bind, RW; dest is container-home-relative; errors when source not absolute
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string, volumes []config.VolumeSpec) (ConfigVolumeResult, error)
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName, harnessName string, volumes []config.VolumeSpec) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
 ### Harness volumes + host-state binds
 
-`GetConfigVolumeMounts` mounts, per selected harness bundle: one named volume per manifest `volumes:` entry (name via `docker.VolumeName(project, agent, v.Name)`, target `<home>/<v.Path>`), the history volume at `/commandhistory`, and the clawker lifecycle volume at `<home>/.clawker` (hook scripts, seed staging, post-init marker — shares the config volumes' lifetime so a recreated container doesn't re-run `post_init` against volumes it already initialized; Docker copy-on-first-use populates it from the image's staged seeds + seed-manifest).
+`GetConfigVolumeMounts` mounts, per selected harness bundle: one named volume per manifest `volumes:` entry (name via `docker.HarnessVolumeName(project, agent, harness, v.Name)`, target `<home>/<v.Path>`), the history volume at `/commandhistory` (harness-neutral, `docker.VolumeName`), and the clawker lifecycle volume at `<home>/.clawker` (hook scripts, seed staging, post-init marker — shares the config volumes' lifetime so a recreated container doesn't re-run `post_init` against volumes it already initialized; Docker copy-on-first-use populates it from the image's staged seeds + seed-manifest). Bundle-declared volumes and the lifecycle volume are harness-scoped: both shipped harnesses declare a volume named `config`, and without the harness segment a codex run would mount the claude volume — including the in-container login — at `~/.codex`; the lifecycle volume is scoped for the same reason (its marker and seeds belong to the harness image). The harness segment is the exact selection spelling (bare, or the qualified `namespace.bundle.component` address for an installed-bundle harness — `Bundle.Name` carries it). `EnsureConfigVolumes` ensures them via `docker.EnsureHarnessVolume`, the ownership failsafe: an existing managed volume labeled for a different harness is refused with `*docker.HarnessVolumeOwnershipError`; same-harness re-entry (container recreation) and unlabeled managed occupants (hand-placed, e.g. backup/restore — clawker itself always labels harness-scoped volumes, and flat pre-harness names are uncomposable) adopt silently.
 
 When `HarnessConfig.MountProjectsEnabled()` (default true), `SetupMounts` appends a RW bind per manifest `staging.mounts` entry (e.g. the claude bundle's `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` → `<home>/.claude/projects`) after the volume mounts. Per Linux mount-namespace semantics, the deeper bind target layers over the corresponding subdir in the volume, sharing live host state (auto-memory, session jsonls) across container runs. Src is expanded + stat'd via `containerfs.ResolveHostMountSource`.
 

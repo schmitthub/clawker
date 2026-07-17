@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,8 +43,9 @@ func TestManager_Statuses(t *testing.T) {
 		registeredRoots: nil,
 		validate:        func(Component) error { return nil },
 	}
-	rows, err := m.Statuses()
+	rows, warnings, err := m.Statuses()
 	require.NoError(t, err)
+	assert.Empty(t, warnings)
 
 	byKey := map[string]Status{}
 	for _, s := range rows {
@@ -74,4 +76,39 @@ func TestManager_Statuses(t *testing.T) {
 	assert.Equal(t, StatusResolving, inPlaceRow.State)
 	assert.Equal(t, TierInPlace, inPlaceRow.Tier)
 	assert.Equal(t, "0.0.1", inPlaceRow.Version, "an in-place bundle reports its manifest version")
+}
+
+// An entry whose receipt exists but does not parse has no source to print, so
+// its row falls back to the unmanaged shape. That shape reads as "hand-placed",
+// which this entry is not — so the read error must be surfaced rather than
+// swallowed, or the operator is told a fetched entry was placed by hand and is
+// pointed away from the corrupt receipt that actually explains it.
+func TestManager_Statuses_CorruptReceiptWarns(t *testing.T) {
+	f := newResolverFixture(t)
+	src := Source{URL: "https://example.com/other/extra.git", Ref: "v2", SHA: "", Path: ""}
+	entry := f.cacheBundleEntry(t, "other", "extra", src.Key(), "2.0.0", "go")
+	require.NoError(t, os.WriteFile(filepath.Join(entry, ReceiptFile), []byte("\tnot: [valid"), 0o600))
+
+	m := &Manager{
+		cfg:             f.cfg,
+		resolver:        f.r,
+		fetcher:         nil,
+		registeredRoots: nil,
+		validate:        func(Component) error { return nil },
+	}
+	rows, warnings, err := m.Statuses()
+	require.NoError(t, err, "a corrupt receipt must never fail the whole listing")
+
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0].Message, "other.extra")
+	assert.Contains(t, warnings[0].Message, ReceiptFile,
+		"the warning must name the receipt as the cause")
+
+	var row Status
+	for _, r := range rows {
+		if r.ID.String() == "other.extra" {
+			row = r
+		}
+	}
+	assert.Equal(t, StatusUnmanaged, row.State)
 }

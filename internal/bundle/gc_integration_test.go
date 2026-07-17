@@ -373,7 +373,7 @@ func TestManager_AutoUpdateCheck_PrunesRefetchedIdentity(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: true}
 	mgr := managerWithRoots([]config.BundleSource{src})
 	ctx := context.Background()
-	_, err := mgr.Install(ctx, src)
+	_, _, err := mgr.Install(ctx, src)
 	require.NoError(t, err)
 
 	// A stranded sibling of the SAME identity, no longer declared anywhere.
@@ -402,4 +402,72 @@ func TestManager_AutoUpdateCheck_PrunesRefetchedIdentity(t *testing.T) {
 	joined := strings.Join(msgs, "\n")
 	assert.Contains(t, joined, "auto-updated")
 	assert.Contains(t, joined, stale.Key(), "the collected entry is reported")
+}
+
+// The project store discovers config layers by walking up from CWD to the
+// project root, probing every intermediate directory — so a nested
+// clawker.yaml (e.g. <root>/svc/) is a first-class declaring layer. The GC
+// roots must count those nested layers, or a prune run from anywhere else
+// deletes an entry the nested layer still references.
+func TestManager_Prune_NestedLayerDeclarationsAreRoots(t *testing.T) {
+	testenv.New(t)
+	nested := bundle.Source{URL: "https://x/nested.git", Ref: "v1", SHA: "", Path: ""}
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		nested,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+
+	root := t.TempDir()
+	svc := filepath.Join(root, "svc")
+	require.NoError(t, os.MkdirAll(svc, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(svc, "."+consts.ProjectConfigFile),
+		[]byte("bundles:\n  - url: https://x/nested.git\n    ref: v1\n"), 0o644))
+
+	mgr := managerWithRoots(nil, root)
+	report, err := mgr.Prune(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, report.Drops,
+		"a nested layer's declaration roots its entry — prune must not collect it")
+	assert.DirExists(t, plantedEntryRoot(t, "tools", nested))
+}
+
+// An entry whose receipt EXISTS but cannot be read is a fetched entry with a
+// broken receipt — not hand-placed. Unrooted, it is collectable (a declaration
+// could fetch it again), and the broken receipt is surfaced as a warning; the
+// drop row simply has no source coordinate to report.
+func TestManager_Prune_CollectsCorruptReceiptEntryWhenUnrooted(t *testing.T) {
+	testenv.New(t)
+	stale := bundle.Source{URL: "https://x/tools.git", Ref: "v0", SHA: "", Path: ""}
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"0.9.0",
+		stale,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	entry := plantedEntryRoot(t, "tools", stale)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entry, bundle.ReceiptFile), []byte("\t::: not yaml"), 0o600))
+
+	mgr := managerWithRoots(nil)
+	report, err := mgr.Prune(context.Background())
+	require.NoError(t, err)
+
+	assert.NoDirExists(t, entry)
+	require.Len(t, report.Drops, 1)
+	assert.Equal(t, stale.Key(), report.Drops[0].Key)
+	assert.Empty(t, report.Drops[0].Source, "an unreadable receipt has no source to report")
+	assert.Contains(t, joinWarnings(report.Warnings), "unreadable fetch receipt")
 }

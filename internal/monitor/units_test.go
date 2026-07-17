@@ -30,13 +30,28 @@ func lane(index, svc string) config.MonitoringLogLane {
 // union and need only a name plus a manifest.
 func seeded(name string, lanes []config.MonitoringLogLane, metrics *config.MonitoringUnitMetrics) monitor.SeededUnit {
 	return monitor.SeededUnit{
-		Name:        name,
-		Source:      "test",
-		ProjectRoot: "",
-		ContentHash: "",
-		Manifest:    config.MonitoringUnitManifest{Description: "", Logs: lanes, Metrics: metrics},
-		SeededAt:    time.Time{},
+		Name:           name,
+		Source:         "test",
+		SourceKey:      "src:" + name,
+		ProjectRoot:    "",
+		ContentHash:    "",
+		Manifest:       config.MonitoringUnitManifest{Description: "", Logs: lanes, Metrics: metrics},
+		ClusterObjects: nil,
+		SeededAt:       time.Time{},
 	}
+}
+
+// seededPin builds a sibling-pin fixture: a SeededUnit of the given name under
+// an explicit source key with cluster-object claims.
+func seededPin(
+	name, sourceKey string,
+	lanes []config.MonitoringLogLane,
+	objects []monitor.ClusterObject,
+) monitor.SeededUnit {
+	u := seeded(name, lanes, nil)
+	u.SourceKey = sourceKey
+	u.ClusterObjects = objects
+	return u
 }
 
 // copyTree mirrors a directory tree from src into dst.
@@ -123,6 +138,100 @@ func TestResolveUnits(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, units, 1)
 	})
+
+	t.Run("floor source key is host-global", func(t *testing.T) {
+		// The embedded floor is one source per host: two projects resolving the
+		// floor unit get the SAME source key, so a post-upgrade re-seed from
+		// another project is an in-place update, never a collision (bug 1).
+		cfgA := projectConfig(t, "", []string{"claude-code"})
+		cfgB := projectConfig(t, "", []string{"claude-code"})
+		unitsA, err := monitor.ResolveUnits(cfgA)
+		require.NoError(t, err)
+		unitsB, err := monitor.ResolveUnits(cfgB)
+		require.NoError(t, err)
+		require.NotEmpty(t, unitsA[0].SourceKey)
+		assert.Equal(t, unitsA[0].SourceKey, unitsB[0].SourceKey,
+			"the floor is the same source regardless of the resolving project")
+	})
+
+	t.Run("loose project source key is project-owned", func(t *testing.T) {
+		cfgA := projectConfig(t, "", []string{"synthetic-codex"}, "synthetic-codex")
+		cfgB := projectConfig(t, "", []string{"synthetic-codex"}, "synthetic-codex")
+		unitsA, err := monitor.ResolveUnits(cfgA)
+		require.NoError(t, err)
+		unitsB, err := monitor.ResolveUnits(cfgB)
+		require.NoError(t, err)
+		require.NotEmpty(t, unitsA[0].SourceKey)
+		assert.NotEqual(t, unitsA[0].SourceKey, unitsB[0].SourceKey,
+			"each project's loose dir is its own content source")
+	})
+
+	t.Run("cluster objects are collected", func(t *testing.T) {
+		cfg := projectConfig(t, "", []string{"claude-code"})
+		units, err := monitor.ResolveUnits(cfg)
+		require.NoError(t, err)
+		require.Len(t, units, 1)
+		byKind := map[string][]string{}
+		for _, o := range units[0].ClusterObjects {
+			assert.NotEmpty(t, o.Digest, "%s/%s must carry a content digest", o.Kind, o.ID)
+			byKind[o.Kind] = append(byKind[o.Kind], o.ID)
+		}
+		assert.Contains(t, byKind[monitor.ClusterObjectIngestPipeline], "claude-code-prompt-nest")
+		assert.Contains(t, byKind[monitor.ClusterObjectIndexTemplate], "claude-code")
+		assert.NotEmpty(t, byKind[monitor.ClusterObjectSavedObject],
+			"ndjson saved-object ids are cluster-scoped claims")
+		// Explore panel files are written by bootstrap as saved objects of TYPE
+		// "explore" (POST /api/saved_objects/explore/<basename>) — they must be
+		// claimed in the SAME namespace as an ndjson line with type "explore",
+		// or a bundle's ndjson can overwrite a floor panel undetected.
+		assert.Contains(t, byKind[monitor.ClusterObjectSavedObject],
+			"explore/clawker-claude-code-total-cost",
+			"explore panel filenames are saved-object claims of type explore")
+	})
+}
+
+// writeLooseUnit materializes a loose monitoring unit directly into a
+// project's convention dir from a relpath→content map.
+func writeLooseUnit(t *testing.T, projectDir, name string, files map[string]string) {
+	t.Helper()
+	base := filepath.Join(projectDir, consts.DotClawkerDir, bundle.ComponentMonitoring.Dir(), name)
+	for rel, content := range files {
+		target := filepath.Join(base, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+		require.NoError(t, os.WriteFile(target, []byte(content), 0o644))
+	}
+}
+
+// TestValidateSeededSet_CrossRepresentationSavedObjectConflict models the two
+// on-disk spellings of one cluster saved object: a unit shipping an explore
+// PANEL FILE and another unit shipping an ndjson line with type "explore" and
+// the same id. Bootstrap writes both into the same saved-object store with
+// overwrite=true, so differing content must be refused across the seeded set —
+// even though no per-render check ever sees both units together.
+func TestValidateSeededSet_CrossRepresentationSavedObjectConflict(t *testing.T) {
+	cfg := projectConfig(t, "", []string{"aunit", "bunit"})
+	projectDir := cfg.ProjectRoot()
+	writeLooseUnit(t, projectDir, "aunit", map[string]string{
+		"monitoring.yaml":                      "logs:\n  - index: aunit\n    service_names: [aunit-svc]\n",
+		"index-templates/aunit.json":           `{"index_patterns": ["aunit"]}`,
+		"saved-objects/explore/shared-id.json": `{"attributes":{"title":"legit panel"}}`,
+	})
+	writeLooseUnit(t, projectDir, "bunit", map[string]string{
+		"monitoring.yaml":            "logs:\n  - index: bunit\n    service_names: [bunit-svc]\n",
+		"index-templates/bunit.json": `{"index_patterns": ["bunit"]}`,
+		"saved-objects/bunit.ndjson": `{"type":"explore","id":"shared-id","attributes":{"title":"hostile"}}`,
+	})
+
+	units, err := monitor.ResolveUnits(cfg)
+	require.NoError(t, err)
+	ledger := monitor.NewLedger()
+	require.NoError(t, ledger.Merge(units, time.Unix(0, 0).UTC()))
+
+	err = monitor.ValidateSeededSet(ledger.Union())
+	require.ErrorContains(t, err, "shared-id",
+		"an explore panel and an ndjson type:explore line with the same id are ONE cluster object")
+	require.ErrorContains(t, err, "aunit")
+	require.ErrorContains(t, err, "bunit")
 }
 
 func TestValidateSeededSet(t *testing.T) {
@@ -147,6 +256,68 @@ func TestValidateSeededSet(t *testing.T) {
 			seeded("b", []config.MonitoringLogLane{lane("idx-b", "svc-b")}, nil),
 		}))
 	})
+
+	// Cluster-level object names (pipeline ids, component templates, ISM
+	// policies, datasources, saved-object ids) are PUT targets shared by the
+	// whole cluster. Two units shipping the same name with different content is
+	// a silent last-write-wins overwrite — refused. Identical content is a
+	// harmless idempotent PUT — shared.
+	t.Run("cluster object content conflict", func(t *testing.T) {
+		err := monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-a")},
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIngestPipeline, ID: "alpha-nest", Digest: "d1"}}),
+			seededPin("evil.pkg.alpha", "src-2",
+				[]config.MonitoringLogLane{lane("alpha-events", "alpha-b")},
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIngestPipeline, ID: "alpha-nest", Digest: "d2"}}),
+		})
+		require.ErrorContains(t, err, "alpha-nest")
+		require.ErrorContains(t, err, "acme.tools.alpha")
+		require.ErrorContains(t, err, "evil.pkg.alpha")
+	})
+
+	t.Run("identical cluster object is shared", func(t *testing.T) {
+		require.NoError(t, monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-a")},
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIngestPipeline, ID: "alpha-nest", Digest: "same"}}),
+			seededPin("beta.pkg.alpha", "src-2",
+				[]config.MonitoringLogLane{lane("alpha-events", "alpha-b")},
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIngestPipeline, ID: "alpha-nest", Digest: "same"}}),
+		}))
+	})
+
+	// Sibling pins of ONE address (value-keyed coexistence) share unchanged
+	// lanes; their divergence, if any, is caught by the cluster-object digests.
+	t.Run("sibling pins sharing an identical lane pass", func(t *testing.T) {
+		shared := []config.MonitoringLogLane{lane("alpha-logs", "alpha-agent")}
+		require.NoError(t, monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1", shared,
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIndexTemplate, ID: "alpha-logs", Digest: "same"}}),
+			seededPin("acme.tools.alpha", "src-2", shared,
+				[]monitor.ClusterObject{{Kind: monitor.ClusterObjectIndexTemplate, ID: "alpha-logs", Digest: "same"}}),
+		}))
+	})
+
+	t.Run("sibling pins with diverged lane definitions are refused", func(t *testing.T) {
+		err := monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-agent")}, nil),
+			seededPin("acme.tools.alpha", "src-2",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-svc")}, nil),
+		})
+		require.ErrorContains(t, err, "alpha-logs")
+	})
+
+	t.Run("same service routed to different indices is refused", func(t *testing.T) {
+		err := monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-agent")}, nil),
+			seededPin("acme.tools.alpha", "src-2",
+				[]config.MonitoringLogLane{lane("alpha-events", "alpha-agent")}, nil),
+		})
+		require.ErrorContains(t, err, "alpha-agent")
+	})
 }
 
 func TestBuildUnitRoutings(t *testing.T) {
@@ -157,6 +328,31 @@ func TestBuildUnitRoutings(t *testing.T) {
 			seeded("a-b", []config.MonitoringLogLane{lane("a_b", "svc-b")}, nil),
 		})
 		require.ErrorContains(t, err, "collides")
+	})
+
+	t.Run("sibling pins sharing an identical lane emit it once", func(t *testing.T) {
+		shared := []config.MonitoringLogLane{lane("alpha-logs", "alpha-agent")}
+		routings, err := monitor.BuildUnitRoutings([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1", shared, nil),
+			seededPin("acme.tools.alpha", "src-2", shared, nil),
+		})
+		require.NoError(t, err)
+		var lanes []monitor.UnitLogLane
+		for _, r := range routings {
+			lanes = append(lanes, r.Lanes...)
+		}
+		require.Len(t, lanes, 1, "a shared lane must render one pipeline, not duplicate YAML keys")
+		assert.Equal(t, "alpha-logs", lanes[0].Index)
+	})
+
+	t.Run("sibling pins with diverged same-index lanes are a hard error", func(t *testing.T) {
+		_, err := monitor.BuildUnitRoutings([]monitor.SeededUnit{
+			seededPin("acme.tools.alpha", "src-1",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-agent")}, nil),
+			seededPin("acme.tools.alpha", "src-2",
+				[]config.MonitoringLogLane{lane("alpha-logs", "alpha-svc")}, nil),
+		})
+		require.Error(t, err)
 	})
 
 	t.Run("rename statements scoped to service names", func(t *testing.T) {

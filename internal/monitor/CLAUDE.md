@@ -15,19 +15,20 @@ type MonitoringUnit struct { Name string; Manifest config.MonitoringUnitManifest
 func (u *MonitoringUnit) WalkArtifacts(fn func(relPath string, content []byte) error) error
 
 // units.go — projection over the resolver + collector routing
-type ResolvedUnit struct { Name string; Qualified bool; Unit *MonitoringUnit; Source, ProjectRoot, ContentHash string }
+type ResolvedUnit struct { Name string; Qualified bool; Unit *MonitoringUnit; Source, SourceKey, ProjectRoot, ContentHash string; ClusterObjects []ClusterObject }
+// SourceKey = tier-derived content-source identity (floor | user:<dir> | project:<dir> | bundle:<dir>, the installed dir embedding the value key); ClusterObjects = cluster-scoped PUT targets (pipelines/component-templates/ISM/datasources/saved-object ids) each with a content digest
 func ResolveUnits(cfg config.Config) ([]ResolvedUnit, error)     // projects monitor.extensions onto internal/bundle's three-tier resolver; selection IS enablement — no activation flag, no registry
-func ValidateSeededSet(units []SeededUnit) error                 // index + service.name exclusivity across the seeded union
+func ValidateSeededSet(units []SeededUnit) error                 // index + service.name exclusivity AND cluster-object digest claims across the seeded union; sibling pins of one address may share identically-defined resources
 type UnitRouting struct { Name string; Lanes []UnitLogLane; MetricRenameStatements []string }
 func BuildUnitRoutings(units []SeededUnit) ([]UnitRouting, error) // logs/unit_<id> + opensearch/logs_unit_<id>; sanitized-ID collision = error
 
 // ledger.go — option-D seeded-set ledger (<monitorDir>/units-ledger.yaml)
-type SeededUnit struct { Name, Source, ProjectRoot, ContentHash string; Manifest config.MonitoringUnitManifest; SeededAt time.Time }
-type Ledger struct { /* keyed by selection spelling */ }
+type SeededUnit struct { Name, Source, SourceKey, ProjectRoot, ContentHash string; Manifest config.MonitoringUnitManifest; ClusterObjects []ClusterObject; SeededAt time.Time }
+type Ledger struct { /* keyed by unit identity: bare name alone; qualified address + "@" + SourceKey (sibling entries per pinned value) */ }
 func NewLedger() *Ledger; func LoadLedger(monitorDir string) (*Ledger, error)
-func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) error // same-hash no-op; same-root diff-hash = in-place update; bare diff-hash diff-root = C5 *SeedCollisionError, batch refused atomically
-func (l *Ledger) Union() []SeededUnit; func (l *Ledger) Save(monitorDir string) error
-func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error // flock-guarded load-merge-save; how `monitor up` persists — concurrent ups can't lost-update each other
+func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) error // bare: same-hash no-op, same-SourceKey or same-root diff-hash = in-place update (floor/user tiers are host-global sources → a CLI upgrade updates in place from ANY project), diff-source diff-root diff-hash = C5 *SeedCollisionError, batch refused atomically; qualified: value-keyed upsert, retires ONLY the seeding project's own stale pins — identical-content pins from other roots keep their own entries (no dedupe: a proxy entry would let the owner's re-pin unroute the other project). Source_key-less entries (hand-edited/corrupt; nothing ever wrote the file without keys) get no special path — root comparison governs
+func (l *Ledger) Union() []SeededUnit; func (l *Ledger) Save(monitorDir string) error // Union sorted by (Name, SourceKey)
+func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error // flock-guarded load-merge-VALIDATE-save (post-merge ValidateSeededSet closes the pre-render-check race); how `monitor up` persists — concurrent ups can't lost-update each other
 ```
 
 Enablement is **selection**, not a flag: a project's `monitor.extensions` (override-merge; the virtual defaults layer selects the floor claude-code unit, and an explicit empty list opts out) names the units it seeds; there is no host registry and no per-unit active toggle. `monitor up` merges the cwd projection into the host ledger and renders the collector config over the **all-ever-seeded union** (option D) so a teammate's routings survive; `monitor reload` applies a selection edit to a running stack (collector recreate); `monitor down --volumes` deletes the ledger. A record whose `service.name` matches no seeded lane falls to the debug-only `logs/untrusted_unrouted` pipeline — never indexed.

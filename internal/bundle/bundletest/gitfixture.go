@@ -236,6 +236,45 @@ func (r *Repo) Commit(t *testing.T, message string, files map[string]string) str
 	return hash.String()
 }
 
+// Symlink stages symlinks (relative path → link target, recorded verbatim as
+// authored) and records one commit on the current branch, returning the new
+// commit SHA. Targets are slash-separated and stored as git stores them — a
+// link target is repository content, so a bundle may legitimately share one
+// file between two components this way, and a target climbing out of the
+// bundle root is the hostile shape.
+func (r *Repo) Symlink(t *testing.T, message string, links map[string]string) string {
+	t.Helper()
+	wt, err := r.repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	for rel, target := range links {
+		abs := filepath.Join(r.dir, filepath.FromSlash(rel))
+		if mkErr := os.MkdirAll(filepath.Dir(abs), 0o750); mkErr != nil {
+			t.Fatalf("mkdir for %s: %v", rel, mkErr)
+		}
+		if linkErr := os.Symlink(filepath.FromSlash(target), abs); linkErr != nil {
+			t.Fatalf("symlink %s -> %s: %v", rel, target, linkErr)
+		}
+		if _, addErr := wt.Add(filepath.FromSlash(rel)); addErr != nil {
+			t.Fatalf("add %s: %v", rel, addErr)
+		}
+	}
+	hash, err := wt.Commit(message, &gogit.CommitOptions{
+		All:               false,
+		AllowEmptyCommits: false,
+		Author:            fixtureSignature(),
+		Committer:         fixtureSignature(),
+		Parents:           nil,
+		Signer:            nil,
+		Amend:             false,
+	})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return hash.String()
+}
+
 // Tag creates an annotated tag pointing at the current branch tip and returns
 // the tagged commit SHA.
 func (r *Repo) Tag(t *testing.T, name string) string {

@@ -158,7 +158,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// The container's harness label (stamped at create from the image) is
 	// the runtime identity — egress floor and pre_run compose against it,
 	// not against whatever the configured default happens to be today.
-	harnessName, err := containerHarnessName(ctx, client, cfg, container)
+	harnessName, err := containerHarnessName(ctx, client, cfg, container, log)
 	if err != nil {
 		return fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
 	}
@@ -249,29 +249,48 @@ func assertHarnessResolvable(cfg config.Config, harnessName string) error {
 }
 
 // containerHarnessName reads the container's harness label — the identity
-// stamped at create from the image — falling back to the configured default
-// for containers created before the label existed.
+// stamped at create from the image — so start composes against what the
+// container actually is, not whatever build.harness says today.
+//
+// Fallback to the configured default happens in exactly two benign cases,
+// each logged with its reason: the container carries no harness label
+// (created before the label existed) or it is not found / not
+// clawker-managed. Any other inspect failure surfaces — a daemon error must
+// not silently resolve to a harness the container may not contain.
 func containerHarnessName(
 	ctx context.Context,
 	client *docker.Client,
 	cfg config.Config,
 	container string,
+	log *logger.Logger,
 ) (string, error) {
-	if inspect, err := client.ContainerInspect(
-		ctx,
-		container,
-		docker.ContainerInspectOptions{Size: false},
-	); err == nil {
+	if log == nil {
+		log = logger.Nop()
+	}
+	reason := "container carries no harness label"
+	inspect, err := client.ContainerInspect(ctx, container, docker.ContainerInspectOptions{Size: false})
+	switch {
+	case err == nil:
 		if inspect.Container.Config != nil {
 			if name := inspect.Container.Config.Labels[consts.LabelHarness]; name != "" {
 				return name, nil
 			}
 		}
+	case docker.IsNotFound(err):
+		reason = "container not found or not clawker-managed"
+	default:
+		return "", fmt.Errorf("resolving harness identity: inspect container %s: %w", container, err)
 	}
-	name, err := bundler.ResolveHarnessName(cfg, "")
-	if err != nil {
-		return "", fmt.Errorf("container %s carries no harness label and default resolution failed: %w", container, err)
+	name, resolveErr := bundler.ResolveHarnessName(cfg, "")
+	if resolveErr != nil {
+		return "", fmt.Errorf(
+			"container %s carries no harness label and default resolution failed: %w", container, resolveErr)
 	}
+	log.Warn().
+		Str("container", container).
+		Str("harness", name).
+		Str("reason", reason).
+		Msg("falling back to the configured default harness")
 	return name, nil
 }
 

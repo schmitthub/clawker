@@ -72,21 +72,32 @@ scripts/binaries. `BaseDockerfileName` (`Dockerfile.clawker-base`) is the
 reserved tar entry name so a user's own `Dockerfile` is never clobbered.
 
 **Freshness (`basehash.go`):** `BaseContentHash` = SHA-256 of the rendered
-base Dockerfile bytes + contents of files matched by `instructions.copy`
-srcs (sorted; `.git`/symlinks skipped; missing srcs hash a stable marker),
-plus the effective values of any `--build-arg` entries the rendered base
-Dockerfile actually declares (parsed from its `ARG` lines; a nil value =
-`--build-arg NAME` pass-through resolves to `os.Getenv(NAME)`). The docker
-Builder passes `BuilderOptions.BuildArgs` in and compares the result against
-the `:base` image's `consts.LabelBaseContentHash` label to decide base
-rebuilds. Folding base-relevant args in keeps clawker faithful to BuildKit
-(which cache-keys images on arg values) — the base skip would otherwise
-silently eat a `--build-arg` that targets a base ARG. Args the base does not
-declare (harness-only or unknown) are excluded, so they never force a base
-rebuild: with no base-relevant args the hash equals the Dockerfile+copy-srcs
-hash exactly (no arg bytes appended) — a base's identity depends only on its
-rendered inputs, independent of the arg-folding path. Deliberately NOT a
-whole-context hash —
+base Dockerfile bytes + everything the base build reads from the project
+context: contents **and permission bits** of files — and mode records for
+directories, whose bits COPY preserves too — matched by `instructions.copy`
+srcs (sorted; `.git` pruned wherever it appears in a walked path, so a
+dereferenced link into a sibling checkout never hashes that repo's git
+state; missing srcs hash a stable marker; symlinks hash a link record of
+their target string, and a src that is itself a symlink additionally hashes
+its dereferenced content — an unresolvable link of any kind hashes the
+missing marker rather than erroring, keeping the gate's never-blocks-a-build
+contract), the
+context's `.dockerignore` content (it gates what COPY can see — hashed only
+when copy instructions exist), plus the effective values of any
+`--build-arg` entries the base build honors: args the rendered base
+Dockerfile declares via `ARG` lines, and Docker's predefined proxy args
+(`HTTP_PROXY` et al., upper/lowercase), which need no declaration (a nil
+value = `--build-arg NAME` pass-through resolves to `os.Getenv(NAME)`). The
+docker Builder passes `BuilderOptions.BuildArgs` in and compares the result
+against the `:base` image's `consts.LabelBaseContentHash` label to decide
+base rebuilds. Folding base-relevant args in keeps clawker faithful to
+Docker — the base skip would otherwise silently eat a `--build-arg` that
+changes what the base build produces. Args the base neither declares nor
+Docker predefines (harness-only or unknown) are excluded, so they never
+force a base rebuild: with no base-relevant args the hash equals the
+Dockerfile+context-inputs hash exactly (no arg bytes appended) — a base's
+identity depends only on its rendered inputs, independent of the arg-folding
+path. Deliberately NOT a whole-context hash —
 source edits outside copy srcs never rebuild the base. Glob semantics are
 Go's, not Docker's; imprecision worst-cases as a spurious rebuild, never a
 wrong image.

@@ -212,6 +212,12 @@ security:
       - nodejs.org
       - oraios-software.de
       - nix.dev
+      - .bazel.build
+      - nx.dev
+      - .turborepo.dev
+      - .earthly.dev
+      - .dagger.io
+      - skaffold.dev
     rules:
       - action: allow
         dst: github.com
@@ -340,6 +346,10 @@ security:
             path: /contributor-assistant/github-action/
           - action: allow
             path: /buildpacks/spec/
+          - action: allow
+            path: /moby/buildkit/
+          - action: allow
+            path: /NixOS/nixpkgs/
           - action: allow
             path: /addyosmani/agent-skills/
           - action: allow

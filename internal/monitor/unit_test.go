@@ -164,6 +164,23 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 			"basename must be",
 		},
 		{
+			"unprefixed ism policy basename",
+			mutate(func(f fstest.MapFS) {
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
+					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
+				f["ism-policies/clawker-retention.json"] = mapFile(
+					`{"policy":{"ism_template":[{"index_patterns":["codex"]}]}}`)
+			}),
+			"basename must be",
+		},
+		{
+			"unprefixed datasource basename",
+			mutate(func(f fstest.MapFS) {
+				f["datasources/clawker_prometheus.json"] = mapFile(`{}`)
+			}),
+			"basename must be",
+		},
+		{
 			"unknown top-level dir",
 			mutate(func(f fstest.MapFS) { f["dashboards/x.json"] = mapFile(`{}`) }),
 			"unknown directory",
@@ -255,6 +272,13 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		require.ErrorContains(t, err, "Bad_Name")
 	})
 
+	t.Run("prefixed datasource accepted", func(t *testing.T) {
+		fsys := validUnitFS()
+		fsys["datasources/codex-prom.json"] = mapFile(`{"name":"codex-prom"}`)
+		_, err := monitor.LoadMonitoringUnit("codex", fsys)
+		require.NoError(t, err)
+	})
+
 	t.Run("valid custom retention", func(t *testing.T) {
 		fsys := validUnitFS()
 		fsys[monitor.MonitoringUnitManifestFile] = mapFile(
@@ -269,9 +293,10 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 
 // TestFloorMonitoringUnit pins the embedded floor's monitoring contribution: the
 // claude-code unit ships as a bare floor component (a peer of the harness/stack
-// floor dirs) that an explicit `monitor.extensions` selection resolves and loads
-// with its migrated bootstrap artifacts. There is no default selection — the
-// floor unit is opt-in like every other extension.
+// floor dirs) that a `monitor.extensions` selection resolves and loads with its
+// migrated bootstrap artifacts. In production the virtual defaults layer selects
+// it (schema default "claude-code"); the config mock here carries no defaults,
+// so the test selects it explicitly.
 func TestFloorMonitoringUnit(t *testing.T) {
 	cfg := configmocks.NewFromString("monitor:\n  extensions: [claude-code]\n", "")
 	units, err := monitor.ResolveUnits(cfg)

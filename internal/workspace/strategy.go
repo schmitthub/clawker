@@ -67,10 +67,17 @@ func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, er
 
 // GetConfigVolumeMounts returns mounts for the harness's declared persisted
 // dirs plus the history volume. Used for both bind and snapshot modes.
-func GetConfigVolumeMounts(projectName, agentName string, volumes []config.VolumeSpec) ([]mount.Mount, error) {
+// Bundle-declared volumes are harness-scoped (docker.HarnessVolumeName):
+// both shipped harnesses declare a volume named "config", and without the
+// harness segment in the identity a codex run would mount the claude volume
+// — including the in-container login — at its own config path.
+func GetConfigVolumeMounts(
+	projectName, agentName, harnessName string,
+	volumes []config.VolumeSpec,
+) ([]mount.Mount, error) {
 	var mounts []mount.Mount
 	for _, v := range volumes {
-		vol, err := docker.VolumeName(projectName, agentName, v.Name)
+		vol, err := docker.HarnessVolumeName(projectName, agentName, harnessName, v.Name)
 		if err != nil {
 			return nil, fmt.Errorf("volume name for %q: %w", v.Name, err)
 		}
@@ -100,8 +107,11 @@ func GetConfigVolumeMounts(projectName, agentName string, volumes []config.Volum
 	// volumes' lifetime — a recreated container must not re-run post_init
 	// against config volumes it already initialized. On first use Docker
 	// copies the image's staged content (seeds, seed-manifest) into the
-	// fresh volume.
-	clawkerVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker)
+	// fresh volume. It is harness-scoped for the same reason the config
+	// volumes are: the seeds and the post-init marker belong to the harness
+	// image, so its lifetime must track the harness-scoped config volumes,
+	// not the agent.
+	clawkerVol, err := docker.HarnessVolumeName(projectName, agentName, harnessName, docker.VolumePurposeClawker)
 	if err != nil {
 		return nil, fmt.Errorf("clawker volume name: %w", err)
 	}
@@ -145,22 +155,32 @@ type ConfigVolumeResult struct {
 // EnsureConfigVolumes creates the harness-declared volumes and the history
 // volume with proper labels. Should be called before container creation so
 // volumes carry clawker labels — that enables label-based cleanup in
-// RemoveContainerWithVolumes.
+// RemoveContainerWithVolumes. Bundle-declared volumes and the clawker
+// lifecycle volume are harness-scoped (name and label), so a pre-existing
+// volume of another harness is never adopted — the harness's own volume is
+// created fresh and reported created, which is what gates staging. Behind
+// the naming scheme sits the ownership failsafe (EnsureHarnessVolume): a
+// volume already at the target name but labeled for a different harness is
+// refused with a typed *docker.HarnessVolumeOwnershipError; same-harness
+// re-entry (container recreation, repeated run) and unlabeled managed
+// occupants (hand-placed, e.g. backup/restore — clawker itself always
+// labels harness-scoped volumes) adopt silently.
 func EnsureConfigVolumes(
 	ctx context.Context,
 	cli *docker.Client,
-	projectName, agentName string,
+	projectName, agentName, harnessName string,
 	volumes []config.VolumeSpec,
 ) (ConfigVolumeResult, error) {
 	result := ConfigVolumeResult{CreatedByName: make(map[string]bool), HistoryCreated: false, ClawkerCreated: false}
-	labels := cli.AgentVolumeLabels(projectName, agentName)
+	agentLabels := cli.AgentVolumeLabels(projectName, agentName)
+	harnessLabels := cli.HarnessVolumeLabels(projectName, agentName, harnessName)
 
 	for _, v := range volumes {
-		volName, err := docker.VolumeName(projectName, agentName, v.Name)
+		volName, err := docker.HarnessVolumeName(projectName, agentName, harnessName, v.Name)
 		if err != nil {
 			return result, fmt.Errorf("volume name for %q: %w", v.Name, err)
 		}
-		created, err := cli.EnsureVolume(ctx, volName, labels)
+		created, err := cli.EnsureHarnessVolume(ctx, volName, harnessLabels, harnessName)
 		if err != nil {
 			return result, fmt.Errorf("ensure volume %s: %w", volName, err)
 		}
@@ -171,17 +191,17 @@ func EnsureConfigVolumes(
 	if err != nil {
 		return result, err
 	}
-	created, err := cli.EnsureVolume(ctx, historyVolume, labels)
+	created, err := cli.EnsureVolume(ctx, historyVolume, agentLabels)
 	if err != nil {
 		return result, err
 	}
 	result.HistoryCreated = created
 
-	clawkerVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker)
+	clawkerVolume, err := docker.HarnessVolumeName(projectName, agentName, harnessName, docker.VolumePurposeClawker)
 	if err != nil {
 		return result, err
 	}
-	created, err = cli.EnsureVolume(ctx, clawkerVolume, labels)
+	created, err = cli.EnsureHarnessVolume(ctx, clawkerVolume, harnessLabels, harnessName)
 	if err != nil {
 		return result, err
 	}

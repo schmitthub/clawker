@@ -215,6 +215,62 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		assert.True(t, decls[0].Source.AutoUpdate)
 	})
 
+	t.Run("nested layers under the root contribute", func(t *testing.T) {
+		// Walk-up discovery makes every directory between a CWD and the
+		// project root a potential declaring layer, so the roots-side loader
+		// must probe the whole tree — a nested declaration roots its cache
+		// entry no matter where the pruning process runs.
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/top.git\n"), 0o644))
+		svc := filepath.Join(root, "svc")
+		require.NoError(t, os.MkdirAll(svc, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(svc, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/nested.git\n    ref: v1\n"), 0o644))
+		deep := filepath.Join(svc, "api", consts.DotClawkerDir)
+		require.NoError(t, os.MkdirAll(deep, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(deep, consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/deep.git\n"), 0o644))
+
+		decls, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		urls := make([]string, 0, len(decls))
+		for _, d := range decls {
+			urls = append(urls, d.Source.URL)
+		}
+		assert.ElementsMatch(t,
+			[]string{"https://x/top.git", "https://x/nested.git", "https://x/deep.git"}, urls)
+	})
+
+	t.Run("nested malformed bundles node fails", func(t *testing.T) {
+		// Roots must be computable before anything is collected — a broken
+		// nested layer fails the load the same way a broken root layer does.
+		root := t.TempDir()
+		svc := filepath.Join(root, "svc")
+		require.NoError(t, os.MkdirAll(svc, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(svc, "."+consts.ProjectConfigFile),
+			[]byte("bundles: notalist\n"), 0o644))
+
+		_, err := config.BundleDeclarationsAt(root)
+		require.Error(t, err)
+	})
+
+	t.Run("dot-directory layers are not discovered", func(t *testing.T) {
+		// The documented bound of the walk: dot-directories are not descended
+		// into (each level's .clawker/ dir form is probed via dual placement
+		// from its parent), so a config file inside e.g. .git contributes
+		// nothing.
+		root := t.TempDir()
+		hidden := filepath.Join(root, ".hidden")
+		require.NoError(t, os.MkdirAll(hidden, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(hidden, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/hidden.git\n"), 0o644))
+
+		decls, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		assert.Empty(t, decls)
+	})
+
 	t.Run("missing root yields no declarations and no error", func(t *testing.T) {
 		decls, err := config.BundleDeclarationsAt(filepath.Join(t.TempDir(), "gone"))
 		require.NoError(t, err)

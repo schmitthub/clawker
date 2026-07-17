@@ -103,6 +103,9 @@ func printUpdateResults(ios *iostreams.IOStreams, results []bundle.UpdateResult)
 		switch r.Outcome {
 		case bundle.UpdateRefetched:
 			fmt.Fprintf(ios.Out, "%s %s updated to version %s\n", cs.SuccessIcon(), r.Subject(), r.NewVersion)
+			for _, w := range r.Warnings {
+				fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w.Message)
+			}
 		case bundle.UpdateUnchanged:
 			fmt.Fprintf(ios.ErrOut, "%s %s is up to date\n", cs.InfoIcon(), r.Subject())
 		case bundle.UpdateSkippedPinned:

@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -97,7 +99,7 @@ func TestManager_Install_RejectsInvalidComponent(t *testing.T) {
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
 	mgr := newManager(t, []config.BundleSource{src})
 
-	_, err := mgr.Install(context.Background(), src)
+	_, _, err := mgr.Install(context.Background(), src)
 	require.ErrorContains(t, err, "no fragment found")
 	assert.NoDirExists(t, entryRoot(t, src), "a rejected bundle must not be committed to the cache")
 }
@@ -122,6 +124,274 @@ func TestManager_Install_Subdir(t *testing.T) {
 	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
 	require.NoError(t, err)
 	assert.Equal(t, "acme.tools.node", comp.Address.String())
+}
+
+// A bundle whose content is reachable only through a symlink climbing out of
+// the bundle root must be REJECTED, not "successfully installed" as a broken
+// entry. The commit drops such a link (it cannot be carried into a
+// self-contained cache entry), so validating anything else than the tree the
+// commit produces would bless content the cache will never hold: the manifest
+// resolves in the clone, the entry lands without it, and every later
+// Bundles() call — bundle list, build, run, monitor up — hard-fails on the
+// unreadable manifest, with the entry rooted by its declaration so no GC ever
+// reclaims it.
+func TestManager_Install_RejectsContentSymlinkedOutOfBundleRoot(t *testing.T) {
+	cases := map[string]struct {
+		link   string // path inside the bundle root that is really a symlink out
+		target string // its link target, relative to the link's own directory
+	}{
+		"manifest": {
+			link:   "bundles/tools/.clawker-bundle/bundle.yaml",
+			target: "../../../shared/bundle.yaml",
+		},
+		"component": {
+			link:   "bundles/tools/stacks/node/Dockerfile.stack-root.tmpl",
+			target: "../../../../shared/Dockerfile.stack-root.tmpl",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := bundletest.New(t)
+			repo := srv.InitRepo(t, "mono")
+			// The bundle lives at bundles/tools; shared/ sits OUTSIDE it, so a
+			// link into shared/ escapes the bundle root while staying inside
+			// the repository — the shape a monorepo author reaches for, and the
+			// shape an attacker uses to pass validation with content the entry
+			// can never carry.
+			files := map[string]string{
+				"shared/bundle.yaml":                                   "namespace: acme\nname: tools\nversion: 1.0.0\n",
+				"shared/Dockerfile.stack-root.tmpl":                    "RUN true\n",
+				"bundles/tools/.clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+				"bundles/tools/stacks/node/stack.yaml":                 "description: node\n",
+				"bundles/tools/stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+			}
+			delete(files, tc.link)
+			repo.Commit(t, "v1", files)
+			repo.Symlink(t, "escape", map[string]string{tc.link: tc.target})
+			repo.Tag(t, "v1.0.0")
+
+			src := config.BundleSource{
+				URL: srv.HTTPURL("mono"), Ref: "v1.0.0", SHA: "", Path: "bundles/tools", AutoUpdate: false,
+			}
+			mgr := newManager(t, []config.BundleSource{src})
+
+			_, _, err := mgr.Install(context.Background(), src)
+			require.Error(t, err, "content reachable only outside the bundle root must fail validation")
+			assert.Contains(t, err.Error(), "self-contained",
+				"the error must name the dropped symlink as the cause, not just a missing file")
+			assert.Contains(t, err.Error(), filepath.Base(tc.link))
+
+			cacheRoot, rootErr := consts.BundlesSubdir()
+			require.NoError(t, rootErr)
+			assert.NoDirExists(t, filepath.Join(cacheRoot, "acme"),
+				"a bundle rejected at validation must leave nothing in the cache")
+		})
+	}
+}
+
+// The receipt name is clawker-owned. A bundle shipping ".fetch.yaml" itself —
+// and above all shipping it as an in-tree relative SYMLINK, the shape the copy
+// is designed to carry — must not let the post-validation receipt write follow
+// that link and overwrite validated content (the manifest, a component file).
+// The staged tree the swap publishes must be the tree validation read, plus
+// exactly one fresh receipt file.
+func TestManager_Install_ReceiptNameIsReservedNeverFollowed(t *testing.T) {
+	t.Run("symlink at the receipt name cannot redirect the receipt write", func(t *testing.T) {
+		srv := bundletest.New(t)
+		repo := srv.InitRepo(t, "tools")
+		repo.Commit(t, "v1", bundleFiles("1.0.0"))
+		// .fetch.yaml -> .clawker-bundle/bundle.yaml: relative, in-tree — the
+		// copy would carry it, and a follow-the-link receipt write would
+		// replace the manifest AFTER validation blessed it.
+		repo.Symlink(t, "squat the receipt name", map[string]string{
+			".fetch.yaml": ".clawker-bundle/bundle.yaml",
+		})
+		repo.Tag(t, "v1.0.0")
+
+		src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+		mgr := newManager(t, []config.BundleSource{src})
+		mustInstall(t, mgr, src)
+
+		entry := entryRoot(t, src)
+		assert.Contains(t, entryManifest(t, entry), "namespace: acme",
+			"the committed manifest must be the one validation read, not receipt YAML")
+
+		info, err := os.Lstat(filepath.Join(entry, bundle.ReceiptFile))
+		require.NoError(t, err)
+		assert.True(t, info.Mode().IsRegular(),
+			"the entry's receipt must be a fresh regular file, never a bundle-authored link")
+
+		// The whole point of bug 1: the installed entry keeps resolving.
+		bundles, _, err := mgr.Resolver().Bundles()
+		require.NoError(t, err)
+		_, ok := bundles[bundle.BundleID{Namespace: "acme", Name: "tools"}]
+		assert.True(t, ok)
+	})
+
+	t.Run("regular file at the receipt name is replaced by the real receipt", func(t *testing.T) {
+		srv := bundletest.New(t)
+		repo := srv.InitRepo(t, "tools")
+		files := bundleFiles("1.0.0")
+		files[".fetch.yaml"] = "canonical: bundle-authored-lie\n"
+		repo.Commit(t, "v1", files)
+		repo.Tag(t, "v1.0.0")
+
+		src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+		mgr := newManager(t, []config.BundleSource{src})
+		mustInstall(t, mgr, src)
+
+		raw, err := os.ReadFile(filepath.Join(entryRoot(t, src), bundle.ReceiptFile))
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "bundle-authored-lie",
+			"the entry's receipt is written by the install, never shipped by the bundle")
+	})
+}
+
+// The REVERSE alias of the receipt-name squat: nothing sits at the reserved
+// root path, but a carried in-tree link at a COMPONENT path targets it. The
+// receipt does not exist while validation runs, so an optional read (a stack's
+// root fragment) sees "absent — fine"; the receipt write then makes the link
+// resolve, and the committed entry would serve receipt YAML as the fragment.
+// The link must be dropped like any other non-portable shape: receipt bytes
+// are clawker-written metadata and must never serve as component content.
+func TestManager_Install_DropsLinkAliasingTheReceipt(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", map[string]string{
+		".clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"stacks/node/stack.yaml":                 "description: node\n",
+		"stacks/node/Dockerfile.stack-user.tmpl": "RUN user\n",
+	})
+	// Relative, in-tree, and dangling at validate time — the one carried-link
+	// shape whose TARGET the pipeline itself creates after validation.
+	repo.Symlink(t, "alias the receipt", map[string]string{
+		"stacks/node/Dockerfile.stack-root.tmpl": "../../" + bundle.ReceiptFile,
+	})
+	repo.Tag(t, "v1.0.0")
+
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+
+	_, warnings, err := mgr.Install(context.Background(), src)
+	require.NoError(t, err, "the optional fragment stays absent; the install succeeds without it")
+	require.Len(t, warnings, 1, "the dropped alias must be reported")
+	assert.Contains(t, warnings[0].Message, "stacks/node/Dockerfile.stack-root.tmpl")
+
+	// The committed entry must not serve receipt bytes as component content.
+	entry := entryRoot(t, src)
+	assert.NoFileExists(t, filepath.Join(entry, "stacks", "node", "Dockerfile.stack-root.tmpl"))
+
+	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
+	require.NoError(t, err)
+	assert.Equal(t, "acme.tools.node", comp.Address.String())
+}
+
+// Symlink safety must not rest on reading link targets lexically: an in-tree
+// DIRECTORY link (one resolving to the bundle root — in-tree, so nothing drops
+// it) lets a second link reach through it to a path its own spelling never
+// names. This receipt alias is invisible to any single-level textual compare
+// (`stacks/node/Dockerfile.stack-root.tmpl -> dir/.fetch.yaml`, `dir -> ../..`)
+// and must be refused by resolving the link for real. It lands on
+// sanitize's UNRESOLVABLE branch — the receipt does not exist when sanitize
+// runs — so the entry cannot serve receipt bytes as a fragment. (The
+// escapes-stage branch, where a link resolves to a real EXISTING file outside
+// the stage, is pinned directly in TestSanitizeStagedLinks_* — it needs a real
+// out-of-stage file, which the subdir copy cannot stage without brittle cache-
+// depth coupling.)
+func TestManager_Install_DropsLinkAliasingReceiptThroughADirectoryLink(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", map[string]string{
+		".clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"stacks/node/stack.yaml":                 "description: node\n",
+		"stacks/node/Dockerfile.stack-user.tmpl": "RUN user\n",
+	})
+	repo.Symlink(t, "alias the receipt through a dir link", map[string]string{
+		"stacks/node/dir":                        "../..",
+		"stacks/node/Dockerfile.stack-root.tmpl": "dir/" + bundle.ReceiptFile,
+	})
+	repo.Tag(t, "v1.0.0")
+
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+
+	_, warnings, err := mgr.Install(context.Background(), src)
+	require.NoError(t, err, "the optional fragment stays absent; the install succeeds without it")
+	require.Len(t, warnings, 1, "the dropped alias must be reported")
+	assert.Contains(t, warnings[0].Message, "stacks/node/Dockerfile.stack-root.tmpl")
+
+	entry := entryRoot(t, src)
+	assert.NoFileExists(t, filepath.Join(entry, "stacks", "node", "Dockerfile.stack-root.tmpl"),
+		"the entry must never serve receipt bytes as a Dockerfile fragment")
+}
+
+// A dropped symlink that validation does not happen to need (an asset a
+// Dockerfile fragment references, say) must still be reported: otherwise the
+// install is silent, and the missing content surfaces later as an opaque build
+// failure. On the success path the drop is a Warning.
+func TestManager_Install_WarnsOnDroppedSymlinks(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "mono")
+	repo.Commit(t, "v1", map[string]string{
+		"shared/entrypoint.sh":                                 "#!/bin/sh\n",
+		"bundles/tools/.clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"bundles/tools/stacks/node/stack.yaml":                 "description: node\n",
+		"bundles/tools/stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+	})
+	// An asset shared from outside the bundle root: validation never reads it
+	// (the stack loader wants only the manifest and fragments), so the install
+	// would succeed silently while the entry ships without it.
+	repo.Symlink(t, "escaping asset", map[string]string{
+		"bundles/tools/stacks/node/entrypoint.sh": "../../../../shared/entrypoint.sh",
+	})
+	repo.Tag(t, "v1.0.0")
+
+	src := config.BundleSource{
+		URL: srv.HTTPURL("mono"), Ref: "v1.0.0", SHA: "", Path: "bundles/tools", AutoUpdate: false,
+	}
+	mgr := newManager(t, []config.BundleSource{src})
+
+	_, warnings, err := mgr.Install(context.Background(), src)
+	require.NoError(t, err, "a dropped link validation does not need is a warning, not a failure")
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0].Message, "stacks/node/entrypoint.sh",
+		"the warning must name the dropped link")
+	assert.NoFileExists(t, filepath.Join(entryRoot(t, src), "stacks", "node", "entrypoint.sh"))
+}
+
+// The flip side of rejecting escaping links: a bundle sharing one file between
+// two of its own components via a relative symlink is a legitimate, expected
+// authoring shape. The link stays inside the bundle root, so the cache entry
+// carries it and it must install and resolve like any other content.
+func TestManager_Install_IntraBundleSymlinkSurvives(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", map[string]string{
+		".clawker-bundle/bundle.yaml":            "namespace: acme\nname: tools\nversion: 1.0.0\n",
+		"stacks/node/stack.yaml":                 "description: node\n",
+		"stacks/node/Dockerfile.stack-root.tmpl": "RUN node\n",
+		"stacks/deno/stack.yaml":                 "description: deno\n",
+	})
+	// deno reuses node's fragment — an in-tree relative link.
+	repo.Symlink(t, "share fragment", map[string]string{
+		"stacks/deno/Dockerfile.stack-root.tmpl": "../node/Dockerfile.stack-root.tmpl",
+	})
+	repo.Tag(t, "v1.0.0")
+
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+	mustInstall(t, mgr, src, "an intra-bundle symlink is legitimate content and must install")
+
+	// The committed entry carries the link and it still resolves to the shared
+	// fragment — the cache entry is self-contained.
+	entry := entryRoot(t, src)
+	shared, err := os.ReadFile(filepath.Join(entry, "stacks", "deno", "Dockerfile.stack-root.tmpl"))
+	require.NoError(t, err)
+	assert.Equal(t, "RUN node\n", string(shared))
+
+	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.deno")
+	require.NoError(t, err)
+	assert.Equal(t, "acme.tools.deno", comp.Address.String())
 }
 
 func TestManager_Install_SHAPin(t *testing.T) {
@@ -267,11 +537,13 @@ func TestManager_Install_SubdirsAreDistinctSources(t *testing.T) {
 }
 
 // mustInstall installs src and fails the test on error, discarding the
-// returned identity (the fixtures all ship acme.tools).
+// returned identity (the fixtures all ship acme.tools). The plain fixtures
+// carry no droppable content, so a warning here is itself a failure.
 func mustInstall(t *testing.T, mgr *bundle.Manager, src config.BundleSource, msgAndArgs ...any) {
 	t.Helper()
-	_, err := mgr.Install(context.Background(), src)
+	_, warnings, err := mgr.Install(context.Background(), src)
 	require.NoError(t, err, msgAndArgs...)
+	require.Empty(t, warnings, msgAndArgs...)
 }
 
 // managerForDecls wires a Manager over the CURRENT testenv (callers own the
@@ -288,6 +560,71 @@ func managerForDecls(decls ...config.BundleSource) *bundle.Manager {
 	}
 	cfg.ProjectRootFunc = func() string { return "" }
 	return bundle.NewManager(cfg, componentcheck.Validate)
+}
+
+// Remove purges cache entries other processes may be committing into, and the
+// per-entry advisory lock files live INSIDE the tree it purges. Removing the
+// tree wholesale would unlink a lock while a writer holds it, so the next
+// writer's flock.New creates a fresh inode at the same path and acquires
+// instantly — two writers on one entry directory. Remove must take each
+// entry's lock, and — unlike the GC removal path, whose entries are condemned
+// with no legitimate writers — it must LEAVE the lock file behind: a
+// still-declared identity has legitimate concurrent installers, and they must
+// keep locking the same inode.
+func TestManager_Remove_SerializesOnTheEntryLock(t *testing.T) {
+	testenv.New(t)
+	src := config.BundleSource{
+		URL: "https://example.com/acme/tools.git", Ref: "v1", SHA: "", Path: "", AutoUpdate: false,
+	}
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", src.URL, map[string]string{
+		"stacks/node/stack.yaml":                 "description: node stack\n",
+		"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+	})
+	mgr := managerForDecls(src)
+	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
+	entry := entryRoot(t, src)
+
+	// Stand in for an in-flight writer holding the entry's lock.
+	held := flock.New(entry + ".lock")
+	locked, err := held.TryLock()
+	require.NoError(t, err)
+	require.True(t, locked)
+	t.Cleanup(func() {
+		if unlockErr := held.Unlock(); unlockErr != nil {
+			t.Logf("unlock: %v", unlockErr)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	removed, err := mgr.Remove(ctx, id)
+	require.Error(t, err, "Remove must block on the entry lock, not purge through a live writer")
+	assert.False(t, removed)
+	assert.FileExists(t, filepath.Join(entry, "stacks", "node", "stack.yaml"),
+		"the locked entry must survive a Remove that could not take its lock")
+
+	// With the writer gone, the same Remove purges the identity.
+	require.NoError(t, held.Unlock())
+	removed, err = mgr.Remove(context.Background(), id)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.NoDirExists(t, entry)
+
+	// The lock INODE must survive the purge. Remove targets identities that may
+	// still be declared — a concurrent install of the same value is legitimate,
+	// and every such writer must keep serializing on one inode. Unlinking the
+	// lock would hand the next writer a fresh inode at the same path, granting
+	// instantly alongside anyone still holding the old one.
+	assert.FileExists(t, entry+".lock",
+		"Remove must leave the per-entry lock file so future writers lock the same inode")
+}
+
+func TestManager_Remove_NotCachedIsNoOp(t *testing.T) {
+	testenv.New(t)
+	mgr := managerForDecls()
+	removed, err := mgr.Remove(context.Background(), bundle.BundleID{Namespace: "acme", Name: "tools"})
+	require.NoError(t, err)
+	assert.False(t, removed)
 }
 
 func TestManager_Update_RefetchesOnDrift(t *testing.T) {
@@ -404,13 +741,14 @@ func TestManager_InstallDeclared_FetchesMissing(t *testing.T) {
 	mgr := newManager(t, []config.BundleSource{src})
 	ctx := context.Background()
 
-	installed, err := mgr.InstallDeclared(ctx)
+	installed, warnings, err := mgr.InstallDeclared(ctx)
 	require.NoError(t, err)
+	assert.Empty(t, warnings)
 	require.Len(t, installed, 1)
 	assert.Equal(t, "acme.tools", installed[0].String())
 
 	// Second pass: already cached, nothing to do.
-	installed, err = mgr.InstallDeclared(ctx)
+	installed, _, err = mgr.InstallDeclared(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, installed)
 }
@@ -445,7 +783,7 @@ func TestManager_Install_InvalidManifestNoCommit(t *testing.T) {
 			repo.Tag(t, "v1.0.0")
 
 			mgr := newManager(t, nil)
-			_, err := mgr.Install(context.Background(), config.BundleSource{
+			_, _, err := mgr.Install(context.Background(), config.BundleSource{
 				URL: srv.HTTPURL("bad"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 			})
 			var manifestErr *bundle.ManifestError
@@ -495,7 +833,7 @@ func TestManager_Install_UnreachableSource(t *testing.T) {
 	srv := bundletest.New(t)
 	// A repository that was never initialized on the server: the clone fails.
 	mgr := newManager(t, nil)
-	_, err := mgr.Install(context.Background(), config.BundleSource{
+	_, _, err := mgr.Install(context.Background(), config.BundleSource{
 		URL: srv.HTTPURL("nonexistent"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 	})
 	var srcErr *bundle.SourceError

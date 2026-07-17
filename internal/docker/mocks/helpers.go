@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"strings"
 
@@ -127,6 +128,38 @@ func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 	}
 }
 
+// SetupImageExistsWithLabels configures the fake so the named image exists
+// carrying the managed label plus the given extra labels; every other ref
+// reports not found. Use it to stage label-derived identity scenarios (e.g.
+// an image stamped with a harness label).
+func (f *FakeClient) SetupImageExistsWithLabels(ref string, extra map[string]string) {
+	f.FakeAPI.ImageInspectFn = func(_ context.Context, image string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		if image != ref {
+			return client.ImageInspectResult{}, notFoundError(image)
+		}
+		result := managedImageInspect(f.Cfg, ref)
+		maps.Copy(result.Config.Labels, extra)
+		return result, nil
+	}
+}
+
+// SetupImageInspectError configures the fake to fail every ImageInspect with
+// err — a daemon-level failure, distinct from not-found.
+func (f *FakeClient) SetupImageInspectError(err error) {
+	f.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{}, err
+	}
+}
+
+// SetupContainerInspectError configures the fake to fail every
+// ContainerInspect with err — a daemon-level failure, distinct from
+// not-found.
+func (f *FakeClient) SetupContainerInspectError(err error) {
+	f.FakeAPI.ContainerInspectFn = func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{}, err
+	}
+}
+
 // SetupImageTag configures the fake to succeed on ImageTag.
 // It wires both ImageTag and ImageInspect (for managed label check).
 func (f *FakeClient) SetupImageTag() {
@@ -197,6 +230,24 @@ func (f *FakeClient) SetupVolumeExists(name string, exists bool) {
 			}, nil
 		}
 		return client.VolumeInspectResult{}, notFoundError(volumeID)
+	}
+}
+
+// SetupVolumeExistsWithLabels configures the fake so the named volume exists
+// carrying the managed label plus the given extra labels; every other volume
+// name reports not found. Use it to stage ownership-label scenarios (e.g. a
+// volume owned by another harness) for Ensure* paths that inspect labels.
+func (f *FakeClient) SetupVolumeExistsWithLabels(name string, extra map[string]string) {
+	f.FakeAPI.VolumeInspectFn = func(_ context.Context, volumeID string, _ client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
+		if volumeID != name {
+			return client.VolumeInspectResult{}, notFoundError(volumeID)
+		}
+		labels := map[string]string{f.Cfg.LabelManaged(): f.Cfg.ManagedLabelValue()}
+		maps.Copy(labels, extra)
+		//nolint:exhaustruct // fake inspect result: only name+labels drive the code under test
+		return client.VolumeInspectResult{
+			Volume: volume.Volume{Name: volumeID, Labels: labels}, //nolint:exhaustruct // ditto
+		}, nil
 	}
 }
 

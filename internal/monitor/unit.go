@@ -217,7 +217,8 @@ func validateUnitMetrics(name string, m *config.MonitoringUnitMetrics) error {
 // validateUnitTree cross-checks the unit directory against the manifest:
 // every top-level entry is a known artifact dir, every declared lane ships
 // its index template (basename == index name, index_patterns == [index]),
-// pipeline/component-template basenames are unit-prefixed, ISM policy
+// pipeline/component-template/ISM-policy/datasource basenames are
+// unit-prefixed (they all become cluster-level PUT targets), ISM policy
 // files appear exactly when a lane declares custom retention and are
 // pattern-scoped to unit-owned indices, and saved-objects carries only
 // ndjson plus the explore/ panel dir. A typo'd directory or extension must
@@ -230,7 +231,12 @@ func validateUnitTree(name string, fsys fs.FS, m config.MonitoringUnitManifest) 
 	if err := validateUnitIndexTemplates(name, fsys, m.Logs); err != nil {
 		return err
 	}
-	for _, dir := range []string{MonitoringDirIngestPipelines, MonitoringDirComponentTemplates} {
+	for _, dir := range []string{
+		MonitoringDirIngestPipelines,
+		MonitoringDirComponentTemplates,
+		MonitoringDirISMPolicies,
+		MonitoringDirDatasources,
+	} {
 		if err := validateUnitPrefixedJSONDir(name, fsys, dir); err != nil {
 			return err
 		}
@@ -238,10 +244,7 @@ func validateUnitTree(name string, fsys fs.FS, m config.MonitoringUnitManifest) 
 	if err := validateUnitISMPolicies(name, fsys, m.Logs); err != nil {
 		return err
 	}
-	if err := validateUnitSavedObjects(name, fsys); err != nil {
-		return err
-	}
-	return validateUnitJSONDir(name, fsys, MonitoringDirDatasources)
+	return validateUnitSavedObjects(name, fsys)
 }
 
 func knownUnitDirs() map[string]bool {
@@ -287,7 +290,7 @@ func validateUnitIndexTemplates(name string, fsys fs.FS, lanes []config.Monitori
 	declared := map[string]bool{}
 	for _, lane := range lanes {
 		declared[lane.Index] = true
-		file := path.Join(MonitoringDirIndexTemplates, lane.Index+".json")
+		file := path.Join(MonitoringDirIndexTemplates, lane.Index+jsonExt)
 		raw, err := fs.ReadFile(fsys, file)
 		if err != nil {
 			return fmt.Errorf(
@@ -328,8 +331,12 @@ func validateUnitIndexTemplates(name string, fsys fs.FS, lanes []config.Monitori
 
 // validateUnitPrefixedJSONDir checks a dir holds only .json files whose
 // basenames are "<unit>-"-prefixed: these become cluster-level object
-// names (pipeline id, component template name), so an unprefixed name
-// could silently rewrite core or another unit's object.
+// names (pipeline id, component template name, ISM policy id, datasource
+// name), so an unprefixed name could silently rewrite core or another
+// unit's object. The prefix scopes the bare-name namespace only — two
+// bundles' same-named components share a prefix, so cross-bundle reuse is
+// additionally digest-checked across the seeded union (ValidateSeededSet's
+// cluster-object claims).
 func validateUnitPrefixedJSONDir(name string, fsys fs.FS, dir string) error {
 	names, err := jsonBasenames(name, fsys, dir)
 	if err != nil {
@@ -386,7 +393,7 @@ func validateUnitISMPolicies(name string, fsys fs.FS, lanes []config.MonitoringL
 		)
 	}
 	for _, n := range names {
-		file := path.Join(MonitoringDirISMPolicies, n+".json")
+		file := path.Join(MonitoringDirISMPolicies, n+jsonExt)
 		if scopeErr := validateISMPolicyScope(name, fsys, file, customIndices); scopeErr != nil {
 			return scopeErr
 		}
@@ -462,7 +469,7 @@ func validateSavedObjectEntry(name string, fsys fs.FS, e fs.DirEntry) error {
 		exploreDir := path.Join(MonitoringDirSavedObjects, MonitoringDirExplore)
 		return validateUnitJSONDir(name, fsys, exploreDir)
 	}
-	if path.Ext(e.Name()) != ".ndjson" {
+	if path.Ext(e.Name()) != ndjsonExt {
 		return fmt.Errorf(
 			"monitoring unit %q: %s/%s: saved-object imports must be .ndjson files",
 			name, MonitoringDirSavedObjects, e.Name(),
@@ -490,13 +497,13 @@ func jsonBasenames(name string, fsys fs.FS, dir string) ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".json" {
+		if e.IsDir() || path.Ext(e.Name()) != jsonExt {
 			return nil, fmt.Errorf(
 				"monitoring unit %q: %s/%s: only .json files belong here — bootstrap would silently ignore it",
 				name, dir, e.Name(),
 			)
 		}
-		names = append(names, strings.TrimSuffix(e.Name(), ".json"))
+		names = append(names, strings.TrimSuffix(e.Name(), jsonExt))
 	}
 	slices.Sort(names)
 	return names, nil

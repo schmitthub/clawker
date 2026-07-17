@@ -110,7 +110,7 @@ func TestBundleJourney_InstallToRender(t *testing.T) {
 			src := config.BundleSource{
 				URL: tp.url(srv), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
 			}
-			_, insErr := mgr.Install(ctx, src)
+			_, _, insErr := mgr.Install(ctx, src)
 			require.NoError(t, insErr)
 
 			// Cache layout: the value-keyed entry
@@ -157,7 +157,7 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	ctx := context.Background()
 
 	// Track a moving branch so the source is a ref (updatable), not a sha-pin.
-	_, insErr := mgr.Install(ctx, config.BundleSource{
+	_, _, insErr := mgr.Install(ctx, config.BundleSource{
 		URL: srv.HTTPURL("tools"), Ref: "master", SHA: "", Path: "", AutoUpdate: false,
 	})
 	require.NoError(t, insErr)

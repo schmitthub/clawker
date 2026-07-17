@@ -465,6 +465,9 @@ agent:
 		})
 		assert.NotContains(t, after, "build:", "emptied build block must be pruned, not left as {}")
 		assert.NotContains(t, after, "agent:", "emptied agent block must be pruned, not left as {}")
+		// The strip emptied the whole document and no header is configured:
+		// the exact contract is an empty file — not a {} stub, not residue.
+		assert.Empty(t, after, "a file emptied of all content must be written as an empty file")
 	})
 
 	t.Run("keys absent is a true no-op", func(t *testing.T) {
@@ -583,6 +586,140 @@ agent:
 		assert.Contains(t, notice, "empty deprecated agent.claude_code")
 	})
 
+	t.Run("drops keys the strict harnesses node would reject", func(t *testing.T) {
+		// The harnesses: node has a strict unknown-field front door
+		// (validateProjectNodes). A typo'd key under agent.claude_code was
+		// silently ignored by the old schema; moving it raw into
+		// harnesses.claude would make the migration write a file its own
+		// validator then rejects — on this load and every one after. The
+		// migration must drop it, loudly, instead of smuggling it.
+		const in = `agent:
+  claude_code:
+    mount_projects: false
+    use_hosts_auth: true
+`
+		var snap *config.Project
+		var after string
+		notice := captureStderr(t, func() {
+			snap, after = loadProjectWithMigrations(t, in)
+		})
+
+		require.Contains(t, snap.Harnesses, consts.DefaultHarnessName)
+		hc := snap.Harnesses[consts.DefaultHarnessName]
+		assert.False(t, hc.MountProjectsEnabled(), "valid fields must still move")
+
+		assert.Contains(t, after, "harnesses:")
+		assert.NotContains(t, after, "use_hosts_auth", "unknown key must not ride into the strict node")
+		assert.Contains(t, notice, "agent.claude_code.use_hosts_auth = true",
+			"dropped key must be surfaced with its value, not silently discarded")
+		assert.Contains(t, notice, "clawker.yaml", "notice must name the owning file")
+	})
+
+	t.Run("drops invalid config.strategy instead of moving it", func(t *testing.T) {
+		// validateHarnessConfigOptions enforces a closed strategy vocabulary
+		// on harnesses.<name>.config; an out-of-vocabulary value must be
+		// dropped from the move for the same reason as an unknown field.
+		const in = `agent:
+  claude_code:
+    config:
+      strategy: sideways
+    mount_projects: false
+`
+		var snap *config.Project
+		var after string
+		notice := captureStderr(t, func() {
+			snap, after = loadProjectWithMigrations(t, in)
+		})
+
+		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
+		require.NotNil(t, hc)
+		assert.Equal(t, config.ConfigStrategyCopy, hc.ConfigStrategy(), "invalid strategy falls back to default")
+		assert.Contains(t, after, "harnesses:")
+		assert.NotContains(t, after, "sideways")
+		assert.Contains(t, notice, "agent.claude_code.config.strategy = sideways")
+	})
+
+	t.Run("block of only invalid keys is removed without creating an entry", func(t *testing.T) {
+		const in = `agent:
+  claude_code:
+    use_hosts_auth: true
+`
+		var after string
+		notice := captureStderr(t, func() {
+			_, after = loadProjectWithMigrations(t, in)
+		})
+		assert.NotContains(t, after, "claude_code:")
+		assert.NotContains(t, after, "harnesses:", "nothing valid remained — no entry must be spawned")
+		assert.Contains(t, notice, "agent.claude_code.use_hosts_auth = true")
+	})
+
+	t.Run("null legacy block converges with the empty spelling", func(t *testing.T) {
+		// A bare `claude_code:` key — e.g. a user commenting out its only
+		// field — decodes as null, not an empty mapping. The shipped schema
+		// loaded it fine (null → nil *HarnessConfig) and the harnesses front
+		// door this migration mirrors treats null as an empty mapping
+		// (nodeMapping), so the migration must too: remove it with the
+		// empty-block notice, never error. Erroring here is a permanent
+		// brick — the migration aborts before writing, so every run repeats
+		// identically until the user hand-edits.
+		const in = `agent:
+  claude_code:
+    # mount_projects: false
+`
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clawker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+
+		load := func() {
+			_, err := storage.New[config.Project]("",
+				storage.WithFilenames("clawker.yaml"),
+				storage.WithPaths(dir),
+				storage.WithMigrations(config.ProjectMigrations()...),
+			)
+			require.NoError(t, err, "a null legacy block must migrate, not error")
+		}
+		notice := captureStderr(t, load)
+
+		after := readFile(t, path)
+		assert.NotContains(t, after, "claude_code:")
+		assert.NotContains(t, after, "harnesses:", "a null legacy block must not spawn a map entry")
+		assert.Contains(t, notice, "empty deprecated agent.claude_code",
+			"null and {} spellings must produce the same removed-empty-block notice")
+
+		// Run 2 — the brick shape is both runs failing identically.
+		notice = captureStderr(t, load)
+		assert.Equal(t, after, readFile(t, path), "second load must be byte-stable")
+		assert.Empty(t, notice, "second load must not re-notice")
+	})
+
+	t.Run("failed load does not announce the move", func(t *testing.T) {
+		// env is a known field, so `env: notamap` passes the front-door
+		// filter and the move commits — but the post-migration typed decode
+		// fails (parity: the legacy agent.claude_code shim failed the same
+		// decode on the old schema, so this is not a new brick). A load that
+		// dies must not have printed the success notice first: notices are
+		// flushed only when construction is going to succeed.
+		const in = `agent:
+  claude_code:
+    env: notamap
+`
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clawker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+
+		var err error
+		notice := captureStderr(t, func() {
+			_, err = storage.New[config.Project]("",
+				storage.WithFilenames("clawker.yaml"),
+				storage.WithPaths(dir),
+				storage.WithMigrations(config.ProjectMigrations()...),
+			)
+		})
+		require.Error(t, err, "an undecodable known-field value keeps failing the load (shim parity)")
+		assert.NotContains(t, notice, "moved project config",
+			"a dying load must not announce the move as a success")
+	})
+
 	t.Run("no-op without legacy key", func(t *testing.T) {
 		const in = `agent:
   editor: vim
@@ -674,4 +811,136 @@ agent:
 	// Both layers' values named in the one-shot notice.
 	assert.Contains(t, notice, "build.image = hi-image")
 	assert.Contains(t, notice, "build.image = lo-image")
+
+	// Migrations run per layer, so the same key duplicated across files emits
+	// one block PER FILE — each must name its owning file, or the user sees
+	// identical blocks with no way to tell which file each came from.
+	assert.Contains(t, notice, hiPath, "notice must name the hi layer file")
+	assert.Contains(t, notice, loPath, "notice must name the lo layer file")
+}
+
+// TestNewConfig_MigratedLegacyBlockSurvivesValidation is the regression test
+// for the self-inflicted config brick: migrateClaudeCodeToHarnesses moved the
+// legacy block as a raw mapping into harnesses.claude — one of the strict
+// unknown-field nodes — so a key that was silently ignored on the old schema
+// (e.g. the use_hosts_auth typo for use_host_auth) was durably rewritten into
+// a shape validateProjectNodes rejects. The first load failed AFTER the
+// rewrite landed, and every later load failed identically: no migration would
+// ever remove the key again. This drives the full NewConfig path (migrations
+// + validation + header) and proves both loads succeed.
+func TestNewConfig_MigratedLegacyBlockSurvivesValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clawker.yaml")
+	const in = `agent:
+  claude_code:
+    mount_projects: false
+    use_hosts_auth: true
+`
+	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+	t.Setenv(consts.EnvConfigDir, dir)
+
+	var cfg config.Config
+	var err error
+	notice := captureStderr(t, func() { cfg, err = config.NewConfig() })
+	require.NoError(t, err, "first load must survive its own migration rewrite")
+
+	hc := cfg.Project().HarnessConfigFor(consts.DefaultHarnessName)
+	require.NotNil(t, hc)
+	assert.False(t, hc.MountProjectsEnabled(), "valid legacy fields must move to the harnesses entry")
+
+	first := readFile(t, path)
+	assert.Contains(t, first, "harnesses:")
+	assert.NotContains(t, first, "use_hosts_auth", "the typo'd key must not be written into the strict node")
+	assert.Contains(t, notice, "agent.claude_code.use_hosts_auth = true", "dropped key surfaced by name and value")
+	assert.Contains(t, notice, path, "notice must name the rewritten file")
+
+	// THE brick was run 2: the rewritten file must pass validation forever after.
+	notice = captureStderr(t, func() { _, err = config.NewConfig() })
+	require.NoError(t, err, "second load must succeed against the migrated file")
+	assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
+	assert.Empty(t, notice, "second load must not re-notice")
+}
+
+// TestNewConfig_MigrationRewriteFailureDegrades pins the unwritable-config-dir
+// behavior: a migration whose file rewrite cannot be persisted (e.g. read-only
+// config dir) must NOT fail the load — the migrated values apply in-memory and
+// the rewrite is retried next run — and must NOT tell the user keys were
+// removed from a file that was never rewritten. Previously the "removed"
+// notice printed before the write, then NewConfig hard-failed, killing every
+// CLI command for a previously-working setup.
+func TestNewConfig_MigrationRewriteFailureDegrades(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only dir permissions are ineffective for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clawker.yaml")
+	const in = `build:
+  image: golang:1.25
+agent:
+  claude_code:
+    mount_projects: false
+`
+	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+	t.Setenv(consts.EnvConfigDir, dir)
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() {
+		// Best-effort: restore so TempDir cleanup can remove the tree.
+		if chErr := os.Chmod(dir, 0o755); chErr != nil {
+			t.Logf("restoring dir mode: %v", chErr)
+		}
+	})
+
+	var cfg config.Config
+	var err error
+	notice := captureStderr(t, func() { cfg, err = config.NewConfig() })
+	require.NoError(t, err, "an unwritable config dir must degrade the load, not fail it")
+
+	// The migration applied in-memory: the legacy block is visible through the
+	// harnesses map even though the file rewrite never landed.
+	require.Contains(t, cfg.Project().Harnesses, consts.DefaultHarnessName)
+	migratedEntry := cfg.Project().Harnesses[consts.DefaultHarnessName]
+	assert.False(t, migratedEntry.MountProjectsEnabled())
+
+	assert.Equal(t, in, readFile(t, path), "file must be untouched when the rewrite fails")
+	assert.Contains(t, notice, path, "failure warning must name the file")
+	assert.Contains(t, notice, "could not persist", "user must be told the rewrite did not land")
+	assert.NotContains(t, notice, "build.image = golang:1.25",
+		"must not claim a removal that never landed on disk")
+	assert.NotContains(t, notice, "moved project config",
+		"must not claim a move that never landed on disk")
+
+	// Every subsequent load degrades identically instead of bricking.
+	_ = captureStderr(t, func() { _, err = config.NewConfig() })
+	require.NoError(t, err, "later loads must keep degrading, not fail")
+}
+
+// TestMigration_FullyEmptiedFileIsNotBraceStub: a config whose only content
+// was legacy keys must migrate to an empty file (or header-only, when a
+// header is configured), never to a literal "{}" — which users read as
+// clawker having eaten the file.
+func TestMigration_FullyEmptiedFileIsNotBraceStub(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clawker.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("build:\n  image: golang:1.25\n"), 0o644))
+
+	load := func() {
+		_, err := storage.New[config.Project]("",
+			storage.WithFilenames("clawker.yaml"),
+			storage.WithPaths(dir),
+			storage.WithMigrations(config.ProjectMigrations()...),
+			storage.WithHeader("yaml-language-server: $schema=https://example.test/clawker.json"),
+		)
+		require.NoError(t, err)
+	}
+	_ = captureStderr(t, load)
+
+	after := readFile(t, path)
+	// Byte-exact contract: the emptied file is the header comment block and
+	// nothing else — no {} stub, no residue.
+	assert.Equal(t, "# yaml-language-server: $schema=https://example.test/clawker.json\n", after,
+		"fully-migrated file must be exactly the header comment block")
+
+	// The header-only file must reload cleanly and stay byte-stable.
+	_ = captureStderr(t, load)
+	assert.Equal(t, after, readFile(t, path), "emptied file must be byte-stable on reload")
 }

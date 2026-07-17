@@ -3,30 +3,35 @@ package bundler
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
 
 // BaseContentHash computes the SHA-256 freshness key for the per-project
-// base image: the rendered base Dockerfile bytes, the contents of every
-// file referenced by the project's copy instructions (their srcs live in
-// the project build context, which is the base image's build context), and
-// the effective values of any user --build-arg entries that the rendered
-// base Dockerfile actually declares.
+// base image: the rendered base Dockerfile bytes; the contents, permission
+// bits, and symlink targets of everything referenced by the project's copy
+// instructions (their srcs live in the project build context, which is the
+// base image's build context); the project's .dockerignore, which gates what
+// those COPY steps can see; and the effective values of any user --build-arg
+// entries the base build would honor — args the rendered base Dockerfile
+// declares via ARG, plus Docker's predefined proxy args, which the builders
+// honor with no declaration at all.
 //
 // Folding the base-relevant build-args in is what keeps clawker honest to
-// Docker: BuildKit cache-keys an image on its arg values, so a bare
-// `docker build --build-arg TZ=…` produces a different image. The base
-// freshness gate skips `docker build` entirely on a hash match, so without
-// this the flag would be silently eaten. Args the base does not declare
-// (harness-only or unknown) stay out so they never force a spurious base
-// rebuild.
+// Docker: a bare `docker build --build-arg TZ=…` — or `--build-arg
+// HTTPS_PROXY=…`, declared nowhere — changes what the build produces. The
+// base freshness gate skips `docker build` entirely on a hash match, so
+// without this the flag would be silently eaten. Args the base neither
+// declares nor Docker predefines (harness-only or unknown) stay out so they
+// never force a spurious base rebuild.
 //
 // Deliberately NOT a hash of the whole context directory — that would
 // rebuild the base on every source edit. Glob expansion here is Go's
@@ -47,12 +52,35 @@ func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte, buildArgs map[
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// isDockerPredefinedArg reports whether name is one of Docker's predefined
+// build args — the proxy variables (upper- and lowercase forms) that both
+// the classic builder and BuildKit honor WITHOUT an ARG declaration in the
+// Dockerfile. They set the network environment of every RUN step, so a
+// --build-arg targeting one changes what the base build produces exactly
+// like a declared ARG does and must count as base-relevant. The vocabulary
+// is Docker's, not clawker's: the set mirrors the predefined-ARG list in the
+// Dockerfile reference (moby's builtinAllowedBuildArgs), which is fixed by
+// the builders.
+func isDockerPredefinedArg(name string) bool {
+	switch name {
+	case "HTTP_PROXY", "http_proxy",
+		"HTTPS_PROXY", "https_proxy",
+		"FTP_PROXY", "ftp_proxy",
+		"NO_PROXY", "no_proxy",
+		"ALL_PROXY", "all_proxy":
+		return true
+	default:
+		return false
+	}
+}
+
 // hashBaseBuildArgs folds the effective values of the user --build-arg
-// entries that the rendered base Dockerfile declares (via ARG) into h.
-// Entries the base does not declare are skipped. When no supplied arg
-// targets a base-declared ARG, nothing is written and the resulting hash is
-// byte-identical to the arg-free hash — an existing base image is never
-// rebuilt merely because the caller passed a harness-only arg.
+// entries the base build honors into h: args the rendered base Dockerfile
+// declares (via ARG) plus Docker's predefined proxy args, which need no
+// declaration. Every other entry is skipped. When no supplied arg targets an
+// honored name, nothing is written and the resulting hash is byte-identical
+// to the arg-free hash — an existing base image is never rebuilt merely
+// because the caller passed a harness-only arg.
 func hashBaseBuildArgs(h hash.Hash, baseDockerfile []byte, buildArgs map[string]*string) {
 	if len(buildArgs) == 0 {
 		return
@@ -61,7 +89,8 @@ func hashBaseBuildArgs(h hash.Hash, baseDockerfile []byte, buildArgs map[string]
 
 	relevant := make([]string, 0, len(buildArgs))
 	for name := range buildArgs {
-		if _, ok := declared[name]; ok {
+		_, isDeclared := declared[name]
+		if isDeclared || isDockerPredefinedArg(name) {
 			relevant = append(relevant, name)
 		}
 	}
@@ -128,8 +157,15 @@ func argInstructionName(line string) (string, bool) {
 	return name, true
 }
 
+// dockerignoreFileName is the ignore file Docker loads from the root of the
+// build context; the name is Docker's vocabulary, not clawker's.
+const dockerignoreFileName = ".dockerignore"
+
 // hashCopySources feeds the contents of every copy-instruction src (files,
-// directories, globs) into h, in a deterministic order.
+// directories, globs) into h, in a deterministic order, together with the
+// context's .dockerignore. With no copy instructions nothing reaches the
+// image from the build context, so nothing is hashed — including the ignore
+// file — and the hash stays byte-identical to the Dockerfile-only hash.
 func (g *ProjectGenerator) hashCopySources(h hash.Hash) error {
 	instructions := g.cfg.Project().Build.Instructions
 	if instructions == nil || len(instructions.Copy) == 0 {
@@ -137,6 +173,10 @@ func (g *ProjectGenerator) hashCopySources(h hash.Hash) error {
 	}
 
 	contextDir := g.GetBuildContext()
+
+	if err := hashDockerignore(h, contextDir); err != nil {
+		return err
+	}
 
 	srcs := make([]string, 0, len(instructions.Copy))
 	for _, c := range instructions.Copy {
@@ -150,6 +190,25 @@ func (g *ProjectGenerator) hashCopySources(h hash.Hash) error {
 		}
 	}
 
+	return nil
+}
+
+// hashDockerignore folds the build context's .dockerignore content into h.
+// The BuildKit base build hands Docker the project dir as the local context
+// and .dockerignore filters what the COPY steps can see, so an ignore edit
+// changes the built image without touching a single copy-src byte on disk —
+// notably an edit made specifically to purge a file already baked into the
+// base. An absent file writes nothing (distinct from an empty one, which
+// writes an empty record).
+func hashDockerignore(h hash.Hash, contextDir string) error {
+	content, err := os.ReadFile(filepath.Join(contextDir, dockerignoreFileName))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("hash %s: %w", dockerignoreFileName, err)
+	}
+	fmt.Fprintf(h, "dockerignore:%s\x00", content)
 	return nil
 }
 
@@ -181,24 +240,42 @@ func hashCopySrc(h hash.Hash, contextDir, src string) error {
 	return nil
 }
 
-// hashPath hashes a single file, or every regular file under a directory,
-// as "relpath\x00content" records. Symlinks and .git are skipped with the
-// same rules as the build-context tar walk.
+// hashPath hashes a single glob match: a file, every regular file under a
+// directory, or — when the match itself is a symlink — the link's target
+// string plus its dereferenced content. The build reads through a src-root
+// symlink, so the target's bytes are what lands in the image; both editing
+// the target and repointing the link must flip the hash.
 func hashPath(h hash.Hash, contextDir, path string) error {
-	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("hash copy src %s: %w", path, err)
+	}
+	root := path
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		if linkErr := hashLinkRecord(h, contextRel(contextDir, path), path); linkErr != nil {
+			return linkErr
+		}
+		root = resolveLinkRoot(h, contextDir, path)
+		if root == "" {
+			return nil
+		}
+	}
+
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("hash copy src %s: %w", p, walkErr)
 		}
 
-		rel, relErr := filepath.Rel(contextDir, p)
-		if relErr != nil {
-			rel = p
-		}
+		rel := contextRel(contextDir, p)
 		switch hashEntryAction(rel, d) {
 		case hashEntrySkip:
 			return nil
 		case hashEntrySkipDir:
 			return filepath.SkipDir
+		case hashEntryLink:
+			return hashLinkRecord(h, rel, p)
+		case hashEntryDir:
+			return hashDirRecord(h, rel, p)
 		default:
 			return hashFileRecord(h, rel, p)
 		}
@@ -209,34 +286,111 @@ func hashPath(h hash.Hash, contextDir, path string) error {
 	return nil
 }
 
+// contextRel returns p relative to contextDir for use as a stable record
+// key; when p cannot be relativized it falls back to p itself.
+func contextRel(contextDir, p string) string {
+	rel, err := filepath.Rel(contextDir, p)
+	if err != nil {
+		return p
+	}
+	return rel
+}
+
+// resolveLinkRoot dereferences a symlink copy src and returns the walk root.
+// An unresolvable link — dangling, looping, or with an unreadable
+// intermediate — returns "" after hashing a stable marker: the build cannot
+// read through such a link either, so there is no content to hash, and the
+// freshness gate must never abort on it (its contract is a spurious rebuild
+// at worst, never a blocked build — the Docker build surfaces the real,
+// actionable error). The caller's link record still flips the hash on
+// repoint, and the link later resolving adds content records.
+func resolveLinkRoot(h hash.Hash, contextDir, path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		// Every resolution failure is an expected input state handled by the
+		// marker, not a gate failure; the error itself carries no hashable
+		// signal (its text may vary by platform).
+		fmt.Fprintf(h, "missing:%s\x00", contextRel(contextDir, path))
+		return ""
+	}
+	return resolved
+}
+
 // hashEntryAction verdicts for a walked copy-src entry.
 const (
 	hashEntryRecord = iota
 	hashEntrySkip
 	hashEntrySkipDir
+	hashEntryLink
+	hashEntryDir
 )
 
-// hashEntryAction prunes .git and skips symlinks/directories — the same
-// rules as the build-context tar walk.
+// hashEntryAction prunes .git wherever it appears in the walked path (a
+// dereferenced symlink root can sit outside the context — even in a sibling
+// checkout — so a positional prefix test would miss its .git and let every
+// commit or fetch there defeat the base cache), records directories for a
+// mode record, and marks symlinks for a link record — a symlink inside a
+// copied directory transfers as a symlink, so its target string is image
+// content.
 func hashEntryAction(rel string, d fs.DirEntry) int {
-	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+	if hasGitComponent(rel) {
 		if d.IsDir() {
 			return hashEntrySkipDir
 		}
 		return hashEntrySkip
 	}
-	if d.Type()&fs.ModeSymlink != 0 || d.IsDir() {
-		return hashEntrySkip
+	if d.Type()&fs.ModeSymlink != 0 {
+		return hashEntryLink
+	}
+	if d.IsDir() {
+		return hashEntryDir
 	}
 	return hashEntryRecord
 }
 
-// hashFileRecord writes one "relpath\x00content\x00" record into h.
+// hasGitComponent reports whether any path component of rel is .git —
+// git state is never a freshness input, at any depth.
+func hasGitComponent(rel string) bool {
+	return slices.Contains(strings.Split(rel, string(filepath.Separator)), ".git")
+}
+
+// hashDirRecord writes one "dir:relpath\x00mode\x00" record into h. A
+// directory's permission bits are image content just like a file's: Docker
+// COPY preserves the source directory's mode (and creates empty ones), so a
+// mode-only chmod of the directory is a different image.
+func hashDirRecord(h hash.Hash, rel, path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("hash copy src %s: %w", path, err)
+	}
+	fmt.Fprintf(h, "dir:%s\x00%04o\x00", filepath.ToSlash(rel), fi.Mode().Perm())
+	return nil
+}
+
+// hashLinkRecord writes one "link:relpath\x00target\x00" record into h so a
+// repointed symlink flips the hash even when its old and new targets hold
+// identical bytes.
+func hashLinkRecord(h hash.Hash, rel, path string) error {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return fmt.Errorf("hash copy src %s: %w", path, err)
+	}
+	fmt.Fprintf(h, "link:%s\x00%s\x00", filepath.ToSlash(rel), filepath.ToSlash(target))
+	return nil
+}
+
+// hashFileRecord writes one "relpath\x00mode\x00content\x00" record into h.
+// The permission bits are image content: with no chmod declared on the copy
+// instruction Docker COPY preserves the source file's mode, and BuildKit's
+// own COPY cache key includes it — a mode-only change is a different image.
 func hashFileRecord(h hash.Hash, rel, path string) error {
-	fmt.Fprintf(h, "%s\x00", filepath.ToSlash(rel))
-	// Read-only hashing input under a walk that already skips symlinks; a
-	// race here only skews the freshness hash (spurious rebuild at worst),
-	// never what gets built.
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("hash copy src %s: %w", path, err)
+	}
+	fmt.Fprintf(h, "%s\x00%04o\x00", filepath.ToSlash(rel), fi.Mode().Perm())
+	// Read-only hashing input; a stat/open race here only skews the
+	// freshness hash (spurious rebuild at worst), never what gets built.
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("hash copy src %s: %w", path, err)

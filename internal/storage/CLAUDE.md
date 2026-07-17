@@ -113,6 +113,8 @@ func (s *Store[T]) Layers() []LayerInfo                   // Discovered layers, 
 func (s *Store[T]) Options() Options                      // Copy of resolved construction options (introspection; slices cloned)
 func (s *Store[T]) WriteTargets() ([]WriteTarget, error)  // Candidate write locations derived from options + layers; every target is rediscoverable on reload
 func (s *Store[T]) Txn(fn func(*Tx[T]) error) error      // Serialize a compound read-modify-write against other Txn callers; the closure mutates via the Tx handle (tx.Get/Set/Remove/Write)
+func (s *Store[T]) Noticef(format string, args ...any)    // Migration-only: queue a user-visible notice, flushed to stderr only after the owning layer's rewrite commits AND the migrated tree remerges cleanly (suppressed on either failure)
+func (s *Store[T]) MigratingLayerPath() string            // Path of the file layer currently being migrated ("" outside a migration pass) — lets migrations name the owning file in notices
 ```
 
 `Read()` is the typed snapshot; `Get(path, &dest)` decodes a single field into a typed destination (so typed read-modify-write needs no closure: `var rules []EgressRule; s.Get("rules", &rules); rules = append(rules, r); s.Set("rules", rules)`). There is no closure mutator and no `Get() *T`.
@@ -187,6 +189,27 @@ engine trusts its own dirty tracking over a migration's returned `changed` bool
 run before the snapshot is published; because the edits land on the layer's own
 node tree, comments on untouched fields are dragged along, and a schema-shape
 change is fixed before the final strict decode.
+
+**Migration notices are deferred; rewrite failures degrade.** A migration that
+wants to tell the user something (a removed legacy key, a moved block) queues
+the message with `Store.Noticef` — never printing directly — and names the
+owning file via `MigratingLayerPath()`. `applyMigrations` flushes the queue to
+stderr only after the rewrites commit and the migrated tree remerges cleanly,
+so a migration can never announce a file change that fails to land, and a
+load that dies on the post-migration decode never announces its migrations as
+successes — the error is the only message. A layer rewrite that cannot be persisted
+(e.g. a read-only config dir) does **not** fail construction: the migrated
+values still apply in-memory for that run (migrations are idempotent, so the
+next load retries the rewrite), the failed layer's own notices are suppressed,
+and a `could not persist migrated <path>` warning prints instead. A migration
+*function* returning an error still aborts construction with nothing written.
+
+**An emptied root writes an empty file, not `{}`.** `encodeNode` special-cases
+a root mapping with no keys (e.g. a file whose entire content was migrated
+away, or whose last key was removed): it emits only the `WithHeader` comment
+block — or zero bytes without one — instead of yaml.v3's literal `{}` stub,
+which users read as the file having been eaten. Empty and comments-only files
+round-trip as an empty mapping on load.
 
 `layerPathForKey` resolves write targets for fields that already have a layer:
 (1) exact provenance match, (2) descendant prefix match, (3) ancestor walk-up for

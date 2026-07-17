@@ -33,7 +33,10 @@ func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 current project's clawker.yaml layers, the user config-dir clawker.yaml, and
 every registered project (including worktrees). A cache entry survives only
 while some declaration's exact source value addresses it — an entry stranded
-by an edited ref, a swapped url, or a removed 'bundles:' entry is deleted.
+by an edited ref, a swapped url, or a removed 'bundles:' entry is deleted, as
+is the stale duplicate left behind when a bundle's upstream renamed its
+identity. Staging debris from interrupted installs is also reclaimed — an
+entry whose replacement never completed is restored.
 
 Hand-placed entries (no fetch receipt) are never pruned; purge those with
 'clawker bundle remove'. When one bundle identity is cached from two or more
@@ -61,11 +64,15 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		return fmt.Errorf("loading bundle manager: %w", err)
 	}
 
-	// Drops are printed even when the sweep failed partway: those entries are
-	// already gone from disk, and a silent deletion is worse than a noisy one.
+	// Drops and warnings are printed even when the sweep failed partway: those
+	// entries are already gone from disk, and a silent deletion is worse than
+	// a noisy one.
 	report, err := mgr.Prune(ctx)
 	for _, d := range report.Drops {
 		fmt.Fprintf(ios.Out, "Removed %s cache entry %s (%s)\n", d.ID, d.Key, d.Source)
+	}
+	for _, w := range report.Warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w.Message)
 	}
 	if err != nil {
 		return fmt.Errorf("pruning bundle cache: %w", err)
