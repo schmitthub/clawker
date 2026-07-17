@@ -6,14 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // newListEnv builds a config whose project store layers a real file (the
@@ -63,10 +64,28 @@ func TestListRun_JSON(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 3)
-	assert.Equal(t, aliasRow{Name: "go", Expansion: "run --rm -it --agent $1 @ --dangerously-skip-permissions", Source: sourceDefault}, rows[0])
-	assert.Equal(t, aliasRow{Name: "v", Expansion: "version", Source: path}, rows[1])
-	assert.Equal(t, aliasRow{Name: "wt", Expansion: "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions", Source: sourceDefault}, rows[2])
+	require.Len(t, rows, 5)
+	assert.Equal(
+		t,
+		aliasRow{
+			Name:      "claude",
+			Expansion: "run --rm -it --agent $1 @:claude --dangerously-skip-permissions",
+			Source:    sourceDefault,
+		},
+		rows[0],
+	)
+	assert.Equal(
+		t,
+		aliasRow{Name: "codex", Expansion: "run --rm -it --agent $1 @:codex --yolo", Source: sourceDefault},
+		rows[1],
+	)
+	assert.Equal(t, aliasRow{Name: "go", Expansion: "run --rm -it --agent $1 @", Source: sourceDefault}, rows[2])
+	assert.Equal(t, aliasRow{Name: "v", Expansion: "version", Source: path}, rows[3])
+	assert.Equal(
+		t,
+		aliasRow{Name: "wt", Expansion: "run --rm -it --agent $1 --worktree $2 @", Source: sourceDefault},
+		rows[4],
+	)
 }
 
 func TestListRun_OverriddenDefaultReportsFile(t *testing.T) {
@@ -76,8 +95,8 @@ func TestListRun_OverriddenDefaultReportsFile(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 2)
-	assert.Equal(t, aliasRow{Name: "go", Expansion: "version", Source: path}, rows[0])
+	require.Len(t, rows, 4)
+	assert.Equal(t, aliasRow{Name: "go", Expansion: "version", Source: path}, rows[2])
 }
 
 func TestListRun_DisabledDefaultReportsDisablingFile(t *testing.T) {
@@ -87,7 +106,7 @@ func TestListRun_DisabledDefaultReportsDisablingFile(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 2)
-	assert.Equal(t, aliasRow{Name: "go", Expansion: "", Source: path}, rows[0],
+	require.Len(t, rows, 4)
+	assert.Equal(t, aliasRow{Name: "go", Expansion: "", Source: path}, rows[2],
 		"disabled default stays listed; SOURCE is the file holding the disabling entry")
 }

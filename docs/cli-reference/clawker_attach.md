@@ -56,4 +56,4 @@ clawker attach CONTAINER [flags]
 
 ### See also
 
-* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Run coding agents in secure Docker containers with clawker

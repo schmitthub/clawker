@@ -84,7 +84,6 @@ BSD-2-Clause
 ================================================================================
 
 github.com/emirpasic/gods                                                      BSD-2-Clause
-github.com/godbus/dbus/v5                                                      BSD-2-Clause
 github.com/pkg/errors                                                          BSD-2-Clause
 github.com/russross/blackfriday/v2                                             BSD-2-Clause
 
@@ -96,6 +95,7 @@ github.com/ProtonMail/go-crypto                                                B
 github.com/atotto/clipboard                                                    BSD-3-Clause
 github.com/cloudflare/circl                                                    BSD-3-Clause
 github.com/cyphar/filepath-securejoin                                          BSD-3-Clause
+github.com/gliderlabs/ssh                                                      BSD-3-Clause
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
 github.com/go-jose/go-jose/v4/json                                             BSD-3-Clause
 github.com/gofrs/flock                                                         BSD-3-Clause
@@ -152,10 +152,12 @@ MIT
 
 github.com/Masterminds/semver/v3                                               MIT
 github.com/alecthomas/chroma/v2                                                MIT
+github.com/anmitsu/go-shlex                                                    MIT
 github.com/apparentlymart/go-cidr/cidr                                         MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
 github.com/aymerick/douceur                                                    MIT
 github.com/beorn7/perks/quantile                                               MIT
+github.com/bmatcuk/doublestar/v4                                               MIT
 github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT
@@ -205,8 +207,6 @@ github.com/tonistiigi/fsutil                                                   M
 github.com/xo/terminfo                                                         MIT
 github.com/yuin/goldmark                                                       MIT
 github.com/yuin/goldmark-emoji                                                 MIT
-github.com/zalando/go-keyring                                                  MIT
-github.com/zalando/go-keyring/internal/shellescape                             MIT
 go.uber.org/automaxprocs                                                       MIT
 go.uber.org/multierr                                                           MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT

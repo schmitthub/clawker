@@ -1,7 +1,7 @@
 ---
 title: "Architecture"
 description: "System layers, package DAG, CLI commands, and key abstractions"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "architecture", "Go CLI"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "self-hosted", "open source", "architecture", "Go CLI"]
 ---
 
 # Architecture
@@ -75,9 +75,9 @@ Commands are organized under `internal/cmd/` with subpackages per subcommand:
 | `auth` | rotate | CLI-side auth material (CA, server certs, OAuth2 signing key) |
 | `monitor` | init, up, down, status | Observability stack (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `settings` | edit | User settings TUI editor |
-| `skill` | install, show, remove | Manage the clawker-support Claude Code plugin |
+| `skill` | install, show, remove | Manage the clawker-support agent skills plugin |
 
-**Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
+**Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `version`
 
 Shared domain logic (container creation) lives in `shared/` subpackages within each command group — not in library packages.
 
@@ -225,7 +225,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 
 **Container names**: `clawker.project.agent` (3-segment) or `clawker.agent` (2-segment when project is empty)
 
-**Volume names**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
+**Volume names**: `clawker.project.agent-purpose` (reserved purposes: `workspace`, `history`, `clawker` lifecycle volume; plus the volumes the harness bundle declares, e.g. `config`)
 
 **Labels** (all under `dev.clawker.*`):
 

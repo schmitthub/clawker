@@ -48,7 +48,10 @@ var ErrListenerConfig = errors.New("clawkerd listener: config error")
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve
 // and is closed by Stop.
-func StartClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int), state agentState) (*grpc.Server, error) {
+func StartClawkerdListener(
+	boot *bootstrap, register *registerCoordinator, spawnEntry func(string) error, onFatal func(error),
+	log *logger.Logger, progress *progressReporter, requestExit func(int), state agentState,
+) (*grpc.Server, error) {
 	if spawnEntry == nil {
 		return nil, fmt.Errorf("%w: spawnEntry is required", ErrListenerConfig)
 	}
@@ -202,7 +205,7 @@ type clawkerdServer struct {
 	clawkerdv1.UnimplementedClawkerdServiceServer
 	log        *logger.Logger
 	register   *registerCoordinator
-	spawnEntry func() error
+	spawnEntry func(string) error
 	// progress drives the user-facing TTY boot-status reporter (plain
 	// status lines, no animation) shared across every Session for the
 	// process lifetime. Nil-tolerant; tests pass nil.

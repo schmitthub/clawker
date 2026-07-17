@@ -246,6 +246,18 @@ func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, brows
 		}
 		editVal = marshalYAMLValue(fv)
 
+	case elem.Kind() == reflect.Map && elem.Key().Kind() == reflect.String && elem.Elem().Kind() == reflect.Struct:
+		kind = KindStructMap
+		switch n := fv.Len(); n {
+		case 0:
+			browseVal = ""
+		case 1:
+			browseVal = "1 entry"
+		default:
+			browseVal = fmt.Sprintf("%d entries", n)
+		}
+		editVal = marshalYAMLValue(fv)
+
 	default:
 		// Unrecognized type — return KindStructSlice as a safe fallback.
 		// This is expected when consumers register custom kinds via KindFunc:

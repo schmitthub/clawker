@@ -5,6 +5,7 @@ package docker
 import (
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
@@ -25,9 +26,9 @@ func (c *Client) ContainerLabels(project, agent, version, image, workdir string)
 	return labels
 }
 
-// AgentVolumeLabels returns labels for an agent-scoped volume (config,
-// history, or workspace). All agent volumes carry purpose=PurposeAgent;
-// the per-volume role lives in the volume name suffix, not the label.
+// AgentVolumeLabels returns labels for an agent-scoped volume (history or
+// workspace). All agent volumes carry purpose=PurposeAgent; the per-volume
+// role lives in the volume name suffix, not the label.
 func (c *Client) AgentVolumeLabels(project, agent string) map[string]string {
 	labels := map[string]string{
 		c.cfg.LabelManaged(): c.cfg.ManagedLabelValue(),
@@ -37,6 +38,21 @@ func (c *Client) AgentVolumeLabels(project, agent string) map[string]string {
 	if project != "" {
 		labels[c.cfg.LabelProject()] = project
 	}
+	return labels
+}
+
+// HarnessVolumeLabels returns labels for a harness-scoped agent volume
+// (bundle-declared persisted dirs and the clawker lifecycle volume): the
+// agent volume labels plus the harness identity. The harness value is the
+// harness's exact selection spelling — a bare floor/loose name, or the
+// qualified namespace.bundle.component address for an installed-bundle
+// harness — the same vocabulary containers and images already carry under
+// consts.LabelHarness, and what EnsureHarnessVolume checks ownership
+// against. Label-based cleanup filters on the agent labels, so
+// harness-scoped volumes stay in its net.
+func (c *Client) HarnessVolumeLabels(project, agent, harness string) map[string]string {
+	labels := c.AgentVolumeLabels(project, agent)
+	labels[consts.LabelHarness] = harness
 	return labels
 }
 

@@ -1,0 +1,8 @@
+description: Synthetic codex-style unit for generation tests
+logs:
+  - index: synthetic-codex
+    service_names: [synthetic-codex]
+    retention: custom
+metrics:
+  datapoint_renames:
+    - { from: type, to: kind }

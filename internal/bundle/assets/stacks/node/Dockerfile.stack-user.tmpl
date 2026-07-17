@@ -1,0 +1,19 @@
+# nvm — runtime Node version-switch tool. zsh sources .zshenv on every
+# invocation, so nvm is available in interactive and non-interactive shells.
+# Installed via its canonical installer (nvm-sh). Floated, not pinned: a
+# frozen tag rots into an unpatched installer Dependabot can't track (curl|bash,
+# not a package) — the failure mode CVE-2026-10796 caused for nvm <=0.40.4. nvm
+# itself checksums the Node tarballs it downloads. Rationale: docs/threat-model.mdx.
+# The root fragment's NODE_VERSION ARG is in scope here, so the installer
+# auto-installs that LTS line into ~/.nvm and sets it as the default alias.
+# Deliberate: shells that source nvm (zsh via .zshenv — user_run build steps
+# and interactive sessions alike) resolve npm to the user-owned nvm prefix,
+# making unprivileged `npm install -g` work with no system-prefix games.
+# Guarded: an existing ~/.nvm (image- or user-provided) is left untouched.
+RUN if [ -s "$HOME/.nvm/nvm.sh" ]; then \
+      echo "clawker stack nvm: $HOME/.nvm already present — skipping install"; \
+    else \
+      NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/latest | jq -r '.tag_name') && \
+      { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \
+      curl -sSfL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh" | PROFILE=${ZSH_ENV} bash ; \
+    fi

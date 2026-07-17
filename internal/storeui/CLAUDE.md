@@ -100,8 +100,8 @@ Edit[T](ios, store, opts...):
   4. Filter skip paths, ApplyOverrides (domain overrides — TUI-specific only)
   5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
-  7. OnFieldSaved callback per field: store.Set(fieldPath, coercedValue) + writeFieldToFile(target)
-  7b. OnFieldDeleted callback per field: store.Remove(path) + store.WriteTo(target.Path)
+  7. OnFieldSaved callback per field: store.Set(fieldPath, coercedValue) + store.WriteFieldTo(target.Path, fieldPath)
+  7b. OnFieldDeleted callback per field: store.Remove(path) + store.WriteFieldTo(target.Path, fieldPath)
   8. Return Result (Saved, SavedCount)
 ```
 
@@ -111,7 +111,7 @@ Edit[T](ios, store, opts...):
 2. Consumer-defined `FieldKind` values (`> KindLast`) map to `BrowserStructSlice` and are forced `ReadOnly = true` by `fieldsToBrowserFields`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
-5. `LayerTarget.Path` used by `writeFieldToFile()` for direct per-field YAML writes to the chosen target file
+5. `LayerTarget.Path` is the destination for `store.WriteFieldTo` — only the saved field is flushed, so unrelated staged state (e.g. a preset store's seed marks) never lands in the chosen target file
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 7. `KindMap` → `BrowserMap` → `KVEditorModel` (interactive key-value pair editor); `KindStructSlice` → `BrowserStructSlice` → `TextareaEditorModel` (raw YAML)
 8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.

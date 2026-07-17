@@ -4,10 +4,11 @@ import (
 	aliascmd "github.com/schmitthub/clawker/internal/cmd/alias"
 	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
+	bundlecmd "github.com/schmitthub/clawker/internal/cmd/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
-	"github.com/schmitthub/clawker/internal/cmd/generate"
+	harnesscmd "github.com/schmitthub/clawker/internal/cmd/harness"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
@@ -16,6 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
 	"github.com/schmitthub/clawker/internal/cmd/skill"
+	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
@@ -29,13 +31,13 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 
 	cmd := &cobra.Command{
 		Use:   "clawker",
-		Short: "Manage Claude Code in secure Docker containers with clawker",
-		Long: `Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
+		Short: "Run coding agents in secure Docker containers with clawker",
+		Long: `Clawker wraps coding agent harnesses (Claude Code and others) in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
   clawker init           # Initialize project in current directory
   clawker build          # Build the container image
-  clawker run            # Start Claude Code in a container
+  clawker run            # Start the agent in a container
   clawker stop           # Stop the container
 
 Workspace modes:
@@ -67,11 +69,13 @@ Workspace modes:
 	cmd.AddCommand(settings.NewCmdSettings(f))
 	cmd.AddCommand(skill.NewCmdSkill(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
-	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 
 	// Add management commands
 	cmd.AddCommand(aliascmd.NewCmdAlias(f, func(name string) bool { return builtinCommandExists(cmd, name) }))
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
+	cmd.AddCommand(bundlecmd.NewCmdBundle(f))
+	cmd.AddCommand(harnesscmd.NewCmdHarness(f))
+	cmd.AddCommand(stackcmd.NewCmdStack(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))

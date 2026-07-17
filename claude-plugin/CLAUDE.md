@@ -19,13 +19,16 @@ the Claude Code plugin and skill authoring conventions:
   are not executed, compiled, or parsed programmatically.
 - **plugin.json is the package manifest.** It follows the Claude Code plugin
   spec (`name`, `description`, `version`, `author`, `license`, `repository`,
-  `homepage`).
+  `homepage`). Its `version` is the plugin's single version of record; bump it
+  once per unmerged release.
 - Consult `https://docs.claude.com/en/docs/claude-code/plugins` for the
   current plugin and skill authoring standards when making structural changes.
 
 ## Relationship to Clawker Codebase
 
-These plugins live inside the clawker repo but are consumed independently by
-Claude Code users. Changes to clawker's config schema, CLI commands, or
-architecture may require plugin updates — see each plugin's own CLAUDE.md for
-domain-specific guidance.
+These plugins live inside the clawker repo solely to prevent drift: changes to
+clawker's config schema, CLI commands, or architecture land in the same tree
+as the skill docs they invalidate. Distribution is external — the
+`schmitthub/claude-plugins` marketplace repo pins this repo + subdir at a
+released SHA (auto-bumped by CI on merges to main that touch this directory).
+See each plugin's own CLAUDE.md for domain-specific guidance.

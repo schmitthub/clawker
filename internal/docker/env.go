@@ -140,12 +140,16 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvOTelResourceAttributes] = strings.Join(resourceAttrs, ",")
 	}
 
-	// Disable telemetry when monitoring stack is not running.
-	// The Dockerfile sets CLAUDE_CODE_ENABLE_TELEMETRY=1 by default; override it
-	// here so containers don't silently attempt exports to unreachable otel-collector.
-	// Users can still force-enable via agent.env (applied after this).
+	// Disable telemetry when the monitoring stack is not running. The
+	// harness image bakes otlp exporter defaults; override every signal to
+	// the standard OTel "none" exporter here so containers don't silently
+	// attempt exports to an unreachable otel-collector. Harness-blind —
+	// any OTel-instrumented harness honors these. Users can still
+	// force-enable via agent.env (applied after this).
 	if !opts.MonitoringActive {
-		m[consts.EnvClaudeCodeEnableTelemetry] = "0"
+		m[consts.EnvOTelMetricsExporter] = consts.OTelExporterNone
+		m[consts.EnvOTelLogsExporter] = consts.OTelExporterNone
+		m[consts.EnvOTelTracesExporter] = consts.OTelExporterNone
 	}
 
 	// Socket forwarding (consumed by clawker-socket-server binary inside container)

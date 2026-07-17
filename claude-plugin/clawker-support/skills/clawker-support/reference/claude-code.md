@@ -1,18 +1,19 @@
 # Claude Code
 
-How clawker integrates with Claude Code inside agent containers. Today that
-means **authentication** — sharing the host login with containers and why that
-sharing has limits. (Other Claude Code topics get their own section here as they
-come up.)
+How clawker integrates with the Claude Code harness inside agent containers.
+Today that means **authentication** — how a container gets and keeps a login.
+(Other Claude Code topics get their own section here as they come up.)
 
 ## Authentication
 
 Read this section when a user reports authentication prompts (`/login`) inside
-containers, or asks how `use_host_auth` works.
+containers, or asks whether their host login is shared with containers.
 
-`use_host_auth` (under `agent.claude_code`, default enabled) is the only knob.
-Fetch `https://docs.clawker.dev/configuration` for the current field path and
-schema — everything below is the stable model, not field syntax.
+**The model in one line: host credentials are never copied into containers.
+The user authenticates once inside the container, and the credential persists
+in the harness config volume.** There is no host-auth knob — authentication is
+in-container by design. Fetch `https://docs.clawker.dev/configuration` and
+`https://docs.clawker.dev/credentials` for current fields and details.
 
 ### The credential model
 
@@ -22,129 +23,61 @@ Claude Code authenticates with an OAuth credential pair:
 - a **refresh token** — long-lived, used to mint a new access token (and a
   newly rotated refresh token) when the access token expires
 
-On the **host**, Claude Code keeps this pair in the OS keychain (with a file
-fallback). When the access token expires, Claude Code silently refreshes it
-using the refresh token and writes the rotated pair back to the keychain. The
-user never sees a prompt as long as the refresh token is still valid. A prompt
-(`/login`) appears only when the refresh token itself is expired, revoked, or
-**already rotated away**.
+Refresh tokens are single-use: each refresh mints a new refresh token and
+invalidates the old one. Inside a container this is invisible — the container
+is the sole holder of its own credential family, refreshes land cleanly in the
+config volume, and the container keeps itself logged in indefinitely.
 
-Refresh tokens are **single-use**: each refresh mints a new refresh token and
-**permanently invalidates the old one** (rotation with reuse detection). On the
-host this is invisible — one holder, one keychain, refreshes serialized behind a
-lock, so the rotated pair always lands cleanly. The wrinkle appears only when
-*two* holders share one refresh token, which is exactly what create-time copying
-produces (see below).
+### How a container authenticates
 
-**Who actually hits this, and how often.** A collision needs a *refresh*, and a
-refresh only fires once the access token expires. A container that lives shorter
-than the access-token lifetime never refreshes — it rides the inherited,
-still-valid access token and exits — so it never collides. Ephemeral and
-short-lived containers get the full zero-touch benefit with no downside. Only
-**long-lived** containers (ones that outlive the inherited access token) are
-exposed, and only **once**: the forced `/login` mints that container its own
-independent family, permanently decoupling it from the host. So this is a
-bounded, self-correcting, one-time-per-container event — not perpetual churn —
-and the host, as the most frequent refresher, stays current and is not the loser
-in practice. A user who wants a long-lived container to skip even that single
-prompt can set `use_host_auth: false` and `/login` once up front (own family
-from the start).
+1. **First run against a fresh config volume**: Claude Code has no credential
+   and prompts `/login`. The OAuth browser flow is proxied to the **host
+   browser** automatically (clawker's host proxy handles the callback), so the
+   user completes login in their normal browser even though Claude Code runs
+   in the container. Anthropic's login domains are part of the claude
+   harness's default egress floor, so the flow works with the firewall on.
+2. **Claude Code stores the credential in the config volume.** On Linux,
+   Claude Code uses an OS Secret Service when one is present and falls back to
+   a plaintext credentials file otherwise. Clawker's images ship no Secret
+   Service, so the credential lands as a file under the harness config dir —
+   which is a named volume. This file fallback is *why* persistence works: if
+   a user bakes a Secret Service backend (e.g. `gnome-keyring` + `dbus`) into
+   the image, refreshed credentials may land in the keyring instead, which
+   does not survive container recreation. Let Claude Code use the file.
+3. **The volume outlives the container.** Restarts, and recreates that reuse
+   the same project + agent name (and thus the same config volume), stay
+   logged in. When the access token expires, Claude Code silently refreshes it
+   against the OAuth endpoint and writes the rotated pair back into the
+   volume. No further prompts.
 
-### How clawker shares it with a container
+The host's login and the container's login are fully independent credential
+families. Nothing syncs between them, in either direction — an agent can never
+touch the host keychain, and host re-logins have no effect on containers.
 
-When `use_host_auth` is enabled, clawker reads the host's stored Claude
-credentials **once, at container create time**, and writes them into the
-container's config **named volume** (mounted at `~/.claude`, as
-`.credentials.json`). Three properties follow from this, and they explain almost
-every support question:
+### Troubleshooting `/login` prompts
 
-1. **Create-only snapshot.** Injection happens when the container is *created*,
-   never on `start` or `restart`. A restarted container keeps whatever
-   credentials its volume already holds. Re-running `clawker` against an
-   existing container does not re-read the host.
+A `/login` prompt inside a container is expected exactly when the config
+volume has no valid credential:
 
-2. **The volume self-heals.** Claude Code on Linux stores credentials in an OS
-   Secret Service (libsecret / gnome-keyring over D-Bus) **when one is present**,
-   and falls back to the plaintext `.credentials.json` otherwise. Clawker's base
-   image ships no Secret Service, so Claude Code reads and writes
-   `.credentials.json` in the config volume directly. The first time the
-   in-container access token expires, Claude Code refreshes it against the OAuth
-   endpoint (allowlisted by default) and writes the rotated pair *back into the
-   volume*. Because the volume persists across restarts, that refreshed refresh
-   token sticks — the container keeps itself logged in on its own from then on.
+- **Brand-new agent (fresh config volume)** — first-run login, one time. The
+  browser flow opens on the host automatically; if it doesn't, the host proxy
+  may be down — restarting the container re-establishes it.
+- **Config volume was removed or recreated** (`clawker volume remove`, or a
+  recreate under a different agent name) — the credential lived in the old
+  volume; log in once in the new one.
+- **Credential revoked or expired server-side** (e.g. revoked from the
+  Anthropic console, or the container was stopped so long the refresh token
+  lapsed) — log in once; the volume self-heals from there.
 
-   This file fallback is *why* persistence works. If a user bakes a Secret
-   Service backend (e.g. `gnome-keyring` + `dbus`) into a custom image, Claude
-   Code may store refreshed credentials in the keyring instead — which does not
-   live under `~/.claude`, so it would not survive container recreation and
-   could defeat the self-heal. For shared-host-auth to behave as described, let
-   Claude Code use the file.
+**Repeated** prompts in the *same* container/volume are not expected. Check:
 
-3. **The two sides never sync — by design.** clawker plants a byte-for-byte copy
-   of the credential at create time and nothing more. From then on the host and
-   the container refresh independently, and clawker propagates nothing between
-   them. That is deliberate on three counts: an agent must never write to the
-   host keychain (a hard security boundary); a single host login can back many
-   containers that each refresh their own volume on their own schedule, so there
-   is no coherent "sync" to perform; and Anthropic's terms reserve OAuth
-   credential handling — refresh, rotation, any mutation — to first-party Claude
-   Code. clawker only seeds the initial copy; it never takes part in a token
-   exchange. This one-way model is the root of the `/login` confusion below.
+- The OAuth/login domains are reachable — they're in the claude harness's
+  egress floor by default, but verify with `clawker firewall list` if the
+  project heavily customizes rules.
+- Something is wiping the config volume between runs (e.g. scripts removing
+  volumes, or the user running one-off agents under new names each time —
+  each new agent name gets its own fresh volume and thus its own login).
 
-An expired *access* token at create time is harmless: clawker injects it
-anyway, because the refresh token (not the access token) is what lets Claude
-Code recover, and it refreshes on first use. Only the **refresh token's**
-validity matters for whether a fresh container starts authenticated.
-
-### Troubleshooting
-
-#### Repeated `/login` in new containers despite `use_host_auth` enabled
-
-**Symptom.** Every new agent container prompts for `/login` even though
-`agent.claude_code.use_host_auth` is on.
-
-**Two causes, both expected, neither a misconfiguration:**
-
-1. **The shared refresh token was rotated away (most common).** The credential
-   clawker copied in was valid at create time, but single-use rotation
-   invalidated this container's copy: the host — or another container created
-   from the same login — refreshed first and "turned the token in," so when
-   *this* container later tries to refresh its (now stale) copy, the OAuth
-   server rejects it (`invalid_grant`) and Claude Code clears the credential and
-   prompts. This is inherent to sharing one rotating credential across two
-   independent holders; it is not stale-at-copy and not a clawker defect.
-
-2. **The host's refresh token was already expired or revoked at create time.**
-   The snapshot could never be refreshed, so Claude Code falls back to login
-   from the start. The shared credential was simply stale when copied.
-
-Both are reasoned about from the model above, not diagnosed from inside the
-container: the credential blob doesn't expose the refresh token's expiry or
-rotation state, and the sandbox can't reach the host keychain. In either case
-the in-container fix is identical — one `/login`, then the volume self-heals.
-
-**For the container that already prompted: nothing more to do.** Once the user
-completes `/login` inside it, Claude Code writes the fresh, rotated credentials
-into that container's config volume. The volume persists across restarts and
-keeps refreshing itself, so the user won't be prompted again in that container.
-They do **not** need to recreate or restart it.
-
-**To stop *future* new containers from prompting: re-authenticate on the host.**
-Have the user start a Claude Code session on the **host** and log in (or run
-any host Claude Code command that triggers a refresh). That writes a fresh
-refresh token into the host keychain, which new containers will snapshot at
-create time. Caveat: only containers created *after* the host re-auth benefit —
-ones created earlier keep their own (now self-healed) volume credentials.
-
-**If it persists for brand-new containers created after a host re-login**, rule
-out the simpler causes:
-
-- `use_host_auth` is actually disabled for this project/agent (it defaults on,
-  but a config may set it off). Confirm against the live config schema.
-- The container was created with `agent.claude_code.config.strategy: fresh`,
-  which skips copying host settings and plugins (clean slate). Credential
-  injection is controlled separately by `use_host_auth`; if both are disabled,
-  the container starts with no credentials and no host config.
-- The user was never authenticated on the host at all — in that case container
-  creation fails with an explicit "no credentials found" error rather than a
-  silent `/login` prompt, so this is a different symptom.
+Note: `harnesses.claude.config.strategy: fresh` skips copying host *settings
+and plugins* at create time (clean-slate config). It is unrelated to
+credentials — those are never copied from the host under any strategy.

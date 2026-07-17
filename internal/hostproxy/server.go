@@ -547,7 +547,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 
 	// Start a dynamic listener on the callback port
 	// This allows the host to capture OAuth callbacks on the same port
-	// that Claude Code expects, without rewriting the redirect_uri
+	// that the in-container agent expects, without rewriting the redirect_uri
 	if err := s.startDynamicListener(req.Port, session.ID); err != nil {
 		s.log.Error().Err(err).Int("port", req.Port).Msg("failed to start dynamic listener")
 		// Clean up the session since we couldn't start the listener

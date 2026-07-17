@@ -229,7 +229,10 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 			}
 		}
 
-		if werr := store.WriteTo(target.Path); werr != nil {
+		// Flush ONLY this field: the store may carry other staged mutations
+		// (a preset store's seed marks, edits routed to other targets), and a
+		// whole-store WriteTo would dump them all into this field's target.
+		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
@@ -245,7 +248,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if werr := store.WriteTo(target.Path); werr != nil {
+		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
@@ -578,6 +581,10 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 	case KindMap:
 		return tui.BrowserMap
 	case KindStructSlice:
+		return tui.BrowserStructSlice
+	case KindStructMap:
+		// Edited as a YAML mapping blob — same editor surface as struct
+		// slices (no dedicated struct-map widget).
 		return tui.BrowserStructSlice
 	default:
 		// Consumer-defined kinds (> KindLast) degrade to read-only display.

@@ -30,9 +30,9 @@ func Presets() []Preset {
 			YAML:        rustPreset,
 		},
 		{
-			Name:        "TypeScript",
+			Name:        "Node",
 			Description: "Node.js and TypeScript development",
-			YAML:        typescriptPreset,
+			YAML:        nodePreset,
 		},
 		{
 			Name:        "Java",
@@ -69,7 +69,8 @@ func Presets() []Preset {
 }
 
 const pythonPreset = `build:
-  image: "python:3.12-bookworm"
+  stacks:
+    - python
   packages:
     - ripgrep
     - build-essential
@@ -81,7 +82,8 @@ security:
 `
 
 const goPreset = `build:
-  image: "golang:1.25-bookworm"
+  stacks:
+    - go
   packages:
     - ripgrep
 security:
@@ -93,7 +95,8 @@ security:
 `
 
 const rustPreset = `build:
-  image: "rust:1-bookworm"
+  stacks:
+    - rust
   packages:
     - ripgrep
     - build-essential
@@ -106,18 +109,18 @@ security:
       - index.crates.io
 `
 
-// Node + npm are baked into every agent image by the default Dockerfile
-// template (see internal/bundler/assets/Dockerfile.tmpl) and NODE_USE_SYSTEM_CA
-// is set globally there. registry.npmjs.org is in the required firewall set
+// The node stack declaration provides node + npm before the project's
+// build instructions run. registry.npmjs.org is in the required firewall set
 // (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
 // layers on top.
-const typescriptPreset = `agent:
+const nodePreset = `agent:
   pre_run: |
     if [ -f package.json ]; then
       npm install || echo "warning: npm install failed; continuing"
     fi
 build:
-  image: "buildpack-deps:bookworm-scm"
+  stacks:
+    - node
   packages:
     - ripgrep
   instructions:
@@ -126,10 +129,10 @@ build:
 `
 
 const javaPreset = `build:
-  image: "eclipse-temurin:21-jdk-alpine"
+  stacks:
+    - java
   packages:
     - ripgrep
-    - maven
 security:
   firewall:
     add_domains:
@@ -138,10 +141,10 @@ security:
 `
 
 const rubyPreset = `build:
-  image: "ruby:3.3-bookworm"
+  stacks:
+    - ruby
   packages:
     - ripgrep
-    - build-essential
 security:
   firewall:
     add_domains:
@@ -150,15 +153,15 @@ security:
 `
 
 const cppPreset = `build:
-  image: "buildpack-deps:bookworm"
+  stacks:
+    - cpp
   packages:
     - ripgrep
-    - cmake
-    - g++
 `
 
 const dotnetPreset = `build:
-  image: "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
+  stacks:
+    - dotnet
   packages:
     - ripgrep
 security:
@@ -168,7 +171,6 @@ security:
 `
 
 const barePreset = `build:
-  image: "buildpack-deps:bookworm-scm"
   packages:
     - ripgrep
 `

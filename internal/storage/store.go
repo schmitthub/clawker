@@ -49,8 +49,18 @@ type Store[T Schema] struct {
 	opts       Options            // construction options (see Options accessor)
 	tags       tagRegistry        // merge tags from T's struct type (internal)
 	migrating  bool               // true while applyMigrations rewrites a layer node in place (snapshot kept best-effort)
-	mu         sync.Mutex         // guards tree + dirtyPaths + layers + prov (Get/Set/Remove/Write/MarkForWrite/Refresh)
-	txnMu      sync.Mutex         // serializes compound Get→Set→Write sequences across callers (see Txn)
+	// migratingPath is the file path of the layer currently being migrated
+	// ("" outside a migration pass). Exposed via MigratingLayerPath so a
+	// migration can name the owning file in its notices.
+	migratingPath string
+	// notices holds user-visible messages queued by migrations (via Noticef),
+	// tagged with the layer they describe. They are flushed to stderr by
+	// applyMigrations only after the owning layer's file rewrite has
+	// committed — never before, so a migration can't announce a file change
+	// that then fails to land.
+	notices []migrationNotice
+	mu      sync.Mutex // guards tree + dirtyPaths + layers + prov (Get/Set/Remove/Write/MarkForWrite/Refresh)
+	txnMu   sync.Mutex // serializes compound Get→Set→Write sequences across callers (see Txn)
 }
 
 // LayerInfo describes a discovered file layer. Data is a decoded map view of the
@@ -169,22 +179,29 @@ func (s *Store[T]) applyMigrations() error {
 	if err != nil {
 		return err
 	}
-	if len(pending) == 0 {
-		return nil
-	}
 
-	// Every layer's migrations applied cleanly — now commit the rewrites. Each
-	// writeFile is atomic (temp + rename), but the batch is not: a write error
-	// partway through leaves earlier files migrated and later ones not. That
-	// split state self-heals — every migration is precondition-guarded and
-	// idempotent, so the next load re-migrates only the remainder — rather than
-	// corrupting anything.
-	for _, pw := range pending {
-		if werr := s.writeFile(pw.path, pw.data); werr != nil {
-			return fmt.Errorf("storage: writing migrated %s: %w", pw.path, werr)
+	// Every layer's migrations applied cleanly — commit the rewrites, then
+	// flush the notices the migrations queued. Each writeFile is atomic
+	// (temp + rename), but the batch is not: a failure leaves some files
+	// migrated and others not. Either split heals itself — every migration is
+	// precondition-guarded and idempotent, so the next load re-migrates
+	// whatever remains on disk. A failed rewrite therefore DEGRADES instead of
+	// failing construction: the migrated values still apply in-memory for this
+	// run, the failed layer's own notices are suppressed (they would announce
+	// a file change that never landed), and a warning naming the file and
+	// error is printed instead.
+	failed := s.commitMigratedLayers(pending)
+	if len(pending) > 0 {
+		// Remerge BEFORE flushing: a migrated tree that no longer decodes
+		// (e.g. a known field carrying an undecodable value rode the rewrite)
+		// fails construction, and a dying load must not have announced its
+		// migrations as successes first — the error is the only message.
+		if rmErr := s.remerge(); rmErr != nil {
+			return rmErr
 		}
 	}
-	return s.remerge()
+	s.flushNotices(failed)
+	return nil
 }
 
 // pendingWrite is a staged migration rewrite: the encoded bytes of one layer's
@@ -192,6 +209,96 @@ func (s *Store[T]) applyMigrations() error {
 type pendingWrite struct {
 	path string
 	data []byte
+}
+
+// migrationNotice is one queued user-visible migration message, tagged with
+// the layer file it describes so a failed rewrite can suppress it.
+type migrationNotice struct {
+	layerPath string
+	text      string
+}
+
+// failedWrite records one staged migration rewrite that could not be
+// persisted to its origin file.
+type failedWrite struct {
+	path string
+	err  error
+}
+
+// commitMigratedLayers writes each staged rewrite to its origin file,
+// collecting failures instead of aborting so one unwritable file (e.g. a
+// read-only config dir) neither blocks the other layers' rewrites nor fails
+// construction.
+func (s *Store[T]) commitMigratedLayers(pending []pendingWrite) []failedWrite {
+	var failed []failedWrite
+	for _, pw := range pending {
+		if werr := s.writeFile(pw.path, pw.data); werr != nil {
+			failed = append(failed, failedWrite{path: pw.path, err: werr})
+		}
+	}
+	return failed
+}
+
+// Noticef queues a user-visible migration notice instead of printing it
+// immediately. Notices are flushed to stderr by applyMigrations only after
+// the owning layer's file rewrite has committed AND the migrated tree has
+// remerged cleanly, so a migration never announces a change that fails to
+// land on disk and a dying load never announces its migrations as successes.
+// For use by migration functions; the current layer (MigratingLayerPath) is
+// recorded with the notice so a failed rewrite suppresses exactly its own
+// layer's messages.
+//
+// Contract for authors: the engine gates flushing on write/remerge success,
+// not on whether the migration mutated anything — a notice queued without a
+// mutation still prints (deliberately: an advisory warning that changes
+// nothing is legitimate). Word notices accordingly: claim a change only from
+// a call site that makes one.
+func (s *Store[T]) Noticef(format string, args ...any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notices = append(s.notices, migrationNotice{
+		layerPath: s.migratingPath,
+		text:      fmt.Sprintf(format, args...),
+	})
+}
+
+// MigratingLayerPath returns the file path of the layer currently being
+// migrated, or "" outside a migration pass. Migrations run once per file
+// layer, so a migration uses this to name the owning file in its notices —
+// the same legacy key cleaned from two files yields two distinctly-named
+// messages instead of identical ones.
+func (s *Store[T]) MigratingLayerPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.migratingPath
+}
+
+// flushNotices prints queued migration notices to stderr, skipping notices
+// from layers whose rewrite failed — announcing keys removed from a file that
+// was never rewritten would be a lie — and printing a persistence-failure
+// warning naming each such file instead. The queue is cleared either way.
+func (s *Store[T]) flushNotices(failed []failedWrite) {
+	failedPaths := make(map[string]bool, len(failed))
+	for _, f := range failed {
+		failedPaths[f.path] = true
+	}
+	for _, n := range s.notices {
+		if failedPaths[n.layerPath] {
+			continue
+		}
+		text := n.text
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		fmt.Fprint(os.Stderr, text)
+	}
+	s.notices = nil
+	for _, f := range failed {
+		fmt.Fprintf(os.Stderr,
+			"warning: could not persist migrated %s: %v\n"+
+				"Its legacy values were migrated in-memory for this run only; the file rewrite will be retried on the next load.\n",
+			f.path, f.err)
+	}
 }
 
 // stageMigratedLayers runs the migrations against each file layer — not the
@@ -248,10 +355,11 @@ func (s *Store[T]) migrateLayer(i int, fns []func(*Store[T]) (bool, error)) (boo
 	s.tree = s.layers[i].node
 	s.dirtyPaths = nil
 	s.migrating = true
+	s.migratingPath = s.layers[i].path
 	// While migrating, Set/Remove graft into the layer node in place and keep
 	// the snapshot best-effort — the layer may be a legacy shape mid-fix that
 	// does not yet decode into T; the final strict decode runs after remerge.
-	defer func() { s.tree, s.dirtyPaths, s.migrating = merged, nil, false }()
+	defer func() { s.tree, s.dirtyPaths, s.migrating, s.migratingPath = merged, nil, false, "" }()
 
 	changed := false
 	for _, fn := range fns {
@@ -573,7 +681,7 @@ func kindAccepts(kind FieldKind, value any) bool {
 		}
 	case KindStringSlice, KindStructSlice:
 		return reflect.TypeOf(value).Kind() == reflect.Slice
-	case KindMap:
+	case KindMap, KindStructMap:
 		return reflect.TypeOf(value).Kind() == reflect.Map
 	case KindLast:
 		return true // boundary sentinel, not a real field kind
@@ -583,11 +691,11 @@ func kindAccepts(kind FieldKind, value any) bool {
 }
 
 // isOpaqueField returns true if the path is a schema-level value field that
-// should not be recursed into by tree operations. Non-union KindMap and
-// KindStructSlice are opaque. Union maps are NOT opaque — their entries
-// are individually merged and tracked. KindStructSlice is always opaque
-// regardless of merge tag — its merge semantics are handled in the sequence
-// branch of mergeNodes, not the mapping branch.
+// should not be recursed into by tree operations. Non-union KindMap,
+// KindStructMap, and KindStructSlice are opaque. Union maps are NOT opaque —
+// their entries are individually merged and tracked. KindStructSlice is
+// always opaque regardless of merge tag — its merge semantics are handled in
+// the sequence branch of mergeNodes, not the mapping branch.
 func isOpaqueField(tags tagRegistry, path string) bool {
 	meta, ok := tags[path]
 	if !ok {
@@ -596,7 +704,7 @@ func isOpaqueField(tags tagRegistry, path string) bool {
 	if meta.kind == KindMap && meta.mergeTag == mergeUnion {
 		return false // union maps recurse per-entry
 	}
-	return meta.kind == KindMap || meta.kind == KindStructSlice
+	return meta.kind == KindMap || meta.kind == KindStructMap || meta.kind == KindStructSlice
 }
 
 // Write persists dirty fields to disk, then refreshes layer data
@@ -637,6 +745,102 @@ func (s *Store[T]) WriteTo(path string) error {
 		return fmt.Errorf("storage: WriteTo requires an absolute path, got %q", path)
 	}
 	return s.write(path)
+}
+
+// WriteFieldTo persists a single dirty field (a staged Set or Remove on
+// fieldPath) to the given absolute path, leaving every other dirty field
+// staged for a later Write/WriteTo. This is the per-field save primitive:
+// a config editor routes each field to its user-chosen destination without
+// flushing unrelated staged state (a seed-marked preset store would
+// otherwise dump its whole seed into the first chosen file). A field that
+// is not dirty is a no-op. Other staged mutations survive the post-write
+// remerge: staged Set values are re-grafted and staged Removes re-applied,
+// since neither is layer-backed until its own flush.
+func (s *Store[T]) WriteFieldTo(path, fieldPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("storage: WriteFieldTo requires an absolute path, got %q", path)
+	}
+	op, ok := s.dirtyPaths[fieldPath]
+	if !ok {
+		return nil
+	}
+
+	var sets, deletes []string
+	switch op {
+	case dirtySet:
+		sets = []string{fieldPath}
+	case dirtyDeleted:
+		deletes = []string{fieldPath}
+	}
+
+	stagedSets, stagedDeletes := s.captureStaged(fieldPath)
+
+	if err := s.writeLayerFile(path, sets, deletes); err != nil {
+		return err
+	}
+	delete(s.dirtyPaths, fieldPath)
+
+	if err := s.refreshLayers(map[string]bool{path: true}); err != nil {
+		return err
+	}
+	if err := s.injectNewLayers([]string{path}); err != nil {
+		return err
+	}
+	if err := s.remerge(); err != nil {
+		return err
+	}
+	return s.restage(stagedSets, stagedDeletes)
+}
+
+// captureStaged snapshots the in-tree values of every dirty field except
+// exclude, so restage can re-apply them after a remerge rebuilds the tree
+// from layer data. Caller must hold s.mu.
+func (s *Store[T]) captureStaged(exclude string) (map[string]*yaml.Node, []string) {
+	var (
+		sets    map[string]*yaml.Node
+		deletes []string
+	)
+	for path, op := range s.dirtyPaths {
+		if path == exclude {
+			continue
+		}
+		switch op {
+		case dirtySet:
+			if n, ok := nodeValueAt(s.tree, strings.Split(path, ".")); ok {
+				if sets == nil {
+					sets = make(map[string]*yaml.Node)
+				}
+				sets[path] = cloneNode(n)
+			}
+		case dirtyDeleted:
+			deletes = append(deletes, path)
+		}
+	}
+	return sets, deletes
+}
+
+// restage re-applies captured staged mutations to the freshly remerged tree
+// and refreshes the typed snapshot. Caller must hold s.mu.
+func (s *Store[T]) restage(sets map[string]*yaml.Node, deletes []string) error {
+	if len(sets) == 0 && len(deletes) == 0 {
+		return nil
+	}
+	candidate := cloneNode(s.tree)
+	for path, node := range sets {
+		nodeGraftValue(candidate, strings.Split(path, "."), node)
+	}
+	for _, path := range deletes {
+		nodeDeletePath(candidate, strings.Split(path, "."))
+	}
+	decoded, err := decodeNode[T](candidate)
+	if err != nil {
+		return fmt.Errorf("storage: re-staging pending mutations after partial flush: %w", err)
+	}
+	s.tree = candidate
+	s.value.Store(decoded)
+	return nil
 }
 
 // write is the shared Write/WriteTo implementation. A non-empty target directs

@@ -90,31 +90,36 @@ func envForUser(env []string, user *ExecUser) []string {
 }
 
 // routeArgs implements the docker-image "--help routing" convention:
-// when argv[0] starts with "-" or is not on PATH, prepend "claude"
-// so `docker run <image> --help` invokes claude with --help rather
-// than failing with `exec: "--help": not found`. The string "claude"
-// is the image's default CMD; changing it requires changing the
-// Dockerfile CMD too.
+// when argv[0] starts with "-" or is not on PATH, prepend defaultCmd (the
+// image's default CMD binary, shipped by CP from image inspect) so
+// `docker run <image> --help` invokes the harness CLI with --help rather
+// than failing with `exec: "--help": not found`. An empty defaultCmd
+// disables routing — argv passes through untouched and a bad argv[0]
+// surfaces as the spawn's own lookup error.
 //
-// resolvedPath is non-empty only on the no-rewrite success path so
-// callers skip a redundant lookPath; the err return surfaces the
-// PATH-fail rewrite cause so callers can log a broken image rather
-// than silently running "claude <broken>".
-func routeArgs(argv []string, lookPath func(string) (string, error)) (routed []string, resolvedPath string, err error) {
-	if len(argv) == 0 {
+// The second return (resolved path) is non-empty only on the no-rewrite
+// success path so callers skip a redundant lookPath; the error return
+// surfaces the PATH-fail rewrite cause so callers can log a broken image
+// rather than silently running "<default> <broken>".
+func routeArgs(
+	argv []string,
+	lookPath func(string) (string, error),
+	defaultCmd string,
+) ([]string, string, error) {
+	if len(argv) == 0 || defaultCmd == "" {
 		return argv, "", nil
 	}
 	first := argv[0]
 	if strings.HasPrefix(first, "-") {
 		out := make([]string, 0, len(argv)+1)
-		out = append(out, "claude")
+		out = append(out, defaultCmd)
 		out = append(out, argv...)
 		return out, "", nil
 	}
 	p, lookErr := lookPath(first)
 	if lookErr != nil {
 		out := make([]string, 0, len(argv)+1)
-		out = append(out, "claude")
+		out = append(out, defaultCmd)
 		out = append(out, argv...)
 		return out, "", lookErr
 	}

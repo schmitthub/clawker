@@ -167,6 +167,8 @@ func kindToType(k storage.FieldKind) string {
 		return "key-value map"
 	case storage.KindStructSlice:
 		return "object list"
+	case storage.KindStructMap:
+		return "object map"
 	default:
 		return "string"
 	}

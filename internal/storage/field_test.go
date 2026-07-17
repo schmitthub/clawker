@@ -215,14 +215,24 @@ func TestNormalizeFields_Int64(t *testing.T) {
 
 // --- KindFunc extension tests ---
 
+func TestNormalizeFields_StructMap(t *testing.T) {
+	type withStructMap struct {
+		Items map[string]fieldTestNested `yaml:"items" desc:"Map of structs"`
+	}
+	fs := NormalizeFields(withStructMap{Items: nil})
+	f := fs.Get("items")
+	require.NotNil(t, f)
+	assert.Equal(t, KindStructMap, f.Kind())
+}
+
 func TestNormalizeFields_NonStringMap_PanicsWithoutKindFunc(t *testing.T) {
-	t.Run("map_string_struct", func(t *testing.T) {
-		type withStructMap struct {
-			Items map[string]fieldTestNested `yaml:"items" desc:"Map of structs"`
+	t.Run("map_string_slice_values", func(t *testing.T) {
+		type withSliceMap struct {
+			Items map[string][]string `yaml:"items" desc:"Map of string slices"`
 		}
 		assert.PanicsWithValue(t,
-			`storage.NormalizeFields: unsupported field type map[string]storage.fieldTestNested at path "items"`,
-			func() { NormalizeFields(withStructMap{}) },
+			`storage.NormalizeFields: unsupported field type map[string][]string at path "items"`,
+			func() { NormalizeFields(withSliceMap{Items: nil}) },
 		)
 	})
 	t.Run("map_int_string", func(t *testing.T) {
@@ -234,48 +244,45 @@ func TestNormalizeFields_NonStringMap_PanicsWithoutKindFunc(t *testing.T) {
 }
 
 func TestNormalizeFields_NonStringMap_ClassifiedByKindFunc(t *testing.T) {
-	type entry struct {
-		Path string `yaml:"path"`
-	}
-	type withStructMap struct {
-		Items map[string]entry `yaml:"items" desc:"Map of entries"`
+	type withSliceMap struct {
+		Items map[string][]string `yaml:"items" desc:"Map of string slices"`
 	}
 
-	const KindEntryMap FieldKind = KindLast + 1
+	const kindSliceMap FieldKind = KindLast + 1
 
-	fs := NormalizeFields(withStructMap{}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
-		if ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem() == reflect.TypeFor[entry]() {
-			return KindEntryMap, true
+	fs := NormalizeFields(withSliceMap{Items: nil}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
+		if ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem() == reflect.TypeFor[[]string]() {
+			return kindSliceMap, true
 		}
 		return 0, false
 	}))
 
 	f := fs.Get("items")
 	require.NotNil(t, f)
-	assert.Equal(t, KindEntryMap, f.Kind())
+	assert.Equal(t, kindSliceMap, f.Kind())
 }
 
 func TestNormalizeFields_KindFunc_FallsThroughToPanic(t *testing.T) {
-	type withStructMap struct {
-		Items map[string]fieldTestNested `yaml:"items" desc:"Map of structs"`
+	type withSliceMap struct {
+		Items map[string][]string `yaml:"items" desc:"Map of string slices"`
 	}
 
 	// KindFunc that doesn't claim the type — should still panic.
 	assert.Panics(t, func() {
-		NormalizeFields(withStructMap{}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
+		NormalizeFields(withSliceMap{Items: nil}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
 			return 0, false
 		}))
 	})
 }
 
 func TestNormalizeFields_KindFunc_RejectsStorageDefinedKinds(t *testing.T) {
-	type withStructMap struct {
-		Items map[string]fieldTestNested `yaml:"items" desc:"Map of structs"`
+	type withSliceMap struct {
+		Items map[string][]string `yaml:"items" desc:"Map of string slices"`
 	}
 
 	// KindFunc returning a storage-defined kind should panic.
 	assert.Panics(t, func() {
-		NormalizeFields(withStructMap{}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
+		NormalizeFields(withSliceMap{Items: nil}, WithKindFunc(func(ft reflect.Type) (FieldKind, bool) {
 			return KindText, true // wrong — consumer must use KindLast+N
 		}))
 	})

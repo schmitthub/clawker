@@ -41,10 +41,10 @@ FIELD     (command imports package directly)
 | Package | Contains |
 |---------|----------|
 | `internal/cmdutil/` | Factory struct, output utilities, arg validators (imports `internal/docker` only for the `*docker.Client` closure type on `Factory`) |
-| `internal/bundler/` | Dockerfile generation, flavor selection, npm version resolution (leaf — no docker import) |
+| `internal/bundler/` | Dockerfile generation, harness version resolution (leaf — no docker import) |
 | `internal/project/` | Project registration in user registry |
 | `internal/containerfs/` | Host Claude config preparation — tar archives for config volume (leaf — config types only, no docker runtime) |
-| `internal/docker/` | Container naming, image resolution, image building (`Builder`, `BuildDefaultImage`), Docker middleware |
+| `internal/docker/` | Container naming, image resolution, image building (`Builder`, `Build`), Docker middleware |
 | `internal/controlplane/` | CP daemon core: startup orchestrator, Ory auth stack, AdminService composition, agent watcher |
 | `internal/controlplane/cpboot/` | Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawkercp + ebpf-manager binaries. Split from `internal/controlplane/` so `cmd/clawkercp` can import the parent daemon package without dragging in `go:embed` directives for its own binary |
 | `internal/controlplane/firewall/` | Firewall `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certificate management, rules store, network discovery, cgroup helpers |

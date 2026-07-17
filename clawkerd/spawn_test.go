@@ -108,18 +108,43 @@ func TestRouteArgs(t *testing.T) {
 		name         string
 		argv         []string
 		lookPath     func(string) (string, error)
+		defaultCmd   string
 		want         []string
 		wantResolved string // non-empty only on the no-rewrite success path
 		wantErr      bool   // routeArgs surfaces lookPath errs only on PATH-fail rewrite
 	}{
-		{name: "empty", argv: nil, lookPath: resolves, want: nil},
-		{name: "leading dash", argv: []string{"--help"}, lookPath: resolves, want: []string{"claude", "--help"}},
-		{name: "resolvable command", argv: []string{"bash", "-l"}, lookPath: resolves, want: []string{"bash", "-l"}, wantResolved: "/usr/bin/bash"},
-		{name: "unresolvable command", argv: []string{"unknown"}, lookPath: notFound, want: []string{"claude", "unknown"}, wantErr: true},
+		{
+			name: "empty", argv: nil, lookPath: resolves, defaultCmd: "claude",
+			want: nil, wantResolved: "", wantErr: false,
+		},
+		{
+			name: "leading dash", argv: []string{"--help"}, lookPath: resolves, defaultCmd: "claude",
+			want: []string{"claude", "--help"}, wantResolved: "", wantErr: false,
+		},
+		{
+			name: "resolvable command", argv: []string{"bash", "-l"}, lookPath: resolves, defaultCmd: "claude",
+			want: []string{"bash", "-l"}, wantResolved: "/usr/bin/bash", wantErr: false,
+		},
+		{
+			name: "unresolvable command", argv: []string{"unknown"}, lookPath: notFound, defaultCmd: "claude",
+			want: []string{"claude", "unknown"}, wantResolved: "", wantErr: true,
+		},
+		{
+			name: "another harness default", argv: []string{"--help"}, lookPath: resolves, defaultCmd: "codex",
+			want: []string{"codex", "--help"}, wantResolved: "", wantErr: false,
+		},
+		{
+			name: "no default disables routing on dash", argv: []string{"--help"}, lookPath: resolves, defaultCmd: "",
+			want: []string{"--help"}, wantResolved: "", wantErr: false,
+		},
+		{
+			name: "no default disables routing on miss", argv: []string{"unknown"}, lookPath: notFound, defaultCmd: "",
+			want: []string{"unknown"}, wantResolved: "", wantErr: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, resolved, err := routeArgs(tc.argv, tc.lookPath)
+			got, resolved, err := routeArgs(tc.argv, tc.lookPath, tc.defaultCmd)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("routeArgs(%v) = %v, want %v", tc.argv, got, tc.want)
 			}

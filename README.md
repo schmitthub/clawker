@@ -1,4 +1,4 @@
-# Clawker — self-hosted AI coding agent sandbox (run Claude Code in Docker)
+# Clawker — self-hosted AI coding agent sandbox (run Claude Code, Codex & more in Docker)
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
@@ -7,11 +7,12 @@
   <a href="#"><img src="https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple" alt="macOS"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Linux-4DA3FF?logo=linux&logoColor=fff&labelColor=0057B8" alt="Linux"></a>
   <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Codex-000000?logo=openai&logoColor=fff" alt="Codex"></a>
   <img alt="Vibe coded with love" src="https://img.shields.io/badge/Vibe%20coded%20with-%F0%9F%92%97-1f1f1f?labelColor=ff69b4">
 </p>
 
 <p align="center">
-<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs <code>Claude Code</code> (and other AI agents) in isolated <code>Docker</code> containers on your own machine, no cloud and no subscription. It pairs a deny-by-default egress firewall (Envoy + custom CoreDNS + eBPF) for prompt-injection and data-exfiltration protection with the convenience features you actually want: image building, monitoring, parallel git-worktree agents, and credential forwarding — a devcontainer alternative that's local, free, <em>and</em> security-deep, for Anthropic's models including the latest mythos-class <code>Fable 5</code>. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
+<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs coding-agent harnesses (<code>Claude Code</code> and <code>OpenAI Codex</code> ship built-in, more on the way, and you can bring your own via harness bundles) in isolated <code>Docker</code> containers on your own machine, no cloud and no subscription. It pairs a deny-by-default egress firewall (Envoy + custom CoreDNS + eBPF) for prompt-injection and data-exfiltration protection with the convenience features you actually want: image building, monitoring, parallel git-worktree agents, and credential forwarding — a devcontainer alternative that's local, free, <em>and</em> security-deep, whatever model your harness talks to (including Anthropic's latest mythos-class <code>Fable 5</code>). It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run coding agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and the sandbox modes these harnesses ship are the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running an agent in a container (you never even have to write a Dockerfile, it's got you covered).
 </p>
 
 <div align="center">
@@ -26,7 +27,7 @@
 
 ## Table of Contents
 
-- [Clawker — self-hosted AI coding agent sandbox (run Claude Code in Docker)](#clawker--self-hosted-ai-coding-agent-sandbox-run-claude-code-in-docker)
+- [Clawker — self-hosted AI coding agent sandbox (run Claude Code, Codex \& more in Docker)](#clawker--self-hosted-ai-coding-agent-sandbox-run-claude-code-codex--more-in-docker)
   - [Table of Contents](#table-of-contents)
   - [High-Level Feature Overview](#high-level-feature-overview)
   - [Installation](#installation)
@@ -47,30 +48,28 @@
 ---
 
 <details>
-<summary>Boring TLDR backstory</summary>
-The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, my first instinct was to protect my own machine by building the harness for the harness: an "agent-in-container" solution. Clawker started as my way to learn Claude Code, then proved useful enough to open source as a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
-
-When I began experimenting with Claude Code to keep up with the Agentic AI trend, I was surprised by the total absence of local development container offerings for using it. Claude Code's sandbox mode is lackluster; the only other options for isolation and orchestration involve paid remote services, which seems silly to me—we've had containers for over a decade now. The Claude Code docs recommend using containers, but they only offer a devcontainer example, which is a step in the right direction but leaves you coupled to the IDE. The DIY approach results in managing multiple Claude Code Dockerfiles, maybe a container registry, per language stack/project, which also sucks, and there are a lot of internals that devcontainers offer that vanilla containers don't have. So I decided to build something that abstracts away all the complexity of creating, managing, automating, and running Claude Code in containers with Docker. It served as a good project to learn the ways of "Agentic Engineering" and "vibing" (exhausting btw, beware of some hilarious slop I've been cleaning up in this code base), but Clawker has become very useful for me, so I've decided to open source it for anyone yearning for a better local development container experience.
+<summary>Boring TLDR manifesto</summary>
+The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, I want my own machine protected, so clawker is the harness for the harness: an "agent-in-container" solution and a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
 </details>
 
 ## High-Level Feature Overview
 
-- **Embedded parameterized Dockerfile template** inspired by the official devcontainer image, supporting Alpine or Debian base images with common tools preinstalled: git, curl, vim, zsh, ripgrep, etc. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `claude` user kernel-side, and supervises the user CMD for the container's lifetime
+- **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle (a manifest + Dockerfile fragment + optional assets) and declaring it in your project's `clawker.yaml`. Images are harness-keyed: `clawker build -t codex` builds a specific harness, `clawker run @:codex` runs it, and the default harness carries a `:default` alias so bare `@` just works
+- **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, language **stacks** (go, node, python, rust, java, ruby, cpp, dotnet), and custom instructions, with a thin per-harness image layered on top. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `claude` user kernel-side, and supervises the harness for the container's lifetime
 - **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry (sqlite), mTLS auth, and the command channel to every agent's `clawkerd`. The CLI talks to it over mTLS gRPC + OAuth2; see `clawker controlplane status`, `clawker controlplane agents`
-- **Static Dockerfile generation** if you desire a tangible Dockerfile to build and customize yourself (this repo was at first going to just be a docker image packaging repo for my private dockerhub lol so I kept this in here)
 - **Injectable build-time instructions** to customize images per project: packages, environment variables, root run commands, user run commands, and more
 - **Bind or snapshot workspace modes**: mount your repository to the container for live editing, or copy it at runtime for pure isolation
-- **Fresh or copy agent mode**: start with a clean Claude Code install, or copy all your Claude Code settings, plugins, authentication, skills, etc. into the container at runtime for a seamless transition from doing work in a host instance to a container
+- **Fresh or copy agent mode**: start the harness with a clean slate, or stage your host settings, plugins, and skills into the container at create time for a seamless transition from doing work in a host instance to a container (the claude harness stages settings, CLAUDE.md, agents, skills, commands, and plugins). Credentials are never copied — you authenticate once inside the container (browser flows are proxied to your host) and the login persists in the harness's config volume across restarts and recreates
 - **Seamless Git credential forwarding**: toggleable SSH agent, GPG agent forwarding from the host using muxrpc (just like devcontainers) for zero-config access to private repositories and commit signing
-- **Host proxy service** copies git ssh keys into the container and sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with `claude` or `gh`
+- **Host proxy service** sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with your harness (`claude`, `codex`) or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
-- **Injectable post-initialization bash script** that runs after the container starts but before Claude Code launches, letting you set up MCPs, etc.
-- **Envoy + custom CoreDNS + eBPF network firewall** enabled by default — Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network, while eBPF cgroup programs (loaded and attached from outside agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Provides DNS-level deny-by-default (unlisted domains return NXDOMAIN), per-domain TCP routing via a real-time BPF DNS cache, and TLS inspection with per-domain MITM certificates for path-level filtering. Agent containers themselves get **no Linux capabilities** — all enforcement happens kernel-side, outside the container's privilege scope. System-required rules (Claude API, Docker registry) are always present; project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status` (or `clawker firewall refresh` to live-apply project config egress edits), temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
+- **Injectable post-initialization bash script** that runs after the container starts but before the harness launches, letting you set up MCPs, etc.
+- **Envoy + custom CoreDNS + eBPF network firewall** enabled by default — Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network, while eBPF cgroup programs (loaded and attached from outside agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Provides DNS-level deny-by-default (unlisted domains return NXDOMAIN), per-domain TCP routing via a real-time BPF DNS cache, and TLS inspection with per-domain MITM certificates for path-level filtering. Agent containers themselves get **no Linux capabilities** — all enforcement happens kernel-side, outside the container's privilege scope. Each harness bundle ships its own egress floor (the claude harness allows the Anthropic API + OAuth domains, codex the OpenAI ones); project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status` (or `clawker firewall refresh` to live-apply project config egress edits), temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
 - **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
-- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable agent: `clawker go dev`) and `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
+- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable default-harness agent: `clawker go dev`), `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`), and per-harness `claude`/`codex` (harness plus its auto-approve flag in one word) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary. Worktree containers ship extra security lockdown for unattended sessions — see [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats)
 - **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
@@ -113,7 +112,7 @@ export PATH="$PWD/bin:$PATH"
 
 ## Quick Start
 
-The fastest path to a seamless containerized Claude Code instance, with all your host settings, plugins, and creds copied in so you can get to work right away.
+The fastest path to a seamless containerized coding agent, with your host settings, plugins, and skills staged in so you can get to work right away. On first run you authenticate inside the container — the browser flow pops on your host automatically, and the login persists in the agent's config volume from then on.
 
 ```bash
 cd your-project
@@ -130,7 +129,7 @@ clawker go dev
 > The `go` command is a built-in alias for:  
 >
 > ```bash
-> clawker run -it --rm --agent $1 @ --dangerously-skip-permissions
+> clawker run --rm -it --agent $1 @
 > ```
 >
 > So `clawker go dev` expands to the full command above with `$1=dev`. The flags mean:  
@@ -138,18 +137,19 @@ clawker go dev
 > - `-it` — interactive mode with a terminal attached
 > - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 > - `--agent dev` — names this container `clawker.<project>.dev`
-> - `@` — shortcut that resolves to your built image (the project image here; outside a project it resolves to the global image from a global `clawker build`)
-> - `--dangerously-skip-permissions` — the infamous claude code yolo flag. You can treat anything after the `@` as a normal `claude` invocation, including `-c` to continue your previous session. You can also pass arguments after an alias, like `clawker go dev -c`.
+> - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific harness instead
 >
-> The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
+> Anything after the `@` is passed straight to the harness CLI, and arguments after an alias are appended — with the out-of-box claude default, `clawker go dev -c` continues your previous Claude Code session and `clawker go dev --dangerously-skip-permissions` hands it the infamous yolo flag, safe inside the container's isolation.
+>
+> The per-harness aliases `claude` and `codex` pick their harness and skip its permission prompts in one word: `clawker claude dev`, `clawker codex dev`. The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (use or create branch `feat/feat`, tracking a matching remote branch when one exists) or `clawker wt auth feature/auth:main` (to create it off a base branch)
 >
 > Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
-You can ask claude code to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
+You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
 
-```bash
+```text
 create a `./.clawker.yaml` file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
 ```
 
@@ -166,7 +166,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 
 `clawker init` walks you through a guided setup with language-based presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare). Choose a preset or "Build from scratch" to customize every field. User settings (`~/.config/clawker/settings.yaml`) and XDG directories are bootstrapped automatically on first run.
 
-> **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real Dockerfile template and config schema and gives you the exact YAML you need.
+> **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real build templates and config schema and gives you the exact YAML you need.
 > ```bash
 > # Via clawker CLI (recommended)
 > clawker skill install
@@ -175,27 +175,30 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > claude plugin marketplace add schmitthub/claude-plugins
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
-> You can also customize your image using `clawker project edit` or point Claude Code at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
+> You can also customize your image using `clawker project edit` or point your agent at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
 
 > **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precedence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A global clawker.yaml can also be created in `$CLAWKER_CONFIG_DIR` for system wide defaults. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
 
 ```bash
-clawker build           # Builds your project's image (referenced as "@" when within a project directory)
+clawker build           # Builds your project's default-harness image (referenced as "@" when within a project directory)
+clawker build -t codex  # Builds a specific harness instead; run it with @:codex
 ```
+
+Builds are two-stage: a shared `clawker-<project>:base` image holds your packages, stacks, and custom instructions, and each harness image (`clawker-<project>:claude`, `clawker-<project>:codex`, ...) layers on top of it. The default harness build also stamps the `:default` alias that bare `@` resolves.
 
 #### Run a container 
 
-My workflow is a hybrid approach. I like having a claude code instance running on the host for real intensive interactive work while at the same time launching a few clawker managed containers in separate tabs and worktrees using `--dangerously-skip-permissions`. 
+My workflow is a hybrid approach. I like having a claude code instance running on the host for real intensive interactive work while at the same time launching a few clawker managed containers in separate tabs and worktrees using `--dangerously-skip-permissions`. (Claude Code is my daily driver, so the walkthrough is narrated in claude terms — swap in `@:codex` / `clawker codex` and everything below works the same.)
 
 So to do that let's say you're working on a feature branch with host claude code and inspiration strikes or you notice an issue / bug and say "shit i should address this". Or you've finished up a few PRDs and want to bang them out in parallel. I just quickly open a tab and have another claude agent via clawker get after it on the side without me having to approve anything over and over again so...
 
 ```bash
 clawker run -it --rm --agent dev --worktree hotfix/example:main @ --dangerously-skip-permissions
-# or the shipped alias for exactly that:
-clawker wt dev hotfix/example:main
+# or with the shipped alias — arguments after it pass straight through to the harness:
+clawker wt dev hotfix/example:main --dangerously-skip-permissions
 ```
 
-This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
+This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, git creds, mcps, build deps instantly (and my in-container login persisted in its config volume), it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
 
 > Worktree containers mask `.git/hooks` and `.git/config` read-only — a security measure that keeps unattended agents from planting host-executable git hooks/config. It changes a few git behaviors inside the container (notably `git push -u` won't persist upstream tracking). Read the [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats) before your first session.
 
@@ -213,7 +216,7 @@ When I'm done I easily remove the worktree
 clawker worktree remove a/example --delete-branch  # this deletes the worktree and the branch since it was only for this worktree, if you want to keep the branch just omit the flag. Delete won't work if the branch isn't fully merged
 ```
 
-If I plan on having long sessions with many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack (need to do this before starting the containers, claude code doesn't retry if it can't establish a connection)
+If I plan on having long sessions with many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack (need to do this before starting the containers — Claude Code, notably, doesn't retry if it can't establish a telemetry connection)
 
 ```bash
 clawker monitor init
@@ -249,14 +252,15 @@ OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code,project=$PROJECT_NAME,agent=ho
 
 When I'm done I can commit / push / open a PR right in the container terminal with all my creds and git access set up, or I can open the worktree in my IDE and do it from there. I can `/exit` out and the container will stop (or `ctrl c` in the terminal). I can use `--rm` flags just like docker cli to automatically remove containers when they stop, or I can start the same one back up again with `clawker start -a -i --agent example` to pick up right where I left off.
 
-All containers get named volume mounts for their claude config directories and command history for persistence.
+All containers get named volume mounts for the harness's config directories (declared by its bundle — `~/.claude` for claude, `~/.codex` for codex) and command history for persistence.
 
 ```bash
 $ clawker volume ls
 VOLUME NAME                                  DRIVER  MOUNTPOINT
-clawker.clawker.example-config               local   ...er/volumes/clawker.clawker.example-config/_data
+clawker.clawker.example-claude.config        local   ...volumes/clawker.clawker.example-claude.config/_data
 clawker.clawker.example-history              local   ...r/volumes/clawker.clawker.example-history/_data
-# You can see the resources naming conventions here (clawker.{project}.{agent}). Labeling works similarly
+# You can see the resources naming conventions here (clawker.{project}.{agent}). Labeling works
+# similarly. Volumes a harness owns carry its name too, so each harness keeps its own config.
 ```
 
 You can also see how clawker is jailed from other docker resource access...
@@ -265,19 +269,19 @@ You can also see how clawker is jailed from other docker resource access...
 $ docker create alpine:latest
 6c6896073eb1a2baa91450d0b5b795808f0ea4a052f729383a2d166d87fa0c17
 $ clawker ps -a
-NAME                     STATUS                  PROJECT                AGENT                  IMAGE                   CREATED
-clawker.clawker.example  exited                  clawker                example                clawker-clawker:latest  9 hours ago
+NAME                     STATUS                  PROJECT                AGENT                  IMAGE                    CREATED
+clawker.clawker.example  exited                  clawker                example                clawker-clawker:default  9 hours ago
 $ docker ps -a 
-CONTAINER ID   IMAGE                    COMMAND                  CREATED         STATUS                    PORTS     NAMES
-6c6896073eb1   alpine:latest            "/bin/sh"                7 seconds ago   Created                             great_dubinsky
-73b4ac14c2b3   clawker-clawker:latest   "/usr/local/bin/clawk…"   10 hours ago    Exited (0) 10 hours ago             clawker.clawker.example
+CONTAINER ID   IMAGE                     COMMAND                  CREATED         STATUS                    PORTS     NAMES
+6c6896073eb1   alpine:latest             "/bin/sh"                7 seconds ago   Created                             great_dubinsky
+73b4ac14c2b3   clawker-clawker:default   "/usr/local/bin/clawk…"   10 hours ago    Exited (0) 10 hours ago             clawker.clawker.example
 ```
 
 ## Creating and Using Containers
 
 ```bash
 # Create a fresh container and connect interactively
-# The @ symbol auto-resolves your project image (clawker-<project>:latest)
+# The @ symbol auto-resolves your project's default-harness image (clawker-<project>:default)
 clawker run -it --agent main @
 
 # Detach without stopping: Ctrl+P, Ctrl+Q
@@ -285,7 +289,7 @@ clawker run -it --agent main @
 # Re-attach to the agent
 clawker attach --agent main
 
-# Stop the agent (Ctrl+C exits Claude Code and stops the container)
+# Stop the agent (Ctrl+C exits the agent and stops the container)
 # Or from another terminal:
 clawker stop --agent main
 
@@ -298,18 +302,21 @@ clawker start -a -i --agent main
 Use `@` anywhere an image argument is expected to auto-resolve your project's image:
 
 ```bash
-clawker run -it @                     # Uses clawker-<project>:latest
+clawker run -it @                     # Uses clawker-<project>:default (the default harness)
 clawker run -it --agent dev @         # Same, with agent name
+clawker run -it --agent dev @:codex   # Pick a specific harness
 clawker container create --agent test @
 ```
 
 ## Command Aliases
 
-Aliases are shortcuts expanded before execution — the alias value is appended to `clawker` in place of the alias name, with `$1`..`$N` positional placeholders and extra arguments appended. Two ship as defaults:
+Aliases are shortcuts expanded before execution — the alias value is appended to `clawker` in place of the alias name, with `$1`..`$N` positional placeholders and extra arguments appended. Four ship as defaults:
 
 ```bash
-clawker go dev                       # → clawker run --rm -it --agent dev @ --dangerously-skip-permissions
-clawker wt auth feature/auth:main    # → clawker run --rm -it --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
+clawker go dev                       # → clawker run --rm -it --agent dev @
+clawker wt auth feature/auth:main    # → clawker run --rm -it --agent auth --worktree feature/auth:main @
+clawker claude dev                   # → clawker run --rm -it --agent dev @:claude --dangerously-skip-permissions
+clawker codex dev                    # → clawker run --rm -it --agent dev @:codex --yolo
 ```
 
 Define your own and share them with your team via the project config:
@@ -377,7 +384,7 @@ clawker project edit                    # Interactive TUI editor for .clawker.ya
 clawker settings edit                   # Interactive TUI editor for settings.yaml
 
 # Skill plugin management
-clawker skill install                   # Install the clawker-support Claude Code plugin
+clawker skill install                   # Install the clawker-support agent skills plugin
 clawker skill install --scope project   # Install with project scope
 clawker skill show                      # Show manual install commands
 clawker skill remove                    # Remove the clawker-support plugin
@@ -385,7 +392,7 @@ clawker skill remove                    # Remove the clawker-support plugin
 
 ## Monitoring 
 
-All containers have the environment variables to push logs and metrics to an OpenTelemetry collector by default. The optional monitoring stack runs four Docker Compose services on `clawker-net`: the **OTEL Collector** (receivers + routing), **OpenSearch** (logs), **OpenSearch Dashboards** (UI over OpenSearch), and **Prometheus** (metrics + UI). Claude Code agents push OTLP/HTTP to the collector, which writes logs to OpenSearch and exposes a Prometheus scrape endpoint. See [`docs/monitoring.mdx`](docs/monitoring.mdx) for the full pipeline reference.
+All containers have the environment variables to push logs and metrics to an OpenTelemetry collector by default. The optional monitoring stack runs four Docker Compose services on `clawker-net`: the **OTEL Collector** (receivers + routing), **OpenSearch** (logs), **OpenSearch Dashboards** (UI over OpenSearch), and **Prometheus** (metrics + UI). Agent containers push OTLP/HTTP to the collector (Claude Code ships first-class OTel telemetry), which writes logs to OpenSearch and exposes a Prometheus scrape endpoint. See [`docs/monitoring.mdx`](docs/monitoring.mdx) for the full pipeline reference.
 
 ```bash
 clawker monitor init
@@ -409,7 +416,8 @@ Once the stack is up:
 
 ## Roadmap / Known Issues
 
-- Linux might have a bug involving accessing the keychain for creds, I haven't focused on linux extensively yet
+- More shipped harness bundles are on the way (opencode, pi) — and you can author your own bundle today
+- Linux works but hasn't been exercised as extensively as macOS
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen) for current known issues and limitations.
 
@@ -431,4 +439,4 @@ The AGPL's network-use clause (section 13) is deliberate: if you run a modified 
 
 **Contributing.** Contributions are accepted under a Contributor License Agreement ([CLA.md](CLA.md)): you keep your copyright, your work is published under the AGPL, and you grant the maintainer the right to also offer it under a commercial license. This is what keeps dual-licensing possible.
 
-> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend and this has no relation to openclaw.  
+> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker, spelled phonetically because `claucker` violates the phonetic rules of English and just doesn't roll off the fingers. The name predates the `clawdbot` `openclaw` `clawthis` `clawthat` naming craze and has no relation to openclaw.  

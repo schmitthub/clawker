@@ -38,7 +38,7 @@ Outputs detailed volume information in JSON format.`,
   clawker volume inspect clawker.myapp.dev-workspace
 
   # Inspect multiple volumes
-  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-config`,
+  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-claude.config`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Names = args

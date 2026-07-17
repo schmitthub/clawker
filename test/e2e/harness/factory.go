@@ -3,16 +3,24 @@ package harness
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -26,10 +34,8 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
 )
 
 // harnessAdminKeepalive mirrors the production adminClientKeepalive in
@@ -41,6 +47,10 @@ var harnessAdminKeepalive = keepalive.ClientParameters{
 	Timeout:             10 * time.Second,
 	PermitWithoutStream: false,
 }
+
+// harnessHTTPTimeout mirrors the production httpClientFunc client timeout in
+// internal/cmd/factory/default.go.
+const harnessHTTPTimeout = 30 * time.Second
 
 // cacheableState mirrors the production helper in internal/cmd/factory/
 // default.go. Ready/Connecting/Idle states are safe to reuse; TransientFailure
@@ -104,11 +114,27 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	)
 	resolveConfig := func() (config.Config, error) {
 		cfgOnce.Do(func() {
-			if opts.Config != nil {
-				cfg, cfgErr = opts.Config()
-			} else {
+			if opts.Config == nil {
 				cfg = configmocks.NewBlankConfig()
+				return
 			}
+			// Mirror configFunc in internal/cmd/factory/default.go: anchor
+			// project-layer walk-up at the registry-resolved root. A bare
+			// constructor call would DISABLE walk-up entirely — the project
+			// .clawker.yaml would silently never load. Outside a registered
+			// project the anchor degrades to empty (walk-up off), matching
+			// production.
+			reg, regErr := f.ProjectRegistry()
+			if regErr != nil {
+				cfgErr = fmt.Errorf("harness: project registry for config walk-up: %w", regErr)
+				return
+			}
+			root, rootErr := reg.CurrentRoot()
+			if rootErr != nil && !errors.Is(rootErr, project.ErrNotInProject) {
+				cfgErr = fmt.Errorf("harness: resolving project root for config walk-up: %w", rootErr)
+				return
+			}
+			cfg, cfgErr = opts.Config(config.WithProjectRoot(root))
 		})
 		return cfg, cfgErr
 	}
@@ -194,6 +220,53 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			}
 		})
 		return pm, pmErr
+	}
+
+	// --- BundleManager ---
+	// Mirrors bundleManagerFunc in internal/cmd/factory/default.go. With no
+	// ProjectManager option wired, the manager is built without a roots
+	// provider — cache GC stays off, fail-closed, per the
+	// bundle.WithRegisteredRoots contract.
+	var (
+		bmOnce sync.Once
+		bm     *bundle.Manager
+		bmErr  error
+	)
+	f.BundleManager = func() (*bundle.Manager, error) {
+		bmOnce.Do(func() {
+			c, cErr := resolveConfig()
+			if cErr != nil {
+				bmErr = fmt.Errorf("bundle manager: loading config: %w", cErr)
+				return
+			}
+			if opts.ProjectManager == nil {
+				bm = bundle.NewManager(c, componentcheck.Validate)
+				return
+			}
+			bm = bundle.NewManager(
+				c,
+				componentcheck.Validate,
+				bundle.WithRegisteredRoots(func(ctx context.Context) ([]string, error) {
+					pmgr, mgrErr := f.ProjectManager()
+					if mgrErr != nil {
+						return nil, fmt.Errorf("bundle GC roots: loading project manager: %w", mgrErr)
+					}
+					entries, listErr := pmgr.List(ctx)
+					if listErr != nil {
+						return nil, fmt.Errorf("bundle GC roots: listing registered projects: %w", listErr)
+					}
+					var roots []string
+					for _, e := range entries {
+						roots = append(roots, e.Root)
+						for _, wt := range e.Worktrees {
+							roots = append(roots, wt.Path)
+						}
+					}
+					return roots, nil
+				}),
+			)
+		})
+		return bm, bmErr
 	}
 
 	// --- GitManager ---
@@ -283,7 +356,14 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			return adminClient, nil
 		}
 	} else {
+		// cleanupTestEnvironment runs `firewall down` through this mock —
+		// wire that RPC as a no-op success so teardown never trips a nil moq
+		// func. Every other RPC stays nil on purpose: moq panics loudly when
+		// a test drives an RPC it didn't opt into (UseRealAdminClient).
 		mockAdmin := &adminv1mocks.AdminServiceClientMock{}
+		mockAdmin.FirewallRemoveFunc = func(context.Context, *adminv1.FirewallRemoveRequest, ...grpc.CallOption) (*adminv1.FirewallRemoveResult, error) {
+			return &adminv1.FirewallRemoveResult{}, nil
+		}
 		f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			return mockAdmin, nil
 		}
@@ -307,10 +387,49 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				}
 				cpMgr = opts.ControlPlane(c, log)
 			} else {
-				cpMgr = &cpbootmocks.ManagerMock{}
+				// Truly no-op: every Manager method wired to return zero
+				// values, so tests that never exercise the CP verbs don't
+				// panic on a nil moq func (and never bootstrap a real CP).
+				cpMgr = &cpbootmocks.ManagerMock{
+					EnsureRunningFunc: func(context.Context) error { return nil },
+					StopFunc:          func(context.Context) error { return nil },
+					IsRunningFunc:     func(context.Context) (bool, error) { return false, nil },
+					ProbeHealthzFunc:  func(context.Context) (int, error) { return 0, nil },
+				}
 			}
 		})
 		return cpMgr
+	}
+
+	// --- CLIState ---
+	// Mirrors cliStateFunc in internal/cmd/factory/default.go: state.New is
+	// self-contained (resolves under the test's isolated XDG dirs).
+	var (
+		stateOnce sync.Once
+		st        state.StateStore
+		stateErr  error
+	)
+	f.CLIState = func() (state.StateStore, error) {
+		stateOnce.Do(func() {
+			if st, stateErr = state.New(); stateErr != nil {
+				stateErr = fmt.Errorf("harness: cli state: %w", stateErr)
+			}
+		})
+		return st, stateErr
+	}
+
+	// --- HttpClient ---
+	// Mirrors httpClientFunc in internal/cmd/factory/default.go (30s-timeout
+	// stdlib client; error reserved).
+	var (
+		httpOnce   sync.Once
+		httpClient *http.Client
+	)
+	f.HttpClient = func() (*http.Client, error) {
+		httpOnce.Do(func() {
+			httpClient = &http.Client{Timeout: harnessHTTPTimeout}
+		})
+		return httpClient, nil
 	}
 
 	// --- Prompter ---

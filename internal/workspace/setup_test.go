@@ -10,6 +10,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -23,6 +24,19 @@ func findMountByTarget(mounts []mount.Mount, target string) *mount.Mount {
 	}
 	return nil
 }
+
+// claudeTestStaging mirrors the claude bundle's staging manifest subset the
+// mount path needs: config dir + the projects host-state mount.
+func claudeTestStaging() config.Staging {
+	return config.Staging{
+		Copy:   nil,
+		Mounts: []config.MountSpec{{Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/projects", Dest: ".claude/projects"}},
+	}
+}
+
+// claudeProjectsTarget is the expected in-container bind target for the
+// claude projects host-state mount.
+const claudeProjectsTarget = consts.ContainerHomeDir + "/.claude/projects"
 
 func TestBuildWorktreeGitMounts_Success(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -367,11 +381,17 @@ func setupMountsForBindBranch(t *testing.T, projectYAML string) (cfg SetupMounts
 
 	wd := t.TempDir()
 	cfg = SetupMountsConfig{
-		Log:           logger.Nop(),
-		Cfg:           mockCfg,
-		AgentName:     "test-agent",
-		WorkDir:       wd,
-		ContainerPath: wd,
+		Log:            logger.Nop(),
+		Cfg:            mockCfg,
+		AgentName:      "test-agent",
+		WorkDir:        wd,
+		ContainerPath:  wd,
+		Harness:        claudeTestStaging(),
+		HarnessName:    consts.DefaultHarnessName,
+		HarnessVolumes: []config.VolumeSpec{{Name: "config", Path: ".claude"}},
+		// Resolved the way the command layer does — exercises the legacy
+		// agent.claude_code shim for the built-in default harness.
+		HarnessConfig: mockCfg.Project().HarnessConfigFor(consts.DefaultHarnessName),
 	}
 	return cfg, hostDir, fake
 }
@@ -394,13 +414,13 @@ func TestSetupMounts_AppendsClaudeProjectsBindMount(t *testing.T) {
 
 	var found *mount.Mount
 	for i := range res.Mounts {
-		if res.Mounts[i].Target == ClaudeProjectsTargetPath {
+		if res.Mounts[i].Target == claudeProjectsTarget {
 			found = &res.Mounts[i]
 			break
 		}
 	}
 	if found == nil {
-		t.Fatalf("expected mount with Target=%q, got mounts=%+v", ClaudeProjectsTargetPath, res.Mounts)
+		t.Fatalf("expected mount with Target=%q, got mounts=%+v", claudeProjectsTarget, res.Mounts)
 	}
 	if found.Source != projectsDir {
 		t.Errorf("Source = %q, want %q", found.Source, projectsDir)
@@ -426,7 +446,7 @@ func TestSetupMounts_SkipsClaudeProjectsBindMountWhenDisabled(t *testing.T) {
 	}
 
 	for _, m := range res.Mounts {
-		if m.Target == ClaudeProjectsTargetPath {
+		if m.Target == claudeProjectsTarget {
 			t.Errorf("unexpected projects mount when disabled: %+v", m)
 		}
 	}
@@ -445,7 +465,7 @@ func TestSetupMounts_SilentSkipWhenHostProjectsMissing(t *testing.T) {
 	}
 
 	for _, m := range res.Mounts {
-		if m.Target == ClaudeProjectsTargetPath {
+		if m.Target == claudeProjectsTarget {
 			t.Errorf("unexpected projects mount when host dir missing: %+v", m)
 		}
 	}

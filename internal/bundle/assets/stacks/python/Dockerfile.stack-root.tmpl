@@ -1,0 +1,28 @@
+# The modern Python stack — uv system-wide, plus a uv-managed CPython
+# resolvable as python3/python for every user and build step. uv is a
+# self-contained binary (official installer over TLS, floated for the same
+# dep-rot rationale as the other curl|sh installers: docs/threat-model.mdx);
+# uv itself verifies the CPython archives it downloads. The managed-python
+# dir is world-writable (sticky, same convention as the go stack's
+# GOPATH) so any user can add versions at runtime; UV_PYTHON_INSTALL_DIR is
+# exported so every uv invocation resolves the shared interpreters.
+# Guarded: an image that already provides python3 keeps its own; an
+# existing uv install is left untouched.
+ENV UV_PYTHON_INSTALL_DIR=/usr/local/share/uv/python
+RUN if ! command -v uv >/dev/null 2>&1; then \
+      curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh ; \
+    else \
+      echo "clawker stack python: uv already present — skipping uv install"; \
+    fi && \
+    if command -v python3 >/dev/null 2>&1; then \
+      echo "clawker stack python: existing $(python3 --version) — skipping python install"; \
+    else \
+      mkdir -p "${UV_PYTHON_INSTALL_DIR}" && \
+      uv python install && \
+      PY_BIN=$(uv python find) && \
+      { [ -n "$PY_BIN" ] && [ -x "$PY_BIN" ]; } || { echo "ERROR: uv python find returned no interpreter" >&2; exit 1; } && \
+      ln -s "$PY_BIN" /usr/local/bin/python3 && \
+      ln -s /usr/local/bin/python3 /usr/local/bin/python && \
+      chmod -R 1777 "${UV_PYTHON_INSTALL_DIR}" && \
+      python3 --version ; \
+    fi

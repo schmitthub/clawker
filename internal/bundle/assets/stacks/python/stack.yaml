@@ -1,0 +1,6 @@
+description: >-
+  The modern Python stack: uv (Astral's package/project manager)
+  installed system-wide on /usr/local/bin, plus a uv-managed CPython
+  installed system-wide with python3/python resolvable from ${PATH} for
+  every user and build step. Skips the python install when the image
+  already provides python3; skips uv when it is already present.

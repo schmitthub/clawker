@@ -2,11 +2,13 @@ package buildkit
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 func TestNewImageBuilder_NilAPIClient(t *testing.T) {
@@ -48,6 +50,23 @@ func TestToSolveOpt_CustomDockerfile(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "build/Dockerfile.dev", solveOpt.FrontendAttrs["filename"])
+}
+
+func TestToSolveOpt_AbsoluteDockerfile(t *testing.T) {
+	contextDir := t.TempDir()
+	dockerfileDir := t.TempDir()
+	opts := whail.ImageBuildKitOptions{ //nolint:exhaustruct // only the dockerfile/context inputs matter
+		ContextDir: contextDir,
+		Dockerfile: filepath.Join(dockerfileDir, "Dockerfile.base"),
+	}
+
+	solveOpt, err := toSolveOpt(opts)
+	require.NoError(t, err)
+
+	// The dockerfile local mount is rooted at the file's directory, so the
+	// frontend must receive a filename relative to that mount — never the
+	// absolute path.
+	assert.Equal(t, "Dockerfile.base", solveOpt.FrontendAttrs["filename"])
 }
 
 func TestToSolveOpt_BuildArgs(t *testing.T) {

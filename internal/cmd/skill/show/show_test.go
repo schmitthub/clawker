@@ -5,11 +5,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdShow_NoArgs(t *testing.T) {
@@ -46,7 +47,7 @@ func TestNewCmdShow_RejectsArgs(t *testing.T) {
 
 func TestShowRun_Output(t *testing.T) {
 	tio, _, stdout, stderr := iostreams.Test()
-	opts := &ShowOptions{IOStreams: tio}
+	opts := &ShowOptions{IOStreams: tio, Harness: shared.HarnessClaude}
 
 	err := showRun(context.Background(), opts)
 	require.NoError(t, err)

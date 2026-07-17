@@ -16,7 +16,7 @@ reference files. Check these first if the issue matches:
 | Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
-| Repeated `/login` in new containers despite `use_host_auth`, how host Claude Code auth is shared | `reference/claude-code.md` | Authentication › Troubleshooting |
+| `/login` prompts in containers, how in-container auth and the config volume work | `reference/claude-code.md` | Authentication › Troubleshooting |
 | Didn't see "What's new" / release notes after upgrade | This file | No release notes after upgrade |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | `Token used before issued` / token fetch timeout on container start | This file | Control plane down or unhealthy |
@@ -71,8 +71,9 @@ a container.
    ```bash
    clawker firewall list
    ```
-   Check if the target domain appears. Only a small subset of Claude Code
-   required domains are hardcoded — everything else must be explicitly allowed.
+   Check if the target domain appears. Only the selected harness's egress
+   floor (the domains that harness needs to function, declared by its bundle)
+   is present by default — everything else must be explicitly allowed.
 
    **Exact host vs subdomain:** an allowed bare domain (`example.com`, or an
    `add_domains` entry) matches **only that exact host** — a blocked

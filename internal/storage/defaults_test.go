@@ -239,5 +239,6 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 
 	// Kinds that don't support defaults panic
 	assert.Panics(t, func() { parseDefaultValue("whatever", KindStructSlice) })
+	assert.Panics(t, func() { parseDefaultValue("whatever", KindStructMap) })
 	assert.Panics(t, func() { parseDefaultValue("whatever", KindLast+1) })
 }

@@ -1,22 +1,22 @@
 ---
 title: "Container Internals"
-description: "How Clawker containers are built, initialized, and managed — workspace mounting, session persistence, git integration, and the container lifecycle"
+description: "How Clawker containers are built, initialized, and managed — workspace mounting, harness state persistence, git integration, and the container lifecycle"
 icon: "microchip"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "container lifecycle", "workspace mounting"]
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "container lifecycle", "workspace mounting", "clawkerd"]
 ---
 
-Clawker containers are more than a simple `docker run`. Every container goes through a multi-phase initialization that sets up workspace mirroring, git integration, session persistence, credential forwarding, and security controls. This page explains what happens under the hood and why.
+Clawker containers are more than a simple `docker run`. Every container goes through a multi-phase initialization that sets up workspace mirroring, git integration, harness state persistence, credential forwarding, and security controls. This page explains what happens under the hood and why.
 
 ## Container Lifecycle
 
 When you run `clawker run @` or `clawker container create @`, the container goes through four host-side phases before clawkerd takes over inside. Creating a container does **not** require the control plane — the bootstrap material is minted against the **host** clock (the source of truth) and staged without contacting CP. The control-plane readiness and clock-sync gate is enforced later, on the **start** path (`clawker container start`, or the start half of `clawker run`): before clawkerd exchanges the baked-in assertion, the CLI ensures CP is up and waits until CP's clock has caught up to the host (see [control plane clock sync](/control-plane#troubleshooting) if a start fails this check). The four host-side phases are:
 
 1. **Workspace** — resolve the working directory, set up mounts, ensure volumes
-2. **Config** — initialize the Claude Code config volume (first run only)
+2. **Config** — initialize the harness's config volumes (first run only)
 3. **Environment** — start the host proxy, forward git credentials, resolve environment variables
 4. **Container** — validate flags, build Docker configs, create the container, stream bootstrap material (mTLS leaf cert, CA cert, Hydra JWT) into the container's writable layer, then start it
 
-After `docker start`, the control plane attaches eBPF firewall programs from outside and dials into the container's mTLS listener to drive a fifth phase **inside** the container — environment wiring, MCP setup, any `agent.post_init` script you've configured — before the readiness signal tells `clawkerd` to fork the user CMD (Claude Code).
+After `docker start`, the control plane attaches eBPF firewall programs from outside and dials into the container's mTLS listener to drive a fifth phase **inside** the container — config seeding, git and credential wiring, any `post_init` script you've configured — before the readiness signal tells `clawkerd` to fork the user CMD (the harness).
 
 Each host-side phase streams progress events to the terminal; clawkerd renders the in-container init steps on the same attached TTY so you see one unified boot log.
 
@@ -28,7 +28,7 @@ Each host-side phase streams progress events to the terminal; clawkerd renders t
 | `clawker container start` | Starts an existing container — clawkerd boots, CP attaches eBPF and dispatches the boot-phase setup, then forks the user CMD |
 | `clawker run` | Create + Start in one step |
 
-A **fresh** container initializes once: the host-side phases run at creation time, and the in-container init phase (environment/MCP wiring, your `agent.post_init` script) runs the first time the container starts. **Restarting** a container (`docker stop`/`start`) re-runs only the boot phase — it respawns Claude Code and re-runs your `agent.pre_run` script, but it does **not** re-run init. Your session data, config, and command history survive restarts. **Recreating** the container (remove + create) starts over and re-runs init, including your `agent.post_init` script.
+A **fresh** container initializes once: the host-side phases run at creation time, and the in-container init phase (config seeding, git wiring, your `post_init` script) runs the first time the container starts. **Restarting** a container (`docker stop`/`start`) re-runs only the boot phase — it respawns the harness and re-runs your `pre_run` script, but it does **not** re-run init. Your harness state, config, and command history survive restarts. **Recreating** the container (remove + create) against pre-existing volumes preserves that state too — init steps that already ran (like `post_init`) are skipped thanks to markers on the lifecycle volume.
 
 ## Workspace Mounting
 
@@ -36,11 +36,11 @@ The most important mount is the workspace — your project source code made avai
 
 ### Bind Mode (default)
 
-Your host directory is mounted directly into the container as a live bind mount. Changes on either side are visible immediately. This is the default because it gives Claude Code real-time access to your latest code.
+Your host directory is mounted directly into the container as a live bind mount. Changes on either side are visible immediately. This is the default because it gives the agent real-time access to your latest code.
 
 ### Snapshot Mode
 
-A one-time copy of your project is placed into a Docker volume. The container works on an isolated snapshot — changes inside the container don't affect your host, and vice versa. Useful when you want Claude to experiment without risk.
+A one-time copy of your project is placed into a Docker volume. The container works on an isolated snapshot — changes inside the container don't affect your host, and vice versa. Useful when you want the agent to experiment without risk.
 
 ### Path Mirroring
 
@@ -48,7 +48,7 @@ Here's something subtle but important: the workspace is not mounted at a generic
 
 If your project lives at `/Users/schmitthub/Code/myapp` on the host, it appears at `/Users/schmitthub/Code/myapp` inside the container too. The container's working directory is set to match.
 
-**Why?** Claude Code tracks sessions by the current working directory. When you use `/resume` to pick up a previous conversation, it discovers your project's git worktrees and looks for session files that match those paths. If the container used a synthetic path like `/workspace`, those session lookups would fail — the paths wouldn't match what git reports, and Claude Code would say "No conversations found."
+**Why?** Coding-agent harnesses key state off the working directory. The concrete case is the claude harness: Claude Code tracks sessions by the current working directory, and when you use `/resume` to pick up a previous conversation, it discovers your project's git worktrees and looks for session files that match those paths. If the container used a synthetic path like `/workspace`, those session lookups would fail — the paths wouldn't match what git reports, and Claude Code would say "No conversations found."
 
 By mirroring the real host path, everything lines up naturally: sessions created in the container are findable by `/resume`.
 
@@ -87,25 +87,48 @@ Git credentials are forwarded into the container automatically based on your pro
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
 - **Git config** — Your `~/.gitconfig` is bind-mounted read-only at `/tmp/host-gitconfig` inside the container. During CP-driven init, clawkerd reads that file, filters out any `[credential]` sections, and writes the sanitized result to `~/.gitconfig` inside the container (which then uses its own credential forwarding).
 
-## Session Persistence
+## State Persistence
 
-Claude Code sessions are preserved across container restarts through persistent Docker volumes.
+Harness state — sessions, settings, auth tokens, command history — is preserved across container restarts and recreations through persistent Docker volumes.
 
-### Config Volume
+### Harness Config Volumes
 
-Each agent gets a dedicated config volume (named `clawker.<project>.<agent>-config`) mounted at `~/.claude` inside the container. This volume stores:
+Each harness bundle declares the directories it persists as a list of `{name, path}` entries in its manifest. Every declared entry becomes a named Docker volume, mounted at that path under the container home:
 
-- **Session transcripts** — Full conversation history as JSONL files under `projects/<mangled-cwd>/` (where the directory name is derived from the working directory path, with non-alphanumeric characters replaced by hyphens)
-- **Config state** — The `.config.json` file tracking the last session ID, startup count, and project metadata
-- **Plugins and settings** — Any Claude Code plugins or settings that persist across sessions
+- The **claude** bundle declares a `config` volume at `~/.claude` — session transcripts (JSONL files under `projects/<mangled-cwd>/`), the `.config.json` state file, plugins, and settings
+- The **codex** bundle declares a `config` volume at `~/.codex` — everything Codex keeps under `$CODEX_HOME`
 
-Because this is a Docker volume, it survives container removal and recreation. As long as you use the same project and agent name, your sessions are preserved.
+Volumes are named `clawker.<project>.<agent>-<harness>.<name>` (e.g. `clawker.myapp.dev-claude.config`). The harness segment is added automatically — bundles declare only the `name`, and cannot opt out. It keeps each harness's state on its own volume, so Claude's `~/.claude` can never land on the volume Codex writes to. For a bundled harness the segment is the fully qualified `<namespace>.<bundle>.<component>` spelling you selected it by.
+
+Because these are Docker volumes, they survive container removal and recreation. As long as you use the same project, agent, and harness, your harness state — including the auth token from your in-container login — is preserved.
 
 ### History Volume
 
-A second volume (`clawker.<project>.<agent>-history`) preserves shell command history at `/commandhistory`, so your bash history carries over between sessions.
+A `clawker.<project>.<agent>-history` volume preserves shell command history at `/commandhistory`, so your bash/zsh history carries over between sessions.
 
-### How Resume Works
+### Lifecycle Volume
+
+A `clawker.<project>.<agent>-<harness>.clawker` volume backs `~/.clawker` inside the container. It is harness-scoped for the same reason the config volumes are: it carries that harness's staged seeds and its post-init marker. It holds Clawker's lifecycle state: delivered hook scripts (`post-init.sh`, `pre-run.sh`), the harness's staged config seeds plus their manifest, and the post-init marker. It lives on its own volume — with the same lifetime as the config volumes that `post_init` mutates — so a recreated container doesn't re-run one-time initialization against volumes that were already initialized.
+
+### First-Boot Config Seeding
+
+Harness bundles can declare **seeds** — config files applied into the harness's config volume on first boot. The image stages each seed file under `~/.clawker/seed/` along with a manifest; on the first start, the control plane dispatches a generic seed-apply step that places each file according to its apply mode:
+
+- `copy-if-missing` — copy unless the destination already exists
+- `copy-if-missing-or-empty` — copy unless the destination exists and is non-empty
+- `json-merge` — merge, with the existing file taking precedence over the seed
+
+The claude bundle, for example, seeds a statusline script, a `.config.json` that marks onboarding complete (so Claude Code skips the first-run wizard), and a base `settings.json`. The step is harness-blind: which files seed where is data the image carries, and CP just applies the manifest.
+
+### Host Config Staging
+
+At create time, when a config volume is **newly created** and the harness's `config.strategy` is `copy` (the default), Clawker stages your host's managed harness configuration into it. For the claude harness that means an allowlisted subset of `settings.json`, your global `CLAUDE.md`, agents, skills, commands, and plugins (with host paths rewritten to container paths); for codex it means your global `AGENTS.md` and prompts. Credentials are never staged — see [Credential Forwarding](/credentials#harness-authentication).
+
+Pre-existing volumes carry your in-container state and are never re-seeded. Set `harnesses.<name>.config.strategy: fresh` to skip staging entirely.
+
+Some harness bundles additionally declare live **host-state mounts** — the claude bundle bind-mounts your host's `~/.claude/projects/` over the config volume's `projects/` subdir, so sessions and auto-memory are shared live between host and containers. Disable per harness with `harnesses.<name>.mount_projects: false`.
+
+### How Resume Works (claude harness)
 
 When you type `/resume` inside Claude Code, it needs to find previous sessions for the current project. Here's the discovery process:
 
@@ -124,27 +147,17 @@ With path mirroring:
 
 Multiple containers working on the same project (but different agents) each get their own sessions that are all discoverable via `/resume`.
 
-### First-Run Initialization
-
-The first time a container is created for a given project+agent combination, Clawker initializes the config volume:
-
-1. **Onboarding bypass** — The container image includes a seed config that marks onboarding as complete, so Claude Code doesn't show the first-run wizard
-2. **Host config copy** — If `agent.claude_code.config.strategy` is set to `copy` (the default), your host's Claude Code plugin configuration, installed plugins, agents, skills, and custom commands are copied into the config volume
-3. **Credential injection** — If `agent.claude_code.use_host_auth` is enabled, your host's Claude Code credentials are copied so the container can authenticate without re-login
-
-On subsequent container recreations with the same agent name, the config volume already exists and this initialization is skipped. Your existing sessions and settings are preserved.
-
 ### Post-Init Scripts
 
-If your `clawker.yaml` includes a `post_init` script, it runs once during the in-container init phase — dispatched by the control plane to `clawkerd` as a setup command before the user CMD is forked. A marker file on the config volume prevents it from running again on subsequent restarts. To re-run, delete the marker (`~/.claude/post-initialized`) or remove the config volume.
+If your `clawker.yaml` includes a `post_init` script (harness-agnostic under `agent.post_init`, per-harness under `harnesses.<name>.post_init` — both run, base first), it runs once during the in-container init phase — dispatched by the control plane to `clawkerd` as a setup command before the user CMD is forked. A marker file on the lifecycle volume prevents it from running again on subsequent restarts or recreations. To re-run, delete the marker (`~/.clawker/post-initialized`) or remove the lifecycle volume.
 
-This is useful for project-specific setup like installing dependencies or configuring MCP servers — anything that needs to run inside the container with `agent.env` available, before Claude Code starts.
+This is useful for project-specific setup like installing dependencies or configuring MCP servers — anything that needs to run inside the container with `agent.env` available, before the harness starts.
 
 ### Pre-Run Scripts
 
-If your `clawker.yaml` includes a `pre_run` script, it runs on **every** container start — `run`, `start`, and `restart` — right before the user CMD is forked, in the container workdir. Unlike `post_init`, there is no marker: it re-runs unconditionally each time. The CLI re-delivers the script fresh on every start, so editing or removing `pre_run` takes effect on the next start without recreating the container.
+If your `clawker.yaml` includes a `pre_run` script (again composable: `agent.pre_run` plus `harnesses.<name>.pre_run`), it runs on **every** container start — `run`, `start`, and `restart` — right before the user CMD is forked, in the container workdir. Unlike `post_init`, there is no marker: it re-runs unconditionally each time. The CLI re-delivers the script fresh on every start, so editing or removing `pre_run` takes effect on the next start without recreating the container.
 
-The canonical use case is `npm install` when `node_modules` lives in a tmpfs (wiped on stop/restart) or `package.json` drifts upstream — anything that must be re-established each boot. A non-zero exit is **fatal**: the boot phase halts, the readiness signal is never sent, and the container exits non-zero (Claude Code never starts).
+The canonical use case is `npm install` when `node_modules` lives in a tmpfs (wiped on stop/restart) or `package.json` drifts upstream — anything that must be re-established each boot. A non-zero exit is **fatal**: the boot phase halts, the readiness signal is never sent, and the container exits non-zero (the harness never starts).
 
 ## Volumes and Naming
 
@@ -153,35 +166,43 @@ Clawker uses a consistent naming scheme for all Docker resources:
 | Resource | Pattern | Example |
 |----------|---------|---------|
 | Container | `clawker.<project>.<agent>` | `clawker.myapp.dev` |
-| Config volume | `clawker.<project>.<agent>-config` | `clawker.myapp.dev-config` |
+| Harness config volume(s) | `clawker.<project>.<agent>-<harness>.<name>` (one per bundle-declared dir) | `clawker.myapp.dev-claude.config` |
 | History volume | `clawker.<project>.<agent>-history` | `clawker.myapp.dev-history` |
+| Lifecycle volume | `clawker.<project>.<agent>-<harness>.clawker` | `clawker.myapp.dev-claude.clawker` |
 | Workspace volume | `clawker.<project>.<agent>-workspace` | `clawker.myapp.dev-workspace` (snapshot mode only) |
 
-All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`) for filtering and management. The `clawker container ls` command uses these labels to show only Clawker-managed containers.
+The history and workspace volumes carry no harness segment on purpose: shell history and your workspace snapshot belong to the agent, not to whichever harness is driving it, and stay shared when you switch harnesses.
+
+All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`) for filtering and management. Anything created under a harness's directive — its containers, its harness image, and its harness-scoped volumes — additionally carries `dev.clawker.harness`, recording which harness made it. That makes `docker volume inspect` answer "which harness owns this?" without guessing at the name. The `clawker container ls` command uses these labels to show only Clawker-managed containers.
 
 ### Volume Lifecycle
 
-- **Config and history volumes** persist independently of containers. Removing a container does not remove its volumes. `clawker volume prune` sweeps all unused agent volumes by default — config, history, and workspace. Use `clawker volume prune --all` to additionally clean up infrastructure volumes (monitoring stack and any other clawker-managed volumes). For targeted cleanup, prefer `clawker volume list` + `clawker volume remove`.
+- **Config, history, and lifecycle volumes** persist independently of containers. Removing a container does not remove its volumes. `clawker volume prune` sweeps all unused agent volumes by default. Use `clawker volume prune --all` to additionally clean up infrastructure volumes (monitoring stack and any other clawker-managed volumes). For targeted cleanup, prefer `clawker volume list` + `clawker volume remove`.
 - **Workspace volumes** (snapshot mode only) are ephemeral and tied to the container lifecycle.
 - **Volume cleanup on failure** — If container creation fails partway through, only volumes created during that attempt are cleaned up. Pre-existing volumes with your session data are never touched.
 
 ## Container Image
 
-Clawker builds custom Docker images tailored to your project. The image includes:
+Clawker builds per-project images tailored to your project: a shared base image plus one image per harness. The harness image a container runs includes:
 
-- A base image (default: `buildpack-deps:bookworm-scm`)
-- System packages you've specified (`build.packages`)
-- Claude Code (installed via npm)
-- An agent awareness prompt at `/etc/claude-code/CLAUDE.md`
+- A pinned Debian substrate plus Clawker's baseline development tooling (git, zsh, gh, editors, Docker CLI)
+- System packages you've specified (`build.packages`) and any declared language stacks
+- The selected harness CLI, installed by its bundle (e.g. Claude Code via its native installer, Codex via its standalone installer), with the bundle's config seeds staged for first boot
 - A baked-in copy of `clawkerd` at `/usr/local/bin/clawkerd` — the per-container daemon that runs as PID 1
 - Credential helper binaries (`git-credential-clawker`, socket-bridge server)
-- A non-root user (`claude`) with sudo access — on Linux hosts the UID is baked at build time to match the CLI invoker's `os.Getuid()` so the `~/.claude/projects/` bind mount stays writable from inside the container; macOS/Windows hosts (Docker Desktop virtiofs) fall back to UID 1001
+- The unprivileged container user (`claude`) with sudo access — on Linux hosts the UID is baked at build time to match the CLI invoker's `os.Getuid()` so host-state bind mounts stay writable from inside the container; macOS/Windows hosts (Docker Desktop virtiofs) fall back to UID 1001
 
-The container's `ENTRYPOINT` is `clawkerd`. See [Custom Images](/custom-images) for build customization.
+The container's `ENTRYPOINT` is `clawkerd`; the `CMD` is the harness command declared by the bundle (`claude`, `codex`, ...). See [Image Customization](/custom-images) for the build model and customization surface.
 
 ## Agent Awareness Prompt
 
-Every Clawker image includes a prompt file baked in at `/etc/claude-code/CLAUDE.md`. Claude Code automatically loads this file, giving the agent awareness of its containerized environment without any user configuration.
+Clawker ships a managed agent-context prompt and bakes it into the image at
+build time, at the location the harness declares it reads managed context from
+(the harness manifest's `managed_prompt` — for the claude harness,
+`/etc/claude-code/CLAUDE.md`, which Claude Code loads automatically). The agent
+gains awareness of its containerized environment without any user
+configuration; a harness that declares no managed-context location gets no
+prompt.
 
 The prompt tells the agent:
 
@@ -195,7 +216,7 @@ This creates a self-service experience: when a network connection fails, the age
 
 ## clawkerd: The Container's PID 1
 
-Every agent container runs `clawkerd` as PID 1. clawkerd is the per-container supervisor — it owns the container's lifecycle, terminates correctly under `docker stop`, signs into the clawker control plane over mTLS, and only **then** forks the user CMD (Claude Code, by default) with kernel-side privilege drop.
+Every agent container runs `clawkerd` as PID 1. clawkerd is the per-container supervisor — it owns the container's lifecycle, terminates correctly under `docker stop`, signs into the clawker control plane over mTLS, and only **then** forks the user CMD (the harness) with kernel-side privilege drop.
 
 clawkerd itself runs as **root** inside the container. It does not drop its own privileges — privilege drop happens kernel-side, between fork and exec, on the child it spawns. The supervisor stays root to: write `/var/log/clawker/clawkerd.log` (rotated), read its mTLS bootstrap material, reap reparented orphan zombies via `Wait4(-1)`, and hold open the mTLS listener.
 
@@ -203,7 +224,7 @@ clawkerd itself runs as **root** inside the container. It does not drop its own 
 
 A PID 1 process in Linux has special responsibilities the kernel does not delegate elsewhere:
 
-- **Signal handling.** SIGTERM, SIGINT, SIGHUP are not handled by default for PID 1. A naive `claude` process running as PID 1 would ignore `docker stop` until the 10-second grace expired and Docker escalated to SIGKILL — leaving no time for clean teardown of Claude Code's session state. clawkerd installs explicit signal handlers and forwards forwardable signals to the user CMD's process group.
+- **Signal handling.** SIGTERM, SIGINT, SIGHUP are not handled by default for PID 1. A harness CLI running naively as PID 1 would ignore `docker stop` until the 10-second grace expired and Docker escalated to SIGKILL — leaving no time for clean teardown of the agent's session state. clawkerd installs explicit signal handlers and forwards forwardable signals to the user CMD's process group.
 - **Zombie reaping.** Any orphaned process whose parent dies is reparented to PID 1. If PID 1 doesn't call `Wait4(-1)`, those zombies accumulate forever. clawkerd runs a two-phase reaper: phase 1 reaps only the user CMD (so concurrent `exec` pipelines from CP don't get their child stolen); phase 2 drains orphans after the user CMD has exited.
 - **Exit code propagation.** Docker reads PID 1's exit code as the container's exit code, which is what `restart: on-failure` switches on. clawkerd maps the user CMD's wait status to the bash convention (`WEXITSTATUS` for normal exit, `128 + signum` for signaled) so Docker's restart policy interprets it correctly.
 
@@ -212,21 +233,21 @@ A PID 1 process in Linux has special responsibilities the kernel does not delega
 When the container starts, clawkerd executes in this order:
 
 1. **Read bootstrap material.** Four files in `/run/clawker/bootstrap` (per-agent mTLS leaf cert + key, the clawker CA cert, and a single-use Hydra JWT). The CLI streams these into the container as a tar archive between `docker create` and `docker start` — they live on the container's writable layer, not on tmpfs or a bind mount.
-2. **Resolve environment.** `CLAWKER_AGENT` is required; `CLAWKER_PROJECT` may be empty (for orphan-project containers). `CLAWKER_USER` (defaults to `claude`) is resolved against `/etc/passwd` to populate the kernel-side privilege-drop credentials for the eventual spawn.
+2. **Resolve environment.** `CLAWKER_AGENT` is required; `CLAWKER_PROJECT` may be empty (for global-scope containers). `CLAWKER_USER` (defaults to `claude`) is resolved against `/etc/passwd` to populate the kernel-side privilege-drop credentials for the eventual spawn.
 3. **Start the mTLS listener.** clawkerd serves a gRPC `ClawkerdService.Session` endpoint on `:7700`, reachable only over the `clawker-net` network. The listener enforces `RequireAndVerifyClientCert` plus a CN pin: the only authorized peer is the clawker control plane's cert (CN = `clawker-controlplane`). Any other peer is rejected at the TLS layer, before any RPC handler runs.
-4. **Wait for CP-driven init.** The control plane dials in over mTLS, registers the agent's identity (binding the container ID to the captured cert thumbprint in CP's sqlite agent registry), and then dispatches one or more setup commands — environment setup, MCP wiring, your `agent.post_init` script if configured. Each step's exit status and output flow back over the same Session stream.
-5. **Fork the user CMD when the agent is ready.** When CP sends the readiness signal, clawkerd forks the user CMD (default: `claude`) using `SysProcAttr.Credential` so the kernel performs `setgroups → setgid → setuid` between fork and exec. The user CMD never runs as root; clawkerd does, but it never executes user-controlled code in its own process.
+4. **Wait for CP-driven init.** The control plane dials in over mTLS, registers the agent's identity (binding the container ID to the captured cert thumbprint in CP's sqlite agent registry), and then dispatches one or more setup commands — config seeding, git wiring, your `post_init` script if configured. Each step's exit status and output flow back over the same Session stream.
+5. **Fork the user CMD when the agent is ready.** When CP sends the readiness signal, clawkerd forks the user CMD (the harness command from the image's CMD) using `SysProcAttr.Credential` so the kernel performs `setgroups → setgid → setuid` between fork and exec. The user CMD never runs as root; clawkerd does, but it never executes user-controlled code in its own process.
 6. **Supervise.** clawkerd holds open the Session for the container's lifetime — CP can dispatch additional setup commands, signal-forward into the child pgroup, or trigger a clean shutdown.
 7. **Reap and exit.** On `docker stop` (SIGTERM) or when the user CMD exits, clawkerd runs an ordered teardown: stop the listener, run phase-2 orphan drain, then `os.Exit` with the bash-convention exit code so Docker's restart policy reads the right value.
 
-If the user CMD exits cleanly (e.g. you `/exit` from Claude Code), clawkerd exits with the same code and the container stops. If you used `--rm`, Docker removes the container. If you didn't, you can start it again later with `clawker start -a -i --agent <agent>` — the config and history volumes still hold your settings and shell history.
+If the user CMD exits cleanly (e.g. you exit the harness), clawkerd exits with the same code and the container stops. If you used `--rm`, Docker removes the container. If you didn't, you can start it again later with `clawker start -a -i --agent <agent>` — the harness volumes still hold your settings, sessions, and shell history.
 
 ### Privilege Model
 
 | Process | UID | Why |
 |---------|----:|-----|
 | `clawkerd` (PID 1) | 0 (`root`) | mTLS listener, log writes, bootstrap reads, `Wait4(-1)` orphan reap |
-| User CMD (`claude` by default) | `claude` (host-derived on Linux, 1001 elsewhere) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
+| User CMD (the harness) | `claude` (host-derived on Linux, 1001 elsewhere) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
 | Anything the user CMD spawns | `claude` (host-derived on Linux, 1001 elsewhere) | Inherits from the user CMD; never reaches clawkerd's privilege |
 
 The kernel performs the credential switch atomically between fork and exec, so there is no user-mode code path that holds root and then drops it.
@@ -237,7 +258,7 @@ clawkerd's command surface (CP-dispatched, root-capable) is the entire trust bou
 
 - **No proactive outbound dial** outside the one-time CP-triggered Register handshake. clawkerd is a server — CP dials in, not the other way around.
 - **No heartbeat or keepalive.** CP knows liveness via Docker events plus the Session stream's TCP keepalives.
-- **No init-script execution as part of clawkerd's own logic.** Setup steps (env wiring, MCP install, `agent.post_init`) are dispatched by CP over the Session as setup commands — clawkerd just runs them and reports the result.
+- **No init-script execution as part of clawkerd's own logic.** Setup steps (config seeding, git wiring, `post_init`) are dispatched by CP over the Session as setup commands — clawkerd just runs them and reports the result.
 - **No firewall configuration.** eBPF cgroup programs are attached to the container's cgroup from outside by the control plane. clawkerd has no role in firewall enforcement.
 - **No reconnect logic.** clawkerd serves; if CP loses the connection, CP reconnects with backoff. clawkerd just waits for the next dial.
 
@@ -245,7 +266,7 @@ clawkerd's command surface (CP-dispatched, root-capable) is the entire trust bou
 
 When you attach an interactive terminal (`-it`), clawkerd renders per-step boot progress in plain text: an "Active" status line for the current step, then a check mark (`✓`) or cross (`✗`) when the step finishes. Steps run in milliseconds typically, so there's no spinner animation — just a clean log of what CP dispatched and how it resolved. On a non-TTY (e.g. `--detach`), the same events go to clawkerd's structured log at `/var/log/clawker/clawkerd.log` (rotated, 50MB × 3 backups, 7-day retention).
 
-After the final readiness step completes, clawkerd transfers TTY foreground to the user CMD and Claude Code takes over the terminal.
+After the final readiness step completes, clawkerd transfers TTY foreground to the user CMD and the harness takes over the terminal.
 
 ## Firewall Decoupling
 
@@ -265,7 +286,7 @@ When `agent.enable_shared_dir` is set to `true`, Clawker mounts a shared directo
 
 Every container runs with a deny-by-default network firewall. See [Security](/security) for the full details on:
 
-- The bare-bones hardcoded allowlist and why you must configure your own domains
+- The selected harness's egress floor and why you configure your own domains on top of it
 - Docker socket access
 - Linux capabilities
 - Agent awareness prompt

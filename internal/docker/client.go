@@ -26,11 +26,6 @@ type Client struct {
 	cfg config.Config  // lazily provides project and settings for image resolution
 	log *logger.Logger // structured file logger (never nil; Nop for tests)
 
-	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
-	// Used by tests to inject fake build behavior.
-	// Follows the same pattern as whail.Engine.BuildKitImageBuilder.
-	BuildDefaultImageFunc BuildDefaultImageFn
-
 	// ChownImage overrides the image used for CopyToVolume's chown step.
 	// When empty, defaults to "busybox:latest". Tests set this to a locally-built
 	// labeled image to avoid DockerHub pulls and ensure test-label propagation.

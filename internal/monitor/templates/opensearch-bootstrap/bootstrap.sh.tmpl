@@ -124,7 +124,14 @@ apply_ism_policies
 # we GET the index and assert `properties` is present — catches the
 # silent "template didn't match, dynamic mapping took over" path that
 # would otherwise lock the wrong shape until `monitor down --volumes`.
-for idx in claude-code clawker-cli clawkercp clawker-envoy clawker-coredns clawker-ebpf-egress; do
+# Index names are derived from the index-template basenames — the
+# generator enforces basename == index name (each template's
+# index_patterns is exactly its basename), so the rendered dir is the
+# single source of truth for which indices exist. Active monitoring
+# units' templates land in the same dir and are picked up identically.
+for tpl in "${BOOTSTRAP_DIR}/index-templates"/*.json; do
+  [ -e "${tpl}" ] || continue
+  idx=$(basename "${tpl}" .json)
   code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
   case "${code}" in
     200|201)
@@ -323,8 +330,10 @@ fi
 # exists. The workspace-scoped path /w/<wsId>/api/saved_objects/_import
 # stamps `workspaces: [<wsId>]` on every imported SO. Re-runs are
 # idempotent via ?overwrite=true.
-NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
-if [ -s "${NDJSON}" ]; then
+# One import per *.ndjson file: the core clawker.ndjson plus one file
+# per active monitoring unit (units ship saved-objects/<unit>.ndjson).
+for NDJSON in "${BOOTSTRAP_DIR}/saved-objects"/*.ndjson; do
+  [ -s "${NDJSON}" ] || continue
   echo "==> bootstrap: importing saved objects from ${NDJSON} into workspace ${WS_ID}"
   # _import returns HTTP 200 even when individual objects fail (per-object
   # errors live in the response body, not the status line). Capture the body
@@ -344,6 +353,6 @@ if [ -s "${NDJSON}" ]; then
     cat /tmp/so_import
     exit 1
   fi
-fi
+done
 
 echo "==> bootstrap: complete"

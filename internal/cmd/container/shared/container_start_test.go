@@ -10,13 +10,19 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobyClient "github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // okClientProvider returns a Client provider backed by a fake whose
@@ -71,7 +77,10 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 		{
 			name: "logger init error is wrapped",
 			cmdOpts: CommandOpts{
-				Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+				Config: testRuntimeConfig(
+					`security: { enable_host_proxy: false }`,
+					`firewall: { enable: false }`,
+				),
 				Logger:       func() (*logger.Logger, error) { return nil, errors.New("logger boom") },
 				ControlPlane: noopCPManager(),
 			},
@@ -322,7 +331,10 @@ func TestReapFailedStart(t *testing.T) {
 				}
 				inspectCalls++
 				if tt.goneAfterCheck && inspectCalls > 1 {
-					return mobyClient.ContainerInspectResult{}, fmt.Errorf("no such container: %w", cerrdefs.ErrNotFound)
+					return mobyClient.ContainerInspectResult{}, fmt.Errorf(
+						"no such container: %w",
+						cerrdefs.ErrNotFound,
+					)
 				}
 				return mobyClient.ContainerInspectResult{
 					Container: container.InspectResponse{
@@ -451,3 +463,36 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 // expects at token-exchange time — is only catchable end-to-end
 // against a real Hydra; that path lives in test/e2e and the manual
 // UAT flow.)
+
+// assertHarnessResolvable enforces the stale-harness-label gate at container
+// start: a qualified harness label resolves only while its bundle's source is
+// declared — a cached bundle whose `bundles:` entry was deleted must refuse the
+// start (the container would otherwise run against an egress floor weaker than
+// it was built for). A bare floor harness always resolves.
+func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
+	testenv.New(t)
+	const url = "https://example.com/acme/tools.git"
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url,
+		map[string]string{"harnesses/claude/harness.yaml": "version:\n  resolver: none\nstacks: []\n"})
+
+	undeclared := configmocks.NewBlankConfig()
+	resolveErr := assertHarnessResolvable(undeclared, "acme.tools.claude")
+	require.Error(t, resolveErr)
+	require.ErrorIs(t, resolveErr, bundle.ErrNotCached)
+	assert.Contains(t, resolveErr.Error(), "no longer resolves")
+	assert.Contains(t, resolveErr.Error(), "clawker bundle install")
+
+	declared := configmocks.NewBlankConfig()
+	declared.BundleDeclarationsFunc = func() []config.BundleDeclaration {
+		return []config.BundleDeclaration{
+			{
+				Source: config.BundleSource{URL: url, Ref: "v1", SHA: "", Path: "", AutoUpdate: false},
+				File:   "clawker.yaml",
+			},
+		}
+	}
+	require.NoError(t, assertHarnessResolvable(declared, "acme.tools.claude"))
+
+	require.NoError(t, assertHarnessResolvable(undeclared, "claude"),
+		"a bare floor harness resolves regardless of bundle declarations")
+}

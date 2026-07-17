@@ -4,7 +4,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -44,6 +48,13 @@ type Config interface {
 	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
+	// ProjectRoot returns the resolved project root the config was loaded
+	// against (the WithProjectRoot anchor), or "" when none was set (config-dir
+	// only loads: CP/host-proxy/bridge daemons, and the in-memory test doubles).
+	// It is the base directory relative registry paths (stacks:/harnesses:
+	// path entries) resolve against.
+	ProjectRoot() string
+
 	// Deprecated: Use SettingsStore().Read().Logging instead.
 	LoggingConfig() LoggingConfig
 
@@ -53,7 +64,16 @@ type Config interface {
 	// Deprecated: Use SettingsStore().Read().HostProxy instead.
 	HostProxyConfig() HostProxyConfig
 
-	EgressRules() []EgressRule
+	ProjectEgressRules() []EgressRule
+
+	// BundleDeclarations returns every declared bundle source paired with the
+	// clawker.yaml layer that declared it, highest-priority layer first. The
+	// union-merged Project().Bundles slice loses per-entry provenance; the
+	// bundle resolver needs the declaring file so an identity-collision error
+	// (two sources resolving to the same namespace.name) can name both
+	// offending files.
+	BundleDeclarations() []BundleDeclaration
+
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -62,7 +82,6 @@ type Config interface {
 	TestRepoDirEnvVar() string
 	MonitorSubdir() (string, error)
 	BuildSubdir() (string, error)
-	DockerfilesSubdir() (string, error)
 	ClawkerNetwork() string
 	LogsSubdir() (string, error)
 	BridgesSubdir() (string, error)
@@ -84,8 +103,6 @@ type Config interface {
 	PurposeMonitoring() string
 	PurposeFirewall() string
 	LabelTestName() string
-	LabelBaseImage() string
-	LabelFlavor() string
 	LabelTest() string
 	LabelE2ETest() string
 	ManagedLabelValue() string
@@ -109,11 +126,9 @@ type Config interface {
 	// collector so Prometheus retains metric metadata (its
 	// /api/v1/metadata excludes OTLP-ingested series).
 	OtelCollectorURL() string
-	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)
 	FirewallCertSubdir() (string, error)
-	RequiredFirewallRules() []EgressRule
 	EnvoyIPLastOctet() byte
 	CoreDNSIPLastOctet() byte
 	CPIPLastOctet() byte
@@ -129,8 +144,16 @@ type Config interface {
 }
 
 type configImpl struct {
-	project  *storage.Store[Project]
-	settings *storage.Store[Settings]
+	project     *storage.Store[Project]
+	settings    *storage.Store[Settings]
+	projectRoot string
+}
+
+// ProjectRoot returns the resolved project root anchor the config was loaded
+// against (empty when walk-up was disabled). Relative registry paths resolve
+// against it.
+func (c *configImpl) ProjectRoot() string {
+	return c.projectRoot
 }
 
 type NewConfigOption func(*newConfigOptions)
@@ -170,6 +193,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
+	}
 
 	settingsOpts := []storage.Option{
 		storage.WithFilenames(consts.SettingsFile),
@@ -190,8 +216,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	}
 
 	return &configImpl{
-		project:  projectStore,
-		settings: settingsStore,
+		project:     projectStore,
+		settings:    settingsStore,
+		projectRoot: options.projectRoot,
 	}, nil
 }
 
@@ -236,6 +263,9 @@ func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], erro
 	if err != nil {
 		return nil, err
 	}
+	if vErr := validateProjectNodes(store); vErr != nil {
+		return nil, fmt.Errorf("config: validating preset project config: %w", vErr)
+	}
 	store.MarkSeedForWrite()
 	return store, nil
 }
@@ -247,6 +277,9 @@ func NewBlankConfig() (Config, error) {
 	projectStore, err := storage.New[Project](storage.GenerateDefaultsYAML[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
+	}
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
@@ -266,6 +299,9 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
+	}
 	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
@@ -276,12 +312,13 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	}, nil
 }
 
-// EgressRules returns the full egress rule set for this project:
-// required baseline + anything configured under security.firewall
-// (explicit rules + add_domains shorthand).
-func (c *configImpl) EgressRules() []EgressRule {
+// ProjectEgressRules returns the egress rules configured under the
+// project's security.firewall: explicit rules verbatim, then add_domains
+// shorthand expansions. This is the project's contribution only — the
+// selected harness's required egress floor is composed in by
+// bundler.EgressRules, which is what firewall sync paths must call.
+func (c *configImpl) ProjectEgressRules() []EgressRule {
 	var rules []EgressRule
-	rules = append(rules, c.RequiredFirewallRules()...)
 	projectFw := c.Project().Security.Firewall
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
@@ -303,6 +340,191 @@ func (c *configImpl) EgressRules() []EgressRule {
 	return rules
 }
 
+// BundleDeclarations walks the project store's discovered layers (highest to
+// lowest priority) and returns each layer's declared bundle sources paired
+// with that layer's file path. It projects each source from the layer's
+// decoded map view — a total projection over BundleSource's scalar fields,
+// valid because validateBundlesNode already rejected any malformed source at
+// load, so no per-layer decode can fail here. The union-merged
+// Project().Bundles snapshot cannot carry this per-entry file provenance.
+func (c *configImpl) BundleDeclarations() []BundleDeclaration {
+	return declarationsFromLayers(c.project.Layers())
+}
+
+// declarationsFromLayers projects the bundles: node of each layer (highest
+// priority first) into per-file declarations.
+func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
+	var decls []BundleDeclaration
+	for _, layer := range layers {
+		raw, ok := layer.Data["bundles"]
+		if !ok || raw == nil {
+			continue
+		}
+		list, isList := raw.([]any)
+		if !isList {
+			continue
+		}
+		for _, item := range list {
+			entry, isMap := item.(map[string]any)
+			if !isMap {
+				continue
+			}
+			decls = append(decls, BundleDeclaration{
+				Source: bundleSourceFromMap(entry),
+				File:   layer.Path,
+			})
+		}
+	}
+	return decls
+}
+
+// BundleDeclarationsAt loads the bundle declarations of one project root
+// WITHOUT a full config load: it probes EVERY directory under root (walk-up
+// discovery makes any directory between a working directory and the project
+// root a declaring layer, so a nested clawker.yaml is a first-class root)
+// with the same dual placement a walk-up level gets (.clawker/ dir form
+// first, then flat dotted files) for the project and local-override config
+// files, validates only their bundles: nodes, and projects the declarations.
+// It exists for the bundle cache's GC roots, which must union the declared
+// source values of every REGISTERED project — not just the one the current
+// process runs in.
+//
+// A missing root or a tree with no config files contributes nothing; an
+// unparseable file or a malformed bundles: node is an error (roots must be
+// computable before anything is collected), while mistakes in unrelated keys
+// are ignored. The walk does not descend into dot-directories (each level's
+// .clawker/ dir form is probed from its parent via dual placement), does not
+// follow directory symlinks, and SKIPS a permission-denied subdirectory
+// rather than failing — root-owned directories inside bind-mounted
+// workspaces are routine for a Docker tool, and one of them must not make
+// every prune fail forever. The skipped paths are returned so the caller can
+// surface them. A subdirectory that VANISHES mid-walk (ordinary build churn —
+// npm ci, a removed dist/) is likewise skipped, silently: it holds no
+// declarations and is not operator-actionable. A layer hidden behind any of
+// these bounds is not counted as a root, and a wrong collect self-heals with
+// one refetch. An unreadable ROOT (as opposed to subdirectory) stays a hard
+// error — that is the whole input, not a corner of it.
+//
+// Deliberately wired with NO migrations and NO writes: this loader runs
+// against OTHER projects' files during GC, and it must never rewrite them —
+// storage.applyMigrations is a no-op without WithMigrations, and nothing here
+// calls Set/Write.
+func BundleDeclarationsAt(root string) ([]BundleDeclaration, []string, error) {
+	dirs, skipped, err := projectLayerDirs(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(dirs) == 0 {
+		return nil, skipped, nil
+	}
+	store, err := storage.New[Project]("",
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
+		storage.WithDirs(dirs...),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("config: loading project config at %s: %w", root, err)
+	}
+	for _, layer := range store.Layers() {
+		if vErr := validateBundlesNode(layer); vErr != nil {
+			return nil, nil, fmt.Errorf("config: validating bundles at %s: %w", root, vErr)
+		}
+	}
+	return declarationsFromLayers(store.Layers()), skipped, nil
+}
+
+// projectLayerDirs enumerates every directory under root that walk-up
+// discovery could probe as a config layer for some working directory inside
+// the project — root itself and every non-dot descendant directory. Dot-named
+// directories are not descended into (their own .clawker/ dir-form files are
+// probed from the parent level's dual placement), and symlinks are not
+// followed (WalkDir never traverses them), so the walk cannot cycle or escape
+// the root. A missing root yields no directories; a permission-denied
+// SUBdirectory is skipped and reported in the second return rather than
+// failing the walk (the directory itself stays in the probe list — its entry
+// was seen from the parent, only its children are unreachable); a
+// SUBdirectory deleted mid-walk (build churn) is skipped silently; any other
+// walk error is surfaced — it could hide a declaring layer, and the GC roots
+// this feeds must be computable before anything is collected.
+func projectLayerDirs(root string) ([]string, []string, error) {
+	var dirs []string
+	var skipped []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			skip, verdict := classifyLayerWalkError(root, path, walkErr)
+			if skip != "" {
+				skipped = append(skipped, skip)
+			}
+			return verdict
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("config: enumerating config layer dirs under %s: %w", root, err)
+	}
+	return dirs, skipped, nil
+}
+
+// classifyLayerWalkError turns one layer-walk error into its verdict: a
+// missing root ends the walk cleanly (contributes nothing); a
+// permission-denied SUBdirectory is skipped and reported (first return names
+// it — a persistent, operator-actionable state that genuinely hides content);
+// a SUBdirectory that vanished mid-walk is skipped SILENTLY (ordinary build
+// churn — npm ci, a removed dist/ — deletes non-dot dirs constantly, a
+// directory that no longer exists holds no declarations, and warning on
+// every prune that races a build would be noise, not signal); anything else —
+// an unreadable root, EIO/ESTALE — is fatal: the tree genuinely could not be
+// assessed, and a loud retriable failure beats a silently incomplete roots
+// union.
+func classifyLayerWalkError(root, path string, walkErr error) (string, error) {
+	if path == root && errors.Is(walkErr, fs.ErrNotExist) {
+		return "", filepath.SkipAll
+	}
+	if path != root && errors.Is(walkErr, fs.ErrPermission) {
+		return path, filepath.SkipDir
+	}
+	if path != root && errors.Is(walkErr, fs.ErrNotExist) {
+		return "", filepath.SkipDir
+	}
+	return "", walkErr
+}
+
+// bundleSourceFromMap projects a decoded bundles[] map entry into a typed
+// BundleSource. It is total: each field coerces to its zero value when absent
+// or the wrong type. Load-time validateBundlesNode guarantees the shape, so
+// the zero-fallback branches are unreachable in practice — they keep the
+// projection total without an error return. Extend this when BundleSource
+// gains a field.
+func bundleSourceFromMap(entry map[string]any) BundleSource {
+	return BundleSource{
+		URL:        stringFromMap(entry, "url"),
+		Ref:        stringFromMap(entry, "ref"),
+		SHA:        stringFromMap(entry, "sha"),
+		Path:       stringFromMap(entry, "path"),
+		AutoUpdate: boolFromMap(entry, "auto_update"),
+	}
+}
+
+func stringFromMap(entry map[string]any, key string) string {
+	if s, ok := entry[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func boolFromMap(entry map[string]any, key string) bool {
+	if b, ok := entry[key].(bool); ok {
+		return b
+	}
+	return false
+}
+
 // --- Store accessors ---
 
 func (c *configImpl) ProjectStore() *storage.Store[Project] {
@@ -314,10 +536,6 @@ func (c *configImpl) SettingsStore() *storage.Store[Settings] {
 }
 
 // --- Schema accessors ---
-
-func (c *configImpl) RequiredFirewallDomains() []string {
-	return append([]string(nil), requiredFirewallDomains...)
-}
 
 func (c *configImpl) Project() *Project {
 	return c.project.Read()

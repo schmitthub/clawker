@@ -274,6 +274,24 @@ from the
 oldest shipped version hits the whole set in one load and lands on the current
 schema; an already-current file matches no precondition and is left untouched.
 
+**Notices go through `Store.Noticef`, never straight to stderr.** A migration
+that tells the user something (a removed legacy key, a moved block) queues the
+message with `s.Noticef(...)`, naming the owning file via
+`s.MigratingLayerPath()`. Storage flushes the queue only after the layer's
+rewrite commits and the migrated tree remerges cleanly — the user is never
+told a file changed when the write then fails, and a load that dies on the
+post-migration decode never announces its migrations as successes. A rewrite
+that cannot be persisted degrades (in-memory migration, retried next load,
+warning printed) instead of failing construction.
+
+**Never migrate a value into a strictly-validated node without filtering it
+first.** If the destination has an unknown-field front door (e.g. config's
+`harnesses:` node), a raw move can manufacture exactly the input that
+validator rejects — durably, so every later load fails identically. Strip
+what the destination's validator would reject and surface each stripped key
+in the notice (see `migrateClaudeCodeToHarnesses` +
+`filterHarnessBlockForMove` in `internal/config/migrations.go`).
+
 When this branch changes how a file is written (e.g. switching a hand-marshalled
 struct to a `Store[T]`), old files on disk carry keys the new schema dropped.
 Storage **preserves unknown keys on re-save**, so without a migration those dead

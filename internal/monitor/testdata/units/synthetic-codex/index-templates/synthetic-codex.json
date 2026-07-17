@@ -1,0 +1,9 @@
+{
+  "index_patterns": ["synthetic-codex"],
+  "priority": 200,
+  "composed_of": ["clawker-common"],
+  "template": {
+    "settings": {"index": {"final_pipeline": "envelope-normalize"}},
+    "mappings": {"properties": {"attributes": {"properties": {"event": {"type": "keyword"}}}}}
+  }
+}

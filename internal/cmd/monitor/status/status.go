@@ -7,13 +7,14 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
-	"github.com/spf13/cobra"
 )
 
 type StatusOptions struct {
@@ -82,7 +83,16 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 
 	// Run docker compose ps — bound to ctx so Ctrl+C doesn't leave an
 	// orphaned subprocess.
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}")
+	cmd := exec.CommandContext(
+		ctx,
+		"docker",
+		"compose",
+		"-f",
+		composePath,
+		"ps",
+		"--format",
+		"table {{.Name}}\t{{.Status}}\t{{.Ports}}",
+	)
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to get container status: %w", err)
@@ -107,13 +117,25 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 	mc := cfg.SettingsStore().Read().Monitoring
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchDashboards) {
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)))
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  OpenSearch Dashboards: %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)),
+		)
 	}
 	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchNode) {
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchPort)))
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  OpenSearch API:        %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchPort)),
+		)
 	}
 	if strings.Contains(outputStr, consts.MonitoringServicePrometheus) {
-		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)))
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  Prometheus:            %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)),
+		)
 	}
 
 	// Check network status. Any non-success collapses to "(not found)"

@@ -17,7 +17,9 @@ project is resolved from the current directory.
 
 If IMAGE is "@", clawker resolves the built image for the current scope: the
 project image inside a registered project, or the global image (built with
-"clawker build" outside any project) elsewhere.
+"clawker build" outside any project) elsewhere. "@" selects the default
+harness image; "@:`<harness>`" (e.g. "@:codex") selects a specific harness
+image built with "clawker build -t `<harness>`".
 
 ```
 clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
@@ -32,14 +34,14 @@ clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
   # Run using default image with generated agent name from config
   clawker container run -it @
 
-  # Pass claude code flags 
+  # Pass flags through to the harness
   clawker container run --rm --agent worker @ --help
   clawker container run --rm --agent ralph @ --dangerously-skip-permissions
 
   # Run in detached mode (background)
   clawker container run --detach --agent web @ -p "build entire app, don't make mistakes" --dangerously-skip-permissions
 
-  # Bypass claude code and run system commands on the container directly 
+  # Bypass the harness and run system commands on the container directly
   clawker container run --agent worker @ echo "Hello" 
   clawker container run --agent worker @ zsh 
 
@@ -166,4 +168,4 @@ clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
 
 ### See also
 
-* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Run coding agents in secure Docker containers with clawker

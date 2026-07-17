@@ -106,6 +106,22 @@ bash scripts/install-hooks.sh          # Install (once after clone)
 make pre-commit                        # Run all hooks
 ```
 
+### `make clawker` — only when embeds are missing
+
+`make clawker` builds the four `//go:embed` binaries the pre-commit go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
+
+```bash
+ls clawkerd/embed/assets/clawkerd \
+   controlplane/manager/assets/clawkercp \
+   controlplane/manager/assets/ebpf-manager \
+   controlplane/firewall/assets/coredns-clawker \
+  || make clawker
+```
+
+(Paths are the Makefile's `CLAWKERD_BINARY`/`CP_BINARY`/`EBPF_BINARY`/`COREDNS_BINARY` vars — check there if this list drifts.)
+
+Embeds persist for the container's lifetime — they are only absent in a fresh container. Editing Go source does not invalidate them for hook purposes.
+
 ## Key Concepts
 
 See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-specific `internal/*/CLAUDE.md` files are the source of truth for API surface.
@@ -114,8 +130,8 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-
 
 See `docs/cli-reference/` for auto-generated command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `version`
-**Management**: `alias *`, `auth *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `version`
+**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
 
 ## Configuration
 
@@ -125,7 +141,7 @@ See `docs/cli-reference/` for auto-generated command reference.
 
 ```yaml
 build:
-  image: "buildpack-deps:bookworm-scm"
+  harness: "claude"
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }

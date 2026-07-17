@@ -37,7 +37,7 @@ repos:
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
-    rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5  # frozen: v2.11.4
+    rev: c0d3ddc9cf3faa61a4e378e879ece580256d76e5  # frozen: v2.12.2
     hooks:
       - id: golangci-lint-full
         entry: golangci-lint run
@@ -86,8 +86,9 @@ repos:
         verbose: true
 
       - id: plugin-drift
-        name: Plugin Dockerfile.tmpl drift check
-        entry: diff internal/bundler/assets/Dockerfile.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl
+        name: Plugin Dockerfile template drift check
+        entry: bash -c 'diff internal/bundler/assets/Dockerfile.base.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.base.tmpl && diff internal/bundler/assets/Dockerfile.harness-image.tmpl claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.harness-image.tmpl'
         language: system
-        files: (internal/bundler/assets/Dockerfile\.tmpl|claude-plugin/.*Dockerfile\.tmpl)
+        files: (internal/bundler/assets/Dockerfile\.(base|harness-image)\.tmpl|claude-plugin/.*Dockerfile\.(base|harness-image)\.tmpl)
         pass_filenames: false
+

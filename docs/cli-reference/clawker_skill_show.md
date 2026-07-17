@@ -8,8 +8,8 @@ Show manual install commands for the clawker skill plugin
 
 ### Synopsis
 
-Display the Claude CLI commands needed to manually install the
-clawker-support skill plugin.
+Display the commands needed to manually install the
+clawker-support skill plugin for a harness.
 
 ```
 clawker skill show [flags]
@@ -18,13 +18,18 @@ clawker skill show [flags]
 ### Examples
 
 ```
+  # Claude Code (default)
   clawker skill show
+
+  # Another harness
+  clawker skill show --harness opencode
 ```
 
 ### Options
 
 ```
-  -h, --help   help for show
+      --harness string   Target harness: claude, codex, opencode, or pi (default "claude")
+  -h, --help             help for show
 ```
 
 ### Options inherited from parent commands
@@ -35,4 +40,4 @@ clawker skill show [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin

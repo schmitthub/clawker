@@ -173,7 +173,7 @@ func RenderStepperBar(steps []Step, width int) string
 
 **Rendering**: `StepState.String()` returns icon. Skipped steps hidden entirely. Steps joined by ` → ` separator (MutedStyle). Truncates to width.
 
-**Example output**: `✓ Build Image: Yes  →  ◉ Flavor  →  ○ Submit`
+**Example output**: `✓ Build Image: Yes  →  ◉ Packages  →  ○ Submit`
 
 ### Layer 3 — WizardModel (`wizard.go`)
 
@@ -298,48 +298,15 @@ func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error)
 - `result.Submitted == false` → user cancelled (Esc on first step or Ctrl+C)
 - `err != nil` → BubbleTea runtime error or empty fields
 
-## 6. Reference Implementation: `clawker init`
+## 6. Reference Implementation: `clawker project init`
 
-### Full Flow
-
-```
-Run()
-  ├── runInteractive()     → TUI.RunWizard(fields) → performSetup(build, flavor)
-  └── runNonInteractive()  → performSetup(false, "")
-```
-
-`Run` dispatches based on `opts.Yes || !opts.IOStreams.IsInteractive()`.
-
-### buildWizardFields()
-
-Three fields:
-```go
-{ID: "build",   Kind: FieldSelect,  Options: [{Yes, Recommended}, {No, Skip}], DefaultIdx: 0}
-{ID: "flavor",  Kind: FieldSelect,  Options: flavorFieldOptions(), SkipIf: vals["build"] != "Yes"}
-{ID: "confirm", Kind: FieldConfirm, DefaultYes: true}
-```
-
-### flavorFieldOptions()
-
-Converts `bundler.DefaultFlavorOptions()` (name/description pairs) to `[]tui.FieldOption`.
-
-### Value Extraction
-
-```go
-buildImage := result.Values["build"] == "Yes"    // string equality on label
-flavor := result.Values["flavor"]                 // label passthrough to FlavorToImage()
-if result.Values["confirm"] != "yes" { return nil } // "yes"/"no" lowercase from ConfirmField
-```
+See `internal/cmd/project/init/init.go`: `runInteractive` → `opts.TUI.RunWizard(buildInitWizardSteps(wctx))`, with `performProjectSetup(ctx, performSetupInput{...})` as the shared testable core called by both interactive and non-interactive paths (`opts.Yes || !IsInteractive()` dispatch). A second inline `RunWizard` drives the post-init customize prompt.
 
 ### Hybrid Scenario 3+4
 
 1. **Wizard phase** (alt screen) — `TUI.RunWizard` collects user choices
 2. **Progress phase** (inline/alt) — `TUI.RunProgress` for image build
 3. **Static next steps** — `fmt.Fprintf(ios.ErrOut, ...)` guidance
-
-### performSetup — Shared Testable Core
-
-`performSetup(ctx, opts, buildBaseImage, flavor)` handles settings save + optional build. Called by both interactive and non-interactive paths. Testable without BubbleTea.
 
 **Error handling**:
 - Build errors → graceful message + next steps + return nil (not fatal)

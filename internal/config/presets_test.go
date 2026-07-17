@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/testenv"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // TestPresets_StrictDecode decodes every preset with KnownFields enabled so
@@ -101,7 +102,7 @@ func assertYAMLSubset(t *testing.T, want, got any, path string) {
 
 func TestPresets_FieldAssertions(t *testing.T) {
 	// Presets that have language-specific firewall domains (not Bare/C++).
-	// TypeScript's only domain (registry.npmjs.org) is in the required
+	// Node's only domain (registry.npmjs.org) is in the required
 	// firewall set — see internal/config/defaults.go — so the preset no
 	// longer adds language-specific domains.
 	presetsWithDomains := map[string]bool{
@@ -118,8 +119,6 @@ func TestPresets_FieldAssertions(t *testing.T) {
 
 			snap := store.Read()
 
-			assert.NotEmpty(t, snap.Build.Image,
-				"preset %q: build.image must not be empty", p.Name)
 			assert.NotEmpty(t, snap.Build.Packages,
 				"preset %q: build.packages must not be empty", p.Name)
 
@@ -129,8 +128,8 @@ func TestPresets_FieldAssertions(t *testing.T) {
 				"preset %q: build.packages must include ripgrep", p.Name)
 
 			// Node users rely on dependencies being installed out of the box;
-			// the TypeScript preset must ship an npm install pre_run.
-			if p.Name == "TypeScript" {
+			// the Node preset must ship an npm install pre_run.
+			if p.Name == "Node" {
 				assert.Contains(t, snap.Agent.PreRun, "npm install",
 					"preset %q: agent.pre_run must run npm install", p.Name)
 			}

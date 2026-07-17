@@ -33,15 +33,16 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages.
 
 ```go
 type BuildOptions struct {
-    IOStreams      *iostreams.IOStreams
-    TUI            *tui.TUI
-    Config         func() (config.Config, error)
-    Logger         func() (*logger.Logger, error)
-    Client         func(context.Context) (*docker.Client, error)
-    ProjectManager func() (project.ProjectManager, error)
-    HttpClient     func() *http.Client
+    IOStreams       *iostreams.IOStreams
+    TUI             *tui.TUI
+    Config          func() (config.Config, error)
+    Logger          func() (*logger.Logger, error)
+    Client          func(context.Context) (*docker.Client, error)
+    ProjectManager  func() (project.ProjectManager, error)
+    ProjectRegistry func() (*project.Registry, error)
+    HttpClient      func() (*http.Client, error)
+    BundleManager   func() (*bundle.Manager, error)
 
-    File      string   // -f, --file (Dockerfile path)
     Tags      []string // -t, --tag (multiple allowed)
     NoCache   bool     // --no-cache
     Pull      bool     // --pull
@@ -55,6 +56,9 @@ type BuildOptions struct {
 }
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command
 ```
+
+The run function opens with `cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)`
+— the opt-in bundle auto-update hook (warn-and-proceed, never blocks the build).
 
 Uses **live-display** output scenario: `BuildOptions` captures `IOStreams` and `TUI` from Factory plus lazy closures for `Config`, `Logger`, `Client`, `ProjectManager`, and `HttpClient`. Build progress is rendered via `opts.TUI.RunProgress(opts.Progress, cfg, ch)` — BubbleTea tree in TTY, plain text otherwise. BuildKit progress events flow through a `buildOpts.OnProgress` callback that forwards `whail.BuildProgressEvent` → `tui.ProgressStep` on a `chan tui.ProgressStep`. The builder runs in a goroutine; channel closure signals done. When `--quiet` or `--progress=none`, output is suppressed and `builder.Build` runs synchronously with no progress channel. Before building, the command calls `docker.BuildKitEnabled` and emits a warning if BuildKit is unavailable (cache mount directives are silently ignored in legacy mode). HttpClient is used at the start of every build to resolve @anthropic-ai/claude-code's latest dist-tag against the npm registry; the resolved version is baked into the rendered Dockerfile's ARG CLAUDE_CODE_VERSION default. Resolution failure is non-fatal — a warning prints and the "latest" literal is used. IIDFile, when set, writes the built image digest to the named file after a successful build.
 

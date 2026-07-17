@@ -1,0 +1,11 @@
+# Rust via rustup — the canonical installer, stable channel, user-owned
+# ~/.cargo and ~/.rustup. rustup wires `. "$HOME/.cargo/env"` into the
+# user's shell init so cargo/rustc resolve at runtime; rustup itself
+# verifies the stack artifacts it downloads. Floated (installer over
+# TLS) for the same dep-rot rationale as nvm: docs/threat-model.mdx.
+# Guarded: an existing user cargo install is left untouched.
+RUN if [ -x "$HOME/.cargo/bin/cargo" ] || command -v cargo >/dev/null 2>&1; then \
+      echo "clawker stack rust: cargo already present — skipping install"; \
+    else \
+      curl https://sh.rustup.rs -sSf | sh -s -- -y ; \
+    fi

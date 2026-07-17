@@ -1,0 +1,182 @@
+---
+title: "Authoring Harnesses"
+description: "Write a coding-agent harness — the harness.yaml manifest (version, stacks, volumes, seeds, staging, egress) and its Dockerfile fragment"
+icon: "code-branch"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "harness", "authoring", "egress floor"]
+---
+
+A **harness** definition tells clawker how to build and run a coding-agent CLI.
+Authoring one means writing a manifest that declares the agent's runtime needs
+plus a Dockerfile fragment that installs it. This page covers the harness
+directory; see [Harnesses](/harnesses) for selecting and running harnesses, and
+[Authoring bundles](/authoring-bundles) for packaging one for distribution.
+
+## Directory layout
+
+A harness is a directory whose name is the harness's component name:
+
+```
+<name>/
+├── harness.yaml               # manifest
+├── Dockerfile.harness.tmpl    # the install fragment for this harness's image
+└── assets/                    # files referenced by seeds/staging (optional)
+```
+
+Place it in a loose convention directory to use it immediately, or inside a
+bundle's `harnesses/` directory to distribute it:
+
+```
+loose (project):  .clawker/harnesses/<name>/
+loose (user):     ~/.config/clawker/harnesses/<name>/
+bundle:           <bundle>/harnesses/<name>/
+```
+
+## The manifest
+
+`harness.yaml` declares everything clawker's engine needs outside template
+rendering — how to resolve the agent's version, which stacks it needs, the
+volumes it keeps state in, what to seed and stage into those volumes, where the
+agent reads managed context from, and the egress the firewall must allow.
+
+```yaml
+# harness.yaml
+version:
+  resolver: npm
+  package: "@acme/agent"
+
+stacks:
+  - node
+
+managed_prompt:
+  dest: /etc/acme/AGENTS.md
+
+volumes:
+  - name: config
+    path: .acme
+
+seeds:
+  - file: assets/settings.json
+    dest: .acme/settings.json
+    apply: json-merge
+
+staging:
+  copy:
+    - src: ${ACME_CONFIG_DIR:-~/.acme}/settings.json
+      dest: .acme/settings.json
+
+egress:
+  - dst: api.acme.com
+```
+
+### `version`
+
+Declares how the agent's version is resolved and rendered into the build
+fragment.
+
+| Field | Purpose |
+|-------|---------|
+| `resolver` | `npm` (resolve the latest of an npm package), `github-release` (resolve the latest GitHub release), or `none` (no version resolution). |
+| `package` | The npm package name or GitHub `owner/repo`, per resolver. |
+| `tag_prefix` | For `github-release`: the release-tag prefix stripped to obtain the bare version (e.g. `rust-v` turns `rust-v0.50.0` into `0.50.0`). |
+
+### `stacks`
+
+The stack dependencies this harness's fragment needs, resolved by the same
+algorithm as every selection surface: a bare name resolves user loose → project
+loose → built-in floor; a qualified `namespace.bundle.component` address
+resolves from an installed bundle. A bundled harness that depends on a stack it
+ships alongside references it by its own qualified address.
+
+### `managed_prompt`
+
+Where the agent reads managed context from. Clawker ships a managed
+agent-context briefing — a harness-agnostic markdown file describing the
+container environment, the firewall, and how to ask for help when a domain is
+blocked. Declaring `managed_prompt` tells the build to bake that file into the
+image at the location your agent loads managed instructions from. The content
+is clawker's, not the harness's; the manifest only names the destination.
+Omit the block entirely if the agent has no managed-context location — nothing
+is copied.
+
+| Field | Purpose |
+|-------|---------|
+| `dest` | Absolute container path, including the filename (e.g. `/etc/claude-code/CLAUDE.md`). |
+| `owner` | `root` (default) or `user` — the unprivileged container user. |
+| `mode` | Octal permission value; defaults to `0644`. |
+
+The copy happens at **build time**, never at runtime, so the destination must
+not sit under a declared volume (a volume mount would shadow it).
+
+### `volumes`
+
+Each entry is a persisted directory that becomes a named volume mounted under
+the container home. `name` is the volume-name suffix; `path` is
+container-home-relative. Every `seeds`/`staging` destination must fall under a
+declared volume.
+
+### `seeds`
+
+First-boot content applied to a volume by clawker's init step. `file` is a
+bundle-relative source under `assets/`; `dest` is container-home-relative; and
+`apply` is one of `copy-if-missing`, `copy-if-missing-or-empty`, or `json-merge`.
+
+### `staging`
+
+The create-time host→container copy of agent state that lives **outside** the
+workspace (the workspace itself arrives via mount and is never staged). Every
+entry is an explicit `src`→`dest` directive; nothing is copied by convention.
+`src` expands `~`, `$VAR`/`${VAR}`, and `${VAR:-fallback}`; `dest` lands in a
+declared volume. `copy` entries can narrow what is copied (for example, an
+allowlist of JSON keys) so host secrets never travel into the container.
+
+### `egress`
+
+The **egress floor** — the domains the firewall must allow for the agent to
+function, composed with the project's `security.firewall` rules. Entries use the
+same rule vocabulary as project firewall rules (`dst`, optional `proto`/`port`,
+optional `path_rules`), so a harness can allow a host broadly or scope it to
+specific paths. See [Firewall](/firewall) for the rule grammar.
+
+<Warning>
+  The egress floor is a security boundary. A container refuses to start if its
+  harness label names a harness no longer available, precisely so it never runs
+  with a weaker floor than it was built for. Declare exactly the domains the
+  agent needs — no more.
+</Warning>
+
+## The Dockerfile fragment
+
+`Dockerfile.harness.tmpl` is the install fragment for this harness's image — it
+installs the agent CLI and sets its `CMD`, and renders on top of the shared base
+image. The resolved `version` and the harness's `stacks` are available to it.
+The shipped `claude` and `codex` harnesses are the best working reference for
+the fragment shape, the seed/staging manifests, and the egress floor.
+
+The fragment is a set of `{{define "<block>"}}` bodies filling slots the master
+template declares. Each slot is named for the permission scope it runs in and
+the template event around it — the name tells you where you are in the build
+timeline, not what to put there. A fragment may define any subset, and any
+instructions may go in any block:
+
+| Block | Runs as | Shell | Position in the build |
+|-------|---------|-------|-----------------------|
+| `root_after_stacks` | root | `sh` | Right after the harness's stack fragments render (root scope), before the volume directories are created and the build switches to the container user. |
+| `user_after_stacks` | user | `sh` | After the user switch and the user-scope stack fragments, before the shell switches to zsh. |
+| `user_after_shell_switch` | user | `zsh` | After the zsh shell switch, before config seeds are staged and the project's harness-image inject points render. The shipped harnesses install their agent CLI here. |
+| `root_before_entrypoint` | root | `zsh` | After the user-scope section ends and root is restored, before clawker stamps its own assets and the `ENTRYPOINT`. |
+| `cmd` | — | — | The final instruction — set the container's `CMD` here. |
+
+Defining any other template name is a validation error, and the project
+inject-point names (`user_commands`, `before_entrypoint`, ...) are
+reserved — a fragment can never override them.
+
+## Validating
+
+Bundle a harness and validate it before publishing:
+
+```bash
+clawker bundle validate ./my-bundle --strict
+```
+
+Validation loads each harness the same way `clawker build` does, so a
+`harness.yaml` that would fail at build time fails here instead.

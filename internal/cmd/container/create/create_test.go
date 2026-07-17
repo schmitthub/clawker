@@ -453,9 +453,12 @@ func TestCreateRun(t *testing.T) {
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
-		// Point CLAUDE_CONFIG_DIR to a non-existent path so InitContainerConfig fails
-		// (proving it WAS called when ConfigCreated=true).
-		t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-test-dir")
+		// Unreadable settings.json forces the staging read (json_keys) to
+		// fail, proving InitContainerConfig WAS called for the fresh
+		// volume. A missing host dir would be a soft skip, not an error.
+		hostDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(hostDir, "settings.json"), []byte("{}"), 0o000))
+		t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 
 		f, _, out, errOut := testFactory(t, fake)
 		cmd := NewCmdCreate(f, nil)
@@ -468,7 +471,7 @@ func TestCreateRun(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "container init")
-		require.Contains(t, err.Error(), "CLAUDE_CONFIG_DIR")
+		require.Contains(t, err.Error(), "settings.json")
 
 		// Container should NOT have been created since init failed before ContainerCreate... wait no.
 		// Actually, init runs AFTER workspace setup (which includes ContainerCreate path? No.)
@@ -500,11 +503,11 @@ func TestCreateRun(t *testing.T) {
 	})
 
 	// NOTE: Onboarding bypass tests removed — onboarding is now handled at image level
-	// (entrypoint seeds ~/.claude/.config.json from ~/.claude-init/.config.json).
+	// (CP's seed-apply step places the harness's .config.json seed from ~/.clawker/seed/).
 	// CopyToContainer is no longer called for onboarding injection.
 
-	t.Run("only one CopyToContainer when use_host_auth disabled and no post_init", func(t *testing.T) {
-		// use_host_auth disabled + no post_init: post-init injection
+	t.Run("only one CopyToContainer with fresh strategy and no post_init", func(t *testing.T) {
+		// fresh strategy + no post_init: post-init injection
 		// must NOT fire, but the bootstrap material copy from
 		// InstallAgentBootstrap always does → exactly one
 		// CopyToContainer call.
@@ -515,7 +518,7 @@ func TestCreateRun(t *testing.T) {
 version: "1"
 workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
-agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { strategy: "fresh" } } }
+agent: { claude_code: { mount_projects: false, config: { strategy: "fresh" } } }
 `, "")
 		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()

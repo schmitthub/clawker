@@ -1,0 +1,14 @@
+{
+  "$id": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/schemas/stack.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "description": "Human-readable description of what the stack provisions.",
+      "title": "Description",
+      "type": "string"
+    }
+  },
+  "title": "clawker stack definition manifest (stack.yaml)",
+  "type": "object"
+}

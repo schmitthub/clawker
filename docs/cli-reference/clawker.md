@@ -4,16 +4,16 @@ title: "clawker"
 
 ## clawker
 
-Manage Claude Code in secure Docker containers with clawker
+Run coding agents in secure Docker containers with clawker
 
 ### Synopsis
 
-Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
+Clawker wraps coding agent harnesses (Claude Code and others) in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
   clawker init           # Initialize project in current directory
   clawker build          # Build the container image
-  clawker run            # Start Claude Code in a container
+  clawker run            # Start the agent in a container
   clawker stop           # Stop the container
 
 Workspace modes:
@@ -25,14 +25,15 @@ Workspace modes:
 * [clawker alias](clawker_alias) - Manage command aliases
 * [clawker attach](clawker_attach) - Attach local standard input, output, and error streams to a running container
 * [clawker auth](clawker_auth) - Manage control plane authentication material
-* [clawker build](clawker_build) - Build an image from a clawker project
+* [clawker build](clawker_build) - Build the project image
+* [clawker bundle](clawker_bundle) - Manage distributed bundles of harnesses, stacks, and monitoring extensions
 * [clawker container](clawker_container) - Manage containers
 * [clawker controlplane](clawker_controlplane) - Break-glass control plane lifecycle
 * [clawker cp](clawker_cp) - Copy files/folders between a container and the local filesystem
 * [clawker create](clawker_create) - Create a new container
 * [clawker exec](clawker_exec) - Execute a command in a running container
 * [clawker firewall](clawker_firewall) - Manage the egress firewall
-* [clawker generate](clawker_generate) - Generate Dockerfiles for Claude Code releases
+* [clawker harness](clawker_harness) - Inspect resolvable harnesses
 * [clawker image](clawker_image) - Manage images
 * [clawker init](clawker_init) - Initialize a new clawker project (alias for 'project init')
 * [clawker kill](clawker_kill) - Kill one or more running containers
@@ -48,7 +49,8 @@ Workspace modes:
 * [clawker rmi](clawker_rmi) - Remove one or more images
 * [clawker run](clawker_run) - Create and run a new container
 * [clawker settings](clawker_settings) - Manage clawker user settings
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
+* [clawker stack](clawker_stack) - Inspect resolvable stacks
 * [clawker start](clawker_start) - Start one or more stopped containers
 * [clawker stats](clawker_stats) - Display a live stream of container resource usage statistics
 * [clawker stop](clawker_stop) - Stop one or more running containers

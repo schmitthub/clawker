@@ -8,9 +8,15 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/keepalive"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -23,9 +29,6 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/keepalive"
 )
 
 // adminClientKeepalive is the keepalive policy the CLI applies to the
@@ -69,11 +72,62 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // anchors at the registry-resolved project root, no Config dependency
 	f.Prompter = prompterFunc(f)
-	f.AdminClient = adminClientFunc(f)   // depends on Config
-	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
-	f.HttpClient = httpClientFunc()      // stdlib *http.Client; tests substitute via custom RoundTripper
+	f.AdminClient = adminClientFunc(f)     // depends on Config
+	f.ControlPlane = controlPlaneFunc(f)   // depends on Config, Logger, Client
+	f.HttpClient = httpClientFunc()        // stdlib *http.Client; tests substitute via custom RoundTripper
+	f.BundleManager = bundleManagerFunc(f) // depends on Config
 
 	return f
+}
+
+// bundleManagerFunc returns a lazy constructor for the bundle-model facade. It
+// resolves the loaded config once (sync.Once-cached) and binds a Manager to it;
+// the Manager's resolver reads the embedded floor, the loose convention dirs,
+// and the host bundle cache on demand. Depends on Config, plus ProjectManager
+// (lazily, per GC pass) for the cache GC roots.
+func bundleManagerFunc(f *cmdutil.Factory) func() (*bundle.Manager, error) {
+	var (
+		once sync.Once
+		mgr  *bundle.Manager
+		err  error
+	)
+	return func() (*bundle.Manager, error) {
+		once.Do(func() {
+			var cfg config.Config
+			cfg, err = f.Config()
+			if err != nil {
+				err = fmt.Errorf("bundle manager: loading config: %w", err)
+				return
+			}
+			mgr = bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(registeredRootsFn(f)))
+		})
+		return mgr, err
+	}
+}
+
+// registeredRootsFn lists every registered project root and worktree path —
+// the directories whose declarations count as bundle cache GC roots. Resolved
+// lazily per GC pass so the registry read happens only when a prune or an
+// install/update auto-GC actually runs.
+func registeredRootsFn(f *cmdutil.Factory) bundle.RegisteredRootsFn {
+	return func(ctx context.Context) ([]string, error) {
+		pm, err := f.ProjectManager()
+		if err != nil {
+			return nil, fmt.Errorf("bundle GC roots: loading project manager: %w", err)
+		}
+		entries, err := pm.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("bundle GC roots: listing registered projects: %w", err)
+		}
+		var roots []string
+		for _, e := range entries {
+			roots = append(roots, e.Root)
+			for _, wt := range e.Worktrees {
+				roots = append(roots, wt.Path)
+			}
+		}
+		return roots, nil
+	}
 }
 
 // cliStateFunc returns a sync.Once-cached lazy closure that yields the CLI
@@ -96,8 +150,8 @@ func cliStateFunc() func() (state.StateStore, error) {
 
 // httpClientFunc returns a lazy closure that yields a shared *http.Client
 // for outbound HTTP from the CLI. First consumer:
-// bundler.ResolveLatestClaudeCodeVersion for npm registry lookups during
-// Claude Code version resolution. Matches cli/cli's HttpClient factory
+// bundler.ResolveHarnessVersion for registry lookups during harness
+// version resolution. Matches cli/cli's HttpClient factory
 // shape — *http.Client is the noun, http.RoundTripper is the stdlib mock
 // seam.
 //
@@ -196,7 +250,6 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 	return l, nil
-
 }
 
 func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {

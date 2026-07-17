@@ -6,6 +6,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
@@ -58,4 +59,8 @@ type Factory struct {
 	// same pattern as cli/cli's pkg/httpmock.Registry. No project-defined
 	// interface; the stdlib RoundTripper IS the seam.
 	HttpClient func() (*http.Client, error)
+	// BundleManager returns the bundle-model facade bound to the loaded config:
+	// three-tier component resolution plus the cache-mutating and validation
+	// operations the `clawker bundle` verbs use. Depends on Config.
+	BundleManager func() (*bundle.Manager, error)
 }

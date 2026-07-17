@@ -1,0 +1,17 @@
+# C/C++ via Debian's canonical toolchain meta: build-essential (gcc, g++,
+# make, libc dev headers) plus CMake and pkg-config — apt-managed, so
+# packages are distro-signature-verified and track Debian security updates
+# on rebuild.
+# Guarded: an existing g++ skips the install.
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v g++ >/dev/null 2>&1; then \
+{{- else}}
+RUN if command -v g++ >/dev/null 2>&1; then \
+{{- end}}
+      echo "clawker stack cpp: existing $(g++ --version | head -n1) — skipping install"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends build-essential cmake pkg-config && \
+      g++ --version && cmake --version ; \
+    fi

@@ -219,6 +219,135 @@ func TestVolumeName(t *testing.T) {
 	}
 }
 
+func TestHarnessVolumeName(t *testing.T) {
+	tests := []struct {
+		name    string
+		project string
+		agent   string
+		harness string
+		volume  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "project scoped", project: "myapp", agent: "dev", harness: "claude",
+			volume: "config", want: "clawker.myapp.dev-claude.config", wantErr: false,
+		},
+		{
+			name: "global scoped", project: "", agent: "dev", harness: "codex",
+			volume: "config", want: "clawker.dev-codex.config", wantErr: false,
+		},
+		{
+			name: "hyphenated harness", project: "myapp", agent: "dev", harness: "my-fork",
+			volume: "config", want: "clawker.myapp.dev-my-fork.config", wantErr: false,
+		},
+		{
+			name: "clawker lifecycle purpose", project: "myapp", agent: "dev", harness: "claude",
+			volume: "clawker", want: "clawker.myapp.dev-claude.clawker", wantErr: false,
+		},
+
+		// The harness segment is the exact selection spelling — for an
+		// installed-bundle harness that is the qualified
+		// namespace.bundle.component address (loadHarnessResolved), so a
+		// dotted three-segment spelling MUST compose.
+		{
+			name: "qualified bundle harness", project: "myapp", agent: "dev", harness: "acme.tools.myharness",
+			volume: "config", want: "clawker.myapp.dev-acme.tools.myharness.config", wantErr: false,
+		},
+		{
+			name: "qualified global scoped", project: "", agent: "dev", harness: "acme.tools.myharness",
+			volume: "config", want: "clawker.dev-acme.tools.myharness.config", wantErr: false,
+		},
+
+		// Segment validation (consts.ValidateHarnessRef for the harness,
+		// consts.ValidateName for the volume) is what keeps the
+		// (harness, volume) → name composition injective for a fixed
+		// (project, agent): every token is dot-free, so the joined purpose
+		// has exactly one dot (bare) or three (qualified) and splitting
+		// recovers the pair. Cross-agent aliasing (agent "dev" + harness
+		// "my-fork" vs agent "dev-my" + harness "fork") is out of the
+		// proof's scope and is refused by EnsureHarnessVolume's ownership
+		// check instead.
+		{
+			name: "empty harness rejected", project: "myapp", agent: "dev", harness: "",
+			volume: "config", want: "", wantErr: true,
+		},
+		{
+			name: "two-segment harness rejected", project: "myapp", agent: "dev", harness: "a.b",
+			volume: "config", want: "", wantErr: true,
+		},
+		{
+			name: "uppercase harness rejected", project: "myapp", agent: "dev", harness: "Claude",
+			volume: "config", want: "", wantErr: true,
+		},
+		{
+			name: "dotted volume rejected", project: "myapp", agent: "dev", harness: "claude",
+			volume: "b.c.d", want: "", wantErr: true,
+		},
+		{
+			name: "uppercase volume rejected", project: "myapp", agent: "dev", harness: "claude",
+			volume: "Config", want: "", wantErr: true,
+		},
+		{
+			name: "invalid agent rejected", project: "myapp", agent: "--rm", harness: "claude",
+			volume: "config", want: "", wantErr: true,
+		},
+		{
+			name: "invalid project rejected", project: "--bad", agent: "dev", harness: "claude",
+			volume: "config", want: "", wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := HarnessVolumeName(tt.project, tt.agent, tt.harness, tt.volume)
+			if gotErr := err != nil; gotErr != tt.wantErr {
+				t.Fatalf("HarnessVolumeName(%q, %q, %q, %q) error = %v, wantErr %v",
+					tt.project, tt.agent, tt.harness, tt.volume, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("HarnessVolumeName(%q, %q, %q, %q) = %q, want %q",
+					tt.project, tt.agent, tt.harness, tt.volume, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHarnessVolumeName_DistinctPairsDistinctNames pins the injectivity of
+// the composition — one harness landing on another's volume is exactly what
+// the harness segment exists to prevent.
+//
+// Hyphen case: hyphens are legal inside harness names, so a "-" join would
+// let harness "a" + volume "b-c" collide with harness "a-b" + volume "c";
+// the "." join does not.
+//
+// Qualified case: a bare harness "a" with volume "b.c.d" would compose the
+// same name as qualified harness "a.b.c" with volume "d" — that collision is
+// closed by making dotted volume names unrepresentable (consts.ValidateName
+// on the volume segment), which the test asserts directly.
+func TestHarnessVolumeName_DistinctPairsDistinctNames(t *testing.T) {
+	first, err := HarnessVolumeName("p", "dev", "a", "b-c")
+	if err != nil {
+		t.Fatalf("HarnessVolumeName(a, b-c) unexpected error: %v", err)
+	}
+	second, err := HarnessVolumeName("p", "dev", "a-b", "c")
+	if err != nil {
+		t.Fatalf("HarnessVolumeName(a-b, c) unexpected error: %v", err)
+	}
+	if first == second {
+		t.Errorf("distinct (harness, volume) pairs composed the same volume name %q", first)
+	}
+
+	qualified, err := HarnessVolumeName("p", "dev", "a.b.c", "d")
+	if err != nil {
+		t.Fatalf("HarnessVolumeName(a.b.c, d) unexpected error: %v", err)
+	}
+	if aliased, aliasErr := HarnessVolumeName("p", "dev", "a", "b.c.d"); aliasErr == nil {
+		t.Errorf("HarnessVolumeName(a, b.c.d) = %q, nil; want error — a dotted volume name could alias %q",
+			aliased, qualified)
+	}
+}
+
 func TestImageTag(t *testing.T) {
 	tests := []struct {
 		project string
@@ -234,6 +363,25 @@ func TestImageTag(t *testing.T) {
 			got := ImageTag(tt.project)
 			if got != tt.want {
 				t.Errorf("ImageTag(%q) = %q, want %q", tt.project, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBaseImageTag(t *testing.T) {
+	tests := []struct {
+		project string
+		want    string
+	}{
+		{"myproject", "clawker-myproject:base"},
+		{"", "clawker:base"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.project, func(t *testing.T) {
+			got := BaseImageTag(tt.project)
+			if got != tt.want {
+				t.Errorf("BaseImageTag(%q) = %q, want %q", tt.project, got, tt.want)
 			}
 		})
 	}

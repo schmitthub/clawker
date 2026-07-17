@@ -34,7 +34,10 @@ monitoring:
   opensearch_heap_mb: 512
 `)
 
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 
 	if data.OtelCollectorPort != 4318 {
 		t.Errorf("OtelCollectorPort = %d, want 4318", data.OtelCollectorPort)
@@ -57,10 +60,18 @@ monitoring:
 		t.Errorf("OtelCollectorService = %q, want %q", data.OtelCollectorService, consts.MonitoringServiceOtelCollector)
 	}
 	if data.OpenSearchNodeService != consts.MonitoringServiceOpenSearchNode {
-		t.Errorf("OpenSearchNodeService = %q, want %q", data.OpenSearchNodeService, consts.MonitoringServiceOpenSearchNode)
+		t.Errorf(
+			"OpenSearchNodeService = %q, want %q",
+			data.OpenSearchNodeService,
+			consts.MonitoringServiceOpenSearchNode,
+		)
 	}
 	if data.OpenSearchDashboardsService != consts.MonitoringServiceOpenSearchDashboards {
-		t.Errorf("OpenSearchDashboardsService = %q, want %q", data.OpenSearchDashboardsService, consts.MonitoringServiceOpenSearchDashboards)
+		t.Errorf(
+			"OpenSearchDashboardsService = %q, want %q",
+			data.OpenSearchDashboardsService,
+			consts.MonitoringServiceOpenSearchDashboards,
+		)
 	}
 }
 
@@ -72,7 +83,10 @@ monitoring:
   otel_grpc_port: 5317
 `)
 
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 	if data.OtelGRPCPort != 5317 {
 		t.Errorf("OtelGRPCPort = %d, want 5317", data.OtelGRPCPort)
 	}
@@ -103,7 +117,10 @@ docker:
   socket: /var/run/docker.sock
 `)
 
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 	result, err := RenderTemplate("compose.yaml", ComposeTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -129,7 +146,10 @@ docker:
 		{"Prometheus listen-address flag", fmt.Sprintf("--web.listen-address=:%d", data.PrometheusPort)},
 		{"OpenSearch REST host:container", fmt.Sprintf("%d:%d", data.OpenSearchPort, data.OpenSearchPort)},
 		{"OpenSearch http.port env", fmt.Sprintf("http.port=%d", data.OpenSearchPort)},
-		{"OpenSearch Dashboards host:container", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort)},
+		{
+			"OpenSearch Dashboards host:container",
+			fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
+		},
 		{"OpenSearch Dashboards SERVER_PORT env", fmt.Sprintf("SERVER_PORT=%d", data.OpenSearchDashboardsPort)},
 		// Heap derived from MonitoringConfig.OpenSearchHeapMB.
 		{"OpenSearch heap", fmt.Sprintf("-Xms%dm -Xmx%dm", data.OpenSearchHeapMB, data.OpenSearchHeapMB)},
@@ -138,7 +158,10 @@ docker:
 		{"Prometheus service key", data.PrometheusService + ":"},
 		{"OpenSearch node service key", data.OpenSearchNodeService + ":"},
 		{"OpenSearch dashboards service key", data.OpenSearchDashboardsService + ":"},
-		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchPort)},
+		{
+			"dashboards points at opensearch-node",
+			fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchPort),
+		},
 	}
 	for _, check := range valueRouting {
 		if !strings.Contains(result, check.contain) {
@@ -159,10 +182,12 @@ docker:
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
 	} {
 		if !strings.Contains(result, hostBind) {
-			t.Errorf("compose.yaml missing loopback bind %q — sensitive port must not be exposed on all interfaces", hostBind)
+			t.Errorf(
+				"compose.yaml missing loopback bind %q — sensitive port must not be exposed on all interfaces",
+				hostBind,
+			)
 		}
 	}
-
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
@@ -175,7 +200,10 @@ monitoring:
   opensearch_port: 9200
 `)
 
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 	result, err := RenderTemplate("otel-config.yaml", OtelConfigTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -186,18 +214,18 @@ monitoring:
 		"0.0.0.0:5318", // HTTP endpoint
 		"0.0.0.0:9889", // prometheus exporter
 		"opensearch/logs_cp:",
-		"opensearch/logs_claude_code:",
+		"opensearch/logs_clawker_cli:",
 		"opensearch/logs_envoy:",
 		"opensearch/logs_coredns:",
 		"opensearch/traces:",
 		"http://" + consts.MonitoringServiceOpenSearchNode + ":9200",
 		"logs_index: clawkercp",
-		"logs_index: claude-code",
+		"logs_index: clawker-cli",
 		"logs_index: clawker-envoy",
 		"logs_index: clawker-coredns",
 		"exporters: [opensearch/traces, spanmetrics, debug]",
 		"exporters: [opensearch/logs_cp, debug]",
-		"exporters: [opensearch/logs_claude_code, debug]",
+		"exporters: [opensearch/logs_clawker_cli, debug]",
 		"exporters: [opensearch/logs_envoy, debug]",
 		"exporters: [opensearch/logs_coredns, debug]",
 		"exporters: [routing/untrusted]",
@@ -205,7 +233,7 @@ monitoring:
 		"exporters: [prometheus, debug]",
 		"routing/untrusted:",
 		"routing/trusted:",
-		`condition: attributes["service.name"] == "claude-code"`,
+		`condition: attributes["service.name"] == "clawker-cli"`,
 		`condition: attributes["service.name"] == "envoy"`,
 		`condition: attributes["service.name"] == "coredns"`,
 		`condition: attributes["service.name"] == "clawkercp"`,
@@ -233,6 +261,14 @@ monitoring:
 		}
 	}
 
+	// Zero active units → zero unit lanes anywhere in the collector
+	// config. Unmatched service names (any inactive unit's traffic)
+	// fall to the debug-only unrouted pipeline.
+	for _, absent := range []string{"claude-code", "logs/unit_"} {
+		if strings.Contains(result, absent) {
+			t.Errorf("otel-config.yaml with no active units should not contain %q", absent)
+		}
+	}
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {
@@ -241,7 +277,10 @@ monitoring:
   prometheus_metrics_port: 9889
 `)
 
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 	result, err := RenderTemplate("prometheus.yaml", PrometheusTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -258,7 +297,10 @@ func TestNewMonitorTemplateData_OpenSearchImages(t *testing.T) {
 monitoring:
   otel_collector_port: 4318
 `)
-	data := NewMonitorTemplateData(mon)
+	data, err := NewMonitorTemplateData(mon, nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
 	if data.OpenSearchImage != OpenSearchImage {
 		t.Errorf("OpenSearchImage = %q, want %q", data.OpenSearchImage, OpenSearchImage)
 	}
@@ -297,7 +339,7 @@ func TestWriteOpenSearchBootstrap_PrunesStaleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := NewMonitorTemplateData(testSettings(t, `
+	data, err := NewMonitorTemplateData(testSettings(t, `
 monitoring:
   otel_collector_port: 4318
   otel_grpc_port: 4317
@@ -306,9 +348,12 @@ monitoring:
   opensearch_port: 9200
   opensearch_dashboards_port: 5601
   opensearch_heap_mb: 512
-`))
-	if err := WriteOpenSearchBootstrap(destDir, data); err != nil {
-		t.Fatalf("WriteOpenSearchBootstrap: %v", err)
+`), nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
+	if writeErr := WriteOpenSearchBootstrap(destDir, data, nil); writeErr != nil {
+		t.Fatalf("WriteOpenSearchBootstrap: %v", writeErr)
 	}
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
@@ -318,7 +363,7 @@ monitoring:
 	for _, want := range []string{
 		"bootstrap.sh",
 		filepath.Join("saved-objects", "clawker.ndjson"),
-		filepath.Join("saved-objects", "explore", "clawker-claude-code-model-usage.json"),
+		filepath.Join("index-templates", "clawker-envoy.json"),
 	} {
 		if _, err := os.Stat(filepath.Join(destDir, want)); err != nil {
 			t.Errorf("expected %s after render: %v", want, err)

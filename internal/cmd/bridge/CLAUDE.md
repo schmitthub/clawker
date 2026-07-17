@@ -26,7 +26,7 @@ clawker bridge serve --container <id> [--gpg] [--pid-file <path>]
 
 The bridge runs as a detached subprocess with no terminal. It initializes a file logger via
 `config.NewConfig()` → `cfg.LogsSubdir()` → `logger.New(...)` with filename `bridge-<containerID[:12]>.log`.
-Falls back to `logger.Nop()` if config or log directory setup fails. The logger is closed via `defer`.
+Falls back to `logger.Nop()` if config or log directory setup fails. The logger is closed via `defer log.Close(context.Background())` (caller-owned flush deadline).
 
 ## Docker Client Usage
 

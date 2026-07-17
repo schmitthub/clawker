@@ -9,8 +9,12 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -23,8 +27,6 @@ import (
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // RunOptions holds options for the run command.
@@ -43,6 +45,7 @@ type RunOptions struct {
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
 	Logger          func() (*logger.Logger, error)
+	BundleManager   func() (*bundle.Manager, error)
 	Version         string
 
 	// Run-specific options
@@ -73,6 +76,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		SocketBridge:           f.SocketBridge,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
+		BundleManager:          f.BundleManager,
 		Version:                f.Version,
 	}
 
@@ -88,21 +92,23 @@ project is resolved from the current directory.
 
 If IMAGE is "@", clawker resolves the built image for the current scope: the
 project image inside a registered project, or the global image (built with
-"clawker build" outside any project) elsewhere.`,
+"clawker build" outside any project) elsewhere. "@" selects the default
+harness image; "@:<harness>" (e.g. "@:codex") selects a specific harness
+image built with "clawker build -t <harness>".`,
 		Example: `  # Run an interactive shell
   clawker container run -it --agent ralph @ 
 
   # Run using default image with generated agent name from config
   clawker container run -it @
 
-  # Pass claude code flags 
+  # Pass flags through to the harness
   clawker container run --rm --agent worker @ --help
   clawker container run --rm --agent ralph @ --dangerously-skip-permissions
 
   # Run in detached mode (background)
   clawker container run --detach --agent web @ -p "build entire app, don't make mistakes" --dangerously-skip-permissions
 
-  # Bypass claude code and run system commands on the container directly 
+  # Bypass the harness and run system commands on the container directly
   clawker container run --agent worker @ echo "Hello" 
   clawker container run --agent worker @ zsh 
 
@@ -151,6 +157,11 @@ project image inside a registered project, or the global image (built with
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerCreateOptions
+
+	// Opt-in bundle auto-update before the container resolves its harness/egress
+	// floor against the cached bundle set. Warn and proceed.
+	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -189,21 +200,13 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 	}
 
-	if containerOpts.Image == "@" {
-		resolvedImage, err := client.ResolveImageWithSource(ctx, projectName)
-		if err != nil {
-			return fmt.Errorf("resolving image: %w", err)
+	if harnessTag, isPlaceholder := shared.ParseImagePlaceholder(containerOpts.Image); isPlaceholder {
+		ref, resolveErr := shared.ResolvePlaceholderImage(
+			ctx, client, cfg, ios, projectName, harnessTag, "run")
+		if resolveErr != nil {
+			return fmt.Errorf("resolving image: %w", resolveErr)
 		}
-		if resolvedImage == nil {
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No built image found for \"@\"\n", cs.FailureIcon())
-			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. Build an image first: clawker build")
-			fmt.Fprintln(ios.ErrOut, "  2. Or specify an image: clawker container run IMAGE")
-			return cmdutil.SilentError
-		}
-
-		containerOpts.Image = resolvedImage.Reference
+		containerOpts.Image = ref
 	}
 
 	// Warn if workspace mount would include the home directory or higher

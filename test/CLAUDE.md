@@ -49,10 +49,12 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 | `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.NewFakeClient` |
 | `ProjectManager` | `func(log, project.GitManagerFactory, nameOverride, project.Registry) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
+| — (`f.BundleManager`) | always wired, mirrors `bundleManagerFunc` in `internal/cmd/factory/default.go` — real `bundle.NewManager` over the harness Config; the registry-roots GC provider is attached only when `ProjectManager` is set (otherwise GC is off, fail-closed) | derived, no option field |
+| — (`f.CLIState`, `f.HttpClient`) | always wired, production-mirroring: `state.New()` (resolves under the test's isolated XDG dirs) and a 30s-timeout stdlib `*http.Client` | derived, no option field |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.NewMockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `adminv1mocks.AdminServiceClientMock` (no-op). |
-| `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
+| `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `adminv1mocks.AdminServiceClientMock` with only `FirewallRemove` wired as a no-op (cleanup's `firewall down` path); any other RPC panics loudly — opt into `UseRealAdminClient` to drive admin verbs. |
+| `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` with every method wired to return zero values, so tests that don't touch CP verbs never panic on a nil moq func nor bootstrap a real CP |
 
 ### Functions
 

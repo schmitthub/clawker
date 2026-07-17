@@ -44,10 +44,10 @@ github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
 github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
 gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf
 gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=
-gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Ik8Y0iQ7F3awE8ntZELLwOvLYjzo3yl7hGRM9aLhHaVCF8bCG7cJTbplCCVSLKcQzQasPAOmPTmCC/NfZqrT0cIQ2rWM8Q1xI/z3THw1h19WSSqLBgNmz8M+Z7oqlABp7UMlP8W5K5RUCTASg9K7hNg7Jy3gmr3G6V+/FFHDB5PASg8q2g9ByCVWDqt1r8I5NxpqhUJ47RCrKE01zEIyc9z
+gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9
 bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO
 bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=
-bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uj/4PXhq0r2tVoBqXJCmLk7k+zpcaoprJBFQDa5A7SjqPQK0pCwBvhOT0hHpF0sWH4AIQHvYAWVTD0tBFPF1yENBxnVJpfL0L2qgGxLbQCWgOG0/1ygM+Gf9n0AIksE1h/uoLERBHQXE30XuP4pHV3n+7kO5+nw5VVFIsMfrQ3oT89Si/NvvmM=
+bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=
 `
 
 // Inline self-gating shell scripts. Each script's gating predicates
@@ -55,23 +55,42 @@ bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2q
 // keep the dispatch CP-feature-flag-free: CP doesn't need to know
 // which optional features a given container has wired.
 const (
-	ConfigSeedScript = `INIT_DIR="$HOME/.claude-init"
-CONFIG_DIR="$HOME/.claude"
-[ -d "$INIT_DIR" ] || exit 0
-mkdir -p "$CONFIG_DIR"
-[ ! -f "$CONFIG_DIR/statusline.sh" ] && cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"
-if [ ! -f "$CONFIG_DIR/.config.json" ] || [ ! -s "$CONFIG_DIR/.config.json" ]; then
-    cp "$INIT_DIR/.config.json" "$CONFIG_DIR/.config.json"
-fi
-if [ ! -f "$CONFIG_DIR/settings.json" ]; then
-    cp "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json"
-else
-    if jq -s '.[0] * .[1]' "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json" > "$CONFIG_DIR/settings.json.tmp" 2>/dev/null; then
-        mv "$CONFIG_DIR/settings.json.tmp" "$CONFIG_DIR/settings.json"
-    else
-        rm -f "$CONFIG_DIR/settings.json.tmp"
-    fi
-fi
+	// ConfigSeedScript interprets the image-baked seed manifest (written by
+	// the master Dockerfile template's seed-staging section; paths agree
+	// via consts.SeedSubdir/SeedManifestFile). Harness-blind: which files
+	// seed where, and how, is data the image carries — CP just applies it.
+	// Manifest shape: one `<apply> <dest>` line per seed, where dest is a
+	// container-home-relative path (apply ∈ copy-if-missing |
+	// copy-if-missing-or-empty | json-merge; json-merge gives the existing
+	// file precedence over the seed). Images without a manifest (no
+	// harness seeds) no-op.
+	ConfigSeedScript = `SEED_DIR="$HOME/` + consts.DotClawkerDir + `/` + consts.SeedSubdir + `"
+MANIFEST="$HOME/` + consts.DotClawkerDir + `/` + consts.SeedManifestFile + `"
+[ -f "$MANIFEST" ] || exit 0
+while read -r apply dest; do
+    [ -n "$dest" ] || continue
+    SRC="$SEED_DIR/$dest"
+    DST="$HOME/$dest"
+    [ -f "$SRC" ] || continue
+    mkdir -p "$(dirname "$DST")"
+    case "$apply" in
+    copy-if-missing)
+        if [ ! -f "$DST" ]; then cp "$SRC" "$DST"; fi
+        ;;
+    copy-if-missing-or-empty)
+        if [ ! -s "$DST" ]; then cp "$SRC" "$DST"; fi
+        ;;
+    json-merge)
+        if [ ! -f "$DST" ]; then
+            cp "$SRC" "$DST"
+        elif jq -s '.[0] * .[1]' "$SRC" "$DST" > "$DST.tmp" 2>/dev/null; then
+            mv "$DST.tmp" "$DST"
+        else
+            rm -f "$DST.tmp"
+        fi
+        ;;
+    esac
+done < "$MANIFEST"
 `
 
 	// GitconfigFilterTemplate strips [credential] sections from the
@@ -105,15 +124,35 @@ fi
 git config --global credential.helper clawker
 `
 
-	// SshKnownHostsScript reads the host blob from stdin (PipeStage's
-	// initial_stdin) and appends only lines not already present.
-	// Idempotent across container restarts.
+	// SshKnownHostsScript first heals the existing file — dropping entries
+	// whose key field is not valid base64 (damage earlier seeds shipped;
+	// OpenSSH skips such lines silently, strict whole-file parsers like
+	// go-git refuse the entire file; decodability is a heuristic, not a full
+	// ssh-key parse — valid-base64 garbage would survive) — then reads the
+	// host blob from stdin
+	// (PipeStage's initial_stdin) and appends only lines not already
+	// present. Idempotent across container restarts.
 	SshKnownHostsScript = `mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 KH="$HOME/.ssh/known_hosts"
 touch "$KH"
 chmod 600 "$KH"
-while IFS= read -r line; do
+if command -v base64 >/dev/null 2>&1; then
+    TMP="$KH.heal"
+    : > "$TMP"
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+        ''|'#'*) printf '%s\n' "$line" >> "$TMP"; continue ;;
+        esac
+        key=$(set -f; set -- $line; case "$1" in @*) echo "$4" ;; *) echo "$3" ;; esac)
+        if [ -n "$key" ] && printf '%s' "$key" | base64 -d >/dev/null 2>&1; then
+            printf '%s\n' "$line" >> "$TMP"
+        fi
+    done < "$KH"
+    mv "$TMP" "$KH"
+    chmod 600 "$KH"
+fi
+while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     if ! grep -qF -- "$line" "$KH"; then
         printf '%s\n' "$line" >> "$KH"
@@ -137,7 +176,7 @@ done
 	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
 	// the script EXISTS and never runs it. Do not remove the braces.
 	PostInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
-DONE="$HOME/.claude/post-initialized"
+DONE="$HOME/` + consts.DotClawkerDir + `/` + consts.PostInitMarkerFile + `"
 [ -f "$DONE" ] && exit 0
 [ -x "$POST" ] || { touch "$DONE"; exit 0; }
 if "$POST"; then
@@ -200,6 +239,11 @@ func (s ShellStep) Command(id string) (*clawkerdv1.Command, bool) {
 
 type AgentReadyStep struct {
 	Name string
+	// DefaultCmd is the image's default CMD binary (Config.Cmd[0]),
+	// resolved by the dialer via image inspect and shipped to clawkerd for
+	// --help argv routing. Empty when resolution failed or the image
+	// declares no CMD — clawkerd then runs argv as-is.
+	DefaultCmd string
 }
 
 type AgentInitializedStep struct {
@@ -211,7 +255,9 @@ func (AgentReadyStep) IsStep()            {}
 func (s AgentReadyStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
-		Payload:   &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}},
+		Payload: &clawkerdv1.Command_AgentReady{
+			AgentReady: &clawkerdv1.AgentReady{DefaultCmd: s.DefaultCmd},
+		},
 	}, false
 }
 

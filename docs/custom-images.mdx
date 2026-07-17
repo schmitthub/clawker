@@ -1,57 +1,88 @@
 ---
-title: "Custom Images"
-description: "Building custom Docker images with packages, Dockerfile instructions, and injection points"
+title: "Image Customization"
+description: "How Clawker builds per-project images — the substrate base, system packages, language stacks, build instructions, and injection points"
 icon: "layer-group"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "Docker image", "Dockerfile", "devcontainer"]
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "Docker image", "stacks", "build customization"]
 ---
 
-Clawker builds Docker images from a parameterized Dockerfile template. You configure the image through `.clawker.yaml` and Clawker generates an optimized Dockerfile with caching, security, and Claude Code pre-installed.
+Clawker generates and builds your project's Docker images itself. There is no user-supplied base image and no custom Dockerfile — every image starts from a pinned Debian substrate, and all customization flows through the `build` block of `.clawker.yaml`: system packages, language stacks, typed build instructions, and raw Dockerfile injection points.
 
-## Base Image
+## The Two-Stage Build
 
-The `build.image` field sets the base image. Alpine and Debian bases are both supported:
+Each project gets a shared **base image** plus one **harness image** per coding-agent harness you build:
 
-```yaml
-build:
-  image: "node:20-slim"        # Debian-based
-  # image: "node:20-alpine"    # Alpine-based
+| Image | Tag | Contents |
+|-------|-----|----------|
+| Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared stacks, your `instructions` and base-stage `inject` points, the unprivileged container user (`claude`) |
+| Harness image | `clawker-<project>:<harness>` | Built `FROM` the base: the harness's own stacks and install steps, config seeds, harness-stage `inject` points, and Clawker's runtime assets (`clawkerd`, credential helpers, firewall CA) |
+
+The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, the Docker CLI (for socket-mount workflows), and `git-delta`. Your `build.packages` install into the same apt layer.
+
+The harness image adds whatever the selected harness declares — for example, `claude` installs Claude Code (plus the `node` stack it runs on), while `codex` installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`.
+
+### Caching
+
+The base image is keyed by a content hash of its inputs (the rendered base Dockerfile plus the contents of any `instructions.copy` sources), stamped as an image label. Rebuilding a harness image reuses the existing base whenever that hash is unchanged — editing source files outside your `copy` sources never triggers a base rebuild. Within each stage, Docker's normal layer cache (BuildKit or classic) skips unchanged layers. Use `clawker build --no-cache` to force a full rebuild.
+
+## Building and Tags
+
+```bash
+clawker build              # Builds the default harness → clawker-myapp:<harness> + :default alias
+clawker build -t codex     # Builds the codex harness → clawker-myapp:codex
 ```
 
-Clawker auto-detects the base OS and adjusts package management (`apt-get` vs `apk`) accordingly.
+Tags are harness-keyed: `-t NAME` builds that harness, and the resulting tag *is* the harness name. `NAME` is a bare name for a built-in or loose harness, or a qualified `namespace.bundle.component` address for a harness from an installed bundle (see [Harnesses](/harnesses)). Building the default harness also stamps the `:default` alias. The default is the built-in `claude` harness unless the `build.harness` key selects another (see [Setting the default harness](/harnesses#setting-the-default-harness)).
+
+The `@` shortcut in run/create commands resolves against these tags:
+
+```bash
+clawker run -it --agent dev @         # Resolves the :default alias
+clawker run -it --agent dev @:codex   # Selects the codex harness image
+```
+
+Images and containers carry the `dev.clawker.harness` label identifying which harness they were built for.
+
+Build-time variables can be overridden with `--build-arg` on `clawker build` — for example `--build-arg CLAUDE_CODE_VERSION=2.1.4` pins the claude harness's install to an exact version, or `--build-arg NODE_VERSION=22` pins a stack's runtime line. When a `--build-arg` targets an ARG the **base** image declares, Clawker folds the value into the base freshness key so changing it rebuilds the base (a build arg the base doesn't declare — harness-only or unknown — never triggers a base rebuild).
 
 ## System Packages
 
-Install system packages with the `packages` field:
+Install additional Debian (apt) packages with the `packages` field:
 
 ```yaml
 build:
   packages:
-    - git
-    - curl
     - ripgrep
     - python3
-    - make
-    - gcc
+    - libpq-dev
 ```
 
-## The `@` Shortcut
+## Stacks
 
-When you build a project image with `clawker build`, the resulting image is tagged as `clawker-<project>:latest`. The `@` shortcut in commands resolves to this image:
+Stacks are reusable language-runtime definitions. Declaring one installs it in the shared base image, before your `root_run`/`user_run` instructions execute — so your instructions can rely on it:
 
-```bash
-clawker build              # Builds clawker-myapp:latest
-clawker run -it --agent dev @  # Resolves @ to clawker-myapp:latest
+```yaml
+build:
+  stacks:
+    - go
+    - python
+    - acme.tools.rust     # a stack from an installed bundle
 ```
 
-Clawker uses Docker's layer cache (BuildKit or classic) to skip unchanged layers. Use `clawker build --no-cache` to force a full rebuild.
+Clawker ships `go`, `node`, `python`, `rust`, `java`, `ruby`, `cpp`, and
+`dotnet` stack definitions. Each entry is
+a component name — bare for a built-in or loose stack, or a qualified
+`namespace.bundle.component` address for a bundled one. See [Stacks](/stacks) for
+where stacks come from and how to author your own.
+
+Stacks are self-guarding — each skips itself when the image already provides the runtime. A project-declared stack renders in the shared base before your `root_run`/`user_run`; a harness-declared stack (for example, `claude` declares `node`) renders in the harness image. Both strata render even when they share a name — the fragment self-guards handle any overlap.
 
 ## Build Instructions
 
-The `instructions` block provides type-safe build and runtime directives:
+The `instructions` block provides type-safe build directives. All of these render in the shared base image.
 
 ### env
 
-Set environment variables injected into the container at start time:
+Environment variables baked into the image:
 
 ```yaml
 build:
@@ -63,7 +94,7 @@ build:
 
 ### copy
 
-Copy files into the image with optional `chown`/`chmod`:
+Copy files from your project into the image with optional `chown`/`chmod`:
 
 ```yaml
 build:
@@ -76,6 +107,8 @@ build:
         dest: "/usr/local/bin/setup.sh"
         chmod: "755"
 ```
+
+Copy sources are part of the base image's content hash — editing a copied file triggers a base rebuild; editing other project files does not. `copy` steps render after `user_run` so expensive setup layers stay cached when a copied file changes.
 
 ### labels
 
@@ -91,7 +124,7 @@ build:
 
 ### args
 
-Define build-time arguments:
+Define build-time arguments (override with `--build-arg` at build time):
 
 ```yaml
 build:
@@ -104,22 +137,21 @@ build:
 
 ### root_run and user_run
 
-Run commands during the build. `root_run` executes as root (before the `USER` switch), `user_run` executes as the container user (after the switch):
+Run commands during the build. `root_run` executes as root, before the container user is created; `user_run` executes as the container user, after the user switch. Both run after any project-declared stacks, so `go`, `node`, `python`, etc. are available:
 
 ```yaml
 build:
   instructions:
     root_run:
-      - "echo 'Setting up system'"
       - "curl -fsSL https://example.com/setup.sh | bash"
     user_run:
       - "pip install --user poetry"
-      - "npm install -g typescript"
+      - "npm install -g pnpm"
 ```
 
 <Note>
   `user_run` commands execute under `/bin/zsh -o pipefail -c`, not `/bin/sh` —
-  clawker bakes zsh as the build shell so its Node/nvm tooling is available. Two
+  clawker bakes zsh as the build shell so its shell tooling is available. Two
   consequences for scripts written against POSIX `sh`: zsh does not word-split
   unquoted variable expansions (quote your variables), and `pipefail` is active
   (a failing command anywhere in a pipe fails the build). `root_run` runs earlier
@@ -128,7 +160,7 @@ build:
 
 ## Injection Points
 
-For advanced use cases, the `inject` field provides raw Dockerfile injection points. Each field accepts an array of raw Dockerfile lines:
+For advanced use cases, the `inject` field provides raw Dockerfile injection points. Each field accepts an array of raw Dockerfile lines. Four points render in the base image, two in the harness image:
 
 ```yaml
 build:
@@ -142,61 +174,71 @@ build:
       - "RUN mkdir -p /home/claude/.config"
     after_user_switch:
       - "COPY --chown=claude:claude ./dotfiles/ /home/claude/"
-    after_claude_install:
-      - "RUN claude mcp add memory -- npx -y @anthropic-ai/claude-code-mcp"
+    user_commands:
+      - "RUN claude mcp add memory -- npx -y @modelcontextprotocol/server-memory"
     before_entrypoint:
       - "RUN echo 'Final cleanup'"
 ```
 
-**Injection point order in the generated Dockerfile:**
+**Injection point order across the generated build:**
 
-1. `FROM` base image
-2. `after_from` -- Base image tweaks, custom repos
-3. Package installation
-4. `after_packages` -- Post-install configuration
-5. User creation and setup
-6. `after_user_setup` -- User-level system config
-7. `USER` switch to non-root
-8. `after_user_switch` -- Dotfiles, shell config
-9. Claude Code installation
-10. `after_claude_install` -- Claude extensions, MCP tools
-11. `before_entrypoint` -- Final setup
-12. `ENTRYPOINT`
+*Base image (`clawker-<project>:base`):*
 
-## Custom Dockerfile
+1. `FROM` the pinned substrate
+2. `after_from` — apt sources, proxy config, CA certs that package installation depends on
+3. Package installation (Clawker's floor + your `build.packages`)
+4. `after_packages` — post-install configuration as root
+5. Project-declared stacks (root scope), then your `root_run`
+6. Container user creation
+7. `after_user_setup` — directories, permissions, services (still root)
+8. `USER` switch to the unprivileged container user (`claude`)
+9. `after_user_switch` — dotfiles, shell config
+10. Project-declared stacks (user scope), then your `user_run`, then `copy`
 
-For complete control, point to your own Dockerfile:
+*Harness image (`clawker-<project>:<harness>`, built `FROM` the base):*
 
-```yaml
-build:
-  dockerfile: "./.devcontainer/Dockerfile"
-```
+11. Harness-declared stacks + the harness's install steps (e.g. the harness CLI)
+12. `user_commands` — runs as the container user, after the harness's fragment blocks and config seeds: add MCP servers, install plugins or extensions
+13. `before_entrypoint` — final tweaks before Clawker's runtime assets and `ENTRYPOINT`
 
-When using a custom Dockerfile, the `image`, `packages`, `instructions`, and `inject` fields are ignored. The Dockerfile is built as-is.
+Because `user_commands` and `before_entrypoint` live in the harness image, they run once per harness you build — but the same `build.inject` applies project-wide, so a step that registers an MCP server with `claude` runs in **every** harness image you build. To scope an inject step to a single harness, use a per-harness overlay (below).
 
-## Build Context
+## Per-Harness Overlays
 
-Set a custom build context directory:
+The base `build` block applies to every image you build. To layer extra stacks, packages, or inject steps onto **one** harness's image without touching the harness definition or the base, declare them under `build.harnesses.<name>` — the same `stacks`, `packages`, and `inject` primitives, scoped to that harness's lineage. The `<name>` key uses the same spelling you select the harness by: a bare name for a built-in or loose harness, or a qualified `namespace.bundle.component` address for a bundled one.
 
 ```yaml
 build:
-  context: "./docker"
+  stacks:
+    - go                      # base image, every harness
+  harnesses:
+    claude:
+      stacks:
+        - bun                 # claude image only, after the harness's own stacks
+      packages:
+        - libnss3             # apt install in the claude image only
+      inject:
+        user_commands:
+          - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"
+        before_entrypoint:
+          - "RUN echo 'claude-only tweak'"
 ```
 
-The `context` path is relative to the project root.
+- **`stacks`** render in that harness's image **after** the harness's own stacks (installer → overlay, declaration order). A name that appears in both the harness and the overlay renders once, at its installer position.
+- **`packages`** install as an apt step in that harness's image. They are **not** deduplicated against `build.packages` — apt idempotence handles any overlap.
+- **`inject`** exposes only the two harness-image points, `user_commands` and `before_entrypoint`. Overlay inject renders after any global `build.inject` at the same anchor, and **only** in that harness's image — this is how you scope a `claude mcp add` to the claude container instead of every harness.
 
-Build-time arguments can be passed via the `--build-arg` flag on `clawker image build`.
+An overlay keyed to a harness that resolves nowhere — not a built-in, not a loose convention directory, and not an installed bundle — is a build error, so a typo'd overlay never silently does nothing.
 
 ## Complete Example
 
 ```yaml
 build:
-  image: "node:20-slim"
   packages:
-    - git
-    - curl
     - ripgrep
     - python3
+  stacks:
+    - node
   instructions:
     env:
       NODE_ENV: "development"
@@ -207,8 +249,8 @@ build:
     root_run:
       - "apt-get install -y libsqlite3-dev"
     user_run:
-      - "npm install -g typescript ts-node"
+      - "npm install -g pnpm ts-node"
   inject:
-    after_claude_install:
-      - "RUN claude mcp add context7 -- npx -y @anthropic-ai/claude-code-mcp"
+    user_commands:
+      - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"
 ```

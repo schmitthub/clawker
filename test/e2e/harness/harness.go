@@ -13,13 +13,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
+
+// EnsureNoControlPlane stops and removes any pre-existing CP container so the
+// test's own bring-up creates a CP whose certs chain to THIS test env's
+// freshly minted CLI CA (manager.EnsureRunning seeds via
+// auth.EnsureAuthMaterial before create). Reusing a foreign CP passes the
+// mTLS-less healthz reuse probe but fails every admin RPC — its certs chain
+// to another environment's CA. Call it after NewIsolatedFS, before the first
+// command that bootstraps the CP. Best-effort: failures are logged, never
+// fatal.
+func EnsureNoControlPlane(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cfg, err := config.NewConfig()
+	if err != nil {
+		t.Logf("harness: cp pre-clean: config: %v (skipping)", err)
+		return
+	}
+	dc, err := docker.NewClient(ctx, cfg, logger.Nop())
+	if err != nil {
+		t.Logf("harness: cp pre-clean: docker client: %v (skipping)", err)
+		return
+	}
+	defer func() { _ = dc.Close() }()
+	if stopErr := manager.Stop(ctx, dc); stopErr != nil {
+		t.Logf("harness: cp pre-clean: manager.Stop: %v (ignoring)", stopErr)
+	}
+}
 
 // CleanupReport captures what infrastructure was running when cleanup ran.
 // Tests can inspect this to fail if expected services were never started.
@@ -73,6 +104,17 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 
 	// Build the clawker binary so the hostproxy daemon can spawn it.
 	ensureClawkerBinary(h.T)
+
+	// Docker CLI plugin discovery (`docker compose`) and registry auth live
+	// under the real user's ~/.docker. testenv re-points HOME at the temp
+	// base, which would silently strip the compose plugin from the monitor
+	// verbs — pin DOCKER_CONFIG to the real location first, unless the
+	// caller already set one.
+	if os.Getenv("DOCKER_CONFIG") == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			h.T.Setenv("DOCKER_CONFIG", filepath.Join(home, ".docker"))
+		}
+	}
 
 	env := testenv.New(h.T)
 

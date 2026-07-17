@@ -56,24 +56,56 @@ const (
 
 // Docker/OCI label keys.
 const (
-	LabelManaged   = LabelPrefix + "managed"
-	LabelProject   = LabelPrefix + "project"
-	LabelAgent     = LabelPrefix + "agent"
-	LabelVersion   = LabelPrefix + "version"
-	LabelImage     = LabelPrefix + "image"
-	LabelCreated   = LabelPrefix + "created"
-	LabelWorkdir   = LabelPrefix + "workdir"
-	LabelPurpose   = LabelPrefix + "purpose"
-	LabelTestName  = LabelPrefix + "test.name"
-	LabelBaseImage = LabelPrefix + "base-image"
-	LabelFlavor    = LabelPrefix + "flavor"
-	LabelTest      = LabelPrefix + "test"
-	LabelE2ETest   = LabelPrefix + "e2e-test"
+	LabelManaged = LabelPrefix + "managed"
+	LabelProject = LabelPrefix + "project"
+	LabelAgent   = LabelPrefix + "agent"
+	LabelHarness = LabelPrefix + "harness"
+)
+
+// Infrastructure volume-name purpose suffixes. Volume names compose as
+// "clawker.<project>.<agent>-<purpose>". Harness bundles declare their own
+// persisted-dir volumes whose names may not collide with these.
+const (
+	VolumePurposeHistory   = "history"
+	VolumePurposeWorkspace = "workspace"
+	// VolumePurposeClawker backs the in-container $HOME/.clawker directory
+	// (hook scripts, seed staging, lifecycle markers). Named so lifecycle
+	// state — above all the post-init marker — survives container
+	// recreation alongside the harness config volumes whose contents
+	// post_init mutates.
+	VolumePurposeClawker = "clawker"
+)
+
+// Image tag aliases reserved by the harness-keyed tag scheme. Harness
+// registry keys may not collide with them.
+const (
+	// ImageTagDefaultAlias tags the default harness's image.
+	ImageTagDefaultAlias = "default"
+	// ImageTagLatest is the legacy pre-harness tag; resolution accepts it
+	// as a fallback for images built before harness tags existed.
+	ImageTagLatest = "latest"
+	// ImageTagBase tags the per-project shared base image that harness
+	// images build FROM. Never runnable, never a harness selector.
+	ImageTagBase  = "base"
+	LabelVersion  = LabelPrefix + "version"
+	LabelImage    = LabelPrefix + "image"
+	LabelCreated  = LabelPrefix + "created"
+	LabelWorkdir  = LabelPrefix + "workdir"
+	LabelPurpose  = LabelPrefix + "purpose"
+	LabelTestName = LabelPrefix + "test.name"
+	LabelTest     = LabelPrefix + "test"
+	LabelE2ETest  = LabelPrefix + "e2e-test"
 	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes onto the built CP image and running container.
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
 	LabelCPBinarySHA = LabelPrefix + "cp.binary_sha256"
+	// LabelBaseContentHash stamps the SHA-256 of the base image's inputs
+	// (rendered base Dockerfile + user copy sources) onto the per-project
+	// base image. The builder compares it against the freshly computed
+	// hash to decide whether the base must be rebuilt before a harness
+	// image build. Also stamped on harness images for provenance.
+	LabelBaseContentHash = LabelPrefix + "base.content_sha256"
 )
 
 // OCI standard label keys (not under LabelPrefix — defined by the
@@ -94,6 +126,7 @@ const (
 	ManagedLabelValue = "true"
 
 	PurposeAgent        = "agent"
+	PurposeBaseImage    = "base"
 	PurposeMonitoring   = "monitoring"
 	PurposeFirewall     = "firewall"
 	PurposeControlPlane = "controlplane"
@@ -149,10 +182,19 @@ const (
 	// SchemaDocsDir is the repo-relative directory holding the generated
 	// schemas, also the website output subdirectory under the docs root.
 	SchemaDocsDir = "docs/schemas"
-	// ProjectSchemaFile / SettingsSchemaFile are the generated JSON Schema
-	// filenames under SchemaDocsDir.
+	// ProjectSchemaFile / SettingsSchemaFile / HarnessSchemaFile /
+	// StackSchemaFile are the generated JSON Schema filenames under
+	// SchemaDocsDir.
 	ProjectSchemaFile  = "clawker.schema.json"
 	SettingsSchemaFile = "settings.schema.json"
+	HarnessSchemaFile  = "harness.schema.json"
+	StackSchemaFile    = "stack.schema.json"
+	// BundleSchemaFile is the generated JSON Schema filename for a bundle
+	// manifest (.clawker-bundle/bundle.yaml) under SchemaDocsDir.
+	BundleSchemaFile = "bundle.schema.json"
+	// MonitoringSchemaFile is the generated JSON Schema filename for a
+	// monitoring unit manifest (monitoring.yaml) under SchemaDocsDir.
+	MonitoringSchemaFile = "monitoring.schema.json"
 )
 
 // Version-shape patterns consumed by SchemaRef. build.Version arrives in one
@@ -222,6 +264,11 @@ const (
 )
 
 // File names (not paths — paths are runtime-resolved via accessor funcs below).
+// DefaultHarnessName is the built-in harness slug: the shipped bundle
+// selected when no settings registry entry is marked default. Cross-cutting —
+// bundler resolves with it, config's settings migration seeds it.
+const DefaultHarnessName = "claude"
+
 const (
 	ProjectConfigFile = "clawker.yaml"
 	// ProjectLocalConfigFile is the gitignored per-developer override that
@@ -262,7 +309,7 @@ const (
 	OtelClientsDirName = "otel-clients"
 	authDir            = "auth"
 	buildDir           = "build"
-	dockerfilesDir     = "dockerfiles"
+	bundlesDir         = "bundles"
 	worktreesDir       = "worktrees"
 	logsDir            = "logs"
 	pidsDir            = "pids"
@@ -286,6 +333,25 @@ const ClaudeProjectsSubdir = "projects"
 // project-config directory variant in a repo root, and the in-container
 // $HOME/.clawker directory where hook scripts land.
 const DotClawkerDir = "." + NamePrefix
+
+// Harness seed staging contract between the generated image and CP's
+// generic seed-apply init step. The master Dockerfile template stages each
+// harness seed file under $HOME/DotClawkerDir/SeedSubdir and writes
+// SeedManifestFile beside it (one `<apply> <dest>` line per seed, dest a
+// container-home-relative path); the CP config step interprets that
+// manifest on first boot. The template spells these values as literals —
+// keep them in sync with the master template when changing.
+const (
+	SeedSubdir       = "seed"
+	SeedManifestFile = "seed-manifest"
+)
+
+// PostInitMarkerFile marks an agent whose post_init hook already ran (or
+// was absent) — written under DotClawkerDir, which is backed by the
+// dedicated clawker volume, so the once-per-agent contract holds across
+// container recreation exactly as long as the harness config volumes that
+// post_init mutates.
+const PostInitMarkerFile = "post-initialized"
 
 // Lifecycle hook names. The CLI delivers <name>.sh scripts under the
 // in-container DotClawkerDir; clawkerd's init plan runs the matching
@@ -923,20 +989,15 @@ func ControlPlaneDBPath() (string, error) {
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
 
+// BundlesSubdir ensures and returns the installed-bundle cache directory under
+// DataDir. Fetched bundles land at <BundlesSubdir>/<namespace>/<name>/<sourceKey>/.
+func BundlesSubdir() (string, error) { return subdirPath(bundlesDir, DataDir) }
+
 // WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
 func WorktreesSubdir() (string, error) { return subdirPath(worktreesDir, DataDir) }
 
 // ShareSubdir ensures and returns the shared directory path under DataDir.
 func ShareSubdir() (string, error) { return subdirPath(shareDir, DataDir) }
-
-// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under BuildSubdir.
-func DockerfilesSubdir() (string, error) {
-	buildSub, err := BuildSubdir()
-	if err != nil {
-		return "", err
-	}
-	return subdirPathUnder(dockerfilesDir, buildSub)
-}
 
 // --- Auth material paths (under DataDir) ---
 // Layout: auth/ca/ for CA material, auth/cli/ for CLI signing material,

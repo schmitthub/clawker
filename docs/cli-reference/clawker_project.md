@@ -58,4 +58,4 @@ Use 'clawker project init' to set up a new project in the current directory.
 
 ### See also
 
-* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Run coding agents in secure Docker containers with clawker

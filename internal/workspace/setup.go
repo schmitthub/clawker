@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -19,7 +20,9 @@ import (
 // binds the host's main .git read-write, and a snapshot copy on top of that
 // would let in-container writes reach the host repo, defeating snapshot
 // isolation. Snapshot already isolates the workspace from the host on its own.
-var ErrWorktreeSnapshot = errors.New("worktrees are not supported in snapshot mode (snapshot already isolates the workspace from the host); set workspace.default_mode: bind or pass --mode bind")
+var ErrWorktreeSnapshot = errors.New(
+	"worktrees are not supported in snapshot mode (snapshot already isolates the workspace from the host); set workspace.default_mode: bind or pass --mode bind",
+)
 
 // ResolveMode applies workspace-mode precedence: an explicit override (CLI
 // --mode flag) wins, otherwise the project's configured default mode. An empty
@@ -63,6 +66,22 @@ type SetupMountsConfig struct {
 	// primitive and never resolves project identity itself). Empty when no
 	// project is registered — no ignore patterns are loaded.
 	IgnoreFile string
+	// Harness is the selected harness bundle's staging manifest (host-state
+	// mounts, live binds layered over the harness volumes). Resolved by the
+	// caller — workspace receives the data and never resolves the harness
+	// itself.
+	Harness config.Staging
+	// HarnessName is the selected harness bundle's registry name. It is the
+	// discriminator in every harness-scoped volume identity — required so
+	// two harnesses that declare the same volume name never land on one
+	// volume.
+	HarnessName string
+	// HarnessVolumes are the bundle's declared persisted dirs; each becomes
+	// a named volume mounted under the container home.
+	HarnessVolumes []config.VolumeSpec
+	// HarnessConfig is the per-harness initialization config resolved for
+	// the selected harness (nil = defaults). Gates the host-state binds.
+	HarnessConfig *config.HarnessConfig
 }
 
 // SetupMountsResult holds the results from setting up workspace mounts.
@@ -177,45 +196,48 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 			Msg("mounting main repo .git for worktree (hooks and config masked read-only)")
 	}
 
-	// Ensure config volumes (returns creation state for init orchestration)
-	configResult, err := EnsureConfigVolumes(ctx, client, cfg.ProjectName, cfg.AgentName)
+	// Ensure harness + history volumes (returns creation state for init orchestration)
+	configResult, err := EnsureConfigVolumes(
+		ctx, client, cfg.ProjectName, cfg.AgentName, cfg.HarnessName, cfg.HarnessVolumes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	configMounts, err := GetConfigVolumeMounts(cfg.ProjectName, cfg.AgentName)
+	configMounts, err := GetConfigVolumeMounts(cfg.ProjectName, cfg.AgentName, cfg.HarnessName, cfg.HarnessVolumes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}
 	mounts = append(mounts, configMounts...)
 
-	// Bind mount host ~/.claude/projects/ on top of the config volume so
-	// auto-memory and session jsonls are shared across container runs.
-	// Resolution failure is a hard error — clawker is not useful without
-	// host Claude Code installed, so we'd rather fail loud than mask a
-	// misconfigured $CLAUDE_CONFIG_DIR. Users who genuinely don't want the
-	// bind can set agent.claude_code.mount_projects: false. Missing
-	// projects/ subdir under an existing config dir is still a soft skip
-	// (Claude Code creates it on first session).
+	// Bind mount the manifest's host-state dirs (e.g. claude's
+	// ~/.claude/projects/) on top of the harness volumes so live state —
+	// auto-memory, session jsonls — is shared across container runs.
+	// Src expansion failure is a hard error — we'd rather fail loud than
+	// mask a misconfigured env reference. Users who genuinely don't want
+	// the binds can set mount_projects: false for the harness. A missing
+	// host dir is a soft skip (the harness creates it on first session).
 	//
 	// Container UID is host-derived (see consts.ContainerUID() /
-	// consts.HostUID()) so the bind mount is writable by construction.
-	if project.Agent.ClaudeCode.MountProjectsEnabled() {
-		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
-		if resolveErr != nil {
-			return nil, fmt.Errorf(
-				"mount_projects is enabled but the host claude config dir could not be resolved: %w. "+
-					"Run claude on the host first, or set agent.claude_code.mount_projects: false to opt out",
-				resolveErr)
-		}
-		if !ok {
-			cfg.Log.Debug().Msg("skip ~/.claude/projects bind: host dir does not exist (Claude Code has not created it yet)")
-		} else {
-			projectsMount, err := GetClaudeProjectsMount(src)
-			if err != nil {
-				return nil, fmt.Errorf("build claude projects mount: %w", err)
+	// consts.HostUID()) so the bind mounts are writable by construction.
+	if cfg.HarnessConfig.MountProjectsEnabled() {
+		for _, hm := range cfg.Harness.Mounts {
+			src, ok, resolveErr := containerfs.ResolveHostMountSource(hm.Src)
+			if resolveErr != nil {
+				return nil, fmt.Errorf(
+					"mount_projects is enabled but host mount src %q could not be resolved: %w. "+
+						"Fix the src, or set mount_projects: false for this harness to opt out",
+					hm.Src, resolveErr)
 			}
-			mounts = append(mounts, projectsMount)
-			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
+			if !ok {
+				cfg.Log.Debug().Str("src", hm.Src).
+					Msg("skip host-state bind: host dir does not exist (harness has not created it yet)")
+				continue
+			}
+			stateMount, mountErr := GetHostStateMount(src, hm.Dest)
+			if mountErr != nil {
+				return nil, fmt.Errorf("build host-state mount: %w", mountErr)
+			}
+			mounts = append(mounts, stateMount)
+			cfg.Log.Debug().Str("src", src).Msg("mounted harness host-state dir")
 		}
 	}
 

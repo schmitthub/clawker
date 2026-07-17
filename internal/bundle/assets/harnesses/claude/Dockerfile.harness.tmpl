@@ -1,0 +1,99 @@
+{{/*
+  Claude Code harness — fills the master Dockerfile.tmpl block slots.
+  Each define's body is emitted verbatim at the block's position in the
+  master; the master owns ordering and cache architecture.
+*/}}
+
+{{define "root_after_stacks" -}}
+# Managed enterprise settings (Linux managed path, highest precedence,
+# cannot be overridden by user/project settings). REQUIRED — do not
+# remove. Claude Code's Bash tool runs `/bin/zsh -c` and sources its own
+# shell snapshot AFTER zsh init files, so the snapshot's PATH overrides
+# anything `.zshenv` exports; managed-settings.json is the only documented
+# enterprise mechanism that injects into that env. Points at `.local/bin`
+# (where the claude binary lives); the inherited `${PATH}` carries the node
+# stack's `/usr/local` install as the floor (declared in harness.yaml),
+# so `node` resolves for build-time `claude mcp add ...` (inject points,
+# post_init) and the agent's Bash tool.
+#
+# Stays in the root_after_stacks scope (not the late clawker block) because any
+# `claude` invocation in `after_claude_install` / `before_entrypoint`
+# inject points reads this at session start — without `.local/bin` here, the
+# user's build-time `claude mcp add ...` cannot find the `claude` binary. The
+# heredoc body is structural (template-author-edited only), so locking it early
+# has negligible cache cost vs the asset bumps in the late block.
+RUN mkdir -p /etc/claude-code && cat > /etc/claude-code/managed-settings.json <<EOF
+{
+  "env": {
+    "PATH": "/home/${USERNAME}/.local/bin:${PATH}"
+  }
+}
+EOF
+{{- end}}
+
+{{define "user_after_stacks" -}}
+# Tell Claude Code where its config lives — must match the config volume mount.
+# CP's generic seed-apply init step places the manifest seeds (statusline,
+# .config.json onboarding bypass, settings.json) here on first boot.
+ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
+# Telemetry: pre-configured for otel-collector on clawker-net (requires 'clawker monitor up').
+# 'monitor up' also provisions OpenSearch indices + Dashboards via the
+# clawker-opensearch-bootstrap one-shot service before the collector starts,
+# so records land in templated (not dynamically-mapped) indices.
+# Disabled at container creation if monitoring stack is not running; override with agent.env
+ENV CLAUDE_CODE_ENABLE_TELEMETRY=1
+# Beta gate: span tracing only fires when CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
+# is also set (per Claude Code docs). With both set, OTEL_TRACES_EXPORTER=otlp
+# sends spans via the same OTLP base endpoint below.
+ENV CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
+ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+ENV OTEL_METRICS_EXPORTER=otlp
+ENV OTEL_LOGS_EXPORTER=otlp
+ENV OTEL_TRACES_EXPORTER=otlp
+# Single base endpoint; OTel SDK appends /v1/metrics, /v1/logs, /v1/traces
+# per signal. Collector OTLP/HTTP receiver listens on the standard paths.
+ENV OTEL_EXPORTER_OTLP_ENDPOINT={{.OtelEndpoint}}
+{{- if .OtelIncludeAccountUUID}}
+ENV OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+{{- end}}
+{{- if .OtelIncludeSessionID}}
+ENV OTEL_METRICS_INCLUDE_SESSION_ID=true
+{{- end}}
+ENV OTEL_LOGS_EXPORT_INTERVAL={{.OtelLogsExportInterval}}
+ENV OTEL_METRIC_EXPORT_INTERVAL={{.OtelMetricExportInterval}}
+{{- if .OtelLogToolDetails}}
+ENV OTEL_LOG_TOOL_DETAILS=1
+{{- end}}
+{{- if .OtelLogUserPrompts}}
+ENV OTEL_LOG_USER_PROMPTS=1
+{{- end}}
+{{- end}}
+
+{{define "user_after_shell_switch" -}}
+# Claude Code version. Build-only ARG (not ENV — CC's runtime ignores it; only
+# the install RUN below consumes it). Default is resolved against the npm
+# registry at template-render time, so a fresh CC release (often several a week)
+# rolls this value.
+#
+# MUST stay here, directly above its only consumer. BuildKit invalidates the
+# cache at an ARG's DECLARATION line, not at first use — that "first use, not
+# definition" rule is the classic (pre-BuildKit) builder's, and Docker 23+
+# builds with BuildKit by default. Hoisting this declaration up the stage would
+# re-run every layer below it (stacks, git-delta, zsh-in-docker, ...) on
+# every CC release. Adjacent placement scopes the CC-version cache miss to the
+# install layer + the late root block alone.
+# Override: clawker build --build-arg CLAUDE_CODE_VERSION=<version>
+ARG CLAUDE_CODE_VERSION={{.HarnessVersion}}
+
+# Install Claude Code
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/home/${USERNAME}/.npm \
+    curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{- else}}
+RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{- end}}
+{{- end}}
+
+{{define "cmd" -}}
+CMD ["claude"]
+{{- end}}

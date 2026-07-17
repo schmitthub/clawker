@@ -4,6 +4,7 @@ package project
 import (
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -16,16 +17,25 @@ import (
 // Overrides here are limited to TUI-specific concerns: Kind and Options for constrained fields.
 //
 // Every field in the schema is editable — no fields are hidden.
-// Maps (map[string]string) use the built-in KV editor; struct slices use the YAML textarea editor.
-func Overrides() []storeui.Override {
+// Maps (map[string]string) use the built-in KV editor; struct slices and the
+// harnesses struct-map (per-harness init config, keyed by harness name) use
+// the YAML textarea editor natively — no per-entry override is possible or
+// needed for map keys the schema cannot enumerate.
+func Overrides(cfg config.Config) []storeui.Override {
 	return []storeui.Override{
+		// Default harness — select from every harness the build can resolve
+		// (embedded floor, loose convention dirs, installed bundles).
+		//nolint:exhaustruct // overrides are sparse by design — an unset field means "no override"
+		{
+			Path: "build.harness",
+			Kind: storeui.Ptr(storeui.KindSelect), Options: bundler.KnownHarnessNames(cfg),
+		},
 		// Workspace — select widget
-		{Path: "workspace.default_mode",
-			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
-
-		// Agent — Claude Code config strategy select
-		{Path: "agent.claude_code.config.strategy",
-			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"copy", "fresh"}},
+		//nolint:exhaustruct // overrides are sparse by design — an unset field means "no override"
+		{
+			Path: "workspace.default_mode",
+			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"},
+		},
 	}
 }
 
@@ -48,15 +58,17 @@ func LayerTargets(store *storage.Store[config.Project]) ([]storeui.LayerTarget, 
 	return targets, nil
 }
 
-// Edit runs an interactive project config editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
+// Edit runs an interactive project config editor. cfg supplies the harness
+// enumeration for the build.harness select — pass the Config the store came
+// from.
+func Edit(ios *iostreams.IOStreams, cfg config.Config, store *storage.Store[config.Project]) (storeui.Result, error) {
 	targets, err := LayerTargets(store)
 	if err != nil {
 		return storeui.Result{}, err
 	}
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Project Configuration Editor"),
-		storeui.WithOverrides(Overrides()),
+		storeui.WithOverrides(Overrides(cfg)),
 		storeui.WithLayerTargets(targets),
 	)
 }

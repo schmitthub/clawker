@@ -1,5 +1,5 @@
 .PHONY: help \
-        clawker clawker-generate clawker-lint clawker-staticcheck clawker-install clawker-clean \
+        clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
         bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
@@ -66,7 +66,6 @@ help:
 	@echo ""
 	@echo "Clawker targets:"
 	@echo "  clawker                 Build the clawker Clawker binary"
-	@echo "  clawker-generate        Build the standalone clawker-generate binary"
 	@echo "  clawker-lint            Run golangci-lint on Clawker code"
 	@echo "  clawker-staticcheck     Run staticcheck on Clawker code"
 	@echo "  clawker-install         Install Clawker to GOPATH/bin"
@@ -93,14 +92,14 @@ help:
 	@echo "  restart             Full rebuild + nuke firewall stack containers/images for clean restart"
 	@echo ""
 	@echo "Release targets:"
-	@echo "  release             Tag and push a release (VERSION=v0.7.6 MESSAGE=\"...\" required)"
+	@echo "  release             Tag and push a release (VERSION=v2026.7.0 MESSAGE=\"...\" required)"
 	@echo "  release-embeds      Cross-compile linux/amd64+arm64 embed sets (go build; bpf2go"
 	@echo "                      native on Linux, Docker on macOS), staged under embeds/."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
 	@echo "  make test"
-	@echo "  make release VERSION=v0.7.6 MESSAGE=\"my release\""
+	@echo "  make release VERSION=v2026.7.0 MESSAGE=\"my release\""
 
 # ============================================================================
 # Clawker Build Targets
@@ -252,7 +251,7 @@ BPF_APT_DEPS := \
     clang=1:18.0-59~exp2 \
     llvm=1:18.0-59~exp2 \
     libbpf-dev=1:1.3.0-2build2 \
-    linux-libc-dev=6.8.0-134.134
+    linux-libc-dev=6.8.0-136.136
 
 # Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
 # and root — versions pinned above only resolve against Noble's apt repos.
@@ -428,12 +427,6 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
 
-# Build the standalone generate binary
-clawker-generate: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@echo "Building clawker-generate $(CLAWKER_VERSION)..."
-	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
-
 # ============================================================================
 # Release pipeline support
 # ============================================================================
@@ -599,9 +592,13 @@ clawker-install-global: clawker
 	sudo cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 
 # Clean Clawker build artifacts
+# bin/ and dist/ are cleaned by contents, never removed: they are
+# tmpfs-masked inside running clawker bind containers, and deleting the
+# host dir detaches the mask (kernel drops submounts on the invalidated
+# dentry), leaking container writes to the host until a recreate.
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
-	rm -rf $(BIN_DIR) $(DIST_DIR) $(RELEASE_EMBED_STAGE)
+	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
 	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
 
@@ -830,9 +827,9 @@ restart: clawker-clean clawker
 # ============================================================================
 
 # Create and push an annotated tag to trigger the release workflow.
-# Usage: make release VERSION=v0.7.6 MESSAGE="description of release"
+# Usage: make release VERSION=v2026.7.0 MESSAGE="description of release"
 release:
-	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=v0.7.6 MESSAGE=\"...\""; exit 1; fi
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=v2026.7.0 MESSAGE=\"...\""; exit 1; fi
 	@if [ -z "$(MESSAGE)" ]; then echo "MESSAGE is required"; exit 1; fi
 	@if ! echo "$(VERSION)" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?$$'; then echo "Invalid semver: $(VERSION)"; exit 1; fi
 	@if [ -n "$$(git status --porcelain)" ]; then echo "Working tree dirty — commit or stash first"; exit 1; fi
