@@ -3,4 +3,4 @@
 	url = git@github.com:schmitthub/clawker-plugin.git
 [submodule "clawker-test-bundle"]
 	path = clawker-test-bundle
-	url = git@github.com:schmitthub/clawker-test-bundle.git
+	url = git@github.com:schmitthub/clawker-bundle-example.git

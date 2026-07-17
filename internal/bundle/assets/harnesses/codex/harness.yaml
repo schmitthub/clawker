@@ -16,6 +16,8 @@ version:
 volumes:
   - name: config
     path: .codex
+  - name: agents
+    path: .agents
 
 staging:
   # config.toml deliberately NOT copied: it embeds host-path-keyed state
