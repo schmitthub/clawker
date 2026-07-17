@@ -1,0 +1,22 @@
+# Ruby via Debian's ruby-full + build-essential (native gem extensions) —
+# apt-managed, distro-signature-verified, tracking Debian security updates
+# on rebuild. GEM_HOME points at a shared world-writable dir (sticky, the
+# same convention as the go stack's GOPATH) so the unprivileged user can
+# `gem install` at runtime; its bin dir rides PATH for every user. The dir
+# is created regardless of the guard so the ENVs never dangle.
+# Guarded: an existing ruby skips the install.
+ENV GEM_HOME=/usr/local/share/gems
+ENV PATH=$GEM_HOME/bin:$PATH
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    mkdir -p "$GEM_HOME/bin" && chmod -R 1777 "$GEM_HOME" && \
+{{- else}}
+RUN mkdir -p "$GEM_HOME/bin" && chmod -R 1777 "$GEM_HOME" && \
+{{- end}}
+    if command -v ruby >/dev/null 2>&1; then \
+      echo "clawker stack ruby: existing $(ruby --version) — skipping install"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends ruby-full build-essential && \
+      ruby --version && gem --version ; \
+    fi

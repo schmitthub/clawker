@@ -28,14 +28,18 @@ func loadFloorStack(t *testing.T, name string) *StackDefinition {
 }
 
 func TestShippedStacks_LoadAndFragments(t *testing.T) {
-	assert.Equal(t, []string{"go", "node", "python", "rust"}, ShippedStackNames())
+	assert.Equal(t, []string{"cpp", "dotnet", "go", "java", "node", "python", "ruby", "rust"}, ShippedStackNames())
 
 	// Which scopes each language stack provisions, with the guard
 	// marker proving each fragment self-guards against an existing install.
 	wantRootGuard := map[string]string{
+		"cpp":    "command -v g++",
+		"dotnet": "command -v dotnet",
 		"go":     "command -v go",
+		"java":   "command -v javac",
 		"node":   "command -v node",
 		"python": "command -v python3",
+		"ruby":   "command -v ruby",
 	}
 	wantUserGuard := map[string]string{
 		"node": ".nvm/nvm.sh",

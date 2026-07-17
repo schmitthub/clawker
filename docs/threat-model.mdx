@@ -289,6 +289,15 @@ Be intentional about what you bind-mount:
 
 Custom build instructions (`build.instructions` in your project config) run during image build. Injected `root_run` commands execute as root. Review what you're adding — package sources, custom scripts, and copied files are part of your supply chain.
 
+### Third-Party Bundle Trust
+
+Installed bundles supply stacks, harnesses, and monitoring extensions — components that introduce direct system behaviors. Stack and harness fragments execute during image build (including as root), a harness defines the agent's entrypoint and its default egress floor (the domains every container built from it may reach), and monitoring extensions ship dashboards and pipelines into the observability stack. Bundle validation checks structure, not intent — it will not catch a malicious component.
+
+- Only install bundles from sources you trust, and review their contents before adding them to `clawker.yaml`.
+- Consider forking a third-party bundle repository and installing from your fork, so updates only reach you after you've reviewed them.
+- Stay diligent when updating bundles — `bundle update` pulls whatever the source now publishes.
+- Treat a bundle's declared egress floor as part of your firewall review: a harness you install decides which domains its containers can reach by default.
+
 ### Resource Limits
 
 Clawker containers are throwaway devcontainers, not production workloads. Docker handles OOM kills natively, but you should configure your Docker engine's default resource limits to prevent a runaway agent from starving the host. Use `--memory` and `--cpus` flags on container creation for per-agent limits.

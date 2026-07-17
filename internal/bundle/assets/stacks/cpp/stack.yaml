@@ -1,0 +1,5 @@
+description: >-
+  The C/C++ toolchain: build-essential (gcc, g++, make, libc dev headers),
+  CMake, and pkg-config via apt (distro-signature-verified, tracking
+  Debian security updates on rebuild). Skips itself when the image already
+  provides g++.

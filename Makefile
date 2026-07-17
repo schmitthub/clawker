@@ -251,7 +251,7 @@ BPF_APT_DEPS := \
     clang=1:18.0-59~exp2 \
     llvm=1:18.0-59~exp2 \
     libbpf-dev=1:1.3.0-2build2 \
-    linux-libc-dev=6.8.0-134.134
+    linux-libc-dev=6.8.0-136.136
 
 # Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
 # and root — versions pinned above only resolve against Noble's apt repos.
