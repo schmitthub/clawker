@@ -12,7 +12,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [2026.7.1] - 2026-07-17
 
-### **⚠ MAJOR UPDATE — BREAKING CHANGES - multi-harness support, bundles**
+### **⚠ MAJOR UPDATE — BREAKING CHANGES — multi-harness support, bundles**
 
 > **Action required:** images from earlier releases will not work. Custom base images are gone — every image now builds from clawker's pinned Debian base, customized by **stacks**: composable toolchain layers that install a language runtime and its tooling into the image. If you used `build.image` or `build.dockerfile`, recreate what your image provided by listing stacks under `build.stacks` in `clawker.yaml` (`go`, `node`, `python`, `rust`, `java`, `ruby`, `cpp`, and `dotnet` ship built in — `clawker stack list` shows everything available, including bundled ones), adding apt packages under `build.packages`, and expressing any remaining setup as `build.instructions`. Then run `clawker build` in every project. Stock configs just rebuild.
 >
