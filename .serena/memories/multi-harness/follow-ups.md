@@ -7,15 +7,7 @@ the list; mark items DONE with the shipping commit rather than deleting them.
 
 ## Open items
 
-1. **New aliases to help users** (user, 2026-07-15). Add aliases that ease the
-   multi-harness workflow. Scope not yet specified — clarify with the user
-   before implementing: which commands, and whether these are shipped built-in
-   aliases or documented `clawker alias set` recipes. Context: harness
-   selection currently spells `clawker run -it --agent dev @:codex`,
-   `clawker build -t <harness>`, etc.; inventory verbs are
-   `clawker harness list` / `stack list` / `monitor extensions`.
-
-2. **Embedded stacks for every init preset** (user, 2026-07-15) — FILED as
+1. **Embedded stacks for every init preset** (user, 2026-07-15) — FILED as
    github issue #421 (2026-07-17, post-#416-merge). The init
    wizard presets (`internal/config/presets.go`) cover python, go, rust,
    typescript, java, ruby, cpp, and dotnet, but the embedded stack floor
