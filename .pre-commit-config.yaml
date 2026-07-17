@@ -37,7 +37,7 @@ repos:
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
-    rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5  # frozen: v2.11.4
+    rev: c0d3ddc9cf3faa61a4e378e879ece580256d76e5  # frozen: v2.12.2
     hooks:
       - id: golangci-lint-full
         entry: golangci-lint run

@@ -238,7 +238,7 @@ security:
           - action: allow
             path: /oraios/serena/
           - action: allow
-            path: /golangci/golangci-lint/
+            path: ~/golangci/golangci-lint(\.git)?(/.*)?
           - action: allow
             path: /koalaman/shellcheck/
           - action: allow
