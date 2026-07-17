@@ -13,7 +13,7 @@ Changed, Removed. Each release section lists those subsections directly.
 ## [Unreleased]
 
 - **Changed:** `clawker skill` is now `clawker plugin`. Every `clawker skill` invocation keeps working as an alias.
-- **Added:** `clawker plugin install` now supports every major harness — `--harness claude | codex | opencode | pi` installs the clawker-support skills into each harness's native skills directory.
+- **Added:** The clawker-support plugin now supports every major harness — Claude Code, Codex, opencode, and pi. Install it with `clawker plugin install --harness <name>`, or through your harness's own mechanism.
 
 ## [2026.7.1] - 2026-07-17
 
