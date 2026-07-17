@@ -365,12 +365,12 @@
             ]
           },
           {
-            "group": "Skill",
+            "group": "Plugin",
             "pages": [
-              "cli-reference/clawker_skill",
-              "cli-reference/clawker_skill_install",
-              "cli-reference/clawker_skill_show",
-              "cli-reference/clawker_skill_remove"
+              "cli-reference/clawker_plugin",
+              "cli-reference/clawker_plugin_install",
+              "cli-reference/clawker_plugin_show",
+              "cli-reference/clawker_plugin_remove"
             ]
           }
         ]

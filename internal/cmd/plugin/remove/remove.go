@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
-	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
+	"github.com/schmitthub/clawker/internal/cmd/plugin/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
@@ -43,13 +43,13 @@ For the claude harness this uninstalls the plugin through the Claude CLI;
 the marketplace registration is left in place. For codex, opencode, and pi
 it deletes the plugin's skills from the harness's native skills directory.`,
 		Example: `  # Remove from Claude Code (default)
-  clawker skill remove
+  clawker plugin remove
 
   # Remove from another harness
-  clawker skill remove --harness codex
+  clawker plugin remove --harness codex
 
   # Remove from project scope (claude only)
-  clawker skill remove --scope project`,
+  clawker plugin remove --scope project`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {

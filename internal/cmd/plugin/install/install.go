@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
-	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
+	"github.com/schmitthub/clawker/internal/cmd/plugin/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
@@ -45,13 +45,13 @@ marketplace and copies its skills into the harness's native skills
 directory. The plugin gives your coding agent hands-on knowledge of
 clawker configuration, troubleshooting, and internals.`,
 		Example: `  # Install for Claude Code (default)
-  clawker skill install
+  clawker plugin install
 
   # Install for another harness
-  clawker skill install --harness codex
+  clawker plugin install --harness codex
 
   # Install with project scope (claude only)
-  clawker skill install --scope project`,
+  clawker plugin install --scope project`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {

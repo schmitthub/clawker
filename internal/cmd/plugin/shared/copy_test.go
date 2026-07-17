@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
-	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
+	"github.com/schmitthub/clawker/internal/cmd/plugin/shared"
 )
 
 func TestValidateHarness(t *testing.T) {

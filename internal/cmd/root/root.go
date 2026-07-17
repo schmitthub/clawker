@@ -14,9 +14,9 @@ import (
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
 	"github.com/schmitthub/clawker/internal/cmd/network"
+	"github.com/schmitthub/clawker/internal/cmd/plugin"
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
-	"github.com/schmitthub/clawker/internal/cmd/skill"
 	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
@@ -67,7 +67,7 @@ Workspace modes:
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 	cmd.AddCommand(project.NewCmdProject(f))
 	cmd.AddCommand(settings.NewCmdSettings(f))
-	cmd.AddCommand(skill.NewCmdSkill(f))
+	cmd.AddCommand(plugin.NewCmdPlugin(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 
 	// Add management commands

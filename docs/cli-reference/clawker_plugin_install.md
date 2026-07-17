@@ -1,8 +1,8 @@
 ---
-title: "clawker skill install"
+title: "clawker plugin install"
 ---
 
-## clawker skill install
+## clawker plugin install
 
 Install the clawker agent skills plugin
 
@@ -18,20 +18,20 @@ directory. The plugin gives your coding agent hands-on knowledge of
 clawker configuration, troubleshooting, and internals.
 
 ```
-clawker skill install [flags]
+clawker plugin install [flags]
 ```
 
 ### Examples
 
 ```
   # Install for Claude Code (default)
-  clawker skill install
+  clawker plugin install
 
   # Install for another harness
-  clawker skill install --harness codex
+  clawker plugin install --harness codex
 
   # Install with project scope (claude only)
-  clawker skill install --scope project
+  clawker plugin install --scope project
 ```
 
 ### Options
@@ -50,4 +50,4 @@ clawker skill install [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
+* [clawker plugin](clawker_plugin) - Manage the clawker agent skills plugin

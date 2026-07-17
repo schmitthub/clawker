@@ -1,15 +1,16 @@
-# Skill Command Package
+# Plugin Command Package
 
-Manage the clawker-support agent skills plugin across host harnesses. The
-claude harness wraps the `claude plugin` CLI; codex, opencode, and pi install
-by fetching the plugin source from the marketplace and copying its skills into
-the harness's native skills directory.
+Manage the clawker-support agent skills plugin across host harnesses
+(`clawker plugin`, alias `clawker skill`). The claude harness wraps the
+`claude plugin` CLI; codex, opencode, and pi install by fetching the plugin
+source from the marketplace and copying its skills into the harness's native
+skills directory.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `skill.go` | `NewCmdSkill(f)` — parent command, registers install/show/remove |
+| `plugin.go` | `NewCmdPlugin(f)` — parent command (alias `skill`), registers install/show/remove |
 | `install/install.go` | `NewCmdInstall(f, runF)` — claude: add marketplace + install plugin; others: fetch + copy skills |
 | `show/show.go` | `NewCmdShow(f, runF)` — display manual install commands per harness |
 | `remove/remove.go` | `NewCmdRemove(f, runF)` — claude: uninstall plugin; others: fetch to enumerate, delete skill dirs |
@@ -19,7 +20,7 @@ the harness's native skills directory.
 ## Key Symbols
 
 ```go
-func NewCmdSkill(f *cmdutil.Factory) *cobra.Command
+func NewCmdPlugin(f *cmdutil.Factory) *cobra.Command
 func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOptions) error) *cobra.Command
 func NewCmdShow(f *cmdutil.Factory, runF func(context.Context, *ShowOptions) error) *cobra.Command
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command

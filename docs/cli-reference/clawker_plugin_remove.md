@@ -1,8 +1,8 @@
 ---
-title: "clawker skill remove"
+title: "clawker plugin remove"
 ---
 
-## clawker skill remove
+## clawker plugin remove
 
 Remove the clawker agent skills plugin
 
@@ -15,7 +15,7 @@ the marketplace registration is left in place. For codex, opencode, and pi
 it deletes the plugin's skills from the harness's native skills directory.
 
 ```
-clawker skill remove [flags]
+clawker plugin remove [flags]
 ```
 
 ### Aliases
@@ -26,13 +26,13 @@ clawker skill remove [flags]
 
 ```
   # Remove from Claude Code (default)
-  clawker skill remove
+  clawker plugin remove
 
   # Remove from another harness
-  clawker skill remove --harness codex
+  clawker plugin remove --harness codex
 
   # Remove from project scope (claude only)
-  clawker skill remove --scope project
+  clawker plugin remove --scope project
 ```
 
 ### Options
@@ -51,4 +51,4 @@ clawker skill remove [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
+* [clawker plugin](clawker_plugin) - Manage the clawker agent skills plugin

@@ -147,7 +147,7 @@ clawker go dev
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
-You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
+You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker plugin install` (recommended) or this prompt:  
 
 ```text
 create a `./.clawker.yaml` file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
@@ -169,7 +169,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real build templates and config schema and gives you the exact YAML you need.
 > ```bash
 > # Via clawker CLI (recommended)
-> clawker skill install
+> clawker plugin install
 >
 > # Or manually
 > claude plugin marketplace add schmitthub/clawker-plugin
@@ -383,11 +383,11 @@ clawker auth rotate                     # Rotate CA, server certs, and OAuth2 si
 clawker project edit                    # Interactive TUI editor for .clawker.yaml
 clawker settings edit                   # Interactive TUI editor for settings.yaml
 
-# Skill plugin management
-clawker skill install                   # Install the clawker-support agent skills plugin
-clawker skill install --scope project   # Install with project scope
-clawker skill show                      # Show manual install commands
-clawker skill remove                    # Remove the clawker-support plugin
+# Plugin management (alias: clawker skill)
+clawker plugin install                  # Install the clawker-support agent skills plugin
+clawker plugin install --scope project  # Install with project scope
+clawker plugin show                     # Show manual install commands
+clawker plugin remove                   # Remove the clawker-support plugin
 ```
 
 ## Monitoring 

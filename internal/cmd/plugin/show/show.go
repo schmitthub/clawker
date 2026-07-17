@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
+	"github.com/schmitthub/clawker/internal/cmd/plugin/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
@@ -23,14 +23,14 @@ func NewCmdShow(f *cmdutil.Factory, runF func(context.Context, *ShowOptions) err
 
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Show manual install commands for the clawker skill plugin",
+		Short: "Show manual install commands for the clawker plugin",
 		Long: `Display the commands needed to manually install the
 clawker-support skill plugin for a harness.`,
 		Example: `  # Claude Code (default)
-  clawker skill show
+  clawker plugin show
 
   # Another harness
-  clawker skill show --harness opencode`,
+  clawker plugin show --harness opencode`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
@@ -80,7 +80,7 @@ func showRun(_ context.Context, opts *ShowOptions) error {
 	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("cp -r clawker-plugin/skills/. "+dstDir+"/"))
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintf(ios.ErrOut, "%s Or let clawker do it (installs from the marketplace):\n\n", cs.InfoIcon())
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("clawker skill install --harness "+opts.Harness))
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("clawker plugin install --harness "+opts.Harness))
 
 	return nil
 }

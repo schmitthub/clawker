@@ -1,8 +1,8 @@
 ---
-title: "clawker skill"
+title: "clawker plugin"
 ---
 
-## clawker skill
+## clawker plugin
 
 Manage the clawker agent skills plugin
 
@@ -19,32 +19,36 @@ The claude harness installs through the Claude CLI marketplace; codex,
 opencode, and pi install by copying the plugin's skills into the harness's
 native skills directory from the marketplace.
 
+### Aliases
+
+`plugin`, `skill`
+
 ### Examples
 
 ```
-  # Install the clawker skill plugin for Claude Code
-  clawker skill install
+  # Install the clawker plugin for Claude Code
+  clawker plugin install
 
   # Install for another harness
-  clawker skill install --harness codex
+  clawker plugin install --harness codex
 
   # Show the manual install commands
-  clawker skill show
+  clawker plugin show
 
-  # Remove the clawker skill plugin
-  clawker skill remove
+  # Remove the clawker plugin
+  clawker plugin remove
 ```
 
 ### Subcommands
 
-* [clawker skill install](clawker_skill_install) - Install the clawker agent skills plugin
-* [clawker skill remove](clawker_skill_remove) - Remove the clawker agent skills plugin
-* [clawker skill show](clawker_skill_show) - Show manual install commands for the clawker skill plugin
+* [clawker plugin install](clawker_plugin_install) - Install the clawker agent skills plugin
+* [clawker plugin remove](clawker_plugin_remove) - Remove the clawker agent skills plugin
+* [clawker plugin show](clawker_plugin_show) - Show manual install commands for the clawker plugin
 
 ### Options
 
 ```
-  -h, --help   help for skill
+  -h, --help   help for plugin
 ```
 
 ### Options inherited from parent commands

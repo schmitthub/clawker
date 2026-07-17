@@ -1,4 +1,4 @@
-package skill
+package plugin_test
 
 import (
 	"testing"
@@ -6,17 +6,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/cmd/plugin"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
-func TestNewCmdSkill(t *testing.T) {
+func TestNewCmdPlugin(t *testing.T) {
 	tio, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: tio}
 
-	cmd := NewCmdSkill(f)
+	cmd := plugin.NewCmdPlugin(f)
 
-	assert.Equal(t, "skill", cmd.Use)
+	assert.Equal(t, "plugin", cmd.Use)
+	assert.Contains(t, cmd.Aliases, "skill")
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
