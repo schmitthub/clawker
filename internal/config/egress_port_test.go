@@ -1,10 +1,6 @@
 package config
 
-import (
-	"testing"
-
-	"gopkg.in/yaml.v3"
-)
+import "testing"
 
 func TestParsePortSpec(t *testing.T) {
 	cases := []struct {
@@ -64,29 +60,5 @@ func TestEgressRulePortHelpers(t *testing.T) {
 	}
 	if _, _, ok := (EgressRule{Port: "9100-9000"}).PortSpan(); ok {
 		t.Fatal("PortSpan(reversed) must collapse the error to ok=false")
-	}
-}
-
-// TestEgressRulePortYAMLScalars pins that a YAML author may write the port as
-// an integer (443) or a string ("443" / "9000-9100") interchangeably — the
-// JSON Schema advertises the same union via the field's jsontype tag.
-func TestEgressRulePortYAMLScalars(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{in: "port: 443", want: "443"},
-		{in: `port: "443"`, want: "443"},
-		{in: "port: 9000-9100", want: "9000-9100"},
-		{in: `port: "9000-9100"`, want: "9000-9100"},
-	}
-	for _, tc := range cases {
-		var r EgressRule
-		if err := yaml.Unmarshal([]byte(tc.in), &r); err != nil {
-			t.Fatalf("unmarshal %q: %v", tc.in, err)
-		}
-		if r.Port != tc.want {
-			t.Fatalf("unmarshal %q: got port %q, want %q", tc.in, r.Port, tc.want)
-		}
 	}
 }

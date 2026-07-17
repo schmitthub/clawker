@@ -59,10 +59,7 @@
           "port": {
             "description": "Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default",
             "title": "Port",
-            "type": [
-              "string",
-              "integer"
-            ]
+            "type": "string"
           },
           "proto": {
             "description": "L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through",
