@@ -265,7 +265,7 @@ security:
           - action: allow
             path: ~/repos/nvm-sh/nvm(/.*)?
           - action: allow
-            path: ~/repos/schmitthub/(clawker|claude-plugins)(/.*)?
+            path: ~/repos/schmitthub/(clawker|clawker-plugin)(/.*)?
           - action: allow
             path: /repos/schmitthub/contributor-assistant
           - action: allow

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	MarketplaceSource = "schmitthub/claude-plugins"
+	MarketplaceSource = "schmitthub/clawker-plugin"
 	PluginName        = "clawker-support@schmitthub-plugins"
 )
 

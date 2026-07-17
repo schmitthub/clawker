@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
 
       - name: Check Dockerfile templates are in sync
         run: |
@@ -20,7 +22,7 @@ jobs:
           for tmpl in Dockerfile.base.tmpl Dockerfile.harness-image.tmpl; do
             diff \
               "internal/bundler/assets/${tmpl}" \
-              "claude-plugin/clawker-support/skills/clawker-support/reference/${tmpl}" \
-            || { echo "::error::${tmpl} drift detected. Copy internal/bundler/assets/${tmpl} to claude-plugin/clawker-support/skills/clawker-support/reference/${tmpl}"; fail=1; }
+              "clawker-plugin/skills/clawker-support/reference/${tmpl}" \
+            || { echo "::error::${tmpl} drift detected. Update ${tmpl} in the clawker-plugin repo and bump the clawker-plugin submodule pointer"; fail=1; }
           done
           exit "$fail"

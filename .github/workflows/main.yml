@@ -45,35 +45,6 @@ jobs:
     permissions:
       contents: read
 
-  plugin-check:
-    name: Detect plugin changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 1
-    outputs:
-      changed: ${{ steps.diff.outputs.changed }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 2
-      - id: diff
-        run: |
-          if git diff --name-only HEAD~1 HEAD | grep -q '^claude-plugin/'; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  plugin-release:
-    name: Plugin Release
-    needs: [plugin-check]
-    if: needs.plugin-check.outputs.changed == 'true'
-    uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@10a280d6fe399d2ee26b3a2c84e8b6f095083a1f # main
-    with:
-      plugin-name: clawker-support
-      sha: ${{ github.sha }}
-    secrets:
-      marketplace-token: ${{ secrets.MARKETPLACE_TOKEN }}
-
   # Future: Integration test jobs will be added here.
   # Use `needs: [security, test]` so integration tests only run
   # after fast checks pass (saves runner minutes on obvious failures).

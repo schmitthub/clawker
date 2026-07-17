@@ -38,11 +38,11 @@ func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOption
 		Short: "Install the clawker agent skills plugin",
 		Long: `Install the clawker-support agent skills plugin.
 
-For the claude harness this adds the schmitthub/claude-plugins marketplace
+For the claude harness this adds the schmitthub/clawker-plugin marketplace
 (if not already present) and installs the clawker-support plugin through the
-Claude CLI. For codex, opencode, and pi it fetches the plugin at the
-marketplace-pinned release and copies its skills into the harness's native
-skills directory. The plugin gives your coding agent hands-on knowledge of
+Claude CLI. For codex, opencode, and pi it fetches the plugin from the
+marketplace and copies its skills into the harness's native skills
+directory. The plugin gives your coding agent hands-on knowledge of
 clawker configuration, troubleshooting, and internals.`,
 		Example: `  # Install for Claude Code (default)
   clawker skill install
@@ -124,7 +124,7 @@ func installByCopy(ctx context.Context, opts *InstallOptions) error {
 
 	fmt.Fprintf(
 		ios.ErrOut,
-		"%s Fetching %s at the marketplace-pinned release...\n",
+		"%s Fetching %s from the marketplace...\n",
 		cs.InfoIcon(),
 		shared.MarketplacePluginName,
 	)

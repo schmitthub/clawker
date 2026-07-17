@@ -17,7 +17,7 @@ templates so the advice it gives is always accurate.
 
 The claude harness installs through the Claude CLI marketplace; codex,
 opencode, and pi install by copying the plugin's skills into the harness's
-native skills directory at the marketplace-pinned release.
+native skills directory from the marketplace.
 
 ### Examples
 

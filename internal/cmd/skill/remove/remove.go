@@ -100,7 +100,7 @@ func removeClaude(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-// removeByCopy fetches the pinned plugin to enumerate its skills — removal
+// removeByCopy fetches the plugin to enumerate its skills — removal
 // has no local receipt to consult — then deletes each from the harness dir.
 func removeByCopy(ctx context.Context, opts *RemoveOptions) error {
 	ios := opts.IOStreams

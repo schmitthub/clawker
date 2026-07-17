@@ -128,13 +128,45 @@ func marketplaceTree(t *testing.T, manifestJSON []byte) func(dir string) error {
 	}
 }
 
-func TestFetchPluginSkills_ResolvesMarketplacePin(t *testing.T) {
+func TestFetchPluginSkills_ResolvesRelativeSource(t *testing.T) {
+	// The live marketplace shape: the plugin lives at the marketplace repo
+	// root and the entry's source is the relative-path string "./".
+	manifest := map[string]any{
+		"plugins": []map[string]any{{
+			"name":   shared.MarketplacePluginName,
+			"source": "./",
+		}},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	fetcher := &fakeFetcher{trees: map[string]func(string) error{
+		shared.MarketplaceGitURL: func(dir string) error {
+			if fillErr := marketplaceTree(t, manifestJSON)(dir); fillErr != nil {
+				return fillErr
+			}
+			skills := filepath.Join(dir, "skills")
+			writeSkill(t, skills, "clawker-support")
+			// A stray file at the skills root must not be reported as a skill.
+			return os.WriteFile(filepath.Join(skills, "README.md"), []byte("x"), 0o644)
+		},
+	}}
+
+	fetched, err := shared.FetchPluginSkills(context.Background(), fetcher)
+	require.NoError(t, err)
+	defer fetched.Cleanup()
+
+	assert.Equal(t, []string{"clawker-support"}, fetched.Names)
+	assert.FileExists(t, filepath.Join(fetched.Dir, "clawker-support", "SKILL.md"))
+}
+
+func TestFetchPluginSkills_ResolvesGitObjectSource(t *testing.T) {
 	manifest := map[string]any{
 		"plugins": []map[string]any{{
 			"name": shared.MarketplacePluginName,
 			"source": map[string]any{
 				"url":  "https://example.com/clawker.git",
-				"path": "claude-plugin/clawker-support",
+				"path": "plugins/clawker-support",
 				"sha":  "1234567890123456789012345678901234567890",
 			},
 		}},
@@ -145,14 +177,9 @@ func TestFetchPluginSkills_ResolvesMarketplacePin(t *testing.T) {
 	fetcher := &fakeFetcher{trees: map[string]func(string) error{
 		shared.MarketplaceGitURL: marketplaceTree(t, manifestJSON),
 		"https://example.com/clawker.git": func(dir string) error {
-			skills := filepath.Join(dir, "claude-plugin", "clawker-support", "skills")
+			skills := filepath.Join(dir, "plugins", "clawker-support", "skills")
 			writeSkill(t, skills, "clawker-support")
-			// A stray file at the skills root must not be reported as a skill.
-			return os.WriteFile(
-				filepath.Join(skills, "README.md"),
-				[]byte("x"),
-				0o644,
-			)
+			return nil
 		},
 	}}
 
@@ -162,6 +189,17 @@ func TestFetchPluginSkills_ResolvesMarketplacePin(t *testing.T) {
 
 	assert.Equal(t, []string{"clawker-support"}, fetched.Names)
 	assert.FileExists(t, filepath.Join(fetched.Dir, "clawker-support", "SKILL.md"))
+}
+
+func TestFetchPluginSkills_RejectsTraversingRelativeSource(t *testing.T) {
+	manifest := []byte(`{"plugins":[{"name":"clawker-support","source":"../outside"}]}`)
+	fetcher := &fakeFetcher{trees: map[string]func(string) error{
+		shared.MarketplaceGitURL: marketplaceTree(t, manifest),
+	}}
+
+	_, err := shared.FetchPluginSkills(context.Background(), fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "traverse")
 }
 
 func TestFetchPluginSkills_UnknownPluginFails(t *testing.T) {

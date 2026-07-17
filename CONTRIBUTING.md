@@ -177,8 +177,9 @@ both, this project uses a Contributor License Agreement: you keep copyright of
 your work, your contribution is published under the AGPL-3.0-or-later, and you
 grant the maintainer the right to also license it under commercial terms.
 
-One subproject is the exception: the `claude-plugin/clawker-support/` plugin is
-licensed separately under the MIT License (see its LICENSE file).
+One subproject is the exception: the clawker-support plugin, tracked as the
+`clawker-plugin/` git submodule ([schmitthub/clawker-plugin](https://github.com/schmitthub/clawker-plugin)),
+is licensed separately under the MIT License (see its LICENSE file).
 
 Read the full text in [CLA.md](CLA.md). On your first pull request, a CLA
 assistant asks you to sign by commenting a short confirmation phrase; merging is

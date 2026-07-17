@@ -7,18 +7,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
 )
 
 // Copy-lane installs: every harness other than Claude Code treats a skill as
 // installed when its directory sits in the harness's skills dir, so install
-// is fetch-the-pinned-plugin-source-then-copy. The marketplace repo is the
-// single source of truth for WHICH commit ships — the same pin the Claude
-// lane resolves through the Claude CLI.
+// is fetch-the-plugin-source-then-copy. The marketplace repo is the single
+// source of truth for WHAT ships — the same catalog the Claude lane resolves
+// through the Claude CLI.
 const (
 	// MarketplaceGitURL is the canonical clone URL of the plugin marketplace repo.
-	MarketplaceGitURL = "https://github.com/schmitthub/claude-plugins.git"
+	MarketplaceGitURL = "https://github.com/schmitthub/clawker-plugin.git"
 	// MarketplaceManifestPath locates the marketplace manifest within that repo.
 	MarketplaceManifestPath = ".claude-plugin/marketplace.json"
 	// MarketplacePluginName is the plugin's entry name in the manifest.
@@ -71,15 +72,43 @@ type marketplacePlugin struct {
 	Source marketplacePluginSource `json:"source"`
 }
 
+// marketplacePluginSource accepts both marketplace source shapes: a relative
+// path string (e.g. "./" or "./plugins/name") for a plugin that lives inside
+// the marketplace repo itself, or a git object {url, path, ref, sha} for a
+// plugin fetched from another repo.
 type marketplacePluginSource struct {
+	// RelPath is set when the source is a relative-path string; the plugin
+	// root resolves against the marketplace checkout.
+	RelPath string `json:"-"`
+
 	URL  string `json:"url"`
 	Path string `json:"path"`
 	Ref  string `json:"ref"`
 	SHA  string `json:"sha"`
 }
 
-// FetchedSkills is the result of resolving and fetching the plugin's pinned
-// source: the on-disk skills directory and the skill names it contains.
+func (s *marketplacePluginSource) UnmarshalJSON(data []byte) error {
+	var rel string
+	if err := json.Unmarshal(data, &rel); err == nil {
+		if strings.Contains(rel, "..") {
+			return fmt.Errorf("relative plugin source %q must not traverse outside the marketplace", rel)
+		}
+		var src marketplacePluginSource
+		src.RelPath = rel
+		*s = src
+		return nil
+	}
+	type object marketplacePluginSource // local alias sheds UnmarshalJSON to avoid recursion
+	var obj object
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("parsing plugin source object: %w", err)
+	}
+	*s = marketplacePluginSource(obj)
+	return nil
+}
+
+// FetchedSkills is the result of resolving and fetching the plugin's source:
+// the on-disk skills directory and the skill names it contains.
 // Cleanup removes the temp checkout and is safe to call exactly once.
 type FetchedSkills struct {
 	Dir     string
@@ -87,10 +116,11 @@ type FetchedSkills struct {
 	Cleanup func()
 }
 
-// FetchPluginSkills clones the marketplace repo, resolves the plugin's pinned
-// source (url + path + sha), fetches it, and returns the plugin's skills
-// directory. The marketplace pin — not any local checkout — decides what
-// ships, keeping the copy lane on the same release the Claude lane installs.
+// FetchPluginSkills clones the marketplace repo, resolves the plugin's source
+// (a relative path inside the marketplace, or a git url + path + sha), fetches
+// it, and returns the plugin's skills directory. The marketplace catalog — not
+// any local checkout — decides what ships, keeping the copy lane on the same
+// release the Claude lane installs.
 func FetchPluginSkills(ctx context.Context, fetcher fetch.Fetcher) (*FetchedSkills, error) {
 	tmp, err := os.MkdirTemp("", "clawker-skill-*")
 	if err != nil {
@@ -98,24 +128,31 @@ func FetchPluginSkills(ctx context.Context, fetcher fetch.Fetcher) (*FetchedSkil
 	}
 	cleanup := func() { _ = os.RemoveAll(tmp) } // best-effort temp cleanup
 
-	entry, err := resolvePluginSource(ctx, fetcher, filepath.Join(tmp, "marketplace"))
+	marketDir := filepath.Join(tmp, "marketplace")
+	entry, err := resolvePluginSource(ctx, fetcher, marketDir)
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
 
-	srcDir := filepath.Join(tmp, "plugin")
-	if _, cloneErr := fetcher.Clone(ctx, fetch.CloneOptions{
-		URL: entry.URL,
-		Ref: entry.Ref,
-		SHA: entry.SHA,
-		Dir: srcDir,
-	}); cloneErr != nil {
-		cleanup()
-		return nil, fmt.Errorf("fetching plugin source %s: %w", entry.URL, cloneErr)
+	var skillsDir string
+	if entry.RelPath != "" {
+		// Relative source: the plugin lives inside the marketplace repo we
+		// already cloned.
+		skillsDir = filepath.Join(marketDir, filepath.FromSlash(entry.RelPath), skillsSubdir)
+	} else {
+		srcDir := filepath.Join(tmp, "plugin")
+		if _, cloneErr := fetcher.Clone(ctx, fetch.CloneOptions{
+			URL: entry.URL,
+			Ref: entry.Ref,
+			SHA: entry.SHA,
+			Dir: srcDir,
+		}); cloneErr != nil {
+			cleanup()
+			return nil, fmt.Errorf("fetching plugin source %s: %w", entry.URL, cloneErr)
+		}
+		skillsDir = filepath.Join(srcDir, filepath.FromSlash(entry.Path), skillsSubdir)
 	}
-
-	skillsDir := filepath.Join(srcDir, filepath.FromSlash(entry.Path), skillsSubdir)
 	names, err := skillNames(skillsDir)
 	if err != nil {
 		cleanup()
@@ -142,8 +179,8 @@ func resolvePluginSource(ctx context.Context, fetcher fetch.Fetcher, dir string)
 	}
 	for _, p := range manifest.Plugins {
 		if p.Name == MarketplacePluginName {
-			if p.Source.URL == "" {
-				return zero, fmt.Errorf("marketplace entry %q has no source url", MarketplacePluginName)
+			if p.Source.RelPath == "" && p.Source.URL == "" {
+				return zero, fmt.Errorf("marketplace entry %q has no source", MarketplacePluginName)
 			}
 			return p.Source, nil
 		}

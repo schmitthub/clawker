@@ -172,7 +172,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > clawker skill install
 >
 > # Or manually
-> claude plugin marketplace add schmitthub/claude-plugins
+> claude plugin marketplace add schmitthub/clawker-plugin
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
 > You can also customize your image using `clawker project edit` or point your agent at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
@@ -431,7 +431,7 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 Clawker is free software: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](LICENSE).
 
-One subproject is the exception: the `claude-plugin/clawker-support/` plugin is licensed separately under the MIT License — see [its LICENSE](claude-plugin/clawker-support/LICENSE). Everything else in this repository is AGPL-3.0-or-later as described below.
+One subproject is the exception: the clawker-support plugin, tracked as the `clawker-plugin/` git submodule ([schmitthub/clawker-plugin](https://github.com/schmitthub/clawker-plugin)), is licensed separately under the MIT License — see its LICENSE. Everything else in this repository is AGPL-3.0-or-later as described below.
 
 The AGPL's network-use clause (section 13) is deliberate: if you run a modified Clawker as a network service, you must offer its source to users of that service. This keeps Clawker free and open — for learning from and building on, not for closed SaaS wrappers.
 

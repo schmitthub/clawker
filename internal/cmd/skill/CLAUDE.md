@@ -2,7 +2,7 @@
 
 Manage the clawker-support agent skills plugin across host harnesses. The
 claude harness wraps the `claude plugin` CLI; codex, opencode, and pi install
-by fetching the marketplace-pinned plugin source and copying its skills into
+by fetching the plugin source from the marketplace and copying its skills into
 the harness's native skills directory.
 
 ## Files
@@ -29,7 +29,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 
 `shared/shared.go` centralizes:
 
-- **Constants**: `MarketplaceSource` (`schmitthub/claude-plugins`), `PluginName` (`clawker-support@schmitthub-plugins`), harness names (`HarnessClaude`/`HarnessCodex`/`HarnessOpencode`/`HarnessPi`, `ValidHarnesses`)
+- **Constants**: `MarketplaceSource` (`schmitthub/clawker-plugin`), `PluginName` (`clawker-support@schmitthub-plugins`), harness names (`HarnessClaude`/`HarnessCodex`/`HarnessOpencode`/`HarnessPi`, `ValidHarnesses`)
 - **`ValidateScope(scope)`** / **`ValidateHarness(harness)`**: Return `FlagError` for invalid values
 - **`CheckClaudeCLI()`**: `exec.LookPath` with differentiated errors (not found vs not usable)
 - **`RunClaude(ctx, ios, args...)`**: Subprocess execution with stdin wired, context cancellation handling, and actionable exit code errors
@@ -37,7 +37,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 `shared/copy.go` owns the copy lane:
 
 - **`SkillsDir(harness)`**: The harness's native skills dir — codex `~/.agents/skills`, pi `~/.pi/agent/skills`, opencode `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/skills`
-- **`FetchPluginSkills(ctx, fetcher)`**: Clones the marketplace repo, resolves the plugin's pinned source (url + path + sha), fetches it via `bundle/fetch.Fetcher`, returns the skills dir + names + cleanup. The marketplace pin decides what ships — same release the claude lane installs
+- **`FetchPluginSkills(ctx, fetcher)`**: Clones the marketplace repo, resolves the plugin's source (a relative path inside the marketplace, or a git object url + path + sha), fetches it via `bundle/fetch.Fetcher`, returns the skills dir + names + cleanup. The marketplace catalog decides what ships — same release the claude lane installs
 - **`CopySkills` / `RemoveSkills`**: Wholesale per-skill dir replace / idempotent delete. Skills sit exactly one level under `skills/` (the flat layout every harness discovers)
 
 ## DI for Testing
