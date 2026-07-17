@@ -55,13 +55,17 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	hp := cfg.HostProxyConfig()
 	assert.Equal(t, 18374, hp.Manager.Port)
 
-	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline)
-	assert.Equal(t, "run --rm -it --agent $1 @ --dangerously-skip-permissions", cfg.Project().Aliases["go"])
+	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline).
+	// go/wt run the DEFAULT harness, so they carry no harness-specific flags;
+	// the per-harness aliases bake in that harness's own auto-approve flag.
+	assert.Equal(t, "run --rm -it --agent $1 @", cfg.Project().Aliases["go"])
+	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @", cfg.Project().Aliases["wt"])
 	assert.Equal(
 		t,
-		"run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions",
-		cfg.Project().Aliases["wt"],
+		"run --rm -it --agent $1 @:claude --dangerously-skip-permissions",
+		cfg.Project().Aliases["claude"],
 	)
+	assert.Equal(t, "run --rm -it --agent $1 @:codex --yolo", cfg.Project().Aliases["codex"])
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {

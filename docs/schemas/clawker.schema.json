@@ -124,8 +124,10 @@
         "type": "string"
       },
       "default": {
-        "go": "run --rm -it --agent $1 @ --dangerously-skip-permissions",
-        "wt": "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"
+        "claude": "run --rm -it --agent $1 @:claude --dangerously-skip-permissions",
+        "codex": "run --rm -it --agent $1 @:codex --yolo",
+        "go": "run --rm -it --agent $1 @",
+        "wt": "run --rm -it --agent $1 --worktree $2 @"
       },
       "description": "Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers",
       "title": "Aliases",

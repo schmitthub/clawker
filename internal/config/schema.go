@@ -21,7 +21,7 @@ type Project struct {
 	// Harnesses holds per-harness container initialization settings; the
 	// entry matching the selected harness applies.
 	Harnesses map[string]HarnessConfig `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Per-harness container initialization settings, keyed by harness name"`
-	Aliases   map[string]string        `yaml:"aliases,omitempty"   label:"Aliases"   desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"`
+	Aliases   map[string]string        `yaml:"aliases,omitempty"   label:"Aliases"   desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @,wt=run --rm -it --agent $1 --worktree $2 @,claude=run --rm -it --agent $1 @:claude --dangerously-skip-permissions,codex=run --rm -it --agent $1 @:codex --yolo"`
 	// Bundles declares the installed-bundle sources this project draws
 	// extension components (harnesses, stacks, monitoring extensions) from.
 	// Each entry is a git-generic source; identity comes from the fetched

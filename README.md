@@ -69,7 +69,7 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
 - **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
-- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable agent: `clawker go dev`) and `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
+- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable default-harness agent: `clawker go dev`), `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`), and per-harness `claude`/`codex` (harness plus its auto-approve flag in one word) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary. Worktree containers ship extra security lockdown for unattended sessions — see [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats)
 - **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
@@ -129,7 +129,7 @@ clawker go dev
 > The `go` command is a built-in alias for:  
 >
 > ```bash
-> clawker run --rm -it --agent $1 @ --dangerously-skip-permissions
+> clawker run --rm -it --agent $1 @
 > ```
 >
 > So `clawker go dev` expands to the full command above with `$1=dev`. The flags mean:  
@@ -138,9 +138,10 @@ clawker go dev
 > - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 > - `--agent dev` — names this container `clawker.<project>.dev`
 > - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific harness instead
-> - `--dangerously-skip-permissions` — the infamous Claude Code yolo flag (the shipped aliases assume the claude harness). Anything after the `@` is passed straight to the harness CLI — treat it as a normal `claude` invocation, including `-c` to continue your previous session. You can also pass arguments after an alias, like `clawker go dev -c`.
 >
-> The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
+> Anything after the `@` is passed straight to the harness CLI, and arguments after an alias are appended — so `clawker go dev -c` continues your previous Claude Code session, and `clawker go dev --dangerously-skip-permissions` hands Claude Code its infamous yolo flag, safe inside the container's isolation.
+>
+> The per-harness aliases `claude` and `codex` pick their harness and skip its permission prompts in one word: `clawker claude dev`, `clawker codex dev`. The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
 >
 > Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 
@@ -309,11 +310,13 @@ clawker container create --agent test @
 
 ## Command Aliases
 
-Aliases are shortcuts expanded before execution — the alias value is appended to `clawker` in place of the alias name, with `$1`..`$N` positional placeholders and extra arguments appended. Two ship as defaults:
+Aliases are shortcuts expanded before execution — the alias value is appended to `clawker` in place of the alias name, with `$1`..`$N` positional placeholders and extra arguments appended. Four ship as defaults:
 
 ```bash
-clawker go dev                       # → clawker run --rm -it --agent dev @ --dangerously-skip-permissions
-clawker wt auth feature/auth:main    # → clawker run --rm -it --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
+clawker go dev                       # → clawker run --rm -it --agent dev @
+clawker wt auth feature/auth:main    # → clawker run --rm -it --agent auth --worktree feature/auth:main @
+clawker claude dev                   # → clawker run --rm -it --agent dev @:claude --dangerously-skip-permissions
+clawker codex dev                    # → clawker run --rm -it --agent dev @:codex --yolo
 ```
 
 Define your own and share them with your team via the project config:

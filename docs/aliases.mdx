@@ -9,20 +9,24 @@ Aliases are user-defined shortcuts expanded before execution: the alias value is
 
 ```bash
 # Instead of typing this every time...
-clawker run --rm -it --agent dev @ --dangerously-skip-permissions
+clawker run --rm -it --agent dev @:claude --dangerously-skip-permissions
 
 # ...type this
-clawker go dev
+clawker claude dev
 ```
 
 ## Shipped Defaults
 
-Clawker ships two aliases out of the box:
+Clawker ships four aliases out of the box:
 
 | Alias | Expansion | What it does |
 |-------|-----------|--------------|
-| `go` | `run --rm -it --agent $1 @ --dangerously-skip-permissions` | Launch a disposable interactive agent: `clawker go dev` |
-| `wt` | `run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Launch an agent on a fresh [worktree](/worktrees) ([caveats](/worktrees#worktree-caveats)) — `$2` is a `branch[:base]` spec: `clawker wt auth feature/auth:main` |
+| `go` | `run --rm -it --agent $1 @` | Launch a disposable interactive agent on your default harness: `clawker go dev` |
+| `wt` | `run --rm -it --agent $1 --worktree $2 @` | Launch a default-harness agent on a fresh [worktree](/worktrees) ([caveats](/worktrees#worktree-caveats)) — `$2` is a `branch[:base]` spec: `clawker wt auth feature/auth:main` |
+| `claude` | `run --rm -it --agent $1 @:claude --dangerously-skip-permissions` | Launch a Claude Code agent with permission prompts skipped: `clawker claude dev` |
+| `codex` | `run --rm -it --agent $1 @:codex --yolo` | Launch a Codex agent with approvals and sandboxing bypassed: `clawker codex dev` |
+
+`go` and `wt` run whichever harness is your project default, so they pass no harness-specific flags — add your harness's own flags after the alias (`clawker go dev --dangerously-skip-permissions`). The per-harness aliases select their harness with `@:<name>` and bake in its auto-approve flag, which is safe to skip inside the container's isolation.
 
 Defaults are always active — no setup required. They can be overridden (see [Deleting and Overriding](#deleting-and-overriding)) but never deleted.
 
@@ -32,11 +36,11 @@ The expansion may reference positional arguments as `$1`..`$N`; arguments beyond
 
 ```yaml
 aliases:
-  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
+  claude: run --rm -it --agent $1 @:claude --dangerously-skip-permissions
   lg: logs $1 --tail $2
 ```
 
-- `clawker go fable --model opus` runs `clawker run --rm -it --agent fable @ --dangerously-skip-permissions --model opus`
+- `clawker claude dev --model opus` runs `clawker run --rm -it --agent dev @:claude --dangerously-skip-permissions --model opus`
 - `clawker lg web 50` runs `clawker logs web --tail 50`
 - Invoking an alias with fewer arguments than its highest placeholder is an error (`expansion references $2 but 1 given`)
 - Placeholders substitute before the expansion is tokenized (same model as the gh CLI), so an argument containing spaces splits into separate tokens through a bare `$1`. Quote the placeholder in the alias definition — `clawker alias set ex 'container exec "$1" sh'` — to keep the substituted value a single argument.

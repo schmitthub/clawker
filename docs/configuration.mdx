@@ -301,7 +301,7 @@ security:
 # Per-harness container initialization settings, keyed by harness name
 harnesses: <value>  # default: n/a | required: false
 # Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers
-aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions | required: false
+aliases:  # default: go=run --rm -it --agent $1 @,wt=run --rm -it --agent $1 --worktree $2 @,claude=run --rm -it --agent $1 @:claude --dangerously-skip-permissions,codex=run --rm -it --agent $1 @:codex --yolo | required: false
   <key>: <value>
 # Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers
 bundles:
@@ -440,7 +440,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers |
+| `aliases` | key-value map | `go=run --rm -it --agent $1 @,wt=run --rm -it --agent $1 --worktree $2 @,claude=run --rm -it --agent $1 @:claude --dangerously-skip-permissions,codex=run --rm -it --agent $1 @:codex --yolo` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers |
 
 
 ### bundles
