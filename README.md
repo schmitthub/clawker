@@ -416,7 +416,7 @@ Once the stack is up:
 
 ## Roadmap / Known Issues
 
-- More shipped harness bundles are on the way (opencode, pi) — and you can author your own bundle today
+- More shipped harness bundles are on the way — experimental versions under development (codex, opencode, pi) live in the [example bundle](https://github.com/schmitthub/clawker-bundle-example). Try them with `clawker bundle install schmitthub/clawker-bundle-example`, and fork the repo or use it as a reference to tweak your own with the clawker plugin's `bundle-creator` skill
 - Linux works but hasn't been exercised as extensively as macOS
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen) for current known issues and limitations.
