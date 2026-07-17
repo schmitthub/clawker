@@ -390,39 +390,46 @@ func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
 // process runs in.
 //
 // A missing root or a tree with no config files contributes nothing; an
-// unreadable directory, an unparseable file, or a malformed bundles: node is
-// an error (roots must be computable before anything is collected), while
-// mistakes in unrelated keys are ignored. The walk does not descend into
-// dot-directories (each level's .clawker/ dir form is probed from its parent
-// via dual placement) and does not follow directory symlinks — a layer
-// reachable only through one of those is not counted as a root; a wrong
-// collect on such a pathological layout self-heals with one refetch.
+// unparseable file or a malformed bundles: node is an error (roots must be
+// computable before anything is collected), while mistakes in unrelated keys
+// are ignored. The walk does not descend into dot-directories (each level's
+// .clawker/ dir form is probed from its parent via dual placement), does not
+// follow directory symlinks, and SKIPS a permission-denied subdirectory
+// rather than failing — root-owned directories inside bind-mounted
+// workspaces are routine for a Docker tool, and one of them must not make
+// every prune fail forever. The skipped paths are returned so the caller can
+// surface them. A subdirectory that VANISHES mid-walk (ordinary build churn —
+// npm ci, a removed dist/) is likewise skipped, silently: it holds no
+// declarations and is not operator-actionable. A layer hidden behind any of
+// these bounds is not counted as a root, and a wrong collect self-heals with
+// one refetch. An unreadable ROOT (as opposed to subdirectory) stays a hard
+// error — that is the whole input, not a corner of it.
 //
 // Deliberately wired with NO migrations and NO writes: this loader runs
 // against OTHER projects' files during GC, and it must never rewrite them —
 // storage.applyMigrations is a no-op without WithMigrations, and nothing here
 // calls Set/Write.
-func BundleDeclarationsAt(root string) ([]BundleDeclaration, error) {
-	dirs, err := projectLayerDirs(root)
+func BundleDeclarationsAt(root string) ([]BundleDeclaration, []string, error) {
+	dirs, skipped, err := projectLayerDirs(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(dirs) == 0 {
-		return nil, nil
+		return nil, skipped, nil
 	}
 	store, err := storage.New[Project]("",
 		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
 		storage.WithDirs(dirs...),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("config: loading project config at %s: %w", root, err)
+		return nil, nil, fmt.Errorf("config: loading project config at %s: %w", root, err)
 	}
 	for _, layer := range store.Layers() {
 		if vErr := validateBundlesNode(layer); vErr != nil {
-			return nil, fmt.Errorf("config: validating bundles at %s: %w", root, vErr)
+			return nil, nil, fmt.Errorf("config: validating bundles at %s: %w", root, vErr)
 		}
 	}
-	return declarationsFromLayers(store.Layers()), nil
+	return declarationsFromLayers(store.Layers()), skipped, nil
 }
 
 // projectLayerDirs enumerates every directory under root that walk-up
@@ -431,17 +438,23 @@ func BundleDeclarationsAt(root string) ([]BundleDeclaration, error) {
 // directories are not descended into (their own .clawker/ dir-form files are
 // probed from the parent level's dual placement), and symlinks are not
 // followed (WalkDir never traverses them), so the walk cannot cycle or escape
-// the root. A missing root yields no directories; any other walk error is
-// surfaced — an unreadable subtree could hide a declaring layer, and the GC
-// roots this feeds must be computable before anything is collected.
-func projectLayerDirs(root string) ([]string, error) {
+// the root. A missing root yields no directories; a permission-denied
+// SUBdirectory is skipped and reported in the second return rather than
+// failing the walk (the directory itself stays in the probe list — its entry
+// was seen from the parent, only its children are unreachable); a
+// SUBdirectory deleted mid-walk (build churn) is skipped silently; any other
+// walk error is surfaced — it could hide a declaring layer, and the GC roots
+// this feeds must be computable before anything is collected.
+func projectLayerDirs(root string) ([]string, []string, error) {
 	var dirs []string
+	var skipped []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			if path == root && errors.Is(walkErr, fs.ErrNotExist) {
-				return filepath.SkipAll // missing root contributes nothing
+			skip, verdict := classifyLayerWalkError(root, path, walkErr)
+			if skip != "" {
+				skipped = append(skipped, skip)
 			}
-			return walkErr
+			return verdict
 		}
 		if !d.IsDir() {
 			return nil
@@ -453,9 +466,33 @@ func projectLayerDirs(root string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("config: enumerating config layer dirs under %s: %w", root, err)
+		return nil, nil, fmt.Errorf("config: enumerating config layer dirs under %s: %w", root, err)
 	}
-	return dirs, nil
+	return dirs, skipped, nil
+}
+
+// classifyLayerWalkError turns one layer-walk error into its verdict: a
+// missing root ends the walk cleanly (contributes nothing); a
+// permission-denied SUBdirectory is skipped and reported (first return names
+// it — a persistent, operator-actionable state that genuinely hides content);
+// a SUBdirectory that vanished mid-walk is skipped SILENTLY (ordinary build
+// churn — npm ci, a removed dist/ — deletes non-dot dirs constantly, a
+// directory that no longer exists holds no declarations, and warning on
+// every prune that races a build would be noise, not signal); anything else —
+// an unreadable root, EIO/ESTALE — is fatal: the tree genuinely could not be
+// assessed, and a loud retriable failure beats a silently incomplete roots
+// union.
+func classifyLayerWalkError(root, path string, walkErr error) (string, error) {
+	if path == root && errors.Is(walkErr, fs.ErrNotExist) {
+		return "", filepath.SkipAll
+	}
+	if path != root && errors.Is(walkErr, fs.ErrPermission) {
+		return path, filepath.SkipDir
+	}
+	if path != root && errors.Is(walkErr, fs.ErrNotExist) {
+		return "", filepath.SkipDir
+	}
+	return "", walkErr
 }
 
 // bundleSourceFromMap projects a decoded bundles[] map entry into a typed

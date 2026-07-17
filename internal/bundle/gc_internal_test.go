@@ -131,3 +131,32 @@ func joinWarningMessages(warnings []Warning) string {
 	}
 	return strings.Join(msgs, "\n")
 }
+
+// A holding tree the sweep cannot even inspect must be left in place and
+// surfaced — every other unprovable state in sweepRetired warns and defers to
+// the operator, and the retired tree may be the only copy of an entry.
+func TestSweepRetired_UninspectableHoldingLeftInPlace(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission bounds are invisible to root")
+	}
+	testenv.New(t)
+	root, err := cacheRoot()
+	require.NoError(t, err)
+	stage := filepath.Join(root, tmpDir)
+	require.NoError(t, os.MkdirAll(stage, 0o750))
+	holding := makeHolding(t, stage, retireStagePrefix+"locked",
+		filepath.Join(root, "acme", "tools", "somekey00000"), true)
+	require.NoError(t, os.Chmod(holding, 0o000))
+	t.Cleanup(func() {
+		// Restore permissions so TempDir cleanup can remove the tree.
+		if chmodErr := os.Chmod(holding, 0o750); chmodErr != nil {
+			t.Logf("restore permissions on %s: %v", holding, chmodErr)
+		}
+	})
+
+	warnings := sweepRetired(context.Background(), root, holding)
+
+	require.NotEmpty(t, warnings, "an uninspectable holding tree must be surfaced, not silently discarded")
+	assert.Contains(t, joinWarningMessages(warnings), "left in place")
+	assert.DirExists(t, holding)
+}

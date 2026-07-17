@@ -94,24 +94,36 @@ const stagingSweepAge = 24 * time.Hour
 // concurrent `bundle install` of a new source) is invisible to the sweep that
 // consumes it, and the per-root tree walks make the window wider than a
 // single file read — see removeEntry for the consequence.
-func (m *Manager) collectRoots(ctx context.Context) (map[string]*rootedSource, error) {
+//
+// The returned warnings surface each root whose walk skipped unreadable
+// (permission-denied) subdirectories: declarations hidden beneath those do
+// not root cache entries, so an entry they still reference can be collected —
+// self-healing with one refetch, but the operator should know why.
+func (m *Manager) collectRoots(ctx context.Context) (map[string]*rootedSource, []Warning, error) {
 	if m.registeredRoots == nil {
-		return nil, errNoRootsProvider
+		return nil, nil, errNoRootsProvider
 	}
 	roots := map[string]*rootedSource{}
 	addRootDecls(roots, m.cfg.BundleDeclarations())
 	dirs, err := m.registeredRoots(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("listing registered project roots: %w", err)
+		return nil, nil, fmt.Errorf("listing registered project roots: %w", err)
 	}
+	var warnings []Warning
 	for _, dir := range dirs {
-		decls, dErr := config.BundleDeclarationsAt(dir)
+		decls, skipped, dErr := config.BundleDeclarationsAt(dir)
 		if dErr != nil {
-			return nil, fmt.Errorf("collecting bundle GC roots: %w", dErr)
+			return nil, nil, fmt.Errorf("collecting bundle GC roots: %w", dErr)
+		}
+		if len(skipped) > 0 {
+			warnings = append(warnings, Warning{Message: fmt.Sprintf(
+				"bundle GC roots: %d unreadable directories under %s were skipped (e.g. %s); "+
+					"declarations beneath them do not root cache entries",
+				len(skipped), dir, skipped[0])})
 		}
 		addRootDecls(roots, decls)
 	}
-	return roots, nil
+	return roots, warnings, nil
 }
 
 // addRootDecls merges one declaration set into the roots union, keyed by cache
@@ -145,7 +157,7 @@ func addRootDecls(roots map[string]*rootedSource, decls []config.BundleDeclarati
 // cache"; an entry whose receipt exists but cannot be read WAS fetched and is
 // collected when condemned, with the broken receipt surfaced as a warning.
 func (m *Manager) Prune(ctx context.Context) (PruneReport, error) {
-	roots, err := m.collectRoots(ctx)
+	roots, warnings, err := m.collectRoots(ctx)
 	if err != nil {
 		return PruneReport{}, err
 	}
@@ -155,7 +167,7 @@ func (m *Manager) Prune(ctx context.Context) (PruneReport, error) {
 	}
 	// Sweep staging BEFORE the scan, so a restored entry is subject to the
 	// same pass (rooted → kept, unrooted → collected) as everything else.
-	warnings := sweepStaging(ctx, cacheDir)
+	warnings = append(warnings, sweepStaging(ctx, cacheDir)...)
 	entries, err := scanInstalled(cacheDir)
 	if err != nil {
 		return PruneReport{Drops: nil, MultiSource: nil, Warnings: warnings}, err
@@ -182,7 +194,7 @@ func (m *Manager) AutoGC(ctx context.Context, ids ...BundleID) []Warning {
 	if m.registeredRoots == nil || len(ids) == 0 {
 		return nil
 	}
-	roots, err := m.collectRoots(ctx)
+	roots, warnings, err := m.collectRoots(ctx)
 	if err != nil {
 		return []Warning{{Message: fmt.Sprintf("bundle cache maintenance skipped: %v", err)}}
 	}
@@ -195,7 +207,6 @@ func (m *Manager) AutoGC(ctx context.Context, ids ...BundleID) []Warning {
 		return []Warning{{Message: fmt.Sprintf("bundle cache maintenance skipped: %v", err)}}
 	}
 	winners := entriesByKey(all)
-	var warnings []Warning
 	for _, id := range dedupIDs(ids) {
 		drops, _, gcWarnings, gcErr := gcEntries(ctx, cacheDir, identityScopedEntries(all, id), roots, winners)
 		warnings = append(warnings, gcWarnings...)
@@ -297,10 +308,25 @@ func gcEntries(
 }
 
 // collectEntry removes one condemned entry, reporting whether it was
-// collected: a hand-placed entry (no receipt at all) never is, an unreadable
-// receipt warns but does not protect, and the removal path depends on whether
-// the entry is superseded (key still declared — lock file stays) or unrooted
-// (lock and emptied parents swept).
+// collected: a hand-placed entry (no receipt at all) never is, and the two
+// condemnations treat an unreadable receipt asymmetrically because they rest
+// on different evidence:
+//
+//   - UNROOTED condemnation is receipt-independent — no declaration addresses
+//     the key, full stop. The receipt only distinguishes fetched from
+//     hand-placed, and a present-but-unreadable receipt proves fetched, so
+//     the entry is collected with the broken receipt surfaced as a warning.
+//   - SUPERSEDED condemnation is receipt-DERIVED — the freshness ordering
+//     that condemned the entry comes from the very receipt that could not be
+//     read (an unreadable receipt LOSES the entriesByKey contest by default,
+//     not by proof; see fresherEntry). Executing that judgment would delete
+//     what may be the LIVE twin on the word of a receipt nobody could read
+//     and enthrone the stale one. So it is kept, warned about, and left for
+//     the operator (or a later unrooted condemnation) to settle.
+//
+// The removal path for a collected entry depends on the condemnation:
+// superseded (key still declared — lock file stays) vs unrooted (lock and
+// emptied parents swept).
 func collectEntry(
 	ctx context.Context, cacheDir string, e InstalledEntry, superseded bool,
 ) (PruneDrop, []Warning, bool, error) {
@@ -310,6 +336,13 @@ func collectEntry(
 	}
 	var warnings []Warning
 	if receiptErr != nil {
+		if superseded {
+			return PruneDrop{}, []Warning{{Message: fmt.Sprintf(
+				"bundle %s: cache entry %s has an unreadable fetch receipt (%v); "+
+					"it may be superseded by a fresher fetch of the same source but cannot be proven so — "+
+					"repair it with `clawker bundle update` or purge it with `clawker bundle remove`",
+				e.ID, e.Key, receiptErr)}}, false, nil
+		}
 		warnings = append(warnings, Warning{Message: fmt.Sprintf(
 			"bundle %s: cache entry %s has an unreadable fetch receipt (%v); "+
 				"the entry was fetched, so it is collected", e.ID, e.Key, receiptErr)})
@@ -437,8 +470,16 @@ func sweepStaging(ctx context.Context, cacheDir string) []Warning {
 func sweepRetired(ctx context.Context, cacheDir, holding string) []Warning {
 	retired := filepath.Join(holding, retiredName)
 	if _, err := os.Lstat(retired); err != nil {
-		removeStaged(holding)
-		return nil
+		// Only a PROVEN absence is crash debris; any other error (e.g. a
+		// permission problem) means the tree could not be inspected, and a
+		// tree that might hold the only copy of an entry is never discarded
+		// on an unproven judgment.
+		if errors.Is(err, fs.ErrNotExist) {
+			removeStaged(holding)
+			return nil
+		}
+		return []Warning{{Message: fmt.Sprintf(
+			"bundle staging sweep: cannot inspect retired entry %s (%v); left in place", holding, err)}}
 	}
 	rawOrigin, err := os.ReadFile(filepath.Join(holding, retiredOriginFile))
 	if err != nil {
@@ -452,15 +493,32 @@ func sweepRetired(ctx context.Context, cacheDir, holding string) []Warning {
 			holding, strings.TrimSpace(string(rawOrigin)))}}
 	}
 
-	// The identity dir may be gone (a sibling-key GC sweeps emptied parents),
-	// and the lock file lives inside it — recreate it before locking, the same
-	// order the install commit uses.
-	if mkErr := os.MkdirAll(filepath.Dir(origin), cacheDirPerm); mkErr != nil {
+	restored, restoreErr := restoreRetired(ctx, retired, origin)
+	if restoreErr != nil {
 		return []Warning{{Message: fmt.Sprintf(
-			"bundle staging sweep: could not reclaim retired entry %s (%v); left in place", holding, mkErr)}}
+			"bundle staging sweep: could not reclaim retired entry %s (%v); left in place", holding, restoreErr)}}
+	}
+	removeStaged(holding)
+	if !restored {
+		return nil
+	}
+	return []Warning{{Message: fmt.Sprintf(
+		"restored bundle cache entry %s from an interrupted install", origin)}}
+}
+
+// restoreRetired puts a retired tree back into its origin entry slot under
+// the entry lock, reporting whether a restore happened — false with a nil
+// error means the slot was (or became) occupied, so the retired tree is a
+// superseded copy the caller may discard. The identity dir may be gone (a
+// sibling-key GC sweeps emptied parents) and the lock file lives inside it,
+// so the parent is recreated before locking, the same order the install
+// commit uses.
+func restoreRetired(ctx context.Context, retired, origin string) (bool, error) {
+	if mkErr := os.MkdirAll(filepath.Dir(origin), cacheDirPerm); mkErr != nil {
+		return false, fmt.Errorf("recreate origin parent: %w", mkErr)
 	}
 	restored := false
-	lockErr := withBundleLock(ctx, origin, func() error {
+	err := withBundleLock(ctx, origin, func() error {
 		if _, statErr := os.Lstat(origin); statErr == nil {
 			return nil // a commit landed in the slot — the retired tree is superseded
 		} else if !errors.Is(statErr, fs.ErrNotExist) {
@@ -472,16 +530,7 @@ func sweepRetired(ctx context.Context, cacheDir, holding string) []Warning {
 		restored = true
 		return nil
 	})
-	if lockErr != nil {
-		return []Warning{{Message: fmt.Sprintf(
-			"bundle staging sweep: could not reclaim retired entry %s (%v); left in place", holding, lockErr)}}
-	}
-	removeStaged(holding)
-	if !restored {
-		return nil
-	}
-	return []Warning{{Message: fmt.Sprintf(
-		"restored bundle cache entry %s from an interrupted install", origin)}}
+	return restored, err
 }
 
 // entrySlotSegments is the number of path segments a cache entry slot sits

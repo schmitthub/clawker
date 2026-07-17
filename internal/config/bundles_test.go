@@ -190,7 +190,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectLocalConfigFile),
 			[]byte("bundles:\n  - url: https://x/local.git\n"), 0o644))
 
-		decls, err := config.BundleDeclarationsAt(root)
+		decls, _, err := config.BundleDeclarationsAt(root)
 		require.NoError(t, err)
 		require.Len(t, decls, 2)
 		// Local override layer outranks the main file, mirroring config load
@@ -208,7 +208,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 			filepath.Join(root, consts.DotClawkerDir, consts.ProjectConfigFile),
 			[]byte("bundles:\n  - url: https://x/dirform.git\n    auto_update: true\n"), 0o644))
 
-		decls, err := config.BundleDeclarationsAt(root)
+		decls, _, err := config.BundleDeclarationsAt(root)
 		require.NoError(t, err)
 		require.Len(t, decls, 1)
 		assert.Equal(t, "https://x/dirform.git", decls[0].Source.URL)
@@ -232,7 +232,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(deep, consts.ProjectConfigFile),
 			[]byte("bundles:\n  - url: https://x/deep.git\n"), 0o644))
 
-		decls, err := config.BundleDeclarationsAt(root)
+		decls, _, err := config.BundleDeclarationsAt(root)
 		require.NoError(t, err)
 		urls := make([]string, 0, len(decls))
 		for _, d := range decls {
@@ -251,8 +251,38 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(svc, "."+consts.ProjectConfigFile),
 			[]byte("bundles: notalist\n"), 0o644))
 
-		_, err := config.BundleDeclarationsAt(root)
+		_, _, err := config.BundleDeclarationsAt(root)
 		require.Error(t, err)
+	})
+
+	t.Run("unreadable subdirectory is skipped and reported, not fatal", func(t *testing.T) {
+		// Root-owned directories inside bind-mounted workspaces are routine
+		// for a Docker tool: one of them must not make every prune fail. The
+		// readable layers still contribute; the skipped path is returned for
+		// the caller to surface.
+		if os.Getuid() == 0 {
+			t.Skip("permission bounds are invisible to root")
+		}
+		root := t.TempDir()
+		svc := filepath.Join(root, "svc")
+		require.NoError(t, os.MkdirAll(svc, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(svc, "."+consts.ProjectConfigFile),
+			[]byte("bundles:\n  - url: https://x/nested.git\n"), 0o644))
+		locked := filepath.Join(root, "locked")
+		require.NoError(t, os.MkdirAll(locked, 0o755))
+		require.NoError(t, os.Chmod(locked, 0o000))
+		t.Cleanup(func() {
+			// Restore permissions so TempDir cleanup can remove the tree.
+			if err := os.Chmod(locked, 0o755); err != nil {
+				t.Logf("restore permissions on %s: %v", locked, err)
+			}
+		})
+
+		decls, skipped, err := config.BundleDeclarationsAt(root)
+		require.NoError(t, err)
+		require.Len(t, decls, 1)
+		assert.Equal(t, "https://x/nested.git", decls[0].Source.URL)
+		assert.Equal(t, []string{locked}, skipped)
 	})
 
 	t.Run("dot-directory layers are not discovered", func(t *testing.T) {
@@ -266,19 +296,19 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(hidden, "."+consts.ProjectConfigFile),
 			[]byte("bundles:\n  - url: https://x/hidden.git\n"), 0o644))
 
-		decls, err := config.BundleDeclarationsAt(root)
+		decls, _, err := config.BundleDeclarationsAt(root)
 		require.NoError(t, err)
 		assert.Empty(t, decls)
 	})
 
 	t.Run("missing root yields no declarations and no error", func(t *testing.T) {
-		decls, err := config.BundleDeclarationsAt(filepath.Join(t.TempDir(), "gone"))
+		decls, _, err := config.BundleDeclarationsAt(filepath.Join(t.TempDir(), "gone"))
 		require.NoError(t, err)
 		assert.Empty(t, decls)
 	})
 
 	t.Run("root without config files yields no declarations", func(t *testing.T) {
-		decls, err := config.BundleDeclarationsAt(t.TempDir())
+		decls, _, err := config.BundleDeclarationsAt(t.TempDir())
 		require.NoError(t, err)
 		assert.Empty(t, decls)
 	})
@@ -288,7 +318,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
 			[]byte("bundles: notalist\n"), 0o644))
 
-		_, err := config.BundleDeclarationsAt(root)
+		_, _, err := config.BundleDeclarationsAt(root)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), root)
 	})
@@ -300,7 +330,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
 			[]byte("bundles:\n  - path: ./b\n    ref: main\n"), 0o644))
 
-		_, err := config.BundleDeclarationsAt(root)
+		_, _, err := config.BundleDeclarationsAt(root)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ref and sha require a url")
 	})
@@ -312,7 +342,7 @@ func TestBundleDeclarationsAt(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "."+consts.ProjectConfigFile),
 			[]byte("build:\n  harness: \"NOT/valid ref\"\nbundles:\n  - url: https://x/y.git\n"), 0o644))
 
-		decls, err := config.BundleDeclarationsAt(root)
+		decls, _, err := config.BundleDeclarationsAt(root)
 		require.NoError(t, err)
 		require.Len(t, decls, 1)
 		assert.Equal(t, "https://x/y.git", decls[0].Source.URL)

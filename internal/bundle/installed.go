@@ -133,6 +133,13 @@ func entriesByKey(installed []InstalledEntry) map[string]InstalledEntry {
 // readable receipt beats a missing or corrupt one (a fetched entry outranks
 // one that cannot prove its fetch); with neither readable the choice is
 // arbitrary and only needs to be deterministic — lower identity wins.
+//
+// Readability is a default judgment, not proof: mid-swap of a concurrent
+// refetch the live entry's receipt reads as absent for an instant, so the
+// stale twin can transiently win here — the loser is only ever DEMOTED by
+// this contest, never deleted on it (GC refuses to collect a superseded
+// entry whose own receipt is unreadable; see collectEntry), and the demotion
+// serves at worst an older fetch of the same declared value until a retry.
 func fresherEntry(a, b InstalledEntry) InstalledEntry {
 	ra, aOK, aErr := readReceipt(a.Root)
 	rb, bOK, bErr := readReceipt(b.Root)

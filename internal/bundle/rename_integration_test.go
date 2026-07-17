@@ -173,3 +173,30 @@ func TestManager_AutoGC_CollectsSupersededTwinOfTouchedIdentity(t *testing.T) {
 	assert.NoDirExists(t, cachedEntryRoot(t, "zeta", src))
 	assert.Contains(t, joinWarnings(warnings), src.Key())
 }
+
+// Supersession is a freshness judgment made FROM receipts. When the live
+// twin's own receipt is unreadable it loses the entriesByKey contest by
+// default, not by proof — executing the collection anyway would delete live
+// content on the word of a receipt nobody could read and enthrone the stale
+// twin (bug 2's failure mode, made destructive). The unreadable×superseded
+// cell must keep the entry and surface the broken receipt; only unrooted
+// condemnation is receipt-independent.
+func TestManager_Prune_UnreadableReceiptTwinNeverCollectedAsSuperseded(t *testing.T) {
+	testenv.New(t)
+	src := bundle.Source{URL: "https://x/tools.git", Ref: "v1", SHA: "", Path: ""}
+	plantRenamedTwins(t, src)
+	// Corrupt the LIVE (fresher) twin's receipt.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(cachedEntryRoot(t, "acme", src), bundle.ReceiptFile),
+		[]byte("\t::: not yaml"), 0o600))
+
+	decl := config.BundleSource{URL: src.URL, Ref: src.Ref, SHA: "", Path: "", AutoUpdate: false}
+	mgr := managerWithRoots([]config.BundleSource{decl})
+	report, err := mgr.Prune(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, report.Drops, "an unprovable supersession must not be executed")
+	assert.DirExists(t, cachedEntryRoot(t, "acme", src), "the live twin must survive its broken receipt")
+	assert.DirExists(t, cachedEntryRoot(t, "zeta", src))
+	assert.Contains(t, joinWarnings(report.Warnings), "unreadable fetch receipt")
+}

@@ -471,3 +471,44 @@ func TestManager_Prune_CollectsCorruptReceiptEntryWhenUnrooted(t *testing.T) {
 	assert.Empty(t, report.Drops[0].Source, "an unreadable receipt has no source to report")
 	assert.Contains(t, joinWarnings(report.Warnings), "unreadable fetch receipt")
 }
+
+// A root-owned (unreadable) directory inside a bind-mounted workspace is
+// routine for a Docker tool. One such directory in ANY registered project must
+// degrade the roots walk (skip + warn — the same self-healing bound as
+// dot-dirs and symlinks), not fail every prune forever.
+func TestManager_Prune_UnreadableSubdirInRegisteredRootDegrades(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission bounds are invisible to root")
+	}
+	testenv.New(t)
+	live := bundle.Source{URL: "https://x/tools.git", Ref: "v1", SHA: "", Path: ""}
+	bundletest.PlantCachedBundleSource(
+		t,
+		"acme",
+		"tools",
+		"1.0.0",
+		live,
+		map[string]string{
+			"stacks/node/stack.yaml":                 "description: node\n",
+			"stacks/node/Dockerfile.stack-root.tmpl": "RUN true\n",
+		},
+	)
+	root := declRoot(t, "bundles:\n  - url: https://x/tools.git\n    ref: v1\n")
+	locked := filepath.Join(root, "locked")
+	require.NoError(t, os.MkdirAll(locked, 0o755))
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() {
+		// Restore permissions so TempDir cleanup can remove the tree.
+		if err := os.Chmod(locked, 0o755); err != nil {
+			t.Logf("restore permissions on %s: %v", locked, err)
+		}
+	})
+
+	mgr := managerWithRoots(nil, root)
+	report, err := mgr.Prune(context.Background())
+	require.NoError(t, err, "an unreadable subdirectory must degrade, not fail the sweep")
+
+	assert.Empty(t, report.Drops)
+	assert.DirExists(t, plantedEntryRoot(t, "tools", live))
+	assert.Contains(t, joinWarnings(report.Warnings), "unreadable")
+}

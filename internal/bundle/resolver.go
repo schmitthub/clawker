@@ -281,9 +281,13 @@ func mergeCachedBundles(
 		// the two renames. That window is left OPEN deliberately: closing it
 		// would require holding a per-entry lock for the entire lifetime of
 		// every consumer (bundler reads component files throughout a build),
-		// serializing builds against updates. The failure is a loud transient
-		// error, never wrong content (value-keying guarantees a replacement
-		// was fetched from the same declared value), and a retry self-heals.
+		// serializing builds against updates. The usual failure is a loud
+		// transient error, and never content from a DIFFERENT declared value
+		// (value-keying guarantees a replacement was fetched from the same
+		// value); the one softer corner is a rename twin — mid-swap the live
+		// entry's receipt reads as absent, so entriesByKey can transiently
+		// crown the stale twin and serve an OLDER fetch of the same declared
+		// value for that instant. Either way a retry self-heals.
 		b, loadErr := LoadBundleDir(os.DirFS(entry.Root), entry.Root)
 		if loadErr != nil {
 			return nil, loadErr
