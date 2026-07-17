@@ -30,9 +30,9 @@ func Presets() []Preset {
 			YAML:        rustPreset,
 		},
 		{
-			Name:        "TypeScript",
+			Name:        "Node",
 			Description: "Node.js and TypeScript development",
-			YAML:        typescriptPreset,
+			YAML:        nodePreset,
 		},
 		{
 			Name:        "Java",
@@ -113,7 +113,7 @@ security:
 // build instructions run. registry.npmjs.org is in the required firewall set
 // (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
 // layers on top.
-const typescriptPreset = `agent:
+const nodePreset = `agent:
   pre_run: |
     if [ -f package.json ]; then
       npm install || echo "warning: npm install failed; continuing"
