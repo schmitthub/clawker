@@ -1,0 +1,36 @@
+# .NET SDK via Microsoft's official dotnet-install script (dot.net over
+# TLS) into a system-wide DOTNET_ROOT, symlinked onto PATH for every user
+# (DOTNET_ROOT is what lets the symlinked binary find its SDK).
+# DOTNET_CHANNEL floats on the LTS channel so rebuilds pick up security
+# patches (dep-rot rationale: docs/threat-model.mdx); set it (e.g. 8.0) to
+# pin a line. libicu72 is the SDK's one runtime dependency the slim
+# bookworm substrate lacks — revisit the package name when SubstrateImage
+# moves off bookworm. Per-user state (the nuget cache, `dotnet tool
+# install -g`) lives under the user's home, so the unprivileged user needs
+# no write access to DOTNET_ROOT.
+# Guarded on a dotnet on PATH AND a populated $DOTNET_ROOT — the ENV is set
+# unconditionally, so the guard keeps it coherent with disk: a dotnet
+# installed elsewhere (an inject step ahead of this stack) must not leave
+# DOTNET_ROOT dangling at an empty dir (apphosts — published executables and
+# `dotnet tool -g` shims — resolve the runtime through it and fail hard on a
+# dangling one). With the stack declared, this install is authoritative; the
+# base→harness re-render inherits the populated DOTNET_ROOT and skips.
+ARG DOTNET_CHANNEL=LTS
+ENV DOTNET_ROOT=/usr/local/share/dotnet
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v dotnet >/dev/null 2>&1 && [ -x "$DOTNET_ROOT/dotnet" ]; then \
+{{- else}}
+RUN if command -v dotnet >/dev/null 2>&1 && [ -x "$DOTNET_ROOT/dotnet" ]; then \
+{{- end}}
+      echo "clawker stack dotnet: existing $(dotnet --version) — skipping install"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends libicu72 && \
+      curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
+      bash /tmp/dotnet-install.sh --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_ROOT" && \
+      rm /tmp/dotnet-install.sh && \
+      ln -sf "$DOTNET_ROOT/dotnet" /usr/local/bin/dotnet && \
+      dotnet --version ; \
+    fi

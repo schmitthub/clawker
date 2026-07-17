@@ -1,0 +1,5 @@
+description: >-
+  The Java toolchain from Debian's default OpenJDK line (default-jdk) plus
+  Maven, installed via apt so packages are distro-signature-verified and
+  track Debian security updates on rebuild. Skips itself when the image
+  already provides javac.

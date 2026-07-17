@@ -129,10 +129,10 @@ build:
 `
 
 const javaPreset = `build:
+  stacks:
+    - java
   packages:
     - ripgrep
-    - default-jdk
-    - maven
 security:
   firewall:
     add_domains:
@@ -141,10 +141,10 @@ security:
 `
 
 const rubyPreset = `build:
+  stacks:
+    - ruby
   packages:
     - ripgrep
-    - ruby-full
-    - build-essential
 security:
   firewall:
     add_domains:
@@ -153,13 +153,15 @@ security:
 `
 
 const cppPreset = `build:
+  stacks:
+    - cpp
   packages:
     - ripgrep
-    - cmake
-    - g++
 `
 
 const dotnetPreset = `build:
+  stacks:
+    - dotnet
   packages:
     - ripgrep
 security:
