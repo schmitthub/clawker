@@ -10,7 +10,7 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
-## [Unreleased]
+## [2026.7.2] - 2026-07-17
 
 - **Changed:** `clawker skill` is now `clawker plugin`. Every `clawker skill` invocation keeps working as an alias.
 - **Added:** The clawker-support plugin now supports every major harness — Claude Code, Codex, opencode, and pi. Install it with `clawker plugin install --harness <name>`, or through your harness's own mechanism.
