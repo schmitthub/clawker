@@ -139,17 +139,17 @@ clawker go dev
 > - `--agent dev` — names this container `clawker.<project>.dev`
 > - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific harness instead
 >
-> Anything after the `@` is passed straight to the harness CLI, and arguments after an alias are appended — so `clawker go dev -c` continues your previous Claude Code session, and `clawker go dev --dangerously-skip-permissions` hands Claude Code its infamous yolo flag, safe inside the container's isolation.
+> Anything after the `@` is passed straight to the harness CLI, and arguments after an alias are appended — with the out-of-box claude default, `clawker go dev -c` continues your previous Claude Code session and `clawker go dev --dangerously-skip-permissions` hands it the infamous yolo flag, safe inside the container's isolation.
 >
-> The per-harness aliases `claude` and `codex` pick their harness and skip its permission prompts in one word: `clawker claude dev`, `clawker codex dev`. The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
+> The per-harness aliases `claude` and `codex` pick their harness and skip its permission prompts in one word: `clawker claude dev`, `clawker codex dev`. The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (use or create branch `feat/feat`, tracking a matching remote branch when one exists) or `clawker wt auth feature/auth:main` (to create it off a base branch)
 >
 > Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
-You can ask claude code to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
+You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
 
-```bash
+```text
 create a `./.clawker.yaml` file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
 ```
 
@@ -175,7 +175,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > claude plugin marketplace add schmitthub/claude-plugins
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
-> You can also customize your image using `clawker project edit` or point Claude Code at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
+> You can also customize your image using `clawker project edit` or point your agent at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
 
 > **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precedence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A global clawker.yaml can also be created in `$CLAWKER_CONFIG_DIR` for system wide defaults. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
 
@@ -188,14 +188,14 @@ Builds are two-stage: a shared `clawker-<project>:base` image holds your package
 
 #### Run a container 
 
-My workflow is a hybrid approach. I like having a claude code instance running on the host for real intensive interactive work while at the same time launching a few clawker managed containers in separate tabs and worktrees using `--dangerously-skip-permissions`. 
+My workflow is a hybrid approach. I like having a claude code instance running on the host for real intensive interactive work while at the same time launching a few clawker managed containers in separate tabs and worktrees using `--dangerously-skip-permissions`. (Claude Code is my daily driver, so the walkthrough is narrated in claude terms — swap in `@:codex` / `clawker codex` and everything below works the same.)
 
 So to do that let's say you're working on a feature branch with host claude code and inspiration strikes or you notice an issue / bug and say "shit i should address this". Or you've finished up a few PRDs and want to bang them out in parallel. I just quickly open a tab and have another claude agent via clawker get after it on the side without me having to approve anything over and over again so...
 
 ```bash
 clawker run -it --rm --agent dev --worktree hotfix/example:main @ --dangerously-skip-permissions
-# or the shipped alias for exactly that:
-clawker wt dev hotfix/example:main
+# or with the shipped alias — arguments after it pass straight through to the harness:
+clawker wt dev hotfix/example:main --dangerously-skip-permissions
 ```
 
 This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, git creds, mcps, build deps instantly (and my in-container login persisted in its config volume), it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
