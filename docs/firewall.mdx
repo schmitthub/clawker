@@ -2,17 +2,21 @@
 title: "Egress Firewall — Network Isolation for AI Agents"
 description: "Clawker's deny-by-default egress firewall for sandboxing AI coding agents: eBPF cgroup egress enforcement, CoreDNS, and Envoy deliver network isolation and data exfiltration prevention. Architecture, configuration, CLI commands, and troubleshooting."
 icon: "fire-flame-curved"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "egress firewall", "eBPF", "Envoy", "CoreDNS", "network isolation"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "self-hosted", "open source", "egress firewall", "eBPF", "Envoy", "CoreDNS", "network isolation"]
 ---
 
 Clawker ships a **deny-by-default egress firewall** — the network isolation layer that makes it a sandbox for AI coding agents. It restricts all container egress to explicitly allowed domains, so a prompt-injected agent cannot exfiltrate your code or credentials to any destination outside your allowlist — egress to everything you haven't approved is denied at the kernel. The firewall runs as a shared stack — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and a set of eBPF cgroup programs that enforce egress at the kernel — managed automatically by clawker on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without granting your agent containers any special privileges.
+
+<Note>
+This page is the reference for the firewall itself — architecture, configuration, and CLI commands. For *why* the firewall is the center of clawker's defenses and the specific attacks it neutralizes (prompt injection, data exfiltration, DNS tunneling), see the [Threat Model](/threat-model).
+</Note>
 
 ## Architecture
 
 The firewall is composed of two managed Docker containers plus a set of eBPF programs attached from outside each agent container:
 
 - **Envoy** (`envoyproxy/envoy`, TLS listener `10000`, sequential TCP listeners from `10001`) — TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
-- **CoreDNS** (`clawker-coredns:latest`, port `53`) — a *custom* CoreDNS build from `cmd/coredns-clawker`. Provides deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`) and embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing. Runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` bind mount, the minimum required to update the pinned cache map.
+- **CoreDNS** (`clawker-coredns:latest`, port `53`) — a *custom* CoreDNS build from `cmd/coredns-clawker`. Provides deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`) and embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing. Its host access is scoped to the minimum needed to update that pinned cache map — see [DNS cache population](#dns-cache-population).
 - **eBPF cgroup programs** (`connect4`, `sendmsg4`, `recvmsg4`, `connect6`, `sendmsg6`, `recvmsg6`, `sock_create`) — loaded and attached **from outside the agent container** by the clawker control plane. Owns the pinned BPF maps under `/sys/fs/bpf/clawker/`: `container_map`, `route_map`, `dns_cache`, `bypass_map`, `metrics_map`, plus the netlogger telemetry maps `events_ringbuf` (decision-point event channel), `events_drops` (kernel-fault drop counter), `ratelimit_state` (per-cgroup token bucket), `ratelimit_drops` (per-cgroup throttled-event counter). The agent container itself runs fully unprivileged — no Linux capabilities, no firewall scripts, no init-time network gymnastics. The control plane container that owns the load step runs with `CAP_BPF + CAP_SYS_ADMIN`, a `/sys/fs/bpf` RW bind mount, a `/sys/fs/cgroup` RO bind mount, the Docker socket, and `apparmor=unconfined` — see [Control Plane → Container Privileges](/control-plane#container-privileges) for the full set and why each is required.
 
 Both managed containers run on the `clawker-net` bridge network with deterministic static IPs computed from the network gateway by replacing its last octet: Envoy at `<network>.200`, CoreDNS at `<network>.201` (so e.g. `192.168.215.200` / `.201` on a default Docker bridge with gateway `192.168.215.1`). Agent containers join the same network with `--dns` pointed at CoreDNS, and the eBPF `connect4/connect6` programs redirect all outbound TCP to Envoy. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11` so internal networking keeps working.
@@ -37,7 +41,7 @@ Each connect4/connect6/sendmsg/sock_create decision also emits one event onto a 
 
 1. When you run `clawker run` or `clawker container create` with the firewall enabled, clawker brings the firewall stack up automatically (this happens transparently — see [Control Plane](/control-plane) if you want the lifecycle details).
 2. The `clawker-net` bridge network is created, the eBPF programs are loaded into the kernel and their maps pinned under `/sys/fs/bpf/clawker/`, then CoreDNS and Envoy are launched. CoreDNS opens the pinned `dns_cache` map on startup, so the eBPF state must exist before CoreDNS boots — this ordering is preserved on every reload.
-3. Project rules from `.clawker.yaml` are merged with system-required rules (additive merge, dedup by `destination:protocol:port`).
+3. Project rules from `.clawker.yaml` are merged with the selected harness's egress floor rules (additive merge, dedup by `destination:protocol:port`).
 4. Envoy, CoreDNS, and the global `route_map` are (re)generated from the merged ruleset.
 5. Agent containers join the firewall network; the eBPF cgroup programs attach to each container's cgroup, and an entry is written to `container_map` (cgroup_id → container config). Presence in `container_map` is what gates enforcement — the `route_map` itself is global.
 6. As the agent resolves DNS, the `dnsbpf` plugin writes `IP → {domain_hash, TTL}` entries into the `dns_cache` map. On each outbound TCP connection, the `connect4` / `connect6` programs look up the destination IP in `dns_cache`, then look up `{domain_hash, dst_port}` in `route_map` to decide which Envoy listener to redirect to.
@@ -56,9 +60,17 @@ The BPF `connect6` program applies the full `connect4` routing logic to **IPv4-m
 **Native IPv6 is denied.** The firewall does not currently route native IPv6 egress (only loopback `::1` and IPv4-mapped addresses pass through). If your agent truly needs native IPv6 to reach a service, it will fail with a connection reset. In practice this is rare because dual-stack clients fall back to IPv4-mapped automatically.
 </Warning>
 
-## Default Allowed Domains
+### DNS cache population
 
-The hardcoded allowlist is deliberately **bare-bones** — only domains required for Claude Code itself are included (API access, OAuth, telemetry):
+Per-domain TCP routing depends on the `dns_cache` map staying consistent with the IPs a container actually dials, and the `dnsbpf` plugin keeps it consistent by tracking every query **live** rather than seeding the cache once at startup. A one-time seed would go stale as CDNs rotate backends behind a domain — silently blackholing traffic to an allowlisted domain until the next firewall reload. Because the plugin observes whatever the upstream resolver returns on each query, any IP a container ends up using has already been observed and hashed at the moment of connection.
+
+The plugin only writes on successful A-record answers. NXDOMAIN and other non-success responses pass through untouched, so a blocked domain can never smuggle an attacker-controlled IP into the route table. The custom CoreDNS image is a small single-purpose build — the CoreDNS binary copied onto a SHA-pinned `alpine:3.21` base, with no application dependencies beyond that single binary — and its host access is deliberately narrow: `CAP_BPF` + `CAP_SYS_ADMIN` scoped to the minimum needed for `bpf(BPF_OBJ_GET)` and `bpf(BPF_MAP_UPDATE_ELEM)` on the pinned map, with a `/sys/fs/bpf` bind mount as its only host access.
+
+## Default Allowed Domains (Harness Floors)
+
+The default allowlist is the selected harness's **egress floor** — each harness bundle declares the bare-minimum set of domains that harness needs (API access, authentication, telemetry), and clawker composes it with your project rules. The floor is deliberately bare-bones.
+
+The **claude** harness floor:
 
 | Domain | Purpose |
 |--------|---------|
@@ -67,26 +79,36 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 | `platform.claude.com` | OAuth token exchange |
 | `.claude.ai` | OAuth authorization, downloads (with `/public/` and `/share/` path-deny for UGC) |
 | `mcp-proxy.anthropic.com` | MCP tool server proxy |
-| `registry.npmjs.org` | npm (Node.js is baked into every image; required for global package installs) |
+| `registry.npmjs.org` | npm (Claude Code is npm-distributed; its runtime hooks install global packages) |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
 | `.datadoghq.com` | Telemetry (all Datadog subdomains/regions) |
 | `.datadoghq.eu` | Telemetry (Datadog EU regions) |
 
+The **codex** harness floor:
+
+| Domain | Purpose |
+|--------|---------|
+| `api.openai.com` | API-key auth inference |
+| `auth.openai.com` | Login/token exchange |
+| `chatgpt.com` | ChatGPT-account backend, path-scoped: only the codex backend prefixes (`/backend-api/codex/`, `/backend-api/wham/usage`, `/backend-api/ps/`, `/backend-api/plugins/`, `/backend-api/connectors/directory/`) are allowed and every other path is denied — `chatgpt.com` also hosts publicly readable shared conversations, an exfiltration sink if the whole domain were open. A companion `wss` rule enables WebSocket upgrades on the same allowed paths for streaming responses |
+
+Custom harness bundles declare their own floor in the manifest's `egress:` list, using the same rule shape as project `security.firewall.rules`.
+
 <Info>
 A leading dot (e.g., `.datadoghq.com`) is the **wildcard convention** — it matches the apex domain and all subdomains. Use this for services with region-specific subdomains. Without the leading dot, only the exact domain is allowed.
 </Info>
 
 <Warning>
-**GitHub, PyPI, and most other services are NOT in this list.** (npm registry is included because Node.js is baked into every image.) When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
+**GitHub, PyPI, and most other services are NOT in any harness floor.** (The claude floor includes the npm registry because Claude Code itself is npm-distributed.) When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
 
 You must explicitly configure every external domain your agent needs. This is by design — an AI agent should not have unrestricted internet access. Review your project's network dependencies and add them to `add_domains` or `rules` in your `.clawker.yaml`.
 </Warning>
 
 ### Common Setups
 
-Here are examples for common services your agent will likely need. Add what you need to your `.clawker.yaml` (see the default allowlist above for what is already included).
+Here are examples for common services your agent will likely need. Add what you need to your `.clawker.yaml` (see the harness floors above for what is already included).
 
 #### Git SSH (GitHub, GitLab, Bitbucket)
 
@@ -132,7 +154,7 @@ security:
 security:
   firewall:
     add_domains:
-      # Node.js / npm — registry.npmjs.org is already in the default allowlist
+      # Node.js / npm — registry.npmjs.org is already in the claude harness floor
       - registry.yarnpkg.com
       # Python / pip
       - pypi.org
@@ -148,7 +170,7 @@ security:
 
 #### Full Working Example
 
-A typical project that uses GitHub and npm (npm registry is already in the default allowlist):
+A typical project that uses GitHub and npm (the npm registry is already in the claude harness floor):
 
 ```yaml
 security:
@@ -411,13 +433,13 @@ security:
         action: allow
 ```
 
-## Global vs Project Rules
+## Harness Floor vs Project Rules
 
-- **System-required rules** (from `cfg.RequiredFirewallRules()`) are always present --- Claude API, OAuth, error tracking, and feature flags
+- **Harness floor rules** come from the selected harness bundle's `egress:` list and are always present --- the domains that harness needs for API access, authentication, and telemetry
 - **Project rules** come from `add_domains` and `rules` in your `.clawker.yaml`
-- Rules merge **additively** --- project rules add to (never replace) system rules
+- Rules merge **additively** --- project rules add to (never replace) the harness floor
 - Dedup key: `destination:protocol:port` --- duplicate rules are silently ignored
-- This means you cannot accidentally override or remove a system-required rule
+- This means you cannot accidentally override or remove a harness floor rule
 
 ## CLI Commands
 
@@ -502,6 +524,8 @@ firewall:
 <Warning>
 Disabling the firewall removes **all** outbound network restrictions. The agent can reach any endpoint on the internet. Only do this in trusted environments where you accept the risk of unrestricted egress.
 </Warning>
+
+Disabling the firewall also stops netlogger emission. The eBPF cgroup programs that produce egress decision records only run while the firewall is enabled, so the `clawker-ebpf-egress` OpenSearch index receives no new records while the firewall is off. See [Egress Observability](/observability) for the record shape.
 
 ## Troubleshooting
 

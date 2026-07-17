@@ -32,17 +32,3 @@ func DefaultVariantConfig() *VariantConfig {
 		},
 	}
 }
-
-// IsAlpine returns true if the variant is Alpine-based.
-func (c *VariantConfig) IsAlpine(variant string) bool {
-	return len(variant) >= 6 && variant[:6] == "alpine"
-}
-
-// VariantNames returns a slice of all variant names.
-func (c *VariantConfig) VariantNames() []string {
-	names := make([]string, 0, len(c.Variants))
-	for name := range c.Variants {
-		names = append(names, name)
-	}
-	return names
-}

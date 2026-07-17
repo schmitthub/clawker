@@ -1,43 +1,55 @@
 package bundler
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-// testClaudeCodeVersion is the version baked into rendered Dockerfiles when
+// testHarnessVersion is the version baked into rendered Dockerfiles when
 // tests construct generators via newTestProjectGenerator. Setting the field
 // directly (rather than going through any resolver) keeps bundler unit tests
 // hermetic — bundler is a pure renderer that doesn't touch npm; the npm
 // round-trip lives at the command layer in production.
-const testClaudeCodeVersion = "2.99.99-test"
+const testHarnessVersion = "2.99.99-test"
+
+// testBaseImageRef is the shared-base FROM ref rendered into harness image
+// Dockerfiles by test generators (production sets clawker-<project>:base).
+const testBaseImageRef = "clawker-test:base"
 
 // newTestProjectGenerator builds a ProjectGenerator with the test version
-// pre-set so Generate() produces a deterministic ARG CLAUDE_CODE_VERSION
-// without any HTTP traffic. Mirrors the way production callers (the build
-// command) set ClaudeCodeVersion after resolving via Factory.HttpClient.
+// and base image ref pre-set so GenerateBase/GenerateHarness produce
+// deterministic output without any HTTP traffic. Mirrors the way production
+// callers (the docker Builder) set HarnessVersion after resolving via
+// Factory.HttpClient and BaseImageRef from the project name.
 func newTestProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	gen := NewProjectGenerator(cfg, workDir)
-	gen.ClaudeCodeVersion = testClaudeCodeVersion
+	gen.HarnessVersion = testHarnessVersion
+	gen.BaseImageRef = testBaseImageRef
 	return gen
 }
 
 func minimalProjectYAML() string {
 	return `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 `
 }
 
 func testConfig(t *testing.T, projectYAML string) config.Config {
 	t.Helper()
+
+	// Isolate the XDG config/data/state dirs so the component resolver's
+	// user-loose convention-dir and installed-bundle cache scans hit empty
+	// temp dirs, never the host's real dirs — a build with no loose dirs or
+	// bundles resolves everything from the embedded floor, hermetically.
+	testenv.New(t)
 
 	// Default settings YAML with proper monitoring defaults
 	defaultMonitoringYAML := `
@@ -150,7 +162,8 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 
 		if skipMonitoring {
 			// Check if we've moved to a different section
-			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") &&
+				!strings.HasPrefix(line, monitoringIndent+"\t") {
 				skipMonitoring = false
 			}
 		}
@@ -181,19 +194,21 @@ func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
 	// cfg.OtelCollectorURL() back to itself.
 	cfg := testConfig(t, `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 9999
 `)
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
 	endpoint := cfg.OtelCollectorURL()
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
-		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal")
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
+		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal",
+	)
 	assert.Contains(t, endpoint, ":9999",
 		"otel endpoint must carry the overridden otel_collector_port — proves the port override reaches the renderer")
 	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
@@ -207,18 +222,34 @@ monitoring:
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
-		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT=http://",
-		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
-		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear")
-	assert.Contains(t, content, "OTEL_TRACES_EXPORTER=otlp",
-		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path")
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
+		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT=http://",
+		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_TRACES_EXPORTER=otlp",
+		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path",
+	)
 	assert.Contains(t, content, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
 		"Claude Code beta tracing gate must be set — without this OTEL_TRACES_EXPORTER is ignored")
 }
@@ -226,7 +257,7 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -235,18 +266,30 @@ func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 	assert.Contains(t, content, "ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude",
 		"Dockerfile must set CLAUDE_CONFIG_DIR to the config volume mount point")
 
-	// claude-config.json must be staged to .claude-init for CP-driven init seeding
-	assert.Contains(t, content, "claude-config.json",
-		"Dockerfile must COPY claude-config.json into build context")
-	assert.Contains(t, content, ".claude-init/.config.json",
-		"Dockerfile must stage claude-config.json to .claude-init/.config.json")
+	// claude-config.json must be staged into the generic seed dir and the
+	// baked seed manifest must tell CP how to apply it — this is the
+	// image-side half of the CP seed contract. Paths are composed from the
+	// same consts the CP seed-apply script uses, so template↔script drift
+	// fails here.
+	seedDir := "/home/${USERNAME}/" + consts.DotClawkerDir + "/" + consts.SeedSubdir
+	assert.Contains(t, content,
+		"COPY --chown=${USERNAME}:${USERNAME} assets/claude-config.json "+seedDir+"/.claude/.config.json",
+		"Dockerfile must stage claude-config.json into the generic seed dir at its home-relative dest")
+	assert.Contains(t, content, "/home/${USERNAME}/"+consts.DotClawkerDir+"/"+consts.SeedManifestFile,
+		"Dockerfile must bake the seed manifest for CP's generic apply step")
+	assert.NotContains(t, content, "config_dir=",
+		"seed manifest carries no config-dir header — dests are home-relative paths")
+	assert.Contains(t, content, config.SeedApplyCopyIfMissingOrEmpty+" .claude/.config.json",
+		"seed manifest must carry the apply strategy per seed")
+	assert.Contains(t, content, config.SeedApplyJSONMerge+" .claude/settings.json",
+		"seed manifest must carry the json-merge strategy for settings")
+	assert.Contains(t, content, "mkdir -p /home/${USERNAME}/.claude ",
+		"runtime-dirs RUN must pre-create declared volume dirs for mount ownership")
 }
 
 func TestBuildContext_TelemetryConfig(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 4318
   telemetry:
@@ -258,7 +301,7 @@ monitoring:
     include_session_id: false
 `)
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -278,7 +321,7 @@ func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	// With default config (all telemetry enabled), all OTEL env vars should be present
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -291,20 +334,6 @@ func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	assert.Contains(t, content, "OTEL_LOGS_EXPORT_INTERVAL=5000")
 }
 
-func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	mgr := NewDockerfileManager(cfg, &DockerFileManagerOptions{})
-
-	expected, err := cfg.DockerfilesSubdir()
-	require.NoError(t, err)
-
-	got, err := mgr.DockerfilesDir()
-	require.NoError(t, err)
-	assert.Equal(t, expected, got)
-	assert.Contains(t, got, "build/dockerfiles",
-		"DockerfilesDir must nest under build/dockerfiles")
-}
-
 // TestBuildContext_ClawkerdIsPID1 pins the security-relevant
 // invariant: clawkerd is the container's ENTRYPOINT and no userspace
 // privilege-drop wrapper (gosu) or shell shim (entrypoint.sh) is
@@ -314,7 +343,7 @@ func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
 func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -328,20 +357,20 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 		"no shell entrypoint shim allowed; clawkerd owns the spawn directly")
 }
 
-// TestBuildContext_ClaudeCodeVersionIsARG pins the ENV→ARG conversion. ARG
+// TestBuildContext_HarnessVersionIsARG pins the ENV→ARG conversion. ARG
 // (not ENV) is required so the ARG-cache behaviour applies: a changed value
 // busts cache at the ARG's declaration line (BuildKit) — so the declaration
 // is placed directly above its only consumer, keeping apt/Node/git-delta/
 // zsh-in-docker cached above. ENV would create a layer whose hash propagates
 // downward and bust every layer below.
-func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
+func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
-	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testClaudeCodeVersion,
+	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testHarnessVersion,
 		"Claude Code version must be declared as ARG with the npm-resolved concrete version baked in")
 	assert.NotContains(t, content, "ENV CLAUDE_CODE_VERSION=",
 		"ENV form would persist into the running container; ARG is build-only and CC's runtime does not read it")
@@ -353,48 +382,58 @@ func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
 	// layer downward — never the Node/git-delta/zsh-in-docker chain. Hoisting
 	// the declaration up the stage reintroduces a full rebuild on every release.
 	argIdx := strings.Index(content, "ARG CLAUDE_CODE_VERSION=")
-	zshIdx := strings.Index(content, "zsh-in-docker")
+	nvmIdx := strings.Index(content, "raw.githubusercontent.com/nvm-sh/nvm")
 	installIdx := strings.Index(content, "claude.ai/install.sh")
-	require.NotEqual(t, -1, zshIdx, "expected zsh-in-docker step as an upstream-layer marker")
+	require.NotEqual(t, -1, nvmIdx,
+		"expected the nvm stack fragment (harness-declared) as an upstream-layer marker")
 	require.NotEqual(t, -1, installIdx, "expected Claude install RUN as the ARG consumer marker")
-	assert.Greater(t, argIdx, zshIdx,
-		"ARG CLAUDE_CODE_VERSION must be declared AFTER zsh-in-docker — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)")
+	assert.Greater(
+		t,
+		argIdx,
+		nvmIdx,
+		"ARG CLAUDE_CODE_VERSION must be declared AFTER the nvm install — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)",
+	)
 	assert.Less(t, argIdx, installIdx,
 		"ARG CLAUDE_CODE_VERSION must be declared BEFORE the install RUN that consumes it")
 }
 
-// TestBuildContext_FallsBackOnEmptyClaudeCodeVersion verifies offline-build
-// resilience: when no ClaudeCodeVersion is set on the generator (resolver
+// TestBuildContext_FallsBackOnEmptyHarnessVersion verifies offline-build
+// resilience: when no HarnessVersion is set on the generator (resolver
 // failure handled by the caller / offline build), the renderer falls back
-// to the literal DefaultClaudeCodeVersion ("latest"). Build still works in
+// to the literal DefaultHarnessVersion ("latest"). Build still works in
 // that path; the cache just won't bust on a new release until network
 // returns and the command-layer resolver succeeds.
-func TestBuildContext_FallsBackOnEmptyClaudeCodeVersion(t *testing.T) {
+func TestBuildContext_FallsBackOnEmptyHarnessVersion(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
-	// ClaudeCodeVersion intentionally unset.
-	dockerfile, err := gen.Generate()
-	require.NoError(t, err, "empty ClaudeCodeVersion must not fail the build — fallback path keeps offline builds working")
+	gen.BaseImageRef = testBaseImageRef
+	// HarnessVersion intentionally unset.
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(
+		t,
+		err,
+		"empty HarnessVersion must not fail the build — fallback path keeps offline builds working",
+	)
 
-	assert.Contains(t, string(dockerfile), "ARG CLAUDE_CODE_VERSION="+DefaultClaudeCodeVersion,
+	assert.Contains(t, string(dockerfile), "ARG CLAUDE_CODE_VERSION="+DefaultHarnessVersion,
 		"fallback must render the literal default so the install RUN still works (downloads npm-latest at build time)")
 }
 
 // TestBuildContext_LateClawkerBlock pins the post-reorder layer ordering.
 // Root-scoped clawker assets (agent prompt, managed-settings heredoc,
 // firewall CA, host-proxy + socket-server binaries, clawkerd) land AFTER
-// the trailing `USER root` switch and BEFORE ENTRYPOINT. The Claude config
-// seeds (.claude-init/) stay in the user-scope section — alongside Claude
-// Code itself — because the after_claude_install / before_entrypoint
+// the trailing `USER root` switch and BEFORE ENTRYPOINT. The harness config
+// seeds (~/.clawker/seed/) stay in the user-scope section — alongside the
+// harness install — because the after_claude_install / before_entrypoint
 // inject points and user Instructions.Copy must be able to reference
-// ~/.claude-init/ contents at injection time. A regression that scatters
+// staged seed contents at injection time. A regression that scatters
 // the root block across the file, or that buries the seeds below
 // after_claude_install, would silently break either cache locality or the
 // inject-point lifetime contract.
 func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -437,17 +476,21 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	)
 	managedSettingsIdx := strings.Index(content, "managed-settings.json")
 	require.Positive(t, managedSettingsIdx, "managed-settings.json heredoc must exist")
-	assert.Less(t, managedSettingsIdx, userRootIdx,
-		"managed-settings.json must appear BEFORE the trailing 'USER root' (early root scope) so any build-time claude invocation in user inject points sees its PATH augmentation")
+	assert.Less(
+		t,
+		managedSettingsIdx,
+		userRootIdx,
+		"managed-settings.json must appear BEFORE the trailing 'USER root' (early root scope) so any build-time claude invocation in user inject points sees its PATH augmentation",
+	)
 	firstUserSwitchIdx := strings.Index(content, "USER ${USERNAME}")
 	require.Positive(t, firstUserSwitchIdx, "USER ${USERNAME} switch must exist")
 	assert.Less(t, managedSettingsIdx, firstUserSwitchIdx,
 		"managed-settings.json must be created in early root scope, before the USER ${USERNAME} switch")
 
-	// Claude config seeds belong BEFORE the trailing USER root — they're
+	// Harness config seeds belong BEFORE the trailing USER root — they're
 	// user-owned writes that production user inject points expect to
 	// reference (e.g. after_claude_install dropping additional config
-	// into ~/.claude-init/). Burying them under USER root and below the
+	// into ~/.clawker/seed/). Burying them under USER root and below the
 	// inject points would silently break that contract.
 	for _, seed := range []string{
 		"statusline.sh",
@@ -456,8 +499,13 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	} {
 		idx := strings.Index(content, seed)
 		require.Positive(t, idx, "seed %q must appear in rendered Dockerfile", seed)
-		assert.Less(t, idx, userRootIdx,
-			"Claude config seed %q must appear BEFORE the trailing 'USER root' switch so user inject points can reference ~/.claude-init/", seed)
+		assert.Less(
+			t,
+			idx,
+			userRootIdx,
+			"Harness config seed %q must appear BEFORE the trailing 'USER root' switch so user inject points can reference ~/.clawker/seed/",
+			seed,
+		)
 	}
 
 	// clawkerd COPY must be the very last asset before ENTRYPOINT (so a
@@ -470,6 +518,28 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 		"COPY clawkerd must precede ENTRYPOINT")
 }
 
+// The managed prompt — clawker's harness-agnostic agent-context briefing — is
+// baked at BUILD time to the location the harness manifest declares
+// (managed_prompt), with root:root 0644 defaults. A harness that declares no
+// managed_prompt (codex) gets no copy at all: absent = unsupported.
+func TestGenerateHarness_ManagedPrompt(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	assert.Contains(t, string(dockerfile),
+		"COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/claude-code/CLAUDE.md",
+		"claude floor manifest declares the managed prompt dest")
+
+	gen = newTestProjectGenerator(cfg, t.TempDir())
+	gen.Harness = "codex"
+	dockerfile, err = gen.GenerateHarness()
+	require.NoError(t, err)
+	assert.NotContains(t, string(dockerfile), "clawker-agent-prompt.md",
+		"a harness without managed_prompt stages no prompt copy")
+}
+
 // TestBuildContext_CollapsedChmod pins the single-chmod-batching invariant:
 // host-proxy + socket-server binaries get one chmod RUN, not multiple. Two
 // separate chmod RUNs would create two layers and lose the "one block to
@@ -477,24 +547,137 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 func TestBuildContext_CollapsedChmod(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
 	chmodCount := strings.Count(content, "chmod +x /usr/local/bin/")
-	assert.Equal(t, 1, chmodCount,
-		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous")
+	assert.Equal(
+		t,
+		1,
+		chmodCount,
+		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous",
+	)
 }
 
-func TestDockerfilesDir_PropagatesError(t *testing.T) {
-	mock := configmocks.NewBlankConfig()
-	mock.DockerfilesSubdirFunc = func() (string, error) {
-		return "", fmt.Errorf("permission denied")
-	}
-	mgr := NewDockerfileManager(mock, &DockerFileManagerOptions{})
+// TestGenerateBase_ExcludesHarnessSurface pins the image split: the base
+// image carries only harness-agnostic layers. Any harness content leaking
+// into the base render would rebuild every harness's shared layers on a
+// harness change and duplicate harness layers across projects.
+// Conformance: E4 — the shared base image is harness-agnostic; no bundle stack or harness surface enters base resolution.
+func TestGenerateBase_ExcludesHarnessSurface(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateBase()
+	require.NoError(t, err)
+	content := string(dockerfile)
 
-	dir, err := mgr.DockerfilesDir()
-	assert.Error(t, err)
-	assert.Empty(t, dir)
-	assert.Contains(t, err.Error(), "permission denied")
+	for _, marker := range []string{
+		"CLAUDE_CODE_VERSION",                 // harness version ARG (user_after_shell_switch block)
+		"/usr/local/bin/clawkerd",             // clawker root assets live harness-side
+		"ENTRYPOINT",                          // harness image owns the entrypoint
+		"CMD [",                               // cmd block
+		"/.clawker/seed",                      // harness config seeds
+		"mkdir -p /home/${USERNAME}/.claude ", // harness volume dirs
+		"callback-forwarder-builder",          // builder stages
+		"clawker-ca.crt",                      // firewall CA is harness-side
+		"nodejs.org/dist",                     // harness-declared stack (node) renders harness-side
+		"nvm-sh/nvm",                          // harness-declared stack (nvm) renders harness-side
+	} {
+		assert.NotContains(t, content, marker,
+			"base image must not carry harness surface %q", marker)
+	}
+
+	for _, marker := range []string{
+		"apt-get update",
+		"useradd",
+		"zsh-in-docker",
+		"HEALTHCHECK",
+		"/var/run/clawker",
+		"WORKDIR /workspace",
+	} {
+		assert.Contains(t, content, marker,
+			"base image must carry harness-agnostic layer %q", marker)
+	}
+}
+
+// TestGenerateHarness_FromBaseBoundary pins FROM-boundary correctness:
+// the harness image builds FROM the shared base ref, re-declares the ARGs
+// that don't survive FROM (USERNAME, ZSH_ENV), and restores the master
+// template's per-block SHELL semantics (blocks 1-3 under sh, 4-6 under
+// zsh — the base image's config ends at SHELL zsh).
+func TestGenerateHarness_FromBaseBoundary(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	fromIdx := strings.Index(content, "FROM "+testBaseImageRef+" AS final")
+	require.Positive(t, fromIdx, "harness image must build FROM the shared base ref")
+
+	usernameArgIdx := strings.Index(content, "ARG USERNAME=")
+	require.Positive(t, usernameArgIdx, "ARG USERNAME must be re-declared (ARGs don't survive FROM)")
+	assert.Greater(t, usernameArgIdx, fromIdx,
+		"ARG USERNAME re-declaration must sit in the final stage")
+
+	zshEnvArgIdx := strings.Index(content, "ARG ZSH_ENV=")
+	require.Positive(t, zshEnvArgIdx,
+		"ARG ZSH_ENV must be re-declared (user-scope stack fragments reference it)")
+
+	shResetIdx := strings.Index(content, `SHELL ["/bin/sh", "-c"]`)
+	require.Positive(t, shResetIdx, "sh SHELL reset must exist — base image config ends at zsh")
+	assert.Greater(t, shResetIdx, fromIdx, "sh reset belongs to the final stage")
+
+	zshRestoreIdx := strings.Index(content, `SHELL ["/bin/zsh", "-o", "pipefail", "-c"]`)
+	require.Positive(t, zshRestoreIdx, "zsh SHELL restore must exist for blocks 4-6")
+
+	// sh reset → root stack fragments (node, harness-declared) → zsh
+	// restore → user_after_shell_switch content (claude install).
+	nodeIdx := strings.Index(content, "nodejs.org/dist")
+	installIdx := strings.Index(content, "claude.ai/install.sh")
+	require.Positive(t, nodeIdx)
+	require.Positive(t, installIdx)
+	assert.Less(t, shResetIdx, nodeIdx, "root_after_stacks must run under sh")
+	assert.Less(t, nodeIdx, zshRestoreIdx, "zsh restore comes after the root blocks")
+	assert.Less(t, zshRestoreIdx, installIdx, "user_after_shell_switch must run under zsh")
+
+	// Harness volume dirs are created harness-side, in root scope before
+	// the USER switch.
+	mkdirIdx := strings.Index(content, "mkdir -p /home/${USERNAME}/.claude ")
+	userSwitchIdx := strings.Index(content, "USER ${USERNAME}")
+	require.Positive(t, mkdirIdx, "harness volume dirs must be created in the harness image")
+	require.Positive(t, userSwitchIdx)
+	assert.Less(t, mkdirIdx, userSwitchIdx, "volume dirs are root-scope, before USER switch")
+}
+
+func TestGenerateHarness_RequiresBaseImageRef(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen.HarnessVersion = testHarnessVersion
+	// BaseImageRef intentionally unset.
+	_, err := gen.GenerateHarness()
+	require.ErrorIs(t, err, ErrNoBaseImageRef)
+}
+
+// Conformance: E22 — base build.packages are filtered against the substrate floor; non-floor packages pass through, order preserved.
+// TestFilterBasePackages isolates the filter directly (the golden render only
+// exercises it incidentally): floor packages the base template already installs
+// are dropped, everything else survives in declaration order. It goes red if the
+// floor stops filtering (a floor package leaks through) or the order is disturbed.
+func TestFilterBasePackages(t *testing.T) {
+	// Floor entries (git, curl, jq, zsh) interleaved with non-floor ones must be
+	// dropped, leaving the survivors in their original declaration order.
+	got := filterBasePackages([]string{"git", "ripgrep", "curl", "libpq-dev", "jq", "zsh", "postgresql-client"})
+	assert.Equal(t, []string{"ripgrep", "libpq-dev", "postgresql-client"}, got,
+		"floor packages dropped; non-floor survivors keep declaration order")
+
+	// An all-floor list filters down to nothing.
+	assert.Empty(t, filterBasePackages([]string{"less", "procps", "sudo"}),
+		"a list of only floor packages filters to empty")
+
+	// An all-non-floor list passes through unchanged, order preserved.
+	assert.Equal(t, []string{"ripgrep", "bat", "fd-find"},
+		filterBasePackages([]string{"ripgrep", "bat", "fd-find"}),
+		"non-floor packages pass through verbatim, in order")
 }

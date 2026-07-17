@@ -7,7 +7,6 @@ package e2e
 // — agents do not run E2E tests.
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -16,10 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
@@ -115,7 +112,7 @@ func TestControlPlaneCLI_DownOnAbsentCP(t *testing.T) {
 
 	// Best-effort pre-clean so the test is robust against stray state
 	// from a previous crashed run.
-	cleanupCPIfPresent(t, 30*time.Second)
+	harness.EnsureNoControlPlane(t, 30*time.Second)
 
 	res := h.Run("controlplane", "down")
 	require.NoError(t, res.Err, "down on absent CP should succeed: %s", res.Stderr)
@@ -139,23 +136,4 @@ type cpStatusRow struct {
 	FirewallReady    bool   `json:"firewall_ready"`
 	FirewallRuleCnt  int    `json:"firewall_rule_count"`
 	FirewallError    string `json:"firewall_error,omitempty"`
-}
-
-// cleanupCPIfPresent stops and removes the CP container when it exists.
-// Used by the no-op path test to guarantee a clean precondition — the
-// harness cleanup runs at end-of-test, not at start.
-func cleanupCPIfPresent(t *testing.T, timeout time.Duration) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	// Build a minimal docker.Client for the precondition sweep.
-	dc, err := docker.NewClient(ctx, nil, logger.Nop())
-	if err != nil {
-		t.Logf("cleanup: docker client: %v (skipping pre-clean)", err)
-		return
-	}
-	defer func() { _ = dc.Close() }()
-	if err := manager.Stop(ctx, dc); err != nil {
-		t.Logf("cleanup: manager.Stop: %v (ignoring — test robust)", err)
-	}
 }

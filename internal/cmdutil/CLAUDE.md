@@ -18,9 +18,10 @@ Heavy command helpers have been extracted to dedicated packages:
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
 | `format.go` | `Format`, `ParseFormat`, `FormatFlags`, `AddFormatFlags` -- reusable `--format`/`--json`/`--quiet` flag handling |
-| `json.go` | `WriteJSON` -- pretty-printed JSON output (replaces deprecated `OutputJSON`) |
+| `json.go` | `WriteJSON` -- compact JSON output (replaces deprecated `OutputJSON`) |
 | `filter.go` | `Filter`, `ParseFilters`, `ValidateFilterKeys`, `FilterFlags`, `AddFilterFlags` -- reusable `--filter key=value` flag handling |
 | `template.go` | `DefaultFuncMap`, `ExecuteTemplate` -- Go template execution for `--format TEMPLATE` output |
+| `inventory.go` | `NewInventoryListCommand`, `InventorySpec`, `InventoryOptions` -- shared read-only per-type component inventory command (`stack list`/`harness list`/`monitor extensions`): NAME/VERSION/SOURCE over `bundle.Manager.Inventory`, `!` shadow markers, bundle-sourced rows name their owning bundle |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 | `slugify.go` | `ProjectSlugify` -- normalizes raw project-name candidates into slugs safe for Docker/x509/gRPC |
 
@@ -140,7 +141,7 @@ Pretty-printed JSON output for `--json` and `--format json` modes. Replaces depr
 func WriteJSON(w io.Writer, data any) error
 ```
 
-Writes indented JSON (2-space indent) followed by a newline. HTML escaping is disabled (`SetEscapeHTML(false)`) so values like `<none>:<none>` are written literally, not as `\u003cnone\u003e`. Accepts any JSON-serializable value (structs, slices, maps, nil).
+Writes compact single-line JSON followed by a newline. HTML escaping is disabled (`SetEscapeHTML(false)`) so values like `<none>:<none>` are written literally, not as `\u003cnone\u003e`. Accepts any JSON-serializable value (structs, slices, maps, nil).
 
 ## Filter Flags (`filter.go`)
 

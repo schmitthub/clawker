@@ -1,0 +1,109 @@
+---
+title: "Authoring Stacks"
+description: "Write a language-runtime stack — the stack.yaml manifest and the root/user Dockerfile fragments that provision a toolchain"
+icon: "code"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "stacks", "authoring", "Dockerfile"]
+---
+
+A **stack** provisions a language toolchain into an image. Authoring one means
+writing a small manifest plus the Dockerfile fragments that do the install. This
+page covers the stack directory; see [Stacks](/stacks) for how stacks are
+selected and resolved, and [Authoring bundles](/authoring-bundles) for packaging
+a stack for distribution.
+
+## Directory layout
+
+A stack is a directory whose name is the stack's component name:
+
+```
+<name>/
+├── stack.yaml                     # manifest
+├── Dockerfile.stack-root.tmpl     # steps that run as root
+└── Dockerfile.stack-user.tmpl     # steps that run as the container user
+```
+
+Place that directory in a loose convention directory to use it immediately, or
+inside a bundle's `stacks/` directory to distribute it:
+
+```
+loose (project):  .clawker/stacks/<name>/
+loose (user):     ~/.config/clawker/stacks/<name>/
+bundle:           <bundle>/stacks/<name>/
+```
+
+## The manifest
+
+`stack.yaml` is a thin descriptor:
+
+```yaml
+# stack.yaml
+description: >-
+  Node.js LTS on /usr/local plus nvm as the per-user version switcher.
+```
+
+| Field | Purpose |
+|-------|---------|
+| `description` | A human-readable summary of what the stack provisions. |
+
+## The Dockerfile fragments
+
+The two fragment files are the substance of a stack. They are Docker build
+snippets that clawker composes into the generated image at the right point:
+
+- **`Dockerfile.stack-root.tmpl`** renders as **root**, before the container
+  user is created — use it for system-level installs.
+- **`Dockerfile.stack-user.tmpl`** renders as the **container user**, after the
+  user switch — use it for per-user tooling.
+
+Ship whichever your toolchain needs; a stack that only installs system-global
+tooling needs just the root fragment.
+
+### Self-guard your install
+
+A stack must be safe to declare unconditionally, because the same name can be
+provisioned by more than one build stratum and images may already carry the
+runtime. Guard each fragment so it **skips itself when the runtime is already
+present**:
+
+```dockerfile
+# Dockerfile.stack-root.tmpl
+ARG MYTOOL_VERSION=1.2
+RUN if command -v mytool >/dev/null 2>&1; then \
+      echo "clawker stack mytool: already present — skipping"; \
+    else \
+      # ... install mytool ... \
+    ; fi
+```
+
+Declaring a build-time `ARG` (as above) lets consumers override it with
+`clawker build --build-arg MYTOOL_VERSION=2.0`.
+
+<Note>
+  Fragments are Go text templates, so a handful of build-context variables are
+  available for interpolation. The shipped `node`, `go`, `python`, and `rust`
+  stacks are the best working reference for the guard pattern, GPG/checksum
+  verification, and the available template variables — copy their shape when
+  writing your own.
+</Note>
+
+## How a stack renders
+
+A project-declared stack (`build.stacks`) renders in the shared **base** image,
+before your `root_run`/`user_run` instructions, so your build steps can rely on
+it. A stack a harness declares as a dependency renders in that **harness** image.
+Both strata render even when they share a name — your self-guard handles any
+overlap. See [Image Customization](/custom-images) for the full build ordering.
+
+## Validating
+
+Bundle a stack and validate it before publishing:
+
+```bash
+clawker bundle validate ./my-bundle --strict
+```
+
+Validation loads each stack the same way `clawker build` does, so a missing
+fragment or malformed `stack.yaml` fails here instead of at build time.
+
+Validation checks the bundle envelope and component naming; the fragments prove
+out at `clawker build` time.

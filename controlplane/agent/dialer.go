@@ -426,7 +426,8 @@ func (d *Dialer) runDial(cpCtx context.Context, dialCtx context.Context, contain
 
 		// Boot ran every time
 		if ok, err := shouldAgentBoot(res); ok {
-			d.runPlan(cpCtx, containerID, res, cycleLog, BootPlan(), "boot")
+			defaultCmd := d.imageDefaultCmd(cpCtx, containerID, cycleLog)
+			d.runPlan(cpCtx, containerID, res, cycleLog, BootPlan(defaultCmd), "boot")
 		} else if err != nil {
 			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should boot")
 		}
@@ -914,6 +915,32 @@ func (d *Dialer) resolveAgent(ctx context.Context, containerID string) (mobycont
 		return mobycontainer.InspectResponse{}, fmt.Errorf("%w (state=%s)", ErrContainerStopped, state)
 	}
 	return c, nil
+}
+
+// imageDefaultCmd resolves the container image's default CMD binary
+// (Config.Cmd[0]) for the agent-ready step's --help argv routing. The
+// image, not the container, carries the default: the container's Cmd
+// reflects any user override, which is exactly what routing must NOT use.
+// Failure degrades to "" (routing disabled in clawkerd) with a structured
+// log line — never a plan failure; a missing route is a UX nicety, not a
+// boot dependency.
+func (d *Dialer) imageDefaultCmd(ctx context.Context, containerID string, log *logger.Logger) string {
+	res, err := d.Docker.ContainerInspect(ctx, containerID, mobyclient.ContainerInspectOptions{Size: false})
+	if err != nil {
+		log.Warn().Err(err).Str("event", "image_default_cmd_unavailable").
+			Msg("agentdial: container inspect failed; agent-ready ships without default cmd")
+		return ""
+	}
+	img, err := d.Docker.ImageInspect(ctx, res.Container.Image)
+	if err != nil {
+		log.Warn().Err(err).Str("event", "image_default_cmd_unavailable").
+			Msg("agentdial: image inspect failed; agent-ready ships without default cmd")
+		return ""
+	}
+	if img.Config == nil || len(img.Config.Cmd) == 0 {
+		return ""
+	}
+	return img.Config.Cmd[0]
 }
 
 // clawkerNetAddr extracts the host:port dial target from an inspect

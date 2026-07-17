@@ -14,9 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Check Dockerfile.tmpl is in sync
+      - name: Check Dockerfile templates are in sync
         run: |
-          diff \
-            internal/bundler/assets/Dockerfile.tmpl \
-            claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl \
-          || (echo "::error::Dockerfile.tmpl drift detected. Copy internal/bundler/assets/Dockerfile.tmpl to claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl" && exit 1)
+          fail=0
+          for tmpl in Dockerfile.base.tmpl Dockerfile.harness-image.tmpl; do
+            diff \
+              "internal/bundler/assets/${tmpl}" \
+              "claude-plugin/clawker-support/skills/clawker-support/reference/${tmpl}" \
+            || { echo "::error::${tmpl} drift detected. Copy internal/bundler/assets/${tmpl} to claude-plugin/clawker-support/skills/clawker-support/reference/${tmpl}"; fail=1; }
+          done
+          exit "$fail"

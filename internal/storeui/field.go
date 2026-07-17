@@ -28,6 +28,7 @@ const (
 	KindTime        = storage.KindTime
 	KindMap         = storage.KindMap
 	KindStructSlice = storage.KindStructSlice
+	KindStructMap   = storage.KindStructMap
 )
 
 // KindTriState is deprecated. Use KindBool instead. Retained for backward

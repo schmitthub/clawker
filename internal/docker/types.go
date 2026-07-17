@@ -3,7 +3,6 @@
 package docker
 
 import (
-	"context"
 
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -90,10 +89,6 @@ type (
 
 // BuildProgressFunc is a callback for reporting build progress events.
 type BuildProgressFunc = whail.BuildProgressFunc
-
-// BuildDefaultImageFn is the function signature for building the default image.
-// Matches (*Client).BuildDefaultImage. Used by shared/image.go for DI.
-type BuildDefaultImageFn func(ctx context.Context, flavor string, onProgress BuildProgressFunc) error
 
 const (
 	// WaitConditionNotRunning is used to wait until a container is not running.

@@ -32,15 +32,20 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors. Also `BundleDeclarationsAt(root)` — bundle declarations of ONE project root without a full config load (dual-placement probe of EVERY directory under the root — nested walk-up layers are declaring layers; dot-dirs/symlinks not descended; permission-denied SUBdirs skipped and returned as the second value for the caller to surface, mid-walk-vanished SUBdirs (build churn) skipped silently, unreadable root stays fatal — for the project + local files, bundles-node validation only, deliberately NO migrations and NO writes since it runs against other projects' files): the loader behind the bundle cache's GC roots, which union every REGISTERED project's declared source values |
 | `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
-| `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
+| `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods; `EgressRule` + egress vocabulary consts |
+| `harness_schema.go` | Harness `harness.yaml` manifest shape (`Manifest`, `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`, `ManagedPromptSpec`) + closed-vocabulary consts (resolvers, seed-apply tokens, JSON-rewrite kinds, managed-prompt owners `PromptOwnerRoot`/`PromptOwnerUser`). Parsed here; loaded/validated/rendered by `internal/bundler` |
+| `stack_schema.go` | Stack `stack.yaml` manifest shape (`StackManifest` — the metadata half; fragments are loaded by `internal/bundler`) |
+| `monitoring_schema.go` | Monitoring unit `monitoring.yaml` manifest shape (`MonitoringUnitManifest`, `MonitoringLogLane`, `MonitoringUnitMetrics`, `MetricRename`) + retention vocab (`MonitoringRetentionDefault`/`Custom`). Loaded/validated by `internal/bundler`; consumed by `internal/monitor` generation |
+| `path_semantics.go` | Manifest path helpers: `ExpandHostPath` (`~`/`$VAR`/`${VAR:-fallback}` expansion), `NormalizeContainerPath`, `HasGlobMeta` |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |
 | `port.go` | `Port` type with `UnmarshalYAML` — typed wrapper for settings port fields |
 | `egress_port.go` | `ParsePortSpec`, `ValidatePortSpec`, `PortSpan`, `SinglePort` — port range parsing for egress rules |
-| `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time |
+| `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time, per file layer. Project chain (in order): legacy run-list → `[]string` conversion; strip of deleted `build.image`/`build.dockerfile`/`build.context`/`agent.claude_code.use_host_auth` keys (one-shot stderr notice naming each key + value + replacement); `agent.claude_code` → `harnesses.claude` rewrite (field-for-field move, or drop with a notice when a `harnesses.claude` entry already out-ranks it; the read shim in `schema.go` stays for unmigrated read-only contexts). Before the move, `filterHarnessBlockForMove` strips everything the strict `harnesses:` front door (`validate.go`) would reject — unknown fields, unknown `config` sub-fields, an out-of-vocabulary `config.strategy` — surfacing each stripped key + value in a notice: moving them raw would durably rewrite the file into a shape `validateProjectNodes` rejects on that same load and every one after. All notices go through `storage.Store.Noticef` + `MigratingLayerPath()`, so each names its owning file and prints only after the rewrite commits (a failed rewrite degrades to in-memory migration with a warning; see `internal/storage/CLAUDE.md`). Settings chain: legacy monitoring-key removal/rename |
+| `validate.go` | `validateProjectNodes(*storage.Store[Project]) error` — front-door validation for the `harnesses:`, `build.harnesses:`, and `bundles:` nodes, called by `NewConfig`/`NewFromString`/`NewBlankConfig`/`NewProjectStoreFromPreset`. Walks each discovered layer (never the merged tree, so errors name the actual file) and rejects a bad harness/overlay name or `build.harness` selection value (`internal/consts.ValidateHarnessRef` — bare or qualified, reserved aliases bare-only; `build.harness` must also be a string), a bad stack-name reference (`build.stacks`, overlay `stacks`, via `consts.ValidateComponentRef`), an unknown field under one of these nodes, a `harnesses.<name>.config.strategy` outside the copy/fresh vocabulary, or a malformed `bundles:` source. `ValidateBundleSource` is the typed write-front-door twin for `clawker bundle install`. Settings has no front-door validator. NOT invoked on the `ProjectStore().Set`/`Write` mutation path — a write front-door must call it (or equivalent per-value checks) itself |
 | `storeui/project/` | `Overrides`, `LayerTargets`, `Edit` — project store UI helpers |
 | `storeui/settings/` | `Overrides`, `LayerTargets`, `Edit` — settings store UI helpers |
 | `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
@@ -74,9 +79,9 @@ ProjectStore() *storage.Store[Project]     // Direct access to project config st
 SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
 
-**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRules()`, `EgressRulesFileName()`
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `ProjectEgressRules()`, `EgressRulesFileName()`
 
-`EgressRules()` returns the full egress rule set as `[]EgressRule`: the required baseline (`RequiredFirewallRules()`) plus the project's `security.firewall` rules and `add_domains` shorthand.
+`ProjectEgressRules()` returns the project's `security.firewall` contribution as `[]EgressRule`: explicit rules verbatim, then `add_domains` shorthand expansions. It deliberately excludes the harness's required egress floor — that lives in the harness bundle's `harness.yaml` and is composed in by `bundler.EgressRules(cfg, name)`, which is what firewall sync paths call.
 
 **Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
 
@@ -86,13 +91,13 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Path resolution**: `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()` (project-root / ignore-file resolution lives in `internal/project`)
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
 **Domain/network**: `Domain()` (the clawker domain), `LabelDomain()` (the label domain), `ClawkerNetwork()` (the clawker network name)
 
-**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
+**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
 **Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID()` / `consts.ContainerGID()`. The underlying consts resolve once at package init: on Linux hosts from `os.Getuid()` / `os.Getgid()` (the CLI invoker), falling back to 1001 when the kernel returns 0 (sudo) or -1; on non-Linux hosts (macOS, Windows) the fallback 1001 is taken unconditionally because Docker Desktop's virtiofs / gRPC-FUSE share masks container UID/GID at the boundary and baking the host's numeric IDs would also risk `groupadd --gid` collisions with low base-image GIDs (e.g. macOS staff=20 vs Debian dialout=20). CP-side code must use `consts.HostUID()` / `consts.HostGID()` instead — inside the CP container `os.Getuid()` is the CP image's UID, not the host's. See `internal/consts/controlplane.go`.
 
@@ -108,19 +113,23 @@ const ModeSnapshot Mode = "snapshot"
 
 `ParseMode(s string) (Mode, error)` lives in `schema.go`. Empty string defaults to `ModeBind`.
 
-### Schema Types (schema.go)
+### Schema Types (schema.go, harness_schema.go, stack_schema.go)
 
 `Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc`, `label`, and `default` struct tags — the single source of truth for field metadata. Critical fields also carry `required:"true"`. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc`, `label`, and `default` tags (and `required:"true"` if the field must always have a value).
 
 **Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyManagerConfig`, `HostProxyDaemonConfig`
 
-**Build**: `BuildConfig`, `DockerInstructions`, `CopyInstruction`, `ArgDefinition`, `InjectConfig`
+**Build**: `BuildConfig`, `DockerInstructions`, `CopyInstruction`, `ArgDefinition`, `InjectConfig`, `HarnessBuildOverlay`, `HarnessOverlayInject`
+
+**Harnesses map + build overlay** (project-side, `clawker.yaml`): `Project.Harnesses map[string]HarnessConfig` (`harnesses:`) is the per-harness init-config block, keyed by possibly-qualified harness name (bare or `namespace.bundle.component`); build-time harness resolution goes through `internal/bundle`'s three-tier resolver. `Project.Build.Harness` (`build.harness`) is the default-harness selection key — the harness used when a command selects none (bare `clawker build`, bare `@`); a scalar, so the highest layer that sets it wins wholesale, and an explicit `-t`/`@:<harness>` always beats it (consumed by `bundler.ResolveHarnessName`). The old harness path-registry field (`HarnessConfig.Path`) and its monitoring settings twin are gone — this schema carries init-config only, no path pointers. There is NO project stack path-registry: custom stacks are authored as loose convention dirs (`.clawker/stacks/<name>/`) or installed bundles, resolved by `internal/bundle`. `Project.Build.Harnesses map[string]HarnessBuildOverlay` (`build.harnesses:`) is the per-harness build overlay — the same packages/stacks/inject primitives as the base `BuildConfig` fields, scoped to one harness's image; `HarnessOverlayInject` only exposes `user_commands`/`before_entrypoint` (harness-image inject points), never the base-image ones. Harness/overlay names are validated by `internal/consts.ValidateHarnessRef` and every stack-name reference (`build.stacks`, `build.harnesses.<name>.stacks`) by `ValidateComponentRef` (both accept bare or qualified spellings; reserved image-tag aliases are rejected bare-only), enforced at load by `validate.go`. Monitoring selection lives in the project's `monitor.extensions` (clawker.yaml, override-merge) and seeds via `monitor up`; there is no host-global monitoring-unit registry in settings.
+
+**Harness/stack manifest shapes** (harness_schema.go, stack_schema.go — the persisted `harness.yaml`/`stack.yaml` file shapes, NOT `storage.Schema` implementers): `Manifest` (`version`, `volumes`, `seeds`, `staging`, `egress`, `stacks`) with nested `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`; and `StackManifest` (`description` only). Their closed vocabularies are consts alongside them: version resolvers (`ResolverNPM`/`ResolverGitHubRelease`/`ResolverNone`), seed-apply tokens (`SeedApplyCopyIfMissing`/`SeedApplyCopyIfMissingOrEmpty`/`SeedApplyJSONMerge`), and JSON-rewrite kinds (`RewritePrefixSwap`/`RewriteReplaceWithWorkdir`). `config` owns only these shapes + vocab; `internal/bundler` loads, validates, resolves lineage, and renders them. Manifest path helpers (`ExpandHostPath`, `NormalizeContainerPath`, `HasGlobMeta`) live in `path_semantics.go`.
 
 **Agent**: `AgentConfig`, `ClaudeCodeConfig`, `ClaudeCodeConfigOptions`
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference these instead of spelling the literals.
+**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `ProjectEgressRules()` add_domains expansion and the built-in firewall defaults (`defaults.go`); reference these instead of spelling the literals. The harness egress floor is a `harness.yaml` `egress:` list that decodes directly as `[]EgressRule` (`config.Manifest.Egress`) — no conversion layer — and `bundler.EgressRules` composes it ahead of the project rules.
 
 **Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
 
@@ -140,7 +149,7 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 
 ## Gotchas
 
-- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`.
+- **Unknown fields are silently accepted** by `NewFromString`/`NewConfig` — **except** under `harnesses:` and `build.harnesses:` (including its nested `inject:`), where `validate.go`'s front-door check rejects an unknown field as a load error naming the file and key path. This is a deliberate, narrower exception to the general rule below, not a project-wide strict-decode.
 - **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
 - **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `aliases`. Settings keys: `logging`, `monitoring`, `host_proxy`, `firewall`, `control_plane`, `docker`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
 - **Aliases are project config** — `Project.Aliases` (union-merged across all layers, ships default `go` and `wt` aliases) is what the CLI registers as commands; walk-up files, the user config-dir `clawker.yaml`, and shipped defaults all apply. Settings has no aliases key.
@@ -148,4 +157,5 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
 - **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
 - **Registry owned by project** — both the `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types and the `Store[ProjectRegistry]` live in `internal/project`. `config` has no registry surface.
+- **Harness/overlay names fail the whole load, not just the field** — `NewConfig`/`NewFromString`/`NewBlankConfig` all call `validateProjectNodes` after loading the project store; a `harnesses:`/`build.harnesses:` key that fails `internal/consts.ValidateHarnessRef` (not lowercase kebab-case, >32 chars per segment, a bad qualified segment count, or a reserved image-tag alias used bare) returns a hard error from the constructor, not a partial/degraded `Config`.
 - **Cross-process safety** — Storage uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.

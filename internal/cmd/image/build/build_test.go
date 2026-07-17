@@ -5,9 +5,13 @@ import (
 	"context"
 	"testing"
 
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/stretchr/testify/require"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 func TestNewCmdBuild(t *testing.T) {
@@ -31,7 +35,6 @@ func TestCmd_Flags(t *testing.T) {
 		shorthand string
 		defValue  string
 	}{
-		{"file flag", "file", "f", ""},
 		{"tag flag", "tag", "t", "[]"},
 		{"no-cache flag", "no-cache", "", "false"},
 		{"pull flag", "pull", "", "false"},
@@ -197,14 +200,6 @@ func TestCmd_FlagParsing(t *testing.T) {
 			args: []string{},
 		},
 		{
-			name: "file short flag",
-			args: []string{"-f", "Dockerfile.dev"},
-		},
-		{
-			name: "file long flag",
-			args: []string{"--file", "Dockerfile.dev"},
-		},
-		{
 			name: "tag short flag",
 			args: []string{"-t", "myimage:latest"},
 		},
@@ -250,7 +245,7 @@ func TestCmd_FlagParsing(t *testing.T) {
 		},
 		{
 			name: "combined flags",
-			args: []string{"-f", "Dockerfile", "-t", "myapp:latest", "--no-cache", "--pull", "-q"},
+			args: []string{"-t", "myapp:latest", "--no-cache", "--pull", "-q"},
 		},
 	}
 
@@ -290,13 +285,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 		args   []string
 		verify func(t *testing.T, opts *BuildOptions)
 	}{
-		{
-			name: "file flag value",
-			args: []string{"-f", "Dockerfile.dev"},
-			verify: func(t *testing.T, opts *BuildOptions) {
-				require.Equal(t, "Dockerfile.dev", opts.File)
-			},
-		},
 		{
 			name: "single tag",
 			args: []string{"-t", "myimage:v1"},
@@ -376,9 +364,18 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 		},
 		{
 			name: "combined flags preserve all values",
-			args: []string{"-f", "Custom.dockerfile", "-t", "app:v1", "-t", "app:latest", "--no-cache", "--pull", "-q", "--target", "prod"},
+			args: []string{
+				"-t",
+				"app:v1",
+				"-t",
+				"app:latest",
+				"--no-cache",
+				"--pull",
+				"-q",
+				"--target",
+				"prod",
+			},
 			verify: func(t *testing.T, opts *BuildOptions) {
-				require.Equal(t, "Custom.dockerfile", opts.File)
 				require.Equal(t, []string{"app:v1", "app:latest"}, opts.Tags)
 				require.True(t, opts.NoCache)
 				require.True(t, opts.Pull)
@@ -421,4 +418,56 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 // strPtr returns a pointer to the given string.
 func strPtr(s string) *string {
 	return &s
+}
+
+// TestHarnessSelectorFromTags pins the strict tag=harness scheme: bare names
+// select a known harness, full refs must end in one (and keep riding as
+// extra image tags), anything else is a flag error.
+func TestHarnessSelectorFromTags(t *testing.T) {
+	// Isolate the XDG dirs so IsKnownHarness resolves claude/codex from the
+	// embedded floor, never a loose harness dir on the host.
+	testenv.New(t)
+	cfg := configmocks.NewFromString("", "")
+
+	t.Run("no tags selects nothing", func(t *testing.T) {
+		selector, extra, err := harnessSelectorFromTags(cfg, nil)
+		require.NoError(t, err)
+		require.Empty(t, selector)
+		require.Empty(t, extra)
+	})
+
+	t.Run("bare name selects harness without extra tag", func(t *testing.T) {
+		selector, extra, err := harnessSelectorFromTags(cfg, []string{"codex"})
+		require.NoError(t, err)
+		require.Equal(t, "codex", selector)
+		require.Empty(t, extra)
+	})
+
+	t.Run("full ref selects by tag part and rides as extra tag", func(t *testing.T) {
+		selector, extra, err := harnessSelectorFromTags(cfg, []string{"myrepo/img:codex"})
+		require.NoError(t, err)
+		require.Equal(t, "codex", selector)
+		require.Equal(t, []string{"myrepo/img:codex"}, extra)
+	})
+
+	t.Run("unknown harness is a flag error", func(t *testing.T) {
+		_, _, err := harnessSelectorFromTags(cfg, []string{"opencode"})
+		require.ErrorContains(t, err, "does not name a known harness")
+
+		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:v1.2.3"})
+		require.ErrorContains(t, err, "does not name a known harness")
+	})
+
+	t.Run("reserved base tag is a flag error", func(t *testing.T) {
+		_, _, err := harnessSelectorFromTags(cfg, []string{"base"})
+		require.ErrorContains(t, err, "does not name a known harness")
+
+		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:base"})
+		require.ErrorContains(t, err, "does not name a known harness")
+	})
+
+	t.Run("conflicting selections error", func(t *testing.T) {
+		_, _, err := harnessSelectorFromTags(cfg, []string{"claude", "codex"})
+		require.ErrorContains(t, err, "conflicting harnesses")
+	})
 }

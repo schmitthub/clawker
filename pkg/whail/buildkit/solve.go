@@ -20,12 +20,18 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 
 	attrs := make(map[string]string)
 
-	// Dockerfile filename (relative to context)
+	// Dockerfile filename. Relative paths resolve inside the context mount;
+	// an absolute path gets its own "dockerfile" local mount rooted at the
+	// file's directory (below), so the frontend must see just the base name.
 	dockerfile := opts.Dockerfile
 	if dockerfile == "" {
 		dockerfile = "Dockerfile"
 	}
-	attrs["filename"] = dockerfile
+	if filepath.IsAbs(dockerfile) {
+		attrs["filename"] = filepath.Base(dockerfile)
+	} else {
+		attrs["filename"] = dockerfile
+	}
 
 	// Build args
 	for k, v := range opts.BuildArgs {

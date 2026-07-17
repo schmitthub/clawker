@@ -4,14 +4,15 @@ title: "clawker skill remove"
 
 ## clawker skill remove
 
-Remove the clawker skill plugin from Claude Code
+Remove the clawker agent skills plugin
 
 ### Synopsis
 
-Remove the clawker-support skill plugin from Claude Code.
+Remove the clawker-support agent skills plugin.
 
-This uninstalls the plugin from the specified scope. The marketplace
-registration is left in place.
+For the claude harness this uninstalls the plugin through the Claude CLI;
+the marketplace registration is left in place. For codex, opencode, and pi
+it deletes the plugin's skills from the harness's native skills directory.
 
 ```
 clawker skill remove [flags]
@@ -24,18 +25,22 @@ clawker skill remove [flags]
 ### Examples
 
 ```
-  # Remove with default user scope
+  # Remove from Claude Code (default)
   clawker skill remove
 
-  # Remove from project scope
+  # Remove from another harness
+  clawker skill remove --harness codex
+
+  # Remove from project scope (claude only)
   clawker skill remove --scope project
 ```
 
 ### Options
 
 ```
-  -h, --help           help for remove
-  -s, --scope string   Uninstall from scope: user, project, or local (default "user")
+      --harness string   Target harness: claude, codex, opencode, or pi (default "claude")
+  -h, --help             help for remove
+  -s, --scope string     Uninstall from scope: user, project, or local (claude only) (default "user")
 ```
 
 ### Options inherited from parent commands
@@ -46,4 +51,4 @@ clawker skill remove [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin

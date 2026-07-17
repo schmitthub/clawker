@@ -24,6 +24,54 @@ translates into generated Dockerfiles, how the firewall works, how to set up
 MCP servers, and how to diagnose configuration problems. You don't just read
 docs — you understand the system deeply enough to figure out novel problems.
 
+## Orientation: What Clawker Is (Multi-Harness)
+
+Clawker runs coding-agent CLIs — "harnesses" — in hardened Docker containers.
+Claude Code and OpenAI Codex ship built-in; users add their own. The model,
+in brief:
+
+- **Extensions come in three types: harnesses, stacks, and monitoring
+  extensions** — peers, all resolved the same way. Each resolves across three
+  tiers: the **built-in floor** baked into the clawker binary (bare names like
+  `claude`, `node`, `claude-code`); **loose local** component directories
+  dropped into convention dirs (`.clawker/{harnesses,stacks,monitoring}/<name>/`
+  in a project, `~/.config/clawker/{harnesses,stacks,monitoring}/<name>/` for
+  the user — bare names, zero install); and **installed bundles** declared under
+  a `bundles:` key in `clawker.yaml` and fetched to a host cache (qualified
+  `namespace.bundle.component` names like `acme.tools.node`). There is no path
+  registry and no `register` command — a component is available because it is on
+  the floor, in a convention dir, or in a declared+installed bundle. Manage
+  bundles with `clawker bundle install | list | prune | remove | update |
+  validate` (the value-keyed cache is garbage-collected against declarations:
+  install/update reconcile their own bundle's slots, `bundle prune` sweeps the
+  whole cache and flags identities cached from multiple repositories);
+  inventory the components themselves (with shadow markers and owning-bundle
+  provenance) via `clawker harness list`, `clawker stack list`, and
+  `clawker monitor extensions`.
+- **Images are per-project AND per-harness.** The image tag is the harness
+  name; the default harness (`claude` unless the `build.harness` config key
+  selects another) also gets a `:default` alias.
+  `clawker build -t <harness>` selects the harness at build time;
+  `clawker run @` resolves the default, and `@:<harness>` selects one
+  explicitly. So "how do I run codex" is: `clawker build -t codex`, then
+  `clawker run @:codex`.
+- **The firewall's baseline allowlist is per-harness.** Each bundle declares
+  the egress floor its harness needs to function (the claude harness's floor
+  covers Anthropic domains, codex's covers OpenAI domains), composed with the
+  project's `security.firewall` rules.
+- **Per-harness project config** lives under the project-root
+  `harnesses.<name>:` map (env overlays, `post_init`/`pre_run` appended after
+  the `agent.*` base hooks, config strategy, host-state mounts). `agent.*` is
+  the harness-agnostic base. The legacy `agent.claude_code` block is
+  deprecated — target `harnesses.claude` instead.
+- **Authentication happens in the container.** Host credentials are never
+  copied in; the user authenticates once inside the container (browser OAuth
+  flows are proxied to the host browser) and the token persists in the
+  harness config volume.
+
+Fetch `https://docs.clawker.dev/configuration` and the CLI reference for
+current field names and flags before giving harness-related guidance.
+
 **Important:** This skill intentionally avoids concrete details. Configurations,
 packages, APIs, and tooling evolve constantly — relying on training data or
 memorized syntax will produce stale or incorrect guidance. You must look up
@@ -99,9 +147,10 @@ Built-in defaults                 ← Lowest priority
 | `.clawker.yaml` (project) | Project-specific config shared with team — this is your default |
 | `~/.config/clawker/clawker.yaml` (user) | Only config that genuinely applies to ALL projects across every distro |
 
-User-level project config is dangerous because different projects use different
-base images. Fetch `https://docs.clawker.dev/configuration` to see the current
-schema before recommending what goes where.
+User-level project config is dangerous because build config (packages,
+stacks, run steps) is almost always project-specific. Fetch
+`https://docs.clawker.dev/configuration` to see the current schema before
+recommending what goes where.
 
 **For every config change you recommend, explicitly state which file it
 targets and why.** If the user hasn't told you which level, ASK.
@@ -291,10 +340,13 @@ integrates with.
    `https://docs.clawker.dev/configuration#user-settings-reference` for the
    current settings fields. See `reference/settings.md`.
 
-5. **Dockerfile template** — Read `reference/Dockerfile.tmpl` (bundled with
-   this skill). This is the actual Go template that generates the Dockerfile.
-   It shows you exactly what each config section produces and in what order.
-   Look for execution order, root vs user context, and injection points.
+5. **Dockerfile templates** — Read `reference/Dockerfile.base.tmpl` (shared
+   base image: packages, user setup, stacks, project instructions) and
+   `reference/Dockerfile.harness-image.tmpl` (harness image built FROM the
+   base), both bundled with this skill. These are the actual Go templates
+   that generate the image Dockerfiles — they show exactly what each config
+   section produces and in what order. Look for execution order, root vs
+   user context, and injection points.
 
 6. **Project config** — If the user's question involves project config
    discovery, layering, or build behavior, read `reference/project-config.md`.
@@ -334,11 +386,22 @@ integrates with.
     first. Fetch `https://docs.clawker.dev/monitoring` for field
     schemas and OTel attribute conventions.
 
-13. **Other topics** — For worktrees or other features, fetch
+13. **Bundles and extensions** — When the user asks about installing, sharing,
+    or authoring harnesses, stacks, or monitoring extensions — or about the
+    `bundles:` config key, the `clawker bundle *` commands, `build.stacks`,
+    `monitor.extensions`, loose convention directories, or qualified
+    `namespace.bundle.component` names — fetch the relevant page:
+    `https://docs.clawker.dev/bundles` (install/list/update/remove),
+    `https://docs.clawker.dev/harnesses`, `https://docs.clawker.dev/stacks`,
+    `https://docs.clawker.dev/monitoring-extensions` (consume/select), and the
+    `authoring-*` pages for writing them. Never guess a command or field — read
+    the page.
+
+14. **Other topics** — For worktrees or other features, fetch
     `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 
-14. **VCS egress security (git credential-exfil defense)** — When the task
+15. **VCS egress security (git credential-exfil defense)** — When the task
     involves firewall rules, git credentials, securing the agent's network, or
     "can the agent push to other repos / leak my token", read
     `reference/firewall-security.md`. It covers path-scoping `github.com` /
@@ -354,15 +417,15 @@ integrates with.
     anchored RE2 regex — single-quote it on the CLI) to close the prefix-bypass
     where `/repos/x` also admits `/repos/x-evil` on UGC-style hosts.
 
-15. **Claude Code host auth (`/login` prompts in containers)** — When the user
-    asks how `use_host_auth` shares their host login, or reports being prompted
-    for `/login` inside containers despite host auth being on, read
-    `reference/claude-code.md` (Authentication section). It covers the
-    create-time credential snapshot, why the config volume self-heals across
-    restarts, and the one-way host↔container model that explains why an expired
-    host refresh token
-    forces a one-time re-login (and why re-authenticating on the host fixes only
-    future containers).
+16. **In-container authentication (`/login` prompts in containers)** — When the
+    user asks how container auth works, whether their host login is shared, or
+    why a container asked them to log in, read `reference/claude-code.md`
+    (Authentication section). The model: host credentials are never copied
+    into containers; the user authenticates once inside the container (browser
+    OAuth flows are proxied to the host browser automatically) and the
+    credential persists in the harness config volume — so restarts and
+    recreates that reuse the volume stay logged in, while removing the volume
+    forces a fresh login.
 
 ### Step 4: Analyze — classify and decide placement
 
@@ -384,9 +447,9 @@ the correct section. The general priority order:
 2. **Build instructions** — for tools not in the package manager. Root
    instructions for system-level installs, user instructions for user-level.
 3. **Runtime only** — ONLY for commands that need the running container's
-   context (the `claude` CLI, the initialized config volume, mounted volumes).
-   The canonical runtime command is `claude mcp add`. Almost nothing else
-   belongs here.
+   context (the harness CLI, the initialized config volume, mounted volumes).
+   The canonical runtime command is `claude mcp add` (claude harness). Almost
+   nothing else belongs here.
 
 **Refer to the schema you fetched for exact field names.** Do not hardcode
 field names from memory — they may have changed.
@@ -420,9 +483,9 @@ Present the user with:
   firewall rules — and especially when the project forwards git credentials
   (the default) — offer to path-scope `github.com` / `api.github.com` (and
   `gitlab.com` or other VCS in use) **over HTTPS** to only the project's own
-  repo(s) plus needed git dependencies, always including the
-  `/anthropics/claude-code/refs/heads/main/` allow (Claude Code's auto-update
-  check). Then recommend `clawker monitor up` and watching firewall block
+  repo(s) plus needed git dependencies — when running the Claude Code harness,
+  always include the `/anthropics/claude-code/refs/heads/main/` allow (its
+  auto-update check). Then recommend `clawker monitor up` and watching firewall block
   events to discover any remaining critical dependency paths before adding
   them. This is clawker's defense against forwarded-credential exfil to
   arbitrary repos. Note the SSH caveat (port-22 git is opaque — no path
@@ -452,9 +515,11 @@ and the live rules store.)
 
 These are the things users consistently get wrong. Keep them in mind always:
 
-- **Firewall is deny-by-default.** Everything except a small set of hardcoded
-  Anthropic domains must be explicitly allowed. Fetch the current firewall
-  docs if you need the exact list.
+- **Firewall is deny-by-default.** Everything except the selected harness's
+  egress floor (the domains that harness needs to function, declared by its
+  bundle — Anthropic domains for the claude harness, OpenAI domains for codex)
+  must be explicitly allowed. Fetch the current firewall docs if you need the
+  exact list.
 
 - **Domain matching is exact unless you opt into a wildcard.** A bare domain
   (`example.com`, or any `add_domains` entry) matches **only that exact host** —
@@ -509,7 +574,7 @@ These are the things users consistently get wrong. Keep them in mind always:
 
 - **Runtime config is ONLY for runtime dependencies.** It runs once per
   config volume (guarded by a marker file). Its only legitimate use is
-  commands that require the `claude` CLI or the initialized config.
+  commands that require the harness CLI or the initialized config.
   Everything else belongs at build-time. This is the #1 configuration mistake.
 
 - **Config layering.** Clawker uses walk-up file discovery. Local overrides
@@ -517,14 +582,13 @@ These are the things users consistently get wrong. Keep them in mind always:
   user-level. Fetch `https://docs.clawker.dev/configuration` for the current
   merge behavior and field-level details.
 
-- **User-level config causes cross-project conflicts.** Different projects use
-  different base images with different package managers, package names, shell
-  behaviors, and available commands. User-level build config that works for one
-  project's distro will break another's. **During troubleshooting**, if a user
-  reports build failures from package managers, missing commands, or unexpected
-  shell behavior, **check user-level config first** — a stale or mismatched
-  user-level entry inherited by the current project is a common root cause.
-  Compare user-level build config against the project's base image.
+- **User-level config causes cross-project conflicts.** Build config written
+  for one project (packages, run steps assuming that project's tools, files,
+  or paths) is inherited by every project and breaks the others' image builds.
+  **During troubleshooting**, if a user reports build failures from package
+  installs, missing commands, or unexpected shell behavior, **check user-level
+  config first** — a stale or project-specific user-level entry inherited by
+  the current project is a common root cause.
 
 - **MCP discovery: use clawker config, not host config.** When investigating
   existing MCP servers, read the project's clawker config — not the host's
@@ -538,10 +602,10 @@ These are the things users consistently get wrong. Keep them in mind always:
 
 - **`pre_run` runs on every start — the once-vs-every counterpart.** `agent.pre_run`
   runs on **every** container start (`run`/`start`/`restart`), in the workdir,
-  right before Claude Code (the CMD) launches. No marker; the CLI re-delivers it
+  right before the harness (the CMD) launches. No marker; the CLI re-delivers it
   fresh each start, so edits and removals take effect on the next start without
   recreating the container. A non-zero exit is fatal — the container fails to
-  reach ready and Claude Code never starts. Use it for setup that must re-run
+  reach ready and the harness never starts. Use it for setup that must re-run
   each boot (e.g. `npm install` against a tmpfs `node_modules`, or `package.json`
   drift) — the every-start cases `post_init` can't cover because its marker blocks
   re-runs.

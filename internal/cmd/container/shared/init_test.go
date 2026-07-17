@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
@@ -237,9 +239,10 @@ func TestCreateContainer_ConfigFresh(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	// Point CLAUDE_CONFIG_DIR to non-existent path so InitContainerConfig fails
-	// (proving it WAS called when ConfigCreated=true)
-	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-init-test-dir")
+	// Unreadable settings.json forces the staging read (json_keys) to fail,
+	// proving InitContainerConfig WAS called for the fresh volume. A missing
+	// host dir would be a soft skip, not an error.
+	seedUnreadableHostConfig(t)
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -278,14 +281,40 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	fake.AssertCalledN(t, "CopyToContainer", 2)
 }
 
+func TestCreateContainer_HarnessPostInit(t *testing.T) {
+	// post_init set ONLY on the selected harness's map entry (no shared
+	// agent.post_init) → still injected. Proves the create path composes
+	// per-harness hooks rather than reading agent.post_init directly.
+	setupAuthEnv(t)
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	cfg := testConfig()
+	harnessCfg := testHarnessCfg("")
+	harnessCfg.PostInit = "claude mcp add foo\n"
+	cfg.Harnesses = map[string]config.HarnessConfig{
+		consts.DefaultHarnessName: *harnessCfg,
+	}
+
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// Bootstrap material + post-init script.
+	fake.AssertCalledN(t, "CopyToContainer", 2)
+}
+
 func TestCreateContainer_NoPostInit(t *testing.T) {
 	// No PostInit configured → no CopyToContainer calls
 	cfg := testConfig()
-	useHostAuth := false
-	cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
-		UseHostAuth: &useHostAuth,
-		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
-	}
+	cfg.Agent.ClaudeCode = testHarnessCfg("fresh")
 
 	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
@@ -455,10 +484,10 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test"
 
-	// Config init will fail because CLAUDE_CONFIG_DIR is invalid.
-	// This happens AFTER volumes are created but BEFORE ContainerCreate,
-	// which triggers the deferred cleanup of those newly-created volumes.
-	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
+	// Config init fails on an unreadable staged file. This happens AFTER
+	// volumes are created but BEFORE ContainerCreate, which triggers the
+	// deferred cleanup of those newly-created volumes.
+	seedUnreadableHostConfig(t)
 
 	_, err := CreateContainer(context.Background(),
 		testCreateConfig(fake, testConfig(), containerOpts, cmd))
@@ -531,7 +560,7 @@ func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 	containerOpts.Agent = "test"
 
 	// Config init will fail (triggering cleanup), and VolumeRemove will also fail
-	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
+	seedUnreadableHostConfig(t)
 
 	_, err := CreateContainer(context.Background(),
 		testCreateConfig(fake, testConfig(), containerOpts, cmd))
@@ -650,4 +679,14 @@ func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 
 	require.Equal(t, "/custom/work/dir", capturedWorkingDir,
 		"WorkingDir should match the explicit --workdir value")
+}
+
+// seedUnreadableHostConfig points CLAUDE_CONFIG_DIR at a dir whose
+// settings.json cannot be read, forcing the copy-staging step to error —
+// the deterministic "init ran" signal (missing host state is a soft skip).
+func seedUnreadableHostConfig(t *testing.T) {
+	t.Helper()
+	hostDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(hostDir, "settings.json"), []byte("{}"), 0o000))
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 }

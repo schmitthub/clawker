@@ -3,9 +3,11 @@ package monitor
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -36,6 +38,14 @@ var PrometheusTemplate string
 //
 //go:embed all:templates/opensearch-bootstrap
 var OpenSearchBootstrapFS embed.FS
+
+// Rendered-file modes for the generated (non-secret) monitoring config
+// tree; bootstrap.sh runs as the container entrypoint and needs +x.
+const (
+	bootstrapFileMode   = os.FileMode(0o644)
+	bootstrapScriptMode = os.FileMode(0o755)
+	bootstrapDirMode    = os.FileMode(0o755)
+)
 
 // Template file names for writing to disk
 const (
@@ -119,15 +129,40 @@ type MonitorTemplateData struct {
 	// /opensearch-bootstrap. Lifted to a template field so the compose
 	// volume mount and the on-disk layout stay in sync from one constant.
 	OpenSearchBootstrapDirName string
+
+	// Units is the collector routing data for every seeded monitoring unit
+	// in the ledger union: otel-config.yaml.tmpl ranges over it to emit
+	// per-lane exporters, routing-table entries, pipelines, and metric
+	// rename statements. An unselected extension contributes nothing — a
+	// record whose service.name matches no seeded lane falls to the
+	// untrusted_unrouted debug pipeline.
+	Units []UnitRouting
+
+	// ISMIndexPatternsJSON is the shared retention policy's
+	// ism_template.index_patterns value: the infra indices plus every
+	// seeded default-retention unit lane index, JSON-encoded Go-side so
+	// the template never hand-quotes.
+	ISMIndexPatternsJSON string
 }
 
-// NewMonitorTemplateData constructs template data from Settings.
-// Service hostnames are populated from [consts.MonitoringService*] —
+// NewMonitorTemplateData constructs template data from Settings and the seeded
+// unit union. Service hostnames are populated from [consts.MonitoringService*] —
 // changing a hostname in consts propagates here without further edits.
-// Settings.Monitoring drives ports/heap.
-func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
+// Settings.Monitoring drives ports/heap; the union drives collector routing and
+// the shared retention policy's index patterns.
+func NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemplateData, error) {
+	routings, err := BuildUnitRoutings(units)
+	if err != nil {
+		return MonitorTemplateData{}, err
+	}
+	ismPatterns, err := ismIndexPatternsJSON(units)
+	if err != nil {
+		return MonitorTemplateData{}, err
+	}
 	mon := s.Monitoring
 	return MonitorTemplateData{
+		Units:                       routings,
+		ISMIndexPatternsJSON:        ismPatterns,
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
 		OtelInfraPort:               int(mon.OtelInfraPort),
@@ -146,7 +181,27 @@ func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 		OpenSearchDashboardsImage:   OpenSearchDashboardsImage,
 		CurlImage:                   CurlImage,
 		OpenSearchBootstrapDirName:  OpenSearchBootstrapDirName,
+	}, nil
+}
+
+// ismIndexPatternsJSON builds the shared retention policy's index
+// pattern list: the reserved infra indices plus every active unit lane
+// that participates in default retention. Custom-retention lanes ship
+// their own unit policies instead.
+func ismIndexPatternsJSON(units []SeededUnit) (string, error) {
+	patterns := consts.ReservedMonitoringIndices()
+	for _, u := range units {
+		for _, lane := range u.Manifest.Logs {
+			if lane.Retention == "" || lane.Retention == config.MonitoringRetentionDefault {
+				patterns = append(patterns, lane.Index)
+			}
+		}
 	}
+	raw, err := json.Marshal(patterns)
+	if err != nil {
+		return "", fmt.Errorf("monitor: encode ISM index patterns: %w", err)
+	}
+	return string(raw), nil
 }
 
 // RenderTemplate renders a Go text/template with the given data.
@@ -165,67 +220,204 @@ func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string,
 }
 
 // WriteOpenSearchBootstrap mirrors [OpenSearchBootstrapFS] into destDir,
-// preserving directory structure. Files ending in `.tmpl` are rendered
-// with [MonitorTemplateData] and written with the `.tmpl` suffix
-// stripped; everything else (JSON, NDJSON) is copied verbatim.
+// preserving directory structure, then overlays every currently-resolvable
+// monitoring unit's artifacts into the same category dirs. Files ending in
+// `.tmpl` are rendered with [MonitorTemplateData] and written with the `.tmpl`
+// suffix stripped; everything else (JSON, NDJSON) is copied verbatim. Unit files
+// are always verbatim — units carry no templates.
+//
+// The overlaid units are the current project's projection (the "seed
+// from cwd" set), NOT the full ledger union: a foreign project's REST artifacts
+// were applied by its own `monitor up` and persist in the OpenSearch volume, so
+// re-materializing them here is unnecessary and their on-disk trees may not even
+// be resolvable from this project. The collector config, by contrast, is
+// rendered over the whole union so foreign routings survive.
+//
+// A unit artifact whose path collides with a core file or another unit's is a
+// hard error naming both provenances: PUT names are basename-derived and index
+// templates reference pipelines by name, so a silent overwrite would rewrite
+// cluster behavior. Saved-object IDs are collision-checked across every ndjson
+// line and explore panel filename for the same reason
+// (`_import?overwrite=true` is last-write-wins).
 //
 // The destination is the workdir subdir bind-mounted into the
-// clawker-opensearch-bootstrap container at /opensearch-bootstrap, so
-// the on-disk layout mirrors what the script reads at runtime. Callers
-// (monitor init) should pass `<monitorDir>/<OpenSearchBootstrapDirName>`.
+// clawker-opensearch-bootstrap container at /opensearch-bootstrap, so the
+// on-disk layout mirrors what the script reads at runtime. Callers should pass
+// `<monitorDir>/<OpenSearchBootstrapDirName>`.
 //
-// Idempotent: existing files are unconditionally overwritten. `monitor
-// init` already enforces the `--force` gate at the top level, so when
-// this runs the caller has decided to (re)render.
-func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData) error {
-	const root = "templates/" + OpenSearchBootstrapDirName
-
-	// destDir holds only generated content — wipe it so files removed from
-	// the embedded tree don't linger and get re-imported by bootstrap.sh,
-	// which loops over every file in the rendered dir.
+// Idempotent: destDir holds only generated content and is wiped first, so files
+// removed from the embedded tree — or belonging to a deselected unit — don't
+// linger and get re-imported by bootstrap.sh's directory loops.
+func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData, units []ResolvedUnit) error {
 	if err := os.RemoveAll(destDir); err != nil {
 		return fmt.Errorf("clear bootstrap dir %s: %w", destDir, err)
 	}
 
-	return fs.WalkDir(OpenSearchBootstrapFS, root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	written := map[string]string{} // rel path → provenance
+	if err := writeBootstrapCore(destDir, data, written); err != nil {
+		return err
+	}
+	for _, u := range units {
+		if err := overlayUnitArtifacts(destDir, u, written); err != nil {
 			return err
 		}
+	}
+	return validateSavedObjectIDs(destDir, written)
+}
 
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return fmt.Errorf("relpath %s: %w", path, err)
+// writeBootstrapCore mirrors the embedded core tree into destDir,
+// recording every written rel path.
+func writeBootstrapCore(destDir string, data MonitorTemplateData, written map[string]string) error {
+	const root = "templates/" + OpenSearchBootstrapDirName
+
+	err := fs.WalkDir(OpenSearchBootstrapFS, root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return fmt.Errorf("relpath %s: %w", path, relErr)
 		}
 		if rel == "." {
-			return os.MkdirAll(destDir, 0o755)
+			return os.MkdirAll(destDir, bootstrapDirMode)
 		}
-
-		outPath := filepath.Join(destDir, rel)
-
 		if d.IsDir() {
-			return os.MkdirAll(outPath, 0o755)
+			return os.MkdirAll(filepath.Join(destDir, rel), bootstrapDirMode)
 		}
+		return writeCoreFile(destDir, path, rel, data, written)
+	})
+	if err != nil {
+		return fmt.Errorf("mirror bootstrap core: %w", err)
+	}
+	return nil
+}
 
-		raw, err := OpenSearchBootstrapFS.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read embed %s: %w", path, err)
+// writeCoreFile writes one embedded core file (rendering .tmpl sources)
+// and records its rel path.
+func writeCoreFile(destDir, srcPath, rel string, data MonitorTemplateData, written map[string]string) error {
+	raw, err := OpenSearchBootstrapFS.ReadFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("read embed %s: %w", srcPath, err)
+	}
+
+	outPath := filepath.Join(destDir, rel)
+	mode := bootstrapFileMode
+	if strings.HasSuffix(outPath, ".tmpl") {
+		rendered, renderErr := RenderTemplate(filepath.Base(srcPath), string(raw), data)
+		if renderErr != nil {
+			return fmt.Errorf("render %s: %w", srcPath, renderErr)
 		}
-
-		mode := os.FileMode(0o644)
-		if strings.HasSuffix(outPath, ".tmpl") {
-			rendered, err := RenderTemplate(filepath.Base(path), string(raw), data)
-			if err != nil {
-				return fmt.Errorf("render %s: %w", path, err)
-			}
-			raw = []byte(rendered)
-			outPath = strings.TrimSuffix(outPath, ".tmpl")
+		raw = []byte(rendered)
+		outPath = strings.TrimSuffix(outPath, ".tmpl")
+		rel = strings.TrimSuffix(rel, ".tmpl")
+		if strings.HasSuffix(outPath, ".sh") {
 			// bootstrap.sh runs as the container entrypoint — needs +x.
-			mode = 0o755
+			// Rendered JSON templates (the datasource) stay plain files.
+			mode = bootstrapScriptMode
 		}
+	}
 
-		if err := os.WriteFile(outPath, raw, mode); err != nil {
+	if writeErr := os.WriteFile(outPath, raw, mode); writeErr != nil {
+		return fmt.Errorf("write %s: %w", outPath, writeErr)
+	}
+	written[filepath.ToSlash(rel)] = "clawker core"
+	return nil
+}
+
+// overlayUnitArtifacts copies one active unit's artifact files into the
+// rendered tree, erroring on any path collision.
+func overlayUnitArtifacts(destDir string, u ResolvedUnit, written map[string]string) error {
+	if u.Unit == nil {
+		return fmt.Errorf("monitor: unit %q has no loaded artifacts", u.Name)
+	}
+	provenance := fmt.Sprintf("unit %q (%s)", u.Name, u.Source)
+	err := u.Unit.WalkArtifacts(func(relPath string, content []byte) error {
+		if owner, taken := written[relPath]; taken {
+			return fmt.Errorf(
+				"monitor: bootstrap file %s from %s collides with %s — artifact names must not overlap",
+				relPath, provenance, owner,
+			)
+		}
+		outPath := filepath.Join(destDir, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(outPath), bootstrapDirMode); err != nil {
+			return fmt.Errorf("mkdir for %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(outPath, content, bootstrapFileMode); err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
+		written[relPath] = provenance
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("overlay unit %q: %w", u.Name, err)
+	}
+	return nil
+}
+
+// validateSavedObjectIDs scans every rendered saved-object source — each
+// ndjson line's (type, id) and each explore panel filename (its id) —
+// and errors on a duplicate ID across providers. Dashboards `_import`
+// runs with overwrite=true, so an undetected duplicate would be silent
+// last-write-wins.
+func validateSavedObjectIDs(destDir string, written map[string]string) error {
+	claim := newSavedObjectClaimer()
+
+	for rel, provenance := range written {
+		dir := path.Dir(rel)
+		switch {
+		case dir == MonitoringDirSavedObjects && strings.HasSuffix(rel, ndjsonExt):
+			if err := scanNDJSONIDs(destDir, rel, provenance, claim); err != nil {
+				return err
+			}
+		case dir == path.Join(MonitoringDirSavedObjects, MonitoringDirExplore):
+			id := strings.TrimSuffix(path.Base(rel), jsonExt)
+			if err := claim(savedObjectTypeExplore, id, provenance); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// newSavedObjectClaimer returns a closure recording (type, id) ownership
+// and erroring when two providers ship the same saved-object ID.
+func newSavedObjectClaimer() func(typ, id, provenance string) error {
+	type soKey struct{ typ, id string }
+	owners := map[soKey]string{}
+	return func(typ, id, provenance string) error {
+		key := soKey{typ, id}
+		if owner, taken := owners[key]; taken && owner != provenance {
+			return fmt.Errorf(
+				"monitor: saved object %s/%s shipped by both %s and %s — IDs must be unique across units",
+				typ, id, owner, provenance,
+			)
+		}
+		owners[key] = provenance
+		return nil
+	}
+}
+
+// scanNDJSONIDs claims each (type, id) pair in one rendered ndjson file.
+func scanNDJSONIDs(destDir, rel, provenance string, claim func(typ, id, provenance string) error) error {
+	raw, err := os.ReadFile(filepath.Join(destDir, filepath.FromSlash(rel)))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", rel, err)
+	}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var obj struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if jsonErr := json.Unmarshal([]byte(line), &obj); jsonErr != nil {
+			return fmt.Errorf("monitor: %s (%s): malformed ndjson line: %w", rel, provenance, jsonErr)
+		}
+		if claimErr := claim(obj.Type, obj.ID, provenance); claimErr != nil {
+			return claimErr
+		}
+	}
+	return nil
 }

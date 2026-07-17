@@ -26,6 +26,7 @@ func TestKindToType_AllKinds(t *testing.T) {
 		{storage.KindTime, "timestamp"},
 		{storage.KindMap, "key-value map"},
 		{storage.KindStructSlice, "object list"},
+		{storage.KindStructMap, "object map"},
 	}
 	for _, tc := range cases {
 		if got := kindToType(tc.kind); got != tc.want {
@@ -67,7 +68,6 @@ func TestRenderYAMLSchema_DescriptionsAsComments(t *testing.T) {
 
 	// Verify descriptions appear as YAML comments.
 	wantComments := []string{
-		"# Starting Docker image",
 		"# System packages",
 		"# Domain or IP the container needs to reach",
 		"# URL path to match",

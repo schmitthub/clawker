@@ -1,0 +1,1 @@
+{"policy": {"description": "synthetic custom retention", "default_state": "hot", "states": [{"name": "hot", "actions": [], "transitions": []}], "ism_template": [{"index_patterns": ["synthetic-codex"], "priority": 110}]}}

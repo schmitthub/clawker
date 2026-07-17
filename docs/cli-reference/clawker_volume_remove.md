@@ -30,7 +30,7 @@ clawker volume remove VOLUME [VOLUME...] [flags]
   clawker volume remove clawker.myapp.dev-workspace
 
   # Remove multiple volumes
-  clawker volume rm clawker.myapp.dev-workspace clawker.myapp.dev-config
+  clawker volume rm clawker.myapp.dev-workspace clawker.myapp.dev-claude.config
 
   # Force remove a volume
   clawker volume remove --force clawker.myapp.dev-workspace

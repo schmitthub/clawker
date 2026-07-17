@@ -4,9 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/cmdutil"
 )
 
 func TestValidateScope(t *testing.T) {

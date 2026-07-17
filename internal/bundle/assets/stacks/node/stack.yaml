@@ -1,0 +1,8 @@
+description: >-
+  The modern Node.js stack: root-global Node LTS on /usr/local
+  (GPG-verified prebuilt, floating patch within the NODE_VERSION line,
+  NODE_USE_SYSTEM_CA trust of the OS CA bundle) with TypeScript baked
+  root-global, plus nvm as the per-user runtime version switcher. The baked
+  installs skip themselves when the image already carries an adequate node
+  (major >= NODE_MIN_MAJOR) or an existing tsc; nvm skips itself when
+  ~/.nvm exists.

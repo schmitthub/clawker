@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -25,14 +27,31 @@ var twoRules = []config.EgressRule{
 	{Dst: "git.example.com", Proto: "ssh", Port: "22", Action: "allow"},
 }
 
+// harnessFloor is the selected harness's required egress floor, resolved the
+// same way the command resolves it (configured default → embedded claude
+// bundle; the config dir is isolated per test so no materialized bundle can
+// interfere). Floor content correctness is guarded by the bundler egress
+// tests — refresh tests only care that the floor is prepended.
+func harnessFloor(t *testing.T) []config.EgressRule {
+	t.Helper()
+	blank := configmocks.NewBlankConfig()
+	blank.ProjectEgressRulesFunc = func() []config.EgressRule { return nil }
+	floor, err := bundler.EgressRules(blank, "")
+	require.NoError(t, err)
+	return floor
+}
+
 // refreshFactory wires a refresh-ready Factory: the given config with its
-// EgressRules overridden to return the supplied rules, a project manager whose
-// CurrentProject succeeds (or returns currentProjErr to simulate "no project"),
-// and the captured streams.
+// ProjectEgressRules overridden to return the supplied rules, a project
+// manager whose CurrentProject succeeds (or returns currentProjErr to
+// simulate "no project"), and the captured streams. The config dir is
+// isolated so harness floor resolution deterministically falls back to the
+// embedded claude bundle.
 func refreshFactory(t *testing.T, cfg *configmocks.ConfigMock, rules []config.EgressRule, currentProjErr error) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())
 	f, out, errOut := testFactoryWithStreams(t)
-	cfg.EgressRulesFunc = func() []config.EgressRule { return rules }
+	cfg.ProjectEgressRulesFunc = func() []config.EgressRule { return rules }
 	f.Config = func() (config.Config, error) { return cfg, nil }
 	f.ProjectManager = func() (project.ProjectManager, error) {
 		return &projectmocks.ProjectManagerMock{
@@ -47,9 +66,10 @@ func refreshFactory(t *testing.T, cfg *configmocks.ConfigMock, rules []config.Eg
 	return f, out, errOut
 }
 
-// TestRefreshCmd_SyncsProjectRules asserts refresh converts the project's
-// EgressRules and passes the full set to FirewallAddRules — the same sync the
-// container-start path runs — and renders the per-status summary.
+// TestRefreshCmd_SyncsProjectRules asserts refresh composes the harness
+// egress floor with the project's rules and passes the full set to
+// FirewallAddRules — the same sync the container-start path runs — and
+// renders the per-status summary.
 func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 	f, out, _ := refreshFactory(t, configmocks.NewBlankConfig(), twoRules, nil)
 	var got *adminv1.FirewallAddRulesRequest
@@ -57,11 +77,13 @@ func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
+				statuses := make([]adminv1.AddRuleStatus, len(req.GetRules()))
+				for i := range statuses {
+					statuses[i] = adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED
+				}
+				statuses[0] = adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED
 				return &adminv1.FirewallAddRulesResult{
-					Statuses: []adminv1.AddRuleStatus{
-						adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED,
-						adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED,
-					},
+					Statuses:       statuses,
 					StackRestarted: true,
 				}, nil
 			},
@@ -74,7 +96,8 @@ func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 
 	require.NotNil(t, got)
-	want := adminv1.EgressRulesToProto(twoRules)
+	floor := harnessFloor(t)
+	want := adminv1.EgressRulesToProto(append(append([]config.EgressRule{}, floor...), twoRules...))
 	require.Len(t, got.GetRules(), len(want))
 	for i, w := range want {
 		assert.Equal(t, w.GetDst(), got.GetRules()[i].GetDst())
@@ -82,7 +105,7 @@ func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 		assert.Equal(t, w.GetPort(), got.GetRules()[i].GetPort())
 		assert.Equal(t, w.GetAction(), got.GetRules()[i].GetAction())
 	}
-	assert.Contains(t, out.String(), "1 added, 0 updated, 1 unchanged")
+	assert.Contains(t, out.String(), fmt.Sprintf("1 added, 0 updated, %d unchanged", len(want)-1))
 }
 
 // TestRefreshCmd_FirewallDisabled_NoRPC asserts the settings gate fires before
@@ -138,13 +161,12 @@ func TestRefreshCmd_AllUnchanged_PrintsInSyncLine(t *testing.T) {
 	f, out, errOut := refreshFactory(t, configmocks.NewBlankConfig(), twoRules, nil)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return &adminv1mocks.AdminServiceClientMock{
-			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
-				return &adminv1.FirewallAddRulesResult{
-					Statuses: []adminv1.AddRuleStatus{
-						adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED,
-						adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED,
-					},
-				}, nil
+			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				statuses := make([]adminv1.AddRuleStatus, len(req.GetRules()))
+				for i := range statuses {
+					statuses[i] = adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED
+				}
+				return &adminv1.FirewallAddRulesResult{Statuses: statuses, StackRestarted: false}, nil
 			},
 		}, nil
 	}
@@ -166,9 +188,13 @@ func TestRefreshCmd_StackNotRestarted_PrintsNote(t *testing.T) {
 	f, out, errOut := refreshFactory(t, configmocks.NewBlankConfig(), oneRule, nil)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return &adminv1mocks.AdminServiceClientMock{
-			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				statuses := make([]adminv1.AddRuleStatus, len(req.GetRules()))
+				for i := range statuses {
+					statuses[i] = adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED
+				}
 				return &adminv1.FirewallAddRulesResult{
-					Statuses:       []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED},
+					Statuses:       statuses,
 					StackRestarted: false,
 				}, nil
 			},

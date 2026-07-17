@@ -60,7 +60,15 @@ const senderDrainGrace = 2 * time.Second
 // invokes it to fork the user CMD; threaded through as a non-optional
 // dependency so a wiring bug fails loud at clawkerdServer construction
 // rather than silently no-op'ing on first AgentReady.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter, requestExit func(int), state agentState) error {
+func runSession(
+	stream clawkerdv1.ClawkerdService_SessionServer,
+	log *logger.Logger,
+	register *registerCoordinator,
+	spawnEntry func(string) error,
+	progress *progressReporter,
+	requestExit func(int),
+	state agentState,
+) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -180,7 +188,7 @@ type session struct {
 	// the process lifetime. nil rejects with Error{IO_ERROR} so a
 	// wiring bug surfaces as a typed terminal failure rather than a
 	// silent timeout.
-	spawnEntry func() error
+	spawnEntry func(string) error
 
 	// progress drives the user-facing TTY boot-status reporter (plain
 	// status lines, no animation). Owned by main(); shared across every
@@ -325,7 +333,7 @@ var stageReaperPanicHookForTest func(stageIndex int, isFinal bool)
 // the next Session command (e.g. Hello reach-check) would race the
 // child's first scheduling slice. Keep this synchronous so the wire
 // order matches the kernel order.
-func (s *session) handleAgentReady(ctx context.Context, commandID string) {
+func (s *session) handleAgentReady(ctx context.Context, commandID, defaultCmd string) {
 	// Mirror the handleRegisterRequired recover pattern: a panic in
 	// the spawn path would otherwise kill clawkerd (PID 1) and the
 	// container with no diagnostic surface. Recover, log structurally,
@@ -366,7 +374,7 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 	// (errAlreadySpawned path) cleanly no-ops.
 	s.progress.Final()
 
-	err := s.spawnEntry()
+	err := s.spawnEntry(defaultCmd)
 	if err != nil && !errors.Is(err, errAlreadySpawned) {
 		s.log.Error().Err(err).
 			Str("event", "agent_ready_spawn_failed").
@@ -863,7 +871,7 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 				"command_id required"))
 			return
 		}
-		s.handleAgentReady(ctx, cmd.CommandId)
+		s.handleAgentReady(ctx, cmd.GetCommandId(), p.AgentReady.GetDefaultCmd())
 	case *clawkerdv1.Command_AgentInitialized:
 		if cmd.CommandId == "" {
 			s.send(ctx, errResponse("",

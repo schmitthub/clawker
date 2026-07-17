@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
@@ -75,13 +74,6 @@ func TestWorktreeGitProtection_E2E(t *testing.T) {
 	initRes := h.Run("project", "init", "wt-protect", "--yes", "--preset", "Bare")
 	require.NoError(t, initRes.Err, "init failed\nstdout: %s\nstderr: %s",
 		initRes.Stdout, initRes.Stderr)
-
-	// use_host_auth: false because the test env has no Claude credentials.
-	setup.WriteYAML(t, testenv.ProjectConfigLocal, setup.ProjectDir, `
-agent:
-  claude_code:
-    use_host_auth: false
-`)
 
 	buildRes := h.Run("build", "--progress=none")
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",

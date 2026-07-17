@@ -175,20 +175,26 @@ func ContainerNamePrefix(project string) string {
 // The purpose parameter is not validated as it is always a hardcoded internal string.
 //
 // Volume-name purpose suffixes. VolumeName composes volume names as
-// "clawker.<project>.<agent>-<purpose>". When adding a new volume
-// purpose: declare it as a const here AND append to VolumePurposes so
-// any future caller can reference the typed name instead of a stringly
-// literal.
+// "clawker.<project>.<agent>-<purpose>". History and workspace are clawker
+// infrastructure in the flat purpose namespace; harness-declared volumes and
+// the clawker lifecycle volume are harness-scoped via HarnessVolumeName.
+// VolumePurposes drives the removal fallback for unlabeled volumes and keeps
+// the legacy pre-multi-harness flat "config" and "clawker" purposes so old
+// agents still clean up fully.
 const (
-	VolumePurposeConfig    = "config"
-	VolumePurposeHistory   = "history"
-	VolumePurposeWorkspace = "workspace"
+	VolumePurposeHistory   = consts.VolumePurposeHistory
+	VolumePurposeWorkspace = consts.VolumePurposeWorkspace
+	VolumePurposeClawker   = consts.VolumePurposeClawker
+	// legacyVolumePurposeConfig is the pre-multi-harness config volume
+	// suffix, retained for cleanup of volumes created by older versions.
+	legacyVolumePurposeConfig = "config"
 )
 
 var VolumePurposes = []string{
-	VolumePurposeConfig,
+	legacyVolumePurposeConfig,
 	VolumePurposeHistory,
 	VolumePurposeWorkspace,
+	VolumePurposeClawker,
 }
 
 func VolumeName(project, agent, purpose string) (string, error) {
@@ -204,10 +210,77 @@ func VolumeName(project, agent, purpose string) (string, error) {
 	return fmt.Sprintf("%s.%s-%s", NamePrefix, agent, purpose), nil
 }
 
-// ImageTag generates image tag: clawker-project:latest
-func ImageTag(project string) string {
-	if project == "" {
-		return NamePrefix + ":latest"
+// HarnessVolumeName generates the name for a harness-scoped volume:
+// clawker.<project>.<agent>-<harness>.<volume>. Bundle-declared persisted
+// dirs and the clawker lifecycle volume are keyed by harness so two harnesses
+// that declare the same volume name (both shipped harnesses declare "config")
+// can never land on one another's state — the volume holds harness config
+// AND the in-container login the user authenticated there.
+//
+// The harness segment is the harness's exact selection spelling: a bare
+// floor/loose name, or the qualified namespace.bundle.component address for
+// an installed-bundle harness (loadHarnessResolved puts that spelling in
+// Bundle.Name). Segments join via consts.JoinIdentity — the shared
+// address-separator helper — never a hardcoded separator.
+//
+// Injectivity — FOR A FIXED (project, agent) PAIR: the harness segment must
+// satisfy consts.ValidateHarnessRef (bare = one dot-free token, qualified =
+// exactly three dot-free tokens) and the volume segment consts.ValidateName
+// (one dot-free token). The joined purpose therefore carries exactly one dot
+// for a bare harness and exactly three for a qualified one, and splitting on
+// dots recovers the pair — with project and agent fixed, no two (harness,
+// volume) pairs can compose the same volume name. The bundle-load front door
+// enforces the same volume-name rule (bundler.validateVolumeSpec);
+// re-validating here makes that a local invariant of this function instead
+// of a cross-package promise.
+//
+// The proof does NOT extend across agents: the agent segment joins the
+// harness with "-", and agents (ValidateResourceName) and harness names
+// (nameRe) both permit interior hyphens, so agent "dev" + harness "my-fork"
+// composes the same name as agent "dev-my" + harness "fork". That aliasing
+// forces equal names with DIFFERENT harness labels, so EnsureHarnessVolume's
+// ownership check — not this composition — is what refuses it. (The same
+// cross-agent ambiguity existed under the pre-harness flat scheme.)
+func HarnessVolumeName(project, agent, harness, volume string) (string, error) {
+	if err := consts.ValidateHarnessRef(harness); err != nil {
+		return "", fmt.Errorf("invalid harness name: %w", err)
 	}
-	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
+	if err := consts.ValidateName(volume); err != nil {
+		return "", fmt.Errorf("invalid harness volume name: %w", err)
+	}
+	return VolumeName(project, agent, consts.JoinIdentity(harness, volume))
+}
+
+// ImageTag generates the legacy image tag: clawker-project:latest. New
+// builds tag by harness (HarnessImageTag); resolution still accepts :latest
+// as the legacy fallback for images built before harness tags existed.
+func ImageTag(project string) string {
+	return imageRef(project, consts.ImageTagLatest)
+}
+
+// HarnessImageTag generates the harness-keyed image tag:
+// clawker-<project>:<harness>. The tag IS the harness registry key.
+func HarnessImageTag(project, harnessName string) string {
+	return imageRef(project, harnessName)
+}
+
+// DefaultAliasImageTag is the alias tag applied to the default
+// harness's image: clawker-<project>:default. Run/create resolve it when no
+// explicit tag is selected.
+func DefaultAliasImageTag(project string) string {
+	return imageRef(project, consts.ImageTagDefaultAlias)
+}
+
+// BaseImageTag is the per-project shared base image tag:
+// clawker-<project>:base. Harness images build FROM it; it is never
+// runnable and never a harness selector.
+func BaseImageTag(project string) string {
+	return imageRef(project, consts.ImageTagBase)
+}
+
+func imageRef(project, tag string) string {
+	if project == "" {
+		return NamePrefix + ":" + tag
+	}
+	return fmt.Sprintf("%s-%s:%s", NamePrefix, project, tag)
 }

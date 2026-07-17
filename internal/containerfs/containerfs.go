@@ -1,7 +1,14 @@
-// Package containerfs prepares host Claude Code configuration for container injection.
+// Package containerfs prepares host harness configuration for container
+// injection, driven by the selected harness bundle's staging manifest
+// (config.Staging) — explicit host→container copy directives (glob-capable
+// src, optional JSON key allowlist, per-file skips, JSON path rewrites
+// host→container). Only host state OUTSIDE the workspace is staged; the
+// workspace arrives via mount. Credentials are never copied from the host —
+// the user authenticates in the container and the token family persists in
+// the config volume.
 //
-// This is a leaf package: it imports internal/config, internal/keyring, internal/logger, and stdlib only.
-// No docker imports allowed.
+// This is a leaf package: it imports internal/config, internal/logger, and
+// stdlib only. No docker imports allowed.
 package containerfs
 
 import (
@@ -14,62 +21,28 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/keyring"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// ResolveHostConfigDir returns the claude config dir ($CLAUDE_CONFIG_DIR or ~/.claude/).
-// Returns error if the directory doesn't exist. A relative $CLAUDE_CONFIG_DIR is
-// normalized to an absolute path against the current working directory so
-// downstream consumers (e.g. workspace.GetClaudeProjectsMount) get a usable
-// bind-mount source.
-func ResolveHostConfigDir() (string, error) {
-	if dir := os.Getenv(claudeConfigDirEnv); dir != "" {
-		abs, err := filepath.Abs(dir)
-		if err != nil {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q cannot be resolved to an absolute path: %w", dir, err)
-		}
-		info, err := os.Stat(abs)
-		if err != nil {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is invalid: %w", dir, abs, err)
-		}
-		if !info.IsDir() {
-			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q (resolved %q) is not a directory", dir, abs)
-		}
-		return abs, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	claudeDir := filepath.Join(home, consts.ClaudeDir)
-	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
-		return claudeDir, nil
-	}
-
-	return "", fmt.Errorf("claude config dir not found on host: checked $CLAUDE_CONFIG_DIR and ~/.claude/")
-}
-
-// ResolveHostProjectsDir returns <hostConfigDir>/projects when the directory
-// exists on the host. The bool result is false when the dir does not exist —
-// callers should skip the bind mount in that case rather than treating it as
-// an error. Errors from ResolveHostConfigDir (e.g. CLAUDE_CONFIG_DIR pointing
-// at a missing path) propagate verbatim. Uses os.Stat, so a symlink at the
-// path resolves to its target. Never creates the directory; that is Claude
-// Code's responsibility.
-func ResolveHostProjectsDir() (string, bool, error) {
-	hostConfigDir, err := ResolveHostConfigDir()
+// ResolveHostMountSource expands a manifest mount entry's host src and
+// returns it when the directory exists on the host. The bool result is
+// false when the dir does not exist — callers should skip the bind mount in
+// that case rather than treating it as an error. Uses [os.Stat], so a
+// symlink at the path resolves to its target. Never creates the directory;
+// that is the harness's responsibility.
+func ResolveHostMountSource(src string) (string, bool, error) {
+	dir, err := config.ExpandHostPath(src)
 	if err != nil {
 		return "", false, err
 	}
-	dir := filepath.Join(hostConfigDir, consts.ClaudeProjectsSubdir)
 	info, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -82,118 +55,203 @@ func ResolveHostProjectsDir() (string, bool, error) {
 	return dir, true, nil
 }
 
-// PrepareClaudeConfig creates a staging directory with host claude config
-// prepared for container injection. Caller must call cleanup() when done.
-//
-// Handles: settings.json enabledPlugins merge, agents/, skills/, commands/,
-// plugins/ (excluding install-counts-cache.json), known_marketplaces.json path fixup, symlink resolution.
-func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error) {
+// PrepareConfig creates a staging directory with host harness state
+// prepared for container injection, following the manifest's staging spec:
+// explicit copy directives (optionally reduced to a JSON key allowlist,
+// with per-file skips + JSON path rewrites). Caller must call cleanup()
+// when done. The staged layout mirrors the container home: each directive
+// lands at <stagingDir>/<dest>.
+func PrepareConfig(
+	log *logger.Logger,
+	staging config.Staging,
+	containerHomeDir, containerWorkDir, hostProjectRoot string,
+) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "clawker-config-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create staging dir: %w", err)
 	}
 
 	cleanupFn := func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			log.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			log.Debug().Err(rmErr).Str("path", tmpDir).Msg("failed to remove staging dir")
 		}
 	}
 
-	stagingClaudeDir := filepath.Join(tmpDir, consts.ClaudeDir)
-	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
-		cleanupFn()
-		return "", nil, fmt.Errorf("create staging .claude dir: %w", err)
-	}
-
-	// settings.json — extract only enabledPlugins
-	if err := stageSettings(log, hostConfigDir, stagingClaudeDir); err != nil {
-		cleanupFn()
-		return "", nil, fmt.Errorf("stage settings.json: %w", err)
-	}
-
-	// Copy directories: agents/, skills/, commands/
-	for _, dir := range []string{agentsSubdir, skillsSubdir, commandsSubdir} {
-		if err := stageDirectory(log, hostConfigDir, stagingClaudeDir, dir); err != nil {
+	for _, c := range staging.Copy {
+		if stageErr := stageCopy(log, c, tmpDir, containerHomeDir, containerWorkDir, hostProjectRoot); stageErr != nil {
 			cleanupFn()
-			return "", nil, fmt.Errorf("stage %s: %w", dir, err)
+			return "", nil, fmt.Errorf("stage %s: %w", c.Src, stageErr)
 		}
-	}
-
-	// CLAUDE.md — user-level instructions
-	claudeMDSrc := filepath.Join(hostConfigDir, claudeMDFile)
-	if err := copyFile(claudeMDSrc, filepath.Join(stagingClaudeDir, claudeMDFile)); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			log.Debug().Msg("CLAUDE.md not found on host, skipping")
-		} else {
-			cleanupFn()
-			return "", nil, fmt.Errorf("stage CLAUDE.md: %w", err)
-		}
-	}
-
-	// plugins/ — copy with cache, rewrite JSON paths for container
-	if err := stagePlugins(log, hostConfigDir, stagingClaudeDir, containerHomeDir, containerWorkDir); err != nil {
-		cleanupFn()
-		return "", nil, fmt.Errorf("stage plugins: %w", err)
 	}
 
 	return tmpDir, cleanupFn, nil
 }
 
-// PrepareCredentials creates a staging directory with credentials.json.
-// Sources: keyring first, then fallback to $CLAUDE_CONFIG_DIR/.credentials.json.
-func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir string, cleanup func(), err error) {
-	tmpDir, err := os.MkdirTemp("", "clawker-creds-*")
+// stageCopy executes one explicit copy directive: expand the host-side src
+// (tokens, ~, env, glob), expand the container-side dest, and copy every
+// match into the staging mirror. Missing sources skip; sources inside the
+// project workspace are rejected — the workspace is mounted, never staged.
+func stageCopy(
+	log *logger.Logger,
+	c config.CopySpec,
+	tmpRoot, containerHomeDir, containerWorkDir, hostProjectRoot string,
+) error {
+	pattern, err := config.ExpandHostPath(c.Src)
 	if err != nil {
-		return "", nil, fmt.Errorf("create staging dir: %w", err)
+		return fmt.Errorf("expand src %q: %w", c.Src, err)
 	}
 
-	cleanupFn := func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			log.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+	matches, globbed, err := expandCopyMatches(pattern)
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		log.Debug().Str("src", pattern).Msg("staging source not found on host, skipping")
+		return nil
+	}
+
+	// A glob, a multi-match, or a trailing-slash dest lands each match
+	// UNDER dest; a single literal src copies TO dest exactly.
+	destRel := config.NormalizeContainerPath(c.Dest)
+	destIsDir := globbed || len(matches) > 1 || strings.HasSuffix(c.Dest, "/")
+
+	for _, match := range matches {
+		if guardErr := guardWorkspaceSrc(match, hostProjectRoot); guardErr != nil {
+			return guardErr
+		}
+
+		dst := filepath.Join(tmpRoot, filepath.FromSlash(destRel))
+		containerDest := containerHomeDir + "/" + destRel
+		if destIsDir {
+			dst = filepath.Join(dst, filepath.Base(match))
+			containerDest += "/" + filepath.Base(match)
+		}
+
+		if copyErr := stageMatch(log, c, match, dst, containerDest, containerWorkDir); copyErr != nil {
+			return copyErr
 		}
 	}
+	return nil
+}
 
-	stagingClaudeDir := filepath.Join(tmpDir, consts.ClaudeDir)
-	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
-		cleanupFn()
-		return "", nil, fmt.Errorf("create staging .claude dir: %w", err)
-	}
-
-	credsDst := filepath.Join(stagingClaudeDir, credentialsFile)
-
-	// Try keyring first. Write the blob verbatim — never round-trip through a
-	// typed struct, which would fabricate zero-value fields (e.g. a zero
-	// organizationUuid the user is not a member of, which the refresh endpoint
-	// rejects) and drop keys the struct does not model. This mirrors the
-	// byte-for-byte copy the file fallback below performs.
-	raw, keyringErr := keyring.GetClaudeCodeCredentialsRaw()
-	if keyringErr == nil {
-		if err := os.WriteFile(credsDst, []byte(raw), 0o600); err != nil {
-			cleanupFn()
-			return "", nil, fmt.Errorf("write credentials: %w", err)
+// expandCopyMatches resolves a directive's expanded src pattern to concrete
+// host paths: glob patterns fan out, literal paths stat (missing = no
+// matches, a soft skip for the caller).
+func expandCopyMatches(pattern string) ([]string, bool, error) {
+	if config.HasGlobMeta(pattern) {
+		matches, err := doublestar.FilepathGlob(pattern)
+		if err != nil {
+			return nil, true, fmt.Errorf("glob %s: %w", pattern, err)
 		}
-		log.Debug().Msg("credentials sourced from OS keyring")
-		return tmpDir, cleanupFn, nil
+		return matches, true, nil
 	}
-
-	log.Debug().Err(keyringErr).Msg("keyring credentials not available, trying file fallback")
-
-	// Fallback to file.
-	filePath := filepath.Join(hostConfigDir, credentialsFile)
-	data, fileErr := os.ReadFile(filePath)
-	if fileErr == nil && len(data) > 0 {
-		if err := os.WriteFile(credsDst, data, 0o600); err != nil {
-			cleanupFn()
-			return "", nil, fmt.Errorf("write credentials: %w", err)
+	if _, err := os.Stat(pattern); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
 		}
-		log.Debug().Str("path", filePath).Msg("credentials sourced from file fallback")
-		return tmpDir, cleanupFn, nil
+		return nil, false, fmt.Errorf("stat %s: %w", pattern, err)
+	}
+	return []string{pattern}, false, nil
+}
+
+// stageMatch copies one matched host path into the staging mirror,
+// dispatching on file-vs-directory.
+func stageMatch(
+	log *logger.Logger,
+	c config.CopySpec,
+	match, dst, containerDest, containerWorkDir string,
+) error {
+	resolved, err := filepath.EvalSymlinks(match)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Debug().Str("src", match).Msg("staging source vanished, skipping")
+			return nil
+		}
+		return fmt.Errorf("resolve symlinks for %s: %w", match, err)
 	}
 
-	cleanupFn()
-	return "", nil, fmt.Errorf(
-		"no claude code credentials found: authenticate on the host first or set agent.claude_code.use_host_auth: false",
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", resolved, err)
+	}
+
+	if info.IsDir() {
+		return stageCopyDir(log, c, match, resolved, dst, containerDest, containerWorkDir)
+	}
+	return stageCopyFile(log, c, resolved, dst)
+}
+
+// guardWorkspaceSrc rejects staging sources inside the project workspace.
+func guardWorkspaceSrc(src, hostProjectRoot string) error {
+	if hostProjectRoot == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(hostProjectRoot, src)
+	if err != nil {
+		// Unrelatable paths (e.g. different volumes) are by definition
+		// outside the workspace.
+		return nil //nolint:nilerr // unrelatable = outside the workspace = allowed
+	}
+	if rel != "." && strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	return fmt.Errorf(
+		"staging src %s is inside the project workspace %s — workspace content is mounted into the container, never staged",
+		src,
+		hostProjectRoot,
 	)
+}
+
+// stageCopyFile copies a single matched file, applying the directive's
+// optional JSON key allowlist.
+func stageCopyFile(log *logger.Logger, c config.CopySpec, src, dst string) error {
+	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o750); mkErr != nil {
+		return fmt.Errorf("create staging dir for %s: %w", dst, mkErr)
+	}
+
+	if len(c.JSONKeys) == 0 {
+		return copyFile(src, dst)
+	}
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", src, err)
+	}
+	out, keep, err := filterJSONKeys(data, c.JSONKeys, filepath.Base(src))
+	if err != nil {
+		return err
+	}
+	if !keep {
+		log.Debug().Str("file", src).Msg("no allowlisted keys present, skipping")
+		return nil
+	}
+	if writeErr := os.WriteFile(dst, out, 0o600); writeErr != nil {
+		return fmt.Errorf("write filtered %s: %w", dst, writeErr)
+	}
+	return nil
+}
+
+// stageCopyDir copies a matched directory recursively, honoring the
+// directive's skip list (paths relative to the directory root) and applying
+// its JSON path rewrites (host paths → container paths).
+func stageCopyDir(
+	log *logger.Logger,
+	c config.CopySpec,
+	match, resolved, dst, containerDest, containerWorkDir string,
+) error {
+	if mkErr := os.MkdirAll(dst, 0o750); mkErr != nil {
+		return fmt.Errorf("create staging dir %s: %w", dst, mkErr)
+	}
+
+	if copyErr := copyTreeContents(log, c.Skip, resolved, dst); copyErr != nil {
+		return copyErr
+	}
+
+	rulesByFile, err := copyRewriteRules(c, match, containerDest, containerWorkDir)
+	if err != nil {
+		return err
+	}
+	return applyTreeRewrites(log, dst, rulesByFile)
 }
 
 // PrepareHookTar tars a shell-wrapped user hook script to .clawker/<name>.sh
@@ -251,133 +309,112 @@ func PrepareHookTar(cfg config.Config, shell, script, name string) (io.Reader, e
 // internal helpers
 // ---------------------------------------------------------------------------
 
-// stageSettings reads settings.json from hostDir and writes only the
-// enabledPlugins key to stagingDir/settings.json.
-func stageSettings(log *logger.Logger, hostDir, stagingDir string) error {
-	src := filepath.Join(hostDir, settingsFile)
+// stageFile copies one manifest file entry from hostDir into stagingDir.
+// With a json_keys allowlist, only the listed top-level keys are carried
+// over (host config files can hold secrets and host-specific junk — the
+// allowlist is deliberate); a file whose allowlisted keys are all absent is
+// skipped entirely. Missing source files are skipped.
 
-	data, err := os.ReadFile(src)
-	if os.IsNotExist(err) {
-		log.Debug().Str("path", src).Msg("settings.json not found, skipping")
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read settings.json: %w", err)
-	}
-
+// filterJSONKeys reduces a JSON document to the staged file's key allowlist.
+// The bool result is false when none of the allowlisted keys are present —
+// the file should not be staged at all.
+func filterJSONKeys(data []byte, keys []string, name string) ([]byte, bool, error) {
 	var full map[string]any
 	if err := json.Unmarshal(data, &full); err != nil {
-		return fmt.Errorf("parse settings.json: %w", err)
+		return nil, false, fmt.Errorf("parse %s: %w", name, err)
 	}
 
-	enabledPlugins, ok := full[enabledPluginsKey]
-	if !ok {
-		log.Debug().Msg("settings.json has no enabledPlugins key, skipping")
-		return nil
+	filtered := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if v, ok := full[key]; ok {
+			filtered[key] = v
+		}
 	}
-
-	filtered := map[string]any{
-		enabledPluginsKey: enabledPlugins,
+	if len(filtered) == 0 {
+		return nil, false, nil
 	}
 
 	out, err := json.MarshalIndent(filtered, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal filtered settings: %w", err)
+		return nil, false, fmt.Errorf("marshal filtered %s: %w", name, err)
 	}
-
-	dst := filepath.Join(stagingDir, settingsFile)
-	return os.WriteFile(dst, out, 0o644)
+	return out, true, nil
 }
 
 // stageDirectory copies an entire directory from hostDir to stagingDir,
 // resolving symlinks at the source level.
-func stageDirectory(log *logger.Logger, hostDir, stagingDir, name string) error {
-	src := filepath.Join(hostDir, name)
 
-	// Resolve symlinks on the source directory itself.
-	resolved, err := filepath.EvalSymlinks(src)
-	if os.IsNotExist(err) {
-		log.Debug().Str("dir", name).Msg("directory not found on host, skipping")
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("resolve symlinks for %s: %w", name, err)
-	}
+// stageTree copies a manifest tree entry recursively and applies its JSON
+// path rewrites (host paths → container paths). Skip entries match paths
+// relative to the tree root.
 
-	dst := filepath.Join(stagingDir, name)
-	return copyDir(log, resolved, dst)
-}
-
-// stagePlugins copies the plugins/ directory (including cache/) and rewrites
-// host-absolute paths in known_marketplaces.json and installed_plugins.json.
-func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, containerWorkDir string) error {
-	src := filepath.Join(hostDir, pluginsSubdir)
-
-	resolved, err := filepath.EvalSymlinks(src)
-	if os.IsNotExist(err) {
-		log.Debug().Msg("plugins/ directory not found on host, skipping")
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("resolve symlinks for plugins: %w", err)
-	}
-
-	dst := filepath.Join(stagingDir, pluginsSubdir)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return fmt.Errorf("create plugins staging dir: %w", err)
-	}
-
-	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, walkErr error) error {
+// copyTreeContents walks the resolved tree and copies every entry not on
+// the skip list (matched relative to the tree root).
+func copyTreeContents(log *logger.Logger, skip []string, resolved, dst string) error {
+	err := filepath.WalkDir(resolved, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 
-		rel, err := filepath.Rel(resolved, path)
-		if err != nil {
-			return err
+		rel, relErr := filepath.Rel(resolved, path)
+		if relErr != nil {
+			return fmt.Errorf("rel %s: %w", path, relErr)
 		}
 
-		// Skip install-counts-cache.json at the top level.
-		if rel == installCountsFile {
+		if slices.Contains(skip, rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
 		return copyEntry(log, path, d, filepath.Join(dst, rel))
 	})
 	if err != nil {
-		return fmt.Errorf("walk plugins: %w", err)
+		return fmt.Errorf("walk %s: %w", resolved, err)
 	}
+	return nil
+}
 
-	// Build rewrite rules for host→container path translation.
-	hostPluginsPrefix := filepath.Join(hostDir, pluginsSubdir)
-	containerPluginsPrefix := filepath.Join(containerHomeDir, consts.ClaudeDir, pluginsSubdir)
-
-	// Rewrite known_marketplaces.json if it exists.
-	mpPath := filepath.Join(dst, knownMarketplacesFile)
-	if _, statErr := os.Stat(mpPath); statErr == nil {
-		if err := rewriteJSONFile(mpPath, []pathRewriteRule{
-			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
-			{key: "installLocation", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
-		}); err != nil {
-			return fmt.Errorf("rewrite known_marketplaces.json: %w", err)
+// treeRewriteRules groups the tree's manifest rewrites into per-file
+// pathRewriteRule sets.
+func copyRewriteRules(
+	c config.CopySpec,
+	hostTreePrefix, containerTreePrefix, containerWorkDir string,
+) (map[string][]pathRewriteRule, error) {
+	rulesByFile := make(map[string][]pathRewriteRule)
+	for _, rw := range c.JSONRewrites {
+		switch rw.Rewrite {
+		case config.RewritePrefixSwap:
+			rulesByFile[rw.File] = append(rulesByFile[rw.File],
+				pathRewriteRule{key: rw.Key, hostPrefix: hostTreePrefix, containerPath: containerTreePrefix})
+		case config.RewriteReplaceWithWorkdir:
+			rulesByFile[rw.File] = append(rulesByFile[rw.File],
+				pathRewriteRule{key: rw.Key, hostPrefix: "", containerPath: containerWorkDir})
+		default:
+			// harness.Load validates the vocabulary; reaching here means a
+			// missed engine primitive, not user error.
+			return nil, fmt.Errorf("json rewrite %q on %s: unknown rewrite kind", rw.Rewrite, rw.File)
 		}
-	} else if !os.IsNotExist(statErr) {
-		log.Debug().Err(statErr).Str("path", mpPath).Msg("plugin file stat failed")
 	}
+	return rulesByFile, nil
+}
 
-	// Rewrite installed_plugins.json if it exists.
-	ipPath := filepath.Join(dst, installedPluginsFile)
-	if _, statErr := os.Stat(ipPath); statErr == nil {
-		if err := rewriteJSONFile(ipPath, []pathRewriteRule{
-			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
-			{key: "projectPath", containerPath: containerWorkDir},
-		}); err != nil {
-			return fmt.Errorf("rewrite installed_plugins.json: %w", err)
+// applyTreeRewrites runs each per-file rule set against the staged copy,
+// skipping files the host tree does not carry.
+func applyTreeRewrites(log *logger.Logger, dst string, rulesByFile map[string][]pathRewriteRule) error {
+	for file, rules := range rulesByFile {
+		path := filepath.Join(dst, file)
+		if _, statErr := os.Stat(path); statErr != nil {
+			if !os.IsNotExist(statErr) {
+				log.Debug().Err(statErr).Str("path", path).Msg("rewrite target stat failed")
+			}
+			continue
 		}
-	} else if !os.IsNotExist(statErr) {
-		log.Debug().Err(statErr).Str("path", ipPath).Msg("plugin file stat failed")
+		if err := rewriteJSONFile(path, rules); err != nil {
+			return fmt.Errorf("rewrite %s: %w", file, err)
+		}
 	}
-
 	return nil
 }
 

@@ -8,32 +8,62 @@
       "properties": {
         "claude_code": {
           "additionalProperties": false,
+          "description": "Deprecated: use the project-root harnesses map keyed by harness name instead",
           "properties": {
             "config": {
               "additionalProperties": false,
               "properties": {
                 "strategy": {
                   "default": "copy",
-                  "description": "How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean",
+                  "description": "How to initialize the harness config: copy syncs host settings, fresh starts clean",
                   "title": "Strategy",
                   "type": "string"
                 }
               },
               "type": "object"
             },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Set container env vars when this harness is selected; overrides agent.env on key collision",
+              "title": "Env",
+              "type": "object"
+            },
+            "env_file": {
+              "description": "Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file",
+              "items": {
+                "type": "string"
+              },
+              "title": "Env Files",
+              "type": "array"
+            },
+            "from_env": {
+              "description": "Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env",
+              "items": {
+                "type": "string"
+              },
+              "title": "Forward Env Vars",
+              "type": "array"
+            },
             "mount_projects": {
               "default": true,
-              "description": "Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances",
-              "title": "Mount Host Projects",
+              "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances",
+              "title": "Mount Host State",
               "type": "boolean"
             },
-            "use_host_auth": {
-              "default": true,
-              "description": "Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed.",
-              "title": "Use Host Auth",
-              "type": "boolean"
+            "post_init": {
+              "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
+              "title": "Post-Init Script",
+              "type": "string"
+            },
+            "pre_run": {
+              "description": "Shell commands run on every container start when this harness is selected, appended after agent.pre_run",
+              "title": "Pre-Run Script",
+              "type": "string"
             }
           },
+          "title": "Claude Code",
           "type": "object"
         },
         "editor": {
@@ -72,12 +102,12 @@
           "type": "array"
         },
         "post_init": {
-          "description": "Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.",
+          "description": "Shell commands to run after container starts but before the harness launches (e.g. install MCP servers). Useful for seeding harness config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.",
           "title": "Post-Init Script",
           "type": "string"
         },
         "pre_run": {
-          "description": "Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install)",
+          "description": "Shell commands run on every container start, in the workdir, right before the harness CMD runs (e.g. npm install)",
           "title": "Pre-Run Script",
           "type": "string"
         },
@@ -94,8 +124,10 @@
         "type": "string"
       },
       "default": {
-        "go": "run --rm -it --agent $1 @ --dangerously-skip-permissions",
-        "wt": "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"
+        "claude": "run --rm -it --agent $1 @:claude --dangerously-skip-permissions",
+        "codex": "run --rm -it --agent $1 @:codex --yolo",
+        "go": "run --rm -it --agent $1 @",
+        "wt": "run --rm -it --agent $1 --worktree $2 @"
       },
       "description": "Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers",
       "title": "Aliases",
@@ -104,26 +136,66 @@
     "build": {
       "additionalProperties": false,
       "properties": {
-        "context": {
-          "description": "Directory to use as Docker build context when using a custom Dockerfile (relative to project root)",
-          "title": "Build Context",
+        "harness": {
+          "default": "claude",
+          "description": "Default harness when a command doesn't select one; any other harness stays available per run (clawker build -t HARNESS). Bare name or namespace.bundle.component address",
+          "title": "Default Harness",
           "type": "string"
         },
-        "dockerfile": {
-          "description": "Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions",
-          "title": "Dockerfile",
-          "type": "string"
-        },
-        "image": {
-          "description": "Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top",
-          "title": "Base Image",
-          "type": "string"
+        "harnesses": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "inject": {
+                "additionalProperties": false,
+                "properties": {
+                  "before_entrypoint": {
+                    "description": "Add Dockerfile instructions at the very end, for this harness's image only",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Before Entrypoint",
+                    "type": "array"
+                  },
+                  "user_commands": {
+                    "description": "Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds, for this harness's image only",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "User Commands",
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "packages": {
+                "description": "Extra apt packages to install in this harness's image; not deduped against build.packages (apt install is idempotent)",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Packages",
+                "type": "array"
+              },
+              "stacks": {
+                "description": "Extra stack definitions to render in this harness's image, after the bundle's own installer stacks",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Stacks",
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "description": "Per-harness build additions (stacks, packages, inject), keyed by harness name",
+          "title": "Harness Build Overlay",
+          "type": "object"
         },
         "inject": {
           "additionalProperties": false,
           "properties": {
             "after_claude_install": {
-              "description": "Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions",
+              "description": "Deprecated: use user_commands",
               "items": {
                 "type": "string"
               },
@@ -147,7 +219,7 @@
               "type": "array"
             },
             "after_user_setup": {
-              "description": "Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services",
+              "description": "Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services",
               "items": {
                 "type": "string"
               },
@@ -155,7 +227,7 @@
               "type": "array"
             },
             "after_user_switch": {
-              "description": "Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools",
+              "description": "Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools",
               "items": {
                 "type": "string"
               },
@@ -168,6 +240,14 @@
                 "type": "string"
               },
               "title": "Before Entrypoint",
+              "type": "array"
+            },
+            "user_commands": {
+              "description": "Add Dockerfile instructions as the container user, after the harness image's fragment blocks and config seeds — e.g. add MCP servers, install plugins, or extensions",
+              "items": {
+                "type": "string"
+              },
+              "title": "User Commands",
               "type": "array"
             }
           },
@@ -208,7 +288,7 @@
                     "type": "string"
                   },
                   "chown": {
-                    "description": "Set file ownership (e.g. claude:claude)",
+                    "description": "Set file ownership (e.g. claude:claude, the unprivileged container user)",
                     "title": "Chown",
                     "type": "string"
                   },
@@ -267,11 +347,135 @@
           "default": [
             "ripgrep"
           ],
-          "description": "System packages (apt/apk) needed by your project that aren't in the base image",
+          "description": "System packages (apt) needed by your project that the clawker base doesn't already install",
           "items": {
             "type": "string"
           },
           "title": "Packages",
+          "type": "array"
+        },
+        "stacks": {
+          "description": "Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run",
+          "items": {
+            "type": "string"
+          },
+          "title": "Stacks",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "bundles": {
+      "description": "Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_update": {
+            "description": "Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources.",
+            "title": "Auto Update",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop); a relative path resolves against the directory of the file declaring it.",
+            "title": "Path",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Branch or tag to fetch from a remote url; sha takes precedence when both are set. Omitting both ref and sha tracks the repository's default branch. Ignored for a local path source.",
+            "title": "Ref",
+            "type": "string"
+          },
+          "sha": {
+            "description": "Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source.",
+            "title": "SHA",
+            "type": "string"
+          },
+          "url": {
+            "description": "Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source.",
+            "title": "URL",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Bundles",
+      "type": "array"
+    },
+    "harnesses": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": false,
+            "properties": {
+              "strategy": {
+                "default": "copy",
+                "description": "How to initialize the harness config: copy syncs host settings, fresh starts clean",
+                "title": "Strategy",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Set container env vars when this harness is selected; overrides agent.env on key collision",
+            "title": "Env",
+            "type": "object"
+          },
+          "env_file": {
+            "description": "Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file",
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Files",
+            "type": "array"
+          },
+          "from_env": {
+            "description": "Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env",
+            "items": {
+              "type": "string"
+            },
+            "title": "Forward Env Vars",
+            "type": "array"
+          },
+          "mount_projects": {
+            "default": true,
+            "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances",
+            "title": "Mount Host State",
+            "type": "boolean"
+          },
+          "post_init": {
+            "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
+            "title": "Post-Init Script",
+            "type": "string"
+          },
+          "pre_run": {
+            "description": "Shell commands run on every container start when this harness is selected, appended after agent.pre_run",
+            "title": "Pre-Run Script",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Per-harness container initialization settings, keyed by harness name",
+      "title": "Harnesses",
+      "type": "object"
+    },
+    "monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "extensions": {
+          "default": [
+            "claude-code"
+          ],
+          "description": "Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins",
+          "items": {
+            "type": "string"
+          },
+          "title": "Monitoring Extensions",
           "type": "array"
         }
       },

@@ -2,7 +2,7 @@
 title: "Worktrees"
 description: "Git worktree integration for multi-branch agent workflows"
 icon: "code-branch"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "git worktree", "parallel agents", "multi-agent"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "self-hosted", "open source", "git worktree", "parallel agents", "multi-agent"]
 ---
 
 Clawker integrates with Git worktrees to let you run multiple agents on separate branches simultaneously without conflicts. Each worktree gets its own working directory, and Clawker tracks them in the project registry.
@@ -189,7 +189,7 @@ This differs from `clawker worktree add`, which is a strict creation command —
 
 ### Path mirroring
 
-When `--worktree` is used, the worktree directory is mounted into the container at its **host absolute path** — not at a generic `/workspace`. This is essential for session persistence: Claude Code discovers sessions by matching the container's current working directory against git worktree paths. If the container used a synthetic path, session resume would fail because the paths wouldn't match.
+When `--worktree` is used, the worktree directory is mounted into the container at its **host absolute path** — not at a generic `/workspace`. This is essential for session persistence with the claude harness: Claude Code discovers sessions by matching the container's current working directory against git worktree paths. If the container used a synthetic path, session resume would fail because the paths wouldn't match.
 
 See [Container Internals](/container-internals) for the full explanation of path mirroring and session persistence.
 

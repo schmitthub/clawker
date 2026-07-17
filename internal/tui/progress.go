@@ -1028,6 +1028,13 @@ func renderProgressSummary(ios *iostreams.IOStreams, cfg *ProgressDisplayConfig,
 	cs := ios.ColorScheme()
 	elapsed := time.Since(startTime)
 
+	// No steps ever arrived: the producer failed before doing anything (or
+	// did nothing). Any summary — especially a success line — would misstate
+	// what happened; stay silent and let the producer's error speak.
+	if len(steps) == 0 {
+		return
+	}
+
 	// Detect failure from step statuses.
 	hasError := false
 	for _, step := range steps {

@@ -78,10 +78,11 @@
       "measurementId": "G-TM021J82T6"
     }
   },
+  "redirects": [],
   "navigation": {
     "groups": [
       {
-        "group": "Quickstart",
+        "group": "Get started",
         "pages": [
           "index",
           "quickstart",
@@ -89,26 +90,77 @@
         ]
       },
       {
-        "group": "Security",
+        "group": "Configuration",
         "pages": [
-          "threat-model"
+          "configuration"
         ]
       },
       {
-        "group": "Guides",
+        "group": "Running Agents",
         "pages": [
-          "configuration",
-          "aliases",
+          "worktrees",
+          "aliases"
+        ]
+      },
+      {
+        "group": "Security",
+        "pages": [
+          "threat-model",
           "security",
           "firewall",
-          "observability",
-          "control-plane",
           "credentials",
-          "custom-images",
-          "container-internals",
-          "worktrees",
+          "observability"
+        ]
+      },
+      {
+        "group": "Building images",
+        "pages": [
+          "custom-images"
+        ]
+      },
+      {
+        "group": "Bundles & extensions",
+        "pages": [
+          "bundles",
+          "harnesses",
+          "stacks",
+          "monitoring-extensions"
+        ]
+      },
+      {
+        "group": "Operations",
+        "pages": [
           "monitoring",
           "docker-hygiene"
+        ]
+      },
+      {
+        "group": "Under the hood",
+        "pages": [
+          "container-internals",
+          "control-plane"
+        ]
+      },
+      {
+        "group": "Developer guide",
+        "pages": [
+          {
+            "group": "Authoring",
+            "pages": [
+              "authoring-bundles",
+              "authoring-harnesses",
+              "authoring-stacks",
+              "authoring-monitoring"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "architecture",
+              "design",
+              "testing"
+            ]
+          }
         ]
       },
       {
@@ -122,7 +174,6 @@
               "cli-reference/clawker_build",
               "cli-reference/clawker_run",
               "cli-reference/clawker_start",
-              "cli-reference/clawker_generate",
               "cli-reference/clawker_ps",
               "cli-reference/clawker_attach",
               "cli-reference/clawker_exec",
@@ -217,8 +268,36 @@
               "cli-reference/clawker_monitor",
               "cli-reference/clawker_monitor_init",
               "cli-reference/clawker_monitor_up",
+              "cli-reference/clawker_monitor_reload",
               "cli-reference/clawker_monitor_down",
-              "cli-reference/clawker_monitor_status"
+              "cli-reference/clawker_monitor_status",
+              "cli-reference/clawker_monitor_extensions"
+            ]
+          },
+          {
+            "group": "Bundle",
+            "pages": [
+              "cli-reference/clawker_bundle",
+              "cli-reference/clawker_bundle_install",
+              "cli-reference/clawker_bundle_list",
+              "cli-reference/clawker_bundle_prune",
+              "cli-reference/clawker_bundle_remove",
+              "cli-reference/clawker_bundle_update",
+              "cli-reference/clawker_bundle_validate"
+            ]
+          },
+          {
+            "group": "Harness",
+            "pages": [
+              "cli-reference/clawker_harness",
+              "cli-reference/clawker_harness_list"
+            ]
+          },
+          {
+            "group": "Stack",
+            "pages": [
+              "cli-reference/clawker_stack",
+              "cli-reference/clawker_stack_list"
             ]
           },
           {
@@ -294,14 +373,6 @@
               "cli-reference/clawker_skill_remove"
             ]
           }
-        ]
-      },
-      {
-        "group": "Developer Guide",
-        "pages": [
-          "architecture",
-          "design",
-          "testing"
         ]
       }
     ]

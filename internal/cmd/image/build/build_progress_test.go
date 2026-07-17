@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -17,8 +20,6 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestBuildProgress_Pipeline exercises the full progress pipeline:
@@ -275,7 +276,8 @@ monitoring:
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, capture.CallCount, "BuildKit builder should be called exactly once")
+	assert.Equal(t, 2, capture.CallCount,
+		"BuildKit builder runs twice: shared base image, then harness image")
 	assert.NotEmpty(t, capture.Opts.Tags, "build should pass tags")
 	assert.NotEmpty(t, capture.Opts.ContextDir, "build should pass context dir")
 }

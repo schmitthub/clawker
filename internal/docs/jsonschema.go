@@ -134,6 +134,9 @@ func jsonSchemaForType(ft reflect.Type) map[string]any {
 	case ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.String:
 		return map[string]any{keyType: typeObject, "additionalProperties": map[string]any{keyType: typeString}}
 
+	case ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.Struct:
+		return map[string]any{keyType: typeObject, "additionalProperties": jsonSchemaForStruct(ft.Elem())}
+
 	case ft.Kind() == reflect.Bool:
 		return map[string]any{keyType: typeBool}
 

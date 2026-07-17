@@ -19,8 +19,9 @@ const (
 	KindStringSlice                  // []string
 	KindDuration                     // time.Duration
 	KindTime                         // time.Time (serialized as an RFC3339Nano scalar)
-	KindMap                          // map[string]string (only — other map types must register via KindFunc)
+	KindMap                          // map[string]string (other non-struct map types must register via KindFunc)
 	KindStructSlice                  // []struct (non-string slice of structs)
+	KindStructMap                    // map[string]struct (string-keyed map of structs)
 
 	// KindLast is the boundary for storage-defined kinds. Consumer packages
 	// define domain-specific kinds starting here:
@@ -50,6 +51,8 @@ func (k FieldKind) String() string {
 		return "Map"
 	case KindStructSlice:
 		return "StructSlice"
+	case KindStructMap:
+		return "StructMap"
 	case KindLast:
 		return "Last (extension boundary)"
 	default:
@@ -320,6 +323,11 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc K
 
 		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
 			*fields = append(*fields, &field{path: path, kind: KindStructSlice, label: label, desc: desc, def: def, required: req, mergeTag: merge})
+
+		case ft.Kind() == reflect.Map && ft.Key().Kind() == reflect.String && ft.Elem().Kind() == reflect.Struct:
+			*fields = append(*fields, &field{
+				path: path, kind: KindStructMap, label: label, desc: desc, def: def, required: req, mergeTag: merge,
+			})
 
 		default:
 			// Try consumer-registered classifier before panicking.

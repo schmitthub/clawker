@@ -14,12 +14,13 @@ This command generates:
   - compose.yaml        Docker Compose stack definition
   - otel-config.yaml    OpenTelemetry Collector configuration
   - prometheus.yaml     Prometheus scrape configuration
+  - opensearch-bootstrap/  index templates, ISM policies, and saved objects
 
-The monitoring stack includes:
-  - OpenTelemetry Collector
-  - OpenSearch
-  - OpenSearch Dashboards
-  - Prometheus
+'monitor init' scaffolds the base stack only — no monitoring extensions.
+Extensions selected via `monitor.extensions` are projected in by
+'monitor up' (and applied to a running stack by 'monitor reload'). init is
+optional — 'monitor up' renders the same files itself — but it lets you inspect
+or pre-generate the config without starting the stack.
 
 ```
 clawker monitor init [flags]

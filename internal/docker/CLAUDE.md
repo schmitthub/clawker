@@ -20,18 +20,18 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 ## Naming Convention
 
 - **3-segment** (project-scoped agent): `clawker.project.agent` — **2-segment** (global-scope agent, no project namespace): `clawker.agent`
-- **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
+- **Volumes**: infrastructure volumes `clawker.project.agent-purpose` (workspace, history); harness-scoped volumes `clawker.project.agent-harness.name` (bundle-declared persisted dirs + the clawker lifecycle volume) — the harness segment is the harness's exact selection spelling (bare name, or the qualified `namespace.bundle.component` address for an installed-bundle harness) and keeps two harnesses that declare the same volume name (both shipped harnesses declare `config`) from ever landing on one volume
 - **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
-Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `HarnessVolumeName(project, agent, harness, volume) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
-**Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. No length cap is enforced (Docker imposes none at the engine level). Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
+**Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. No length cap is enforced (Docker imposes none at the engine level). Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"history"`, `"workspace"`) are not validated. `HarnessVolumeName` validates the harness segment against `consts.ValidateHarnessRef` (bare OR qualified selection spelling) and the volume segment against `consts.ValidateName`, joining them via `consts.JoinIdentity`. That pairing keeps the composition injective **for a fixed (project, agent) pair**: every token is dot-free, so the joined purpose has exactly one dot (bare harness) or three (qualified), and splitting recovers the pair. The proof does not extend across agents — agents join the harness with `-` and both allow interior hyphens, so agent `dev` + harness `my-fork` aliases agent `dev-my` + harness `fork`; that cross-agent case necessarily carries different harness labels and is refused by `EnsureHarnessVolume`'s ownership check (same ambiguity existed under the flat scheme).
 
 ## Labels
 
 All label keys come from `config.Config` interface methods (`LabelManaged()`, `LabelProject()`, etc.). No label constants are exported from this package — callers use `(*Client)` methods which read keys from `c.cfg`.
 
-**Client methods** (all on `*Client`): `ContainerLabels(project, agent, version, image, workdir)`, `AgentVolumeLabels(project, agent)`, `ImageLabels(project, version)`, `NetworkLabels()`. `AgentVolumeLabels` always sets `purpose=PurposeAgent`; the config/history/workspace role lives in the volume name suffix, not the label.
+**Client methods** (all on `*Client`): `ContainerLabels(project, agent, version, image, workdir)`, `AgentVolumeLabels(project, agent)`, `HarnessVolumeLabels(project, agent, harness)`, `ImageLabels(project, version)`, `NetworkLabels()`. `AgentVolumeLabels` always sets `purpose=PurposeAgent`; the per-volume role lives in the volume name suffix, not the label. `HarnessVolumeLabels` is the agent volume labels plus `consts.LabelHarness` — used for harness-scoped volumes (bundle-declared dirs + clawker lifecycle volume) so label-based agent cleanup still finds them.
 
 **Filters** (all on `*Client`): `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` — return `whail.Filters`.
 
@@ -43,7 +43,7 @@ func NewClientFromEngine(engine *whail.Engine, cfg config.Config, log *logger.Lo
 type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 ```
 
-`Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
+`Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `ChownImage string`.
 
 **Image methods**: `Close()`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`.
 
@@ -69,11 +69,11 @@ type Container struct {
 
 ## Builder (`builder.go`)
 
-`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` builds the image; cache invalidation is delegated to the daemon-side builder (BuildKit layer cache or classic builder `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress/OnComplete/ClaudeCodeVersion`.
+`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` is **two-phase**: it first ensures the per-project shared base image (`BaseImageTag(project)` = `clawker-<project>:base`) exists and is fresh — comparing `bundler.BaseContentHash` against the image's `consts.LabelBaseContentHash` label, rebuilding on miss/drift or `--no-cache` — then builds the harness image `FROM` it. Base failure aborts before the harness build. `--pull` applies to the base build only (the harness parent is the local-only `:base` tag). `OnComplete` fires only for the harness build (`--iidfile` = runnable image). Base labels: `ImageLabels` + content hash + `LabelPurpose=PurposeBaseImage`, never user labels or `LabelHarness`; the harness image also records the base content hash. Legacy-stream progress events from the base build are namespaced via `phaseProgress` (`base:` StepID prefix, `[base]` StepName prefix; `[internal]` steps left intact for downstream filtering). In-image layer cache invalidation stays delegated to the daemon-side builder (BuildKit layer cache or classic `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/OnProgress/OnComplete/HarnessVersion/HarnessName`.
 
-## Default Image (`defaults.go`)
+## Test Labels (`defaults.go`)
 
-`DefaultImageTag = "clawker-default:latest"`. `(*Client).BuildDefaultImage(ctx, flavor, onProgress)`. `TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig`.
+`TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig` — test label set for `WithLabels` in test code so `CleanupTestResources` can find test-created resources.
 
 ## BuildKit (`buildkit.go`)
 
@@ -85,7 +85,7 @@ type Container struct {
 
 ## Volume Utilities (`volume.go`)
 
-`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (defaults to a busybox image when unset); set `Client.ChownImage` to override.
+`EnsureVolume(...)`, `EnsureHarnessVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. `EnsureHarnessVolume` is the ownership failsafe for harness-scoped volumes: an existing MANAGED volume whose `consts.LabelHarness` label names a different harness is refused with `*HarnessVolumeOwnershipError` (use `errors.As`); same-harness re-entry (container recreation, repeated run) adopts silently, and so does an unlabeled managed occupant — that population is hand-placed (e.g. backup/restore; clawker always labels harness-scoped volumes, flat pre-harness names are uncomposable here), refusing it would not stop deliberate placement (the label is forgeable by whoever creates the volume), and Docker cannot retro-label a local volume. Volumes lacking the managed label are invisible to whail's label-scoped inspect and outside the check. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (defaults to a busybox image when unset); set `Client.ChownImage` to override.
 
 `FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, force-keeps `.git/` even if a pattern would match it (bind mode needs git for live development), and skips recursion into matched directories for performance.
 

@@ -1,0 +1,77 @@
+# Node.js (≥22.10) trusts the OS CA bundle. Set globally — applies to root
+# (build-time RUN steps) AND to the unprivileged user (agent hooks, user
+# `npm`/`npx`). When the firewall MITM CA is added to /etc/ssl/certs via
+# update-ca-certificates (clawker's late root block), `fetch()` and TLS
+# calls from any process transparently trust clawker's interception cert.
+ENV NODE_USE_SYSTEM_CA=1
+
+# Root-global Node.js on /usr/local — resolves from ${PATH} for build-time
+# RUN steps, agent tooling, and interactive shells alike.
+#
+# NODE_VERSION names the LTS *line* (e.g. "24"), not an exact patch; the latest
+# patch in that line is resolved per-build from nodejs.org/dist/index.json so
+# rebuilds float forward onto security patches (dep-rot rationale:
+# docs/threat-model.mdx). The prebuilt tarball is GPG-verified via
+# SHASUMS256.txt.asc. Guarded: an image that already provides node at major
+# >= NODE_MIN_MAJOR keeps its own install — a deliberate user choice is never
+# overwritten; below the floor (too old for NODE_USE_SYSTEM_CA et al.) the
+# clawker install lands on /usr/local and wins PATH.
+ARG NODE_VERSION=24
+ARG NODE_MIN_MAJOR=22
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v node >/dev/null 2>&1 && [ "$(node -e 'console.log(process.versions.node.split(".")[0])')" -ge "${NODE_MIN_MAJOR}" ]; then \
+{{- else}}
+RUN if command -v node >/dev/null 2>&1 && [ "$(node -e 'console.log(process.versions.node.split(".")[0])')" -ge "${NODE_MIN_MAJOR}" ]; then \
+{{- end}}
+      echo "clawker stack node: existing $(node --version) satisfies floor ${NODE_MIN_MAJOR} — skipping install"; \
+    else \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates dirmngr xz-utils libatomic1 && \
+    NODE_LTS_VERSION=$(curl -sSfL https://nodejs.org/dist/index.json | jq -r --arg ver "$NODE_VERSION" '[.[] | select(.lts != false)] | map(select(.version | startswith("v" + $ver + "."))) | .[0].version' | sed 's/^v//') && \
+    { [ -n "$NODE_LTS_VERSION" ] && [ "$NODE_LTS_VERSION" != "null" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
+    ARCH= && dpkgArch="$(dpkg --print-architecture)" && \
+    case "${dpkgArch##*-}" in \
+      amd64) ARCH='x64' ;; \
+      arm64) ARCH='arm64' ;; \
+      *) echo "ERROR: node prebuilt does not support architecture: $dpkgArch (only amd64 and arm64)" >&2; exit 1 ;; \
+    esac && \
+    set -ex && \
+    export GNUPGHOME="$(mktemp -d)" && \
+    for key in \
+      5BE8A3F6C8A5C01D106C0AD820B1A390B168D356 \
+      DD792F5973C6DE52C432CBDAC77ABFA00DDBF2B7 \
+      CC68F5A3106FF448322E48ED27F5E38D5B0A215F \
+      8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600 \
+      890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4 \
+      C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C \
+      108F52B48DB57BB0CC439B2997B01419BD92F80A \
+      A363A499291CBBC940DD62E41F10027AF002F8B0 \
+    ; do \
+      { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" && gpg --batch --fingerprint "$key"; } || \
+      { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" && gpg --batch --fingerprint "$key"; } ; \
+    done && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/SHASUMS256.txt.asc" && \
+    gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc && \
+    gpgconf --kill all && \
+    rm -rf "$GNUPGHOME" && \
+    grep " node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+    tar -xJf "node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
+    rm "node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt && \
+    ln -s /usr/local/bin/node /usr/local/bin/nodejs && \
+    node --version && npm --version ; \
+    fi
+
+# TypeScript, baked root-global into npm's system prefix. Root-global (not an
+# nvm-scope install) so `tsc` stays on PATH across nvm version switches — its
+# `env node` shebang runs whichever node is active. Floated to latest for the
+# same dep-rot rationale as the node install above. Guarded: an image that
+# already provides tsc keeps its own — a deliberate user pin is never
+# overwritten (users can also shadow it per-version via nvm's npm).
+RUN if command -v tsc >/dev/null 2>&1; then \
+      echo "clawker stack node: existing tsc $(tsc --version) — skipping typescript install"; \
+    else \
+      npm install -g typescript && tsc --version; \
+    fi

@@ -65,6 +65,10 @@ type spawnConfig struct {
 	log       *logger.Logger
 	readyFile string                       // touched after Start; "" = skip
 	lookPath  func(string) (string, error) // test seam, defaults to exec.LookPath
+	// defaultCmd is the image's default CMD binary, shipped by CP on the
+	// AgentReady dispatch. Used by routeArgs for --help routing; empty
+	// disables routing (argv runs as-is).
+	defaultCmd string
 }
 
 // spawnState tracks the user CMD across its lifetime. Exactly one
@@ -150,17 +154,18 @@ func NewSpawnState(log *logger.Logger) *spawnState {
 // Dir is left empty so the child inherits PID 1's cwd (the kernel set it
 // from Docker's WorkingDir), mirroring tini/gosu. readyFile is the
 // HEALTHCHECK marker touched immediately after the child Starts.
-func (s *spawnState) DefaultEntry(user *ExecUser) func() error {
-	return func() error {
+func (s *spawnState) DefaultEntry(user *ExecUser) func(string) error {
+	return func(defaultCmd string) error {
 		return s.Run(spawnConfig{
-			argv:      os.Args[1:],
-			env:       os.Environ(),
-			user:      user,
-			stdin:     os.Stdin,
-			stdout:    os.Stdout,
-			stderr:    os.Stderr,
-			log:       s.log,
-			readyFile: consts.ReadyMarkerPath,
+			argv:       os.Args[1:],
+			env:        os.Environ(),
+			user:       user,
+			stdin:      os.Stdin,
+			stdout:     os.Stdout,
+			stderr:     os.Stderr,
+			log:        s.log,
+			readyFile:  consts.ReadyMarkerPath,
+			defaultCmd: defaultCmd,
 		})
 	}
 }
@@ -246,18 +251,20 @@ func (s *spawnState) runOnce(cfg spawnConfig) error {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	routedArgv, resolvedPath, routedErr := routeArgs(cfg.argv, lookPath)
+	routedArgv, resolvedPath, routedErr := routeArgs(cfg.argv, lookPath, cfg.defaultCmd)
 	if routedErr != nil {
-		// Broken image path: argv[0] is not on PATH so we routed to
-		// "claude". Warn (not Info) — the supervisor is silently
-		// running "claude <orig_argv0>" instead of what the user
-		// asked for; an operator triaging "why is claude getting
-		// weird args" needs this to surface above operational noise.
+		// Broken image path: argv[0] is not on PATH so we routed to the
+		// image's default CMD. Warn (not Info) — the supervisor is
+		// silently running "<default> <orig_argv0>" instead of what the
+		// user asked for; an operator triaging "why is the harness
+		// getting weird args" needs this to surface above operational
+		// noise.
 		cfg.log.Warn().Err(routedErr).
-			Str("event", "spawn_argv_routed_to_claude").
+			Str("event", "spawn_argv_routed_to_default_cmd").
+			Str("default_cmd", cfg.defaultCmd).
 			Str("orig_argv0", cfg.argv[0]).
 			Strs("routed_argv", routedArgv).
-			Msg("clawkerd: argv[0] not on PATH; routing through 'claude'")
+			Msg("clawkerd: argv[0] not on PATH; routing through the image default CMD")
 	}
 
 	// resolvedPath is non-empty only on the no-rewrite success path

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -42,6 +44,112 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 
 	c.log.Debug().Str("volume", name).Msg("created volume")
 	return true, nil
+}
+
+// IsNotFound reports whether err denotes a missing — or unmanaged, hence
+// invisible to whail's label-scoped inspects — Docker resource. It is the
+// one benign sentinel that identity/ownership resolution collapses into a
+// fallback path; every other error must surface.
+//
+// whail's image path collapses EVERY inspect failure into its not-found
+// error shape, nesting the real cause (possibly through further whail
+// wrappers) in the chain — so the outer message alone would classify a
+// daemon failure as benign. Classification therefore dives to the deepest
+// wrapped cause: a genuine daemon not-found or a nil cause (pure
+// unmanaged/missing) is benign; any other root cause is a real failure.
+func IsNotFound(err error) bool {
+	if errors.Is(err, whail.ErrNotManaged) {
+		return true
+	}
+	var dockerErr *whail.DockerError
+	if !errors.As(err, &dockerErr) {
+		return isNotFoundError(err)
+	}
+	cause := dockerErr.Unwrap()
+	for cause != nil {
+		var inner *whail.DockerError
+		if errors.As(cause, &inner) && inner.Unwrap() != nil {
+			cause = inner.Unwrap()
+			continue
+		}
+		break
+	}
+	if cause != nil {
+		return isNotFoundError(cause)
+	}
+	// No underlying cause: the whail wrapper itself is the whole story
+	// (e.g. "not found" minted for an unmanaged resource).
+	return isNotFoundError(err)
+}
+
+// HarnessVolumeOwnershipError is the typed refusal EnsureHarnessVolume
+// returns when an existing volume at a harness-scoped name is owned — per
+// its harness ownership label — by a different harness than the one asking.
+// Owner is always non-empty: unlabeled occupants are adopted, not refused
+// (see EnsureHarnessVolume).
+type HarnessVolumeOwnershipError struct {
+	// Volume is the volume name the requesting harness composed.
+	Volume string
+	// Owner is the occupying volume's ownership-label value.
+	Owner string
+	// Requested is the harness whose ensure was refused.
+	Requested string
+}
+
+func (e *HarnessVolumeOwnershipError) Error() string {
+	return fmt.Sprintf(
+		"volume %s belongs to harness %q, not %q — refusing to reuse another harness's state; "+
+			"remove it with 'clawker volume remove %s' if it is stale, or use a different agent name",
+		e.Volume, e.Owner, e.Requested, e.Volume)
+}
+
+// EnsureHarnessVolume creates a harness-scoped volume if it doesn't exist,
+// returning true if created. It is the ownership failsafe behind the
+// harness-scoped naming scheme (HarnessVolumeName): when a volume already
+// sits at the target name, its harness ownership label is checked — a volume
+// labeled for a DIFFERENT harness is refused rather than adopted, so a
+// naming bug or a hand-placed volume can never silently hand one harness
+// another harness's state (config, plugins, the in-container login).
+//
+// Legitimate re-use stays silent: a volume labeled for the same harness
+// (container recreation, repeated run for the same agent+harness) is
+// adopted without error, as is a managed volume with no ownership label
+// (hand-placed — e.g. a backup/restore; see the in-body rationale).
+func (c *Client) EnsureHarnessVolume(
+	ctx context.Context,
+	name string,
+	labels map[string]string,
+	harness string,
+) (bool, error) {
+	inspect, err := c.VolumeInspect(ctx, name)
+	switch {
+	case err == nil:
+		// Ownership check: an occupant labeled for a DIFFERENT harness is
+		// refused. An occupant with NO ownership label is adopted: clawker
+		// itself always labels harness-scoped volumes (label and naming
+		// shipped together) and pre-existing flat-named volumes are
+		// unreachable by HarnessVolumeName composition, so the unlabeled
+		// managed population is hand-placed — above all legitimate volume
+		// backup/restore (docker volume create + tar restore drops labels).
+		// Refusing those would not stop deliberate placement anyway
+		// (whoever can create the volume can forge the label) and Docker
+		// cannot retro-label a local volume, so an adopted unlabeled volume
+		// stays unlabeled and re-adopts on every ensure. The check's value
+		// is against ACCIDENTAL cross-harness collisions; deliberate
+		// forgery is outside any label check's reach. Volumes without the
+		// managed label are invisible to whail's label-scoped inspect and
+		// outside this check entirely.
+		owner := inspect.Volume.Labels[consts.LabelHarness]
+		if owner != "" && owner != harness {
+			return false, &HarnessVolumeOwnershipError{Volume: name, Owner: owner, Requested: harness}
+		}
+		c.log.Debug().Str("volume", name).Str("harness", harness).Msg("volume already exists for this harness")
+		return false, nil
+	case !IsNotFound(err):
+		return false, fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+
+	return c.EnsureVolume(ctx, name, labels)
 }
 
 // CopyToVolume copies a directory to a Docker volume using a temporary container.

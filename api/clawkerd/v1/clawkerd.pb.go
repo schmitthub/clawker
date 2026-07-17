@@ -370,7 +370,14 @@ func (*RegisterRequired) Descriptor() ([]byte, []int) {
 // reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
 // (build drift); Error{IO_ERROR} on syscall-level failure.
 type AgentReady struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// default_cmd is the image's default CMD binary (Config.Cmd[0], resolved
+	// by CP via image inspect). clawkerd's spawn path uses it for the
+	// docker-image "--help routing" convention: when argv[0] is a flag or is
+	// not on PATH, default_cmd is prepended so `docker run <image> --help`
+	// invokes the harness CLI. Empty disables routing — argv runs (and
+	// fails) as-is.
+	DefaultCmd    string `protobuf:"bytes,1,opt,name=default_cmd,json=defaultCmd,proto3" json:"default_cmd,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -403,6 +410,13 @@ func (x *AgentReady) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AgentReady.ProtoReflect.Descriptor instead.
 func (*AgentReady) Descriptor() ([]byte, []int) {
 	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *AgentReady) GetDefaultCmd() string {
+	if x != nil {
+		return x.DefaultCmd
+	}
+	return ""
 }
 
 // AgentInitialized signals that the agent has completed its initialization sequence.
@@ -1298,9 +1312,11 @@ const file_clawkerd_v1_clawkerd_proto_rawDesc = "" +
 	"\x11agent_initialized\x18\t \x01(\v2%.clawker.clawkerd.v1.AgentInitializedH\x00R\x10agentInitializedB\t\n" +
 	"\apayload\"\a\n" +
 	"\x05Hello\"\x12\n" +
-	"\x10RegisterRequired\"\f\n" +
+	"\x10RegisterRequired\"-\n" +
 	"\n" +
-	"AgentReady\"\x12\n" +
+	"AgentReady\x12\x1f\n" +
+	"\vdefault_cmd\x18\x01 \x01(\tR\n" +
+	"defaultCmd\"\x12\n" +
 	"\x10AgentInitialized\"\xe0\x01\n" +
 	"\fShellCommand\x126\n" +
 	"\x06stages\x18\x01 \x03(\v2\x1e.clawker.clawkerd.v1.PipeStageR\x06stages\x12'\n" +

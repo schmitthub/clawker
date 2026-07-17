@@ -4,15 +4,18 @@ title: "clawker skill install"
 
 ## clawker skill install
 
-Install the clawker skill plugin for Claude Code
+Install the clawker agent skills plugin
 
 ### Synopsis
 
-Install the clawker-support skill plugin for Claude Code.
+Install the clawker-support agent skills plugin.
 
-This adds the schmitthub/claude-plugins marketplace (if not already present)
-and installs the clawker-support plugin. The plugin gives Claude Code
-hands-on knowledge of clawker configuration, troubleshooting, and internals.
+For the claude harness this adds the schmitthub/claude-plugins marketplace
+(if not already present) and installs the clawker-support plugin through the
+Claude CLI. For codex, opencode, and pi it fetches the plugin at the
+marketplace-pinned release and copies its skills into the harness's native
+skills directory. The plugin gives your coding agent hands-on knowledge of
+clawker configuration, troubleshooting, and internals.
 
 ```
 clawker skill install [flags]
@@ -21,18 +24,22 @@ clawker skill install [flags]
 ### Examples
 
 ```
-  # Install with default user scope
+  # Install for Claude Code (default)
   clawker skill install
 
-  # Install with project scope
+  # Install for another harness
+  clawker skill install --harness codex
+
+  # Install with project scope (claude only)
   clawker skill install --scope project
 ```
 
 ### Options
 
 ```
-  -h, --help           help for install
-  -s, --scope string   Installation scope: user, project, or local (default "user")
+      --harness string   Target harness: claude, codex, opencode, or pi (default "claude")
+  -h, --help             help for install
+  -s, --scope string     Installation scope: user, project, or local (claude only) (default "user")
 ```
 
 ### Options inherited from parent commands
@@ -43,4 +50,4 @@ clawker skill install [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin

@@ -1,0 +1,221 @@
+package bundle
+
+import (
+	"context"
+	"fmt"
+)
+
+// UpdateOutcome classifies what an update attempt did to one declared bundle
+// source.
+type UpdateOutcome int
+
+const (
+	// UpdateSkippedPinned means a sha-pinned source was left untouched.
+	UpdateSkippedPinned UpdateOutcome = iota
+	// UpdateSkippedNotInstalled means the declared source has no cache entry
+	// for its value — installing, not updating, is the remedy.
+	UpdateSkippedNotInstalled
+	// UpdateUnchanged means the tracked tip still resolves to the cached commit.
+	UpdateUnchanged
+	// UpdateRefetched means the tip moved and the entry was refetched in place.
+	UpdateRefetched
+	// UpdateFailed means the refetch/resolve failed; the cache still serves.
+	UpdateFailed
+)
+
+// UpdateResult is the per-source outcome of an update pass.
+type UpdateResult struct {
+	// ID is the cached identity; zero for a declared source that was never
+	// fetched (identity comes only from the manifest).
+	ID BundleID
+	// Source is the canonical declared source coordinate.
+	Source     string
+	Outcome    UpdateOutcome
+	NewVersion string
+	Err        error
+	// Warnings are the advisories a successful refetch accumulated (content
+	// the entry could not carry).
+	Warnings []Warning
+}
+
+// Subject is the display label for a result row: the cached identity when
+// known, else the declared source coordinate.
+func (r UpdateResult) Subject() string {
+	if r.ID.zero() {
+		return r.Source
+	}
+	return r.ID.String()
+}
+
+// Update refetches declared bundle sources whose tracked tip — a ref, or the
+// remote's default branch for an unpinned source — has moved. The pass is
+// declaration-driven: each remote declaration is compared against its own
+// value-keyed cache entry, so an update can never touch content another
+// declaration addresses. A non-zero id updates only the declarations whose
+// cached identity matches; a zero id updates every declared source. A
+// sha-pinned source is skipped; a resolve/refetch failure is reported per
+// source and never purges the cache. The top-level error is only for a
+// cache-enumeration failure, or an id that matches no cached entry.
+func (m *Manager) Update(ctx context.Context, id BundleID) ([]UpdateResult, error) {
+	root, err := cacheRoot()
+	if err != nil {
+		return nil, err
+	}
+	installed, err := scanInstalled(root)
+	if err != nil {
+		return nil, err
+	}
+	byKey := entriesByKey(installed)
+
+	var results []UpdateResult
+	for _, d := range m.resolver.remoteDeclarations() {
+		entry, cached := byKey[d.src.Key()]
+		if !id.zero() && (!cached || entry.ID != id) {
+			continue
+		}
+		results = append(results, m.updateOne(ctx, d.src, entry, cached))
+	}
+	if !id.zero() && len(results) == 0 {
+		return nil, fmt.Errorf(
+			"bundle %s has no declared source to update — declare it in a `bundles:` entry first", id)
+	}
+	return results, nil
+}
+
+// updateOne resolves one declared source's tracked tip — its ref, or the
+// remote's default branch for an unpinned source — and refetches its cache
+// entry in place when the tip has moved since the last fetch. A sha-pinned
+// source is a skip; a resolve or fetch error is captured on the result,
+// leaving the cache intact. A refetch whose fresh manifest resolves a
+// DIFFERENT identity (an upstream namespace/name rename) reports the new
+// identity on the result, warns, and removes the old identity's superseded
+// same-key entry.
+func (m *Manager) updateOne(ctx context.Context, src Source, entry InstalledEntry, cached bool) UpdateResult {
+	result := UpdateResult{
+		ID: entry.ID, Source: src.Canonical(), Outcome: UpdateFailed, NewVersion: "", Err: nil, Warnings: nil,
+	}
+	switch {
+	case !cached:
+		result.Outcome = UpdateSkippedNotInstalled
+		return result
+	case src.SHA != "":
+		result.Outcome = UpdateSkippedPinned
+		return result
+	}
+
+	newSHA, err := m.fetcher.ResolveRef(ctx, src.URL, src.Ref)
+	if err != nil {
+		result.Err = &SourceError{Source: src, Err: err}
+		return result
+	}
+	// A missing or corrupt receipt just means there is nothing to compare —
+	// refetch rather than fail (the receipt is display/compare-only).
+	receipt, ok, err := readReceipt(entry.Root)
+	if err == nil && ok && newSHA == receipt.SHA {
+		result.Outcome = UpdateUnchanged
+		return result
+	}
+
+	newID, version, warnings, err := m.fetchIntoCache(ctx, src)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	result.Outcome = UpdateRefetched
+	result.NewVersion = version
+	result.Warnings = warnings
+	// The refetch resolves identity from the fresh manifest, so an upstream
+	// namespace/name rename moves this value's entry to a NEW identity dir,
+	// leaving the old identity's same-key entry superseded. Surface the rename
+	// (it is also what a hijacked repository shipping a new identity looks
+	// like) and remove the superseded twin so it cannot linger; the result
+	// carries the identity the value now resolves to, so the caller's AutoGC
+	// pass reconciles the right entries even if the removal here fails.
+	if newID != entry.ID {
+		result.Warnings = append(result.Warnings, Warning{Message: fmt.Sprintf(
+			"bundle %s was renamed upstream to %s; verify the source repository is still the one you trust",
+			entry.ID, newID)})
+		if rmErr := removeSupersededEntry(ctx, entry); rmErr != nil {
+			result.Warnings = append(result.Warnings, Warning{Message: fmt.Sprintf(
+				"superseded cache entry of %s could not be removed (%v); `clawker bundle prune` will retry",
+				entry.ID, rmErr)})
+		}
+	}
+	result.ID = newID
+	return result
+}
+
+// AutoUpdateCheck refetches opt-in bundles whose tracked source has moved —
+// a ref, or the remote's default branch for an unpinned source — fired at the
+// start of bundle-consuming commands. It NEVER errors and NEVER blocks: every
+// problem (a resolve failure, a refetch failure) becomes a Warning and the
+// cached version keeps serving. Only declarations that opted in
+// (auto_update: true), are movable (not sha-pinned, not local), and have a
+// cache entry to compare are considered.
+func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
+	root, err := cacheRoot()
+	if err != nil {
+		return []Warning{{Message: fmt.Sprintf("bundle auto-update skipped: %v", err)}}
+	}
+	installed, err := scanInstalled(root)
+	if err != nil {
+		return []Warning{{Message: fmt.Sprintf("bundle auto-update skipped: %v", err)}}
+	}
+	byKey := entriesByKey(installed)
+
+	var warnings []Warning
+	var refetched []BundleID
+	for _, src := range m.autoUpdateSources() {
+		entry, cached := byKey[src.Key()]
+		if !cached {
+			continue
+		}
+		result := m.updateOne(ctx, src, entry, true)
+		if w, emit := autoUpdateWarning(result); emit {
+			warnings = append(warnings, w)
+		}
+		warnings = append(warnings, result.Warnings...)
+		if result.Outcome == UpdateRefetched {
+			refetched = append(refetched, result.ID)
+		}
+	}
+	// A refetch means a declaration moved — reconcile the touched identities'
+	// stranded siblings against the roots while we're here (see AutoGC).
+	return append(warnings, m.AutoGC(ctx, refetched...)...)
+}
+
+// autoUpdateSources lists the declared sources eligible for auto-update —
+// opted in (auto_update: true) and movable (not sha-pinned, not local) —
+// deduplicated by value key.
+func (m *Manager) autoUpdateSources() []Source {
+	var sources []Source
+	seen := map[string]bool{}
+	for _, decl := range m.cfg.BundleDeclarations() {
+		if !decl.Source.AutoUpdate {
+			continue
+		}
+		src := SourceFromConfig(decl.Source)
+		if src.IsLocal() || src.SHA != "" || seen[src.Key()] {
+			continue
+		}
+		seen[src.Key()] = true
+		sources = append(sources, src)
+	}
+	return sources
+}
+
+// autoUpdateWarning renders the advisory for an auto-update outcome: a refetch or
+// a failure warns; an unchanged or pinned bundle is silent.
+func autoUpdateWarning(r UpdateResult) (Warning, bool) {
+	switch r.Outcome {
+	case UpdateRefetched:
+		return Warning{Message: fmt.Sprintf("bundle %s auto-updated to version %s", r.ID, r.NewVersion)}, true
+	case UpdateFailed:
+		return Warning{Message: fmt.Sprintf(
+			"bundle %s auto-update failed (%v); using the cached version", r.ID, r.Err)}, true
+	case UpdateSkippedPinned, UpdateSkippedNotInstalled, UpdateUnchanged:
+		return Warning{}, false
+	default:
+		return Warning{}, false
+	}
+}

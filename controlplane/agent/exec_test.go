@@ -99,7 +99,7 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 		plan  []agent.Step
 		label string
 	}{
-		"boot plan": {plan: agent.BootPlan(), label: "boot"},
+		"boot plan": {plan: agent.BootPlan("claude"), label: "boot"},
 		"init plan": {plan: agent.InitPlan(), label: "init"},
 	}
 
@@ -195,7 +195,7 @@ func TestInitPlan_PrivilegeAndShape(t *testing.T) {
 // no step races the CMD past the entrypoint fifo release).
 func TestBootPlan_PreRunShape(t *testing.T) {
 	idxPreRun, idxReady := -1, -1
-	for i, st := range agent.BootPlan() {
+	for i, st := range agent.BootPlan("claude") {
 		switch s := st.(type) {
 		case agent.ShellStep:
 			if s.Name == consts.HookPreRun {
@@ -219,8 +219,9 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 	// steps prepend to the head; this pair must stay terminal, in this order
 	// (mirrors agent.BootPlanPost). Pinning both indices catches a reorder of the
 	// pair or any step wedged between them.
-	assert.Equal(t, len(agent.BootPlan())-1, idxReady, "agent-ready must be the terminal step")
-	assert.Equal(t, len(agent.BootPlan())-2, idxPreRun, "pre-run must be the second-to-last step (immediately before agent-ready)")
+	assert.Equal(t, len(agent.BootPlan("claude"))-1, idxReady, "agent-ready must be the terminal step")
+	assert.Equal(t, len(agent.BootPlan("claude"))-2, idxPreRun,
+		"pre-run must be the second-to-last step (immediately before agent-ready)")
 }
 
 // TestPreRunScript_GuardSemantics executes agent.PreRunScript the same way the
@@ -538,7 +539,7 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	target := agent.ExecTarget{ContainerID: "c-cs-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	done := stream.FeedDone()
-	require.NoError(t, e.Run(ctx, stream, target, agent.BootPlan(), "boot"))
+	require.NoError(t, e.Run(ctx, stream, target, agent.BootPlan("claude"), "boot"))
 	if cerr := stream.CloseSend(); cerr != nil {
 		t.Errorf("close send: %v", cerr)
 	}

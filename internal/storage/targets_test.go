@@ -183,6 +183,58 @@ func TestWriteTargets_LayerDedupAndAppend(t *testing.T) {
 	assert.Equal(t, filepath.Join(parent, ".config.yaml"), targets[1].Path)
 }
 
+// SiblingTarget mirrors the resolved file's placement form: plain inside a
+// .clawker/ directory, dotted as a flat root file. It derives from the path
+// alone, so a discovered dir-form main file yields a plain-form sibling in the
+// same directory and a flat dotfile yields a dotted sibling.
+func TestSiblingTarget(t *testing.T) {
+	dirForm := filepath.Join("/proj", consts.DotClawkerDir, "clawker.yaml")
+	assert.Equal(t,
+		filepath.Join("/proj", consts.DotClawkerDir, "clawker.local.yaml"),
+		storage.SiblingTarget(dirForm, "clawker.local.yaml"))
+
+	dottedDirForm := filepath.Join("/proj", consts.DotClawkerDir, ".clawker.yaml")
+	assert.Equal(t,
+		filepath.Join("/proj", consts.DotClawkerDir, ".clawker.local.yaml"),
+		storage.SiblingTarget(dottedDirForm, "clawker.local.yaml"))
+
+	flatDotfile := filepath.Join("/proj", ".clawker.yaml")
+	assert.Equal(t,
+		filepath.Join("/proj", ".clawker.local.yaml"),
+		storage.SiblingTarget(flatDotfile, "clawker.local.yaml"))
+}
+
+// A SiblingTarget path is rediscoverable: writing the derived sibling beside a
+// discovered main file and reloading an identically-configured store finds it.
+func TestSiblingTarget_Rediscoverable(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(cwd, consts.DotClawkerDir), 0o755))
+
+	mainPath := filepath.Join(cwd, consts.DotClawkerDir, "config.yaml")
+	require.NoError(t, os.WriteFile(mainPath, []byte("name: main\n"), 0o600))
+
+	siblingPath := storage.SiblingTarget(mainPath, "config.local.yaml")
+	require.NoError(t, os.WriteFile(siblingPath, []byte("name: local\n"), 0o600))
+
+	store, err := storage.New[targetsSchema]("",
+		storage.WithFilenames("config.local.yaml", "config.yaml"),
+		storage.WithWalkUp(cwd),
+	)
+	require.NoError(t, err)
+
+	found := false
+	for _, l := range store.Layers() {
+		if l.Path == siblingPath {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "sibling target %q was not rediscovered", siblingPath)
+}
+
 // The invariant behind the whole API: every candidate location, once written,
 // must be rediscovered by an identically-configured store on reload. The
 // swept store covers all source shapes: walk-up in .clawker/ dir form,

@@ -23,7 +23,7 @@ clawker volume inspect VOLUME [VOLUME...] [flags]
   clawker volume inspect clawker.myapp.dev-workspace
 
   # Inspect multiple volumes
-  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-config
+  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-claude.config
 ```
 
 ### Options

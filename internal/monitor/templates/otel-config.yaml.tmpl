@@ -1,11 +1,12 @@
 receivers:
-  # Untrusted OTLP ingress for agent containers (Claude Code's SDK) +
-  # host CLI (clawker-cli). No client auth — anyone reachable on
+  # Untrusted OTLP ingress for agent containers (harness SDK telemetry)
+  # + host CLI (clawker-cli). No client auth — anyone reachable on
   # clawker-net or the host loopback can push. Records are dispatched
-  # by routing/untrusted, which forwards only service.name=claude-code
-  # and service.name=clawker-cli to their respective indices; every
-  # other service.name (including spoofed envoy/coredns/clawkercp) is
-  # dropped at routing. The resource/untrusted_otlp processor stamps
+  # by routing/untrusted, which forwards only service.name=clawker-cli
+  # plus the service names declared by ACTIVE monitoring units to their
+  # respective indices; every other service.name (including spoofed
+  # envoy/coredns/clawkercp) is dropped at routing. The
+  # resource/untrusted_otlp processor stamps
   # ingest_source=untrusted_otlp on all records from this receiver so
   # dashboards can separate forgeable, sender-declared records from
   # provenance-stamped ones.
@@ -107,19 +108,20 @@ processors:
   # transport/model/ExecuteDirectQueryActionResponse.java#parseResult.
   #
   # Affects the OSD Explore "Metrics" UI for every series whose label
-  # set includes `type` — today that's all Claude Code counters with a
-  # `type` attribute (claude_code.token.usage [input/output/cacheRead/
-  # cacheCreation], claude_code.active_time.total [cli/user], and
-  # claude_code.lines_of_code.count [added/removed]). PPL form
-  # (`source = clawker_prometheus.<metric>`) and the native Prom UI
-  # are unaffected — they take a different code path.
+  # set includes `type` — several coding-agent SDK counters carry one
+  # (token/active-time/lines-of-code breakdowns commonly use it). PPL
+  # form (`source = clawker_prometheus.<metric>`) and the native Prom
+  # UI are unaffected — they take a different code path.
   #
-  # Rename is unconditional rather than scoped to the known metrics so
-  # future producers carrying `type` work without further changes.
+  # Rename is unconditional rather than scoped to known metrics so any
+  # producer carrying `type` works without further changes — this is
+  # generic core, NOT a per-unit transform: scoping it to a unit would
+  # break every other unit's series whenever that unit is deactivated.
   # Remove this block when upstream lands a fix (e.g. switching the
   # substring check to a JSON-root check) and bump the pinned
   # OpenSearch / OpenSearch Dashboards version in
-  # internal/monitor/templates.go.
+  # internal/monitor/templates.go. Unit-declared datapoint_renames
+  # render below the core statements, scoped to their service names.
   transform/metrics:
     error_mode: ignore
     metric_statements:
@@ -129,29 +131,33 @@ processors:
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
           - set(attributes["kind"], attributes["type"]) where attributes["type"] != nil
           - delete_key(attributes, "type") where attributes["type"] != nil
+{{- range .Units}}
+{{- range .MetricRenameStatements}}
+          - {{.}}
+{{- end}}
+{{- end}}
   # Convert delta-temporality Sum metrics into cumulative before they hit
-  # the Prometheus exporter. Claude Code's SDK emits its counters
-  # (claude_code.cost.usage, claude_code.token.usage, etc.) with
-  # AggregationTemporality=Delta — each export is the increment since the
-  # last export, not the running total. The Prometheus exporter requires
-  # cumulative semantics for `_total` series; without this processor, each
-  # scrape sees only the latest delta instead of the lifetime sum, which
-  # silently undercounts every Claude Code counter by 10-20× over a session.
-  # Spanmetrics-derived RED metrics on the trusted pipeline are also delta
-  # by default, so apply on both metrics pipelines.
+  # the Prometheus exporter. Coding-agent SDKs commonly emit counters
+  # with AggregationTemporality=Delta — each export is the increment
+  # since the last export, not the running total. The Prometheus
+  # exporter requires cumulative semantics for `_total` series; without
+  # this processor, each scrape sees only the latest delta instead of
+  # the lifetime sum, silently undercounting delta counters by 10-20×
+  # over a session. Already-cumulative producers pass through untouched.
+  # Spanmetrics-derived RED metrics on the trusted pipeline are also
+  # delta by default, so apply on both metrics pipelines.
   #
   # max_stale governs how long a stream's accumulated cumulative value is
   # kept after its last delta sample; idle streams are evicted past it.
-  # The default (5m) silently drops one-shot/infrequent counters:
-  # claude_code.session.count fires exactly once at session start, and
-  # claude_code.pull_request.count / claude_code.commit.count fire only
-  # on the rare event, so within minutes their cumulative value is evicted
-  # and the `_total` series vanishes from the exporter even while the
-  # session is still alive. That defeats the exporter's metric_expiration
-  # (8760h) intent for `_total` series. max_stale=0 is invalid (errors),
-  # so align it with metric_expiration so every counter persists for the
-  # life of the (ephemeral, throwaway) stack; max_streams remains the
-  # memory bound.
+  # The default (5m) silently drops one-shot/infrequent counters (a
+  # session counter fires exactly once at session start; commit/PR
+  # counters fire only on the rare event), so within minutes their
+  # cumulative value is evicted and the `_total` series vanishes from
+  # the exporter even while the session is still alive. That defeats the
+  # exporter's metric_expiration (8760h) intent for `_total` series.
+  # max_stale=0 is invalid (errors), so align it with metric_expiration
+  # so every counter persists for the life of the (ephemeral, throwaway)
+  # stack; max_streams remains the memory bound.
   deltatocumulative:
     max_streams: 10000
     max_stale: 8760h
@@ -273,8 +279,9 @@ exporters:
       max_elapsed_time: 5m
   # Logs → OpenSearch. Indices split by source because each source has
   # a different schema shape: clawker emits attributes.event as a scalar
-  # string (logger pattern `Str("event", ...)`); Claude Code emits the
-  # OTEL semantic-conventions nested form `event.name`; Envoy ALS lands
+  # string (logger pattern `Str("event", ...)`); harness SDKs typically
+  # emit the OTEL semantic-conventions nested form `event.name` (each
+  # active monitoring unit owns its index's shape); Envoy ALS lands
   # HTTP/TLS/TCP fields flat on the record; the CoreDNS otel plugin
   # emits structured dns.query attributes. The clawker-opensearch-bootstrap
   # one-shot service PUTs an explicit index template per source (see
@@ -295,16 +302,22 @@ exporters:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
-  opensearch/logs_claude_code:
+{{- range .Units}}
+{{- range .Lanes}}
+  # Active monitoring unit lane — declared by the unit's monitoring.yaml
+  # and rendered per `clawker monitor enable`.
+  {{.ExporterName}}:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
-    logs_index: claude-code
+      endpoint: "http://{{$.OpenSearchNodeService}}:{{$.OpenSearchPort}}"
+    logs_index: {{.Index}}
     sending_queue:
       enabled: true
     retry_on_failure:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
+{{- end}}
+{{- end}}
   opensearch/logs_clawker_cli:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
@@ -355,9 +368,8 @@ exporters:
   #
   # metric_expiration controls the exporter's staleness window. The
   # default (5m) reaps cumulative counters that haven't seen a fresh
-  # delta in 5 minutes. Several Claude Code counters fire only on
-  # user-action triggers (session.count, code_edit_tool.decision,
-  # commit.count, pull_request.count, lines_of_code.count) — gaps of
+  # delta in 5 minutes. Coding-agent SDK counters commonly fire only on
+  # user-action triggers (session/commit/PR/edit counters) — gaps of
   # hours between deltas are normal, and the default expiration would
   # silently drop them from `_total` series after their last event.
   # Foot-gun: `0` does NOT disable expiration — it expires every
@@ -373,8 +385,9 @@ connectors:
   # through the traces pipeline and re-emits them into the metrics
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
-  # Route untrusted (plaintext OTLP) records. Only claude-code and
-  # clawker-cli records reach their indices. An agent crafting
+  # Route untrusted (plaintext OTLP) records. Only clawker-cli and
+  # active monitoring units' declared service names reach their
+  # indices. An agent crafting
   # `service.name=envoy`/`coredns`/`clawkercp` from the unauth'd
   # port CANNOT reach the trusted indices — there is no such route
   # off this connector. default_pipelines catches any other
@@ -387,11 +400,17 @@ connectors:
     default_pipelines: [logs/untrusted_unrouted]
     table:
       - context: resource
-        condition: attributes["service.name"] == "claude-code"
-        pipelines: [logs/claude-code]
-      - context: resource
         condition: attributes["service.name"] == "clawker-cli"
         pipelines: [logs/clawker-cli]
+{{- range .Units}}
+{{- range $lane := .Lanes}}
+{{- range $svc := $lane.ServiceNames}}
+      - context: resource
+        condition: attributes["service.name"] == "{{$svc}}"
+        pipelines: [{{$lane.PipelineName}}]
+{{- end}}
+{{- end}}
+{{- end}}
   # Route trusted (mTLS-gated) records by sender-declared service.name.
   # Reachable only by peers whose client cert chains through the infra
   # intermediate CA. error_mode: propagate so OTTL evaluation errors
@@ -444,24 +463,29 @@ service:
       receivers: [prometheus/self, spanmetrics]
       processors: [memory_limiter, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
-    # Untrusted log ingress. Only claude-code/clawker-cli route
-    # downstream; other service.name values are dropped at the routing
-    # connector. ingest_source stamped here so it carries through to
+    # Untrusted log ingress. Only clawker-cli and active units' lanes
+    # route downstream; other service.name values are dropped at the
+    # routing connector. ingest_source stamped here so it carries through to
     # the per-source pipelines.
     logs/in_untrusted:
       receivers: [otlp]
       processors: [memory_limiter, resource/untrusted_otlp, batch]
       exporters: [routing/untrusted]
-    logs/claude-code:
-      receivers: [routing/untrusted]
-      processors: [memory_limiter]
-      exporters: [opensearch/logs_claude_code, debug]
     logs/clawker-cli:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
-    # Quarantine for untrusted records whose service.name isn't
-    # claude-code or clawker-cli. Stdout-only (debug); never indexed
+{{- range .Units}}
+{{- range .Lanes}}
+    {{.PipelineName}}:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [{{.ExporterName}}, debug]
+{{- end}}
+{{- end}}
+    # Quarantine for untrusted records whose service.name matches no
+    # route (no active unit claims it, not clawker-cli). Stdout-only
+    # (debug); never indexed
     # because the lane is unauthenticated and the records are
     # forgeable. Operator can grep `docker logs clawker-otel-collector`
     # for the dropped record to spot a misconfigured sender.

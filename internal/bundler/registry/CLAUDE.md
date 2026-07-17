@@ -8,6 +8,7 @@ npm registry client and version metadata types for `internal/bundler`. Full API 
 |------|---------|
 | `fetcher.go` | `Fetcher` interface — `FetchVersions(ctx, pkg) ([]string, error)`, `FetchDistTags(ctx, pkg) (DistTags, error)`. The test seam for version resolution. |
 | `npm.go` | `NPMClient` — concrete `Fetcher` backed by `https://registry.npmjs.org`. Configurable via `WithHTTPClient`, `WithBaseURL`, `WithTimeout`. Default timeout 30s. |
+| `github.go` | `GitHubReleaseClient.LatestVersion(ctx, repo, tagPrefix)` — resolves a repo's latest GitHub release tag to a bare version, stripping the manifest-configured tag prefix (mismatch = error, not a guess). Serves `version.resolver: github-release` harness bundles. Configurable via `WithGitHubHTTPClient`, `WithGitHubBaseURL`. |
 | `types.go` | `DistTags`, `VersionInfo`, `VersionsFile`, `NPMPackageInfo`, `NewVersionInfo(...)`. `VersionsFile.SortedKeys` returns keys in semver-descending order; order-sensitive consumers iterate that. |
 | `errors.go` | `NetworkError` (with `Unwrap`), `RegistryError` (with `IsNotFound` for 404 detection), `ParseError` (with `Unwrap`; HTTP-200 body decode failure, distinct from network failure), sentinel `ErrVersionNotFound`/`ErrInvalidVersion`/`ErrNoVersions`. `bundler/errors.go` re-exports these as type aliases so callers outside `registry` import `bundler` instead. |
 | `npm_test.go` | `httptest.Server` stubs for `FetchVersions`, `FetchDistTags`, 404 handling, network error paths. |

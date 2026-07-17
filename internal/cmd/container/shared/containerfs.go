@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -13,7 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// containerHomeDir is the home directory for the claude user inside containers.
+// containerHomeDir is the home directory for the unprivileged container user.
 const containerHomeDir = consts.ContainerHomeDir
 
 // CopyToVolumeFn is the signature for copying a directory to a Docker volume.
@@ -34,11 +35,30 @@ type InitConfigOpts struct {
 	ProjectName string
 	// AgentName is the agent name for volume naming.
 	AgentName string
+	// HarnessName is the selected harness bundle's registry name — the
+	// discriminator in the harness-scoped volume identities the staged
+	// subtrees are copied into.
+	HarnessName string
 	// ContainerWorkDir is the workspace directory inside the container (e.g. "/Users/dev/my-app").
 	// Used to rewrite projectPath values in installed_plugins.json.
 	ContainerWorkDir string
-	// ClaudeCode is the claude code configuration. Nil uses defaults (copy strategy + host auth).
-	ClaudeCode *config.ClaudeCodeConfig
+	// Harness is the per-harness initialization config resolved for the
+	// selected harness (project harnesses map / legacy agent.claude_code
+	// shim). Nil uses defaults (copy strategy + host auth).
+	Harness *config.HarnessConfig
+	// Staging is the selected harness bundle's create-time staging manifest:
+	// explicit host→container copy directives.
+	Staging config.Staging
+	// Volumes are the bundle's declared persisted dirs; each staged dest
+	// falls under one of them (validated at bundle load).
+	Volumes []config.VolumeSpec
+	// FreshVolumes maps a harness volume name to whether this create made
+	// it. Staged subtrees are copied only into fresh volumes — pre-existing
+	// volumes carry user state and are never re-seeded.
+	FreshVolumes map[string]bool
+	// HostProjectRoot is the host workspace path; staging sources inside it
+	// are rejected (the workspace is mounted, never staged).
+	HostProjectRoot string
 	// CopyToVolume copies a directory to a Docker volume.
 	// In production, wire this to (*docker.Client).CopyToVolume.
 	CopyToVolume CopyToVolumeFn
@@ -46,72 +66,64 @@ type InitConfigOpts struct {
 	Log *logger.Logger
 }
 
-// InitContainerConfig handles one-time claude config initialization for new containers.
-// Called after EnsureConfigVolumes when the config volume was freshly created.
-//
-// Steps:
-//  1. If strategy=="copy": prepare host claude config, copy to volume
-//  2. If use_host_auth: prepare credentials, copy to volume
+// InitContainerConfig handles one-time harness state initialization for new
+// containers. When strategy=="copy", it stages host harness state per the
+// manifest and copies each staged subtree into its declared volume — but
+// only into volumes this create made (FreshVolumes); pre-existing volumes
+// carry user state and are never re-seeded. Credentials are never copied —
+// the user authenticates inside the container and the token family
+// persists in the harness volumes.
 func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 	if opts.CopyToVolume == nil {
 		return fmt.Errorf("InitContainerConfig: CopyToVolumeFn is required")
 	}
 
-	claudeCode := opts.ClaudeCode
-
-	// Get config volume name using docker naming convention
-	configVolume, err := docker.VolumeName(opts.ProjectName, opts.AgentName, docker.VolumePurposeConfig)
-	if err != nil {
-		return err
+	if opts.Harness.ConfigStrategy() != config.ConfigStrategyCopy {
+		return nil
+	}
+	if !anyFresh(opts.Volumes, opts.FreshVolumes) {
+		return nil
 	}
 
-	// Step 1: Copy host claude config if strategy is "copy"
-	if claudeCode.ConfigStrategy() == "copy" {
-		hostConfigDir, err := containerfs.ResolveHostConfigDir()
-		if err != nil {
-			return fmt.Errorf("cannot copy claude config: %w", err)
-		}
-
-		stagingDir, cleanup, err := containerfs.PrepareClaudeConfig(opts.Log, hostConfigDir, containerHomeDir, opts.ContainerWorkDir)
-		if err != nil {
-			return fmt.Errorf("failed to prepare claude config: %w", err)
-		}
-		defer cleanup()
-
-		// PrepareClaudeConfig creates a .claude/ subdirectory inside stagingDir.
-		// CopyToVolume copies the staging dir contents to the config volume,
-		// which mounts at /home/claude/.claude.
-		claudeDir := filepath.Join(stagingDir, ".claude")
-		if err := opts.CopyToVolume(ctx, configVolume, claudeDir, containerHomeDir+"/.claude", nil); err != nil {
-			return fmt.Errorf("failed to copy claude config to volume: %w", err)
-		}
-
-		opts.Log.Debug().Msg("copied host claude config to container")
+	stagingDir, cleanup, prepErr := containerfs.PrepareConfig(
+		opts.Log, opts.Staging, containerHomeDir, opts.ContainerWorkDir, opts.HostProjectRoot)
+	if prepErr != nil {
+		return fmt.Errorf("failed to prepare harness config: %w", prepErr)
 	}
+	defer cleanup()
 
-	// Step 2: Copy credentials if use_host_auth is enabled
-	if claudeCode.UseHostAuthEnabled() {
-		hostConfigDir, err := containerfs.ResolveHostConfigDir()
+	// PrepareConfig stages a mirror of the container home. Copy each
+	// declared volume's subtree into the volume it belongs to.
+	for _, v := range opts.Volumes {
+		if !opts.FreshVolumes[v.Name] {
+			continue
+		}
+		volName, err := docker.HarnessVolumeName(opts.ProjectName, opts.AgentName, opts.HarnessName, v.Name)
 		if err != nil {
-			return fmt.Errorf("cannot prepare credentials: %w", err)
+			return fmt.Errorf("volume name for %q: %w", v.Name, err)
 		}
-
-		stagingDir, cleanup, err := containerfs.PrepareCredentials(opts.Log, hostConfigDir)
-		if err != nil {
-			return fmt.Errorf("failed to prepare credentials: %w", err)
+		rel := config.NormalizeContainerPath(v.Path)
+		srcDir := filepath.Join(stagingDir, filepath.FromSlash(rel))
+		if _, statErr := os.Stat(srcDir); statErr != nil {
+			continue // nothing staged for this volume
 		}
-		defer cleanup()
-
-		// PrepareCredentials creates a .claude/.credentials.json inside stagingDir.
-		credsDir := filepath.Join(stagingDir, ".claude")
-		if err := opts.CopyToVolume(ctx, configVolume, credsDir, containerHomeDir+"/.claude", nil); err != nil {
-			return fmt.Errorf("failed to copy credentials to volume: %w", err)
+		if copyErr := opts.CopyToVolume(ctx, volName, srcDir, containerHomeDir+"/"+rel, nil); copyErr != nil {
+			return fmt.Errorf("failed to copy harness config to volume: %w", copyErr)
 		}
-
-		opts.Log.Debug().Msg("injected host credentials into container config volume")
+		opts.Log.Debug().Str("volume", v.Name).Msg("copied host harness state into volume")
 	}
 
 	return nil
+}
+
+// anyFresh reports whether any declared volume was created by this setup.
+func anyFresh(volumes []config.VolumeSpec, fresh map[string]bool) bool {
+	for _, v := range volumes {
+		if fresh[v.Name] {
+			return true
+		}
+	}
+	return false
 }
 
 // InjectPostInitOpts holds options for post-init script injection.
@@ -134,7 +146,11 @@ type InjectPostInitOpts struct {
 // InjectPostInitScript writes ~/.clawker/post-init.sh to a created (not started) container.
 // Must be called after ContainerCreate and before ContainerStart.
 // The control plane is responsible for attempting to run this script if it exists during first start after initial creation.
-// If script succeeds, or doesn't exist during first start, a ~/.claude/post-initialized marker is created to prevent re-runs on restart as per the contract.
+// If the script succeeds, or doesn't exist during first start, a
+// ~/.clawker/post-initialized marker is created to prevent re-runs as per
+// the contract. ~/.clawker is backed by the dedicated clawker volume, so
+// the marker's lifetime matches the config volumes post_init mutates —
+// recreating a container against existing volumes skips post_init.
 func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	return InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     opts.ContainerID,

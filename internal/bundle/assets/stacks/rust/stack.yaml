@@ -1,0 +1,4 @@
+description: >-
+  The Rust toolchain via rustup (official installer, stable channel) into
+  the user's ~/.cargo and ~/.rustup. Skips itself when cargo is already
+  present for the user.

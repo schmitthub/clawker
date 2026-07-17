@@ -12,9 +12,12 @@ Four containers brought up by `clawker monitor up`:
 
 - **OTel Collector** — receives OTLP/HTTP from agents on `:4318`, fans
   out to OpenSearch (logs) and Prometheus exporter (metrics).
-- **OpenSearch** — log storage. Six indices: `claude-code`,
-  `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`,
-  `clawker-ebpf-egress`.
+- **OpenSearch** — log storage. Core infra indices (`clawker-cli`,
+  `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`)
+  are always present; the `claude-code` index and its dashboards are
+  contributed by the built-in `claude-code` monitoring extension, which a
+  project opts into via `monitor.extensions` (no default selection). Other
+  extensions add their own indices.
 - **OpenSearch Dashboards (OSD)** — UI at `http://localhost:5601`.
 - **Prometheus** — metrics scrape + UI at `http://localhost:9090`.
 
@@ -27,6 +30,25 @@ it never starts until the cluster is preconfigured. Prometheus starts in
 parallel with bootstrap (bootstrap depends on Prometheus being up so
 the datasource registration can validate the configured URI). If
 bootstrap fails, the collector does not start.
+
+## Monitoring extensions (what the stack observes)
+
+Beyond the core firewall/control-plane telemetry, what the stack observes is
+contributed by **monitoring extensions** a project selects under
+`monitor.extensions` in `clawker.yaml` (a whole-value selection — the highest
+config layer that sets it wins; the default selection is the built-in
+`claude-code` extension, and an explicit empty list opts out of all
+monitoring). `clawker monitor up` is bring-up only: it seeds the current
+project's selected extensions (indices, ingest pipelines, dashboards) when it
+starts the stack, and exits untouched — with an already-up notice — when the
+stack is running; there is no host-side enable registry, and the collector
+routes from the union of every extension ever seeded. Apply a selection edit
+to a running stack with `clawker monitor reload` (seeds the selection,
+re-renders the config, and recreates the collector). An extension is a `harnesses`/`stacks`-peer component
+resolved across the same three tiers (built-in floor, loose
+`.clawker/monitoring/<name>/`, installed bundle `namespace.bundle.component`).
+Fetch `https://docs.clawker.dev/monitoring-extensions` (consume/select) and
+`https://docs.clawker.dev/authoring-monitoring` (author) for details.
 
 ## How to get into the workspace
 
@@ -146,11 +168,13 @@ container.
 ## Anti-patterns
 
 - **Treating the stack as durable state.** It is preconfigured +
-  ephemeral. Index templates, dashboards, ISM policies, and the
-  Clawker workspace are all baked into the bootstrap image. The
-  answer to almost every state-management question is "regenerate
-  with `clawker monitor down --volumes && clawker monitor init
-  --force && clawker monitor up`."
+  ephemeral. Core index templates, ISM policies, and the Clawker
+  workspace ride the bootstrap; extension assets (indices, pipelines,
+  dashboards) are seeded from each project's `monitor.extensions`
+  selection at bring-up (or `monitor reload`). The answer to almost every
+  state-management question is "regenerate with `clawker monitor down
+  --volumes && clawker monitor init --force && clawker monitor up`" —
+  `--volumes` clears both telemetry data and every seeded extension.
 - **Adding fields to OSD index patterns by hand.** They will be
   overwritten on the next `monitor init`. If a field is missing,
   the fix is in the bootstrap image, not in OSD.

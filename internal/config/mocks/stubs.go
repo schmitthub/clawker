@@ -39,11 +39,13 @@ func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
-	mock.EgressRulesFunc = cfg.EgressRules
+	mock.ProjectEgressRulesFunc = cfg.ProjectEgressRules
+	mock.BundleDeclarationsFunc = cfg.BundleDeclarations
 
 	// Store accessors
 	mock.ProjectStoreFunc = cfg.ProjectStore
 	mock.SettingsStoreFunc = cfg.SettingsStore
+	mock.ProjectRootFunc = cfg.ProjectRoot
 
 	// Schema accessors
 	mock.ProjectFunc = cfg.Project
@@ -51,9 +53,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LoggingConfigFunc = cfg.LoggingConfig
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
-	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
-	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 
 	// Constants
 	mock.ClawkerIgnoreNameFunc = cfg.ClawkerIgnoreName
@@ -89,7 +89,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	// Path helpers
 	mock.MonitorSubdirFunc = cfg.MonitorSubdir
 	mock.BuildSubdirFunc = cfg.BuildSubdir
-	mock.DockerfilesSubdirFunc = cfg.DockerfilesSubdir
 	mock.LogsSubdirFunc = cfg.LogsSubdir
 	mock.BridgesSubdirFunc = cfg.BridgesSubdir
 	mock.PidsSubdirFunc = cfg.PidsSubdir
@@ -114,8 +113,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.PurposeMonitoringFunc = cfg.PurposeMonitoring
 	mock.PurposeFirewallFunc = cfg.PurposeFirewall
 	mock.LabelTestNameFunc = cfg.LabelTestName
-	mock.LabelBaseImageFunc = cfg.LabelBaseImage
-	mock.LabelFlavorFunc = cfg.LabelFlavor
 	mock.LabelTestFunc = cfg.LabelTest
 	mock.LabelE2ETestFunc = cfg.LabelE2ETest
 

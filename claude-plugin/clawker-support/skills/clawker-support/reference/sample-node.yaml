@@ -2,11 +2,6 @@
 # Manually maintained — may lag behind schema. Fetch
 # https://docs.clawker.dev/configuration for field-level details.
 agent:
-  claude_code:
-    config:
-      strategy: copy
-    use_host_auth: true
-    mount_projects: true
   editor: vim
   enable_shared_dir: true
   env_file:
@@ -14,25 +9,34 @@ agent:
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
-  post_init: |
-    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
-    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
-    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
   # pre_run runs on EVERY start (run/start/restart), in the workdir, right before
-  # Claude Code. Use for deps that must re-sync each boot (post_init runs once and
-  # can't). Canonical case: node_modules in a tmpfs, or package.json drift.
+  # the harness CMD. Use for deps that must re-sync each boot (post_init runs once
+  # and can't). Canonical case: node_modules in a tmpfs, or package.json drift.
   # Non-zero exit is fatal (container won't reach ready).
   pre_run: |
     pnpm install
+# Per-harness overlay: `claude mcp add` needs the claude CLI, so it lives in
+# the claude harness's post_init, not the harness-agnostic agent.post_init.
+harnesses:
+  claude:
+    config:
+      strategy: copy
+    mount_projects: true
+    post_init: |
+      claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+      claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+      claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 build:
-  # Node + npm are baked into every clawker image (current LTS line) and already
-  # on PATH — you do NOT install Node yourself. nvm is also set up; to switch
-  # versions at runtime: `nvm install <ver> && nvm use <ver>`.
-  #
-  # Build-time RUN steps already have the baked node on PATH. To build against a
-  # different version, source nvm first:
-  #   . "$NVM_DIR/nvm.sh" && nvm install <ver> && nvm use <ver>
-  image: buildpack-deps:bookworm-scm
+  # The node stack provisions Node + npm + TypeScript on PATH (latest LTS
+  # line) plus nvm for switching versions at runtime
+  # (`nvm install <ver> && nvm use <ver>`).
+  # Declaring it here renders it in the shared base image so build-time steps
+  # (user_run below) have node available; the claude harness declares node
+  # too, so omitting this only moves the install into the harness image.
+  # Every clawker image builds from the pinned Debian substrate — there is no
+  # base-image field.
+  stacks:
+    - node
   packages:
     - ripgrep
     - ca-certificates
@@ -41,13 +45,15 @@ build:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
-      # Global npm installs land on the agent's PATH (baked node).
-      - npm install -g pnpm typescript
+      # Global npm installs land on the agent's PATH (stack node; tsc is
+      # already baked by the stack).
+      - npm install -g pnpm
 security:
   docker_socket: false
   firewall:
     add_domains:
       - registry.npmjs.org
+      - nodejs.org
       - github.com
       - api.github.com
       - docs.astro.build
@@ -55,6 +61,7 @@ security:
       - mcp.context7.com
       - files.pythonhosted.org
       - api.cloudflare.com
+      - astral.sh
     rules:
       - action: allow
         dst: github.com
@@ -63,15 +70,15 @@ security:
       - action: allow
         dst: raw.githubusercontent.com
         port: 443
-        proto: tls
+        proto: https
         path_default: deny
         path_rules:
           - path: /schmitthub/clawker/
             action: allow
-    git_credentials:
-      copy_git_config: true
-      forward_gpg: true
-      forward_https: true
-      forward_ssh: true
+  git_credentials:
+    copy_git_config: true
+    forward_gpg: true
+    forward_https: true
+    forward_ssh: true
 workspace:
   default_mode: bind

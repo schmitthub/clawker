@@ -1,0 +1,40 @@
+# Go toolchain — official tarball onto /usr/local/go, sha256-verified
+# against the go.dev download index (the same TLS source that names the
+# release; Go publishes no detached signatures for tarballs). GO_VERSION
+# empty floats to the latest stable so rebuilds pick up security patches
+# (dep-rot rationale: docs/threat-model.mdx); set GO_VERSION (e.g. 1.26.0)
+# to pin a line. GOPATH/PATH follow the official golang image conventions
+# so `go install` binaries resolve at runtime for every user.
+ARG GO_VERSION=""
+ENV GOPATH=/go
+ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v go >/dev/null 2>&1; then \
+{{- else}}
+RUN if command -v go >/dev/null 2>&1; then \
+{{- end}}
+      echo "clawker stack go: existing $(go version) — skipping install"; \
+    else \
+    GO_TARGET="$GO_VERSION" && \
+    if [ -z "$GO_TARGET" ]; then \
+      GO_TARGET=$(curl -sSfL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version' | sed 's/^go//'); \
+    fi && \
+    { [ -n "$GO_TARGET" ] && [ "$GO_TARGET" != "null" ]; } || { echo "ERROR: could not resolve Go release" >&2; exit 1; } && \
+    ARCH= && dpkgArch="$(dpkg --print-architecture)" && \
+    case "${dpkgArch##*-}" in \
+      amd64) ARCH='amd64' ;; \
+      arm64) ARCH='arm64' ;; \
+      *) echo "ERROR: go prebuilt does not support architecture: $dpkgArch (only amd64 and arm64)" >&2; exit 1 ;; \
+    esac && \
+    TARBALL="go${GO_TARGET}.linux-${ARCH}.tar.gz" && \
+    SHA=$(curl -sSfL 'https://go.dev/dl/?mode=json&include=all' | jq -r --arg f "$TARBALL" '[.[].files[] | select(.filename == $f)][0].sha256') && \
+    { [ -n "$SHA" ] && [ "$SHA" != "null" ]; } || { echo "ERROR: could not resolve sha256 for $TARBALL" >&2; exit 1; } && \
+    curl -fsSLO "https://go.dev/dl/$TARBALL" && \
+    echo "$SHA  $TARBALL" | sha256sum -c - && \
+    tar -C /usr/local -xzf "$TARBALL" && \
+    rm "$TARBALL" && \
+    mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH" && \
+    /usr/local/go/bin/go version ; \
+    fi

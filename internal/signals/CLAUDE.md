@@ -17,7 +17,7 @@ Creates a context that's canceled on SIGINT/SIGTERM.
 func SetupSignalContext(parent context.Context) (context.Context, context.CancelFunc)
 ```
 
-**Consumers**: `internal/cmd/image/build`, `internal/cmd/generate`
+**Consumers**: `internal/cmd/image/build`
 
 ## ResizeHandler
 

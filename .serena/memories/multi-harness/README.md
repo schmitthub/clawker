@@ -1,0 +1,51 @@
+# Multi-Harness — Current State (branch feat/multi-harness-support)
+
+**2026-07-10: the extensibility DESIGN was rejected and is being redesigned from
+scratch.** The active design lives in serena `brainstorm_clawker-package-install-model`
+(bundle/install-model pivot). Its GOVERNING MANDATE applies here: the former
+registry/walkup/materialize design was branch-only experimentation — never
+shipped, no user ever saw it. It is not precedent for anything. Do NOT cite its
+decisions, mirror its schemas, or reuse its plumbing as a shortest path. The old
+design-model memory (`stack-unit-contract-model`) was deliberately deleted so it
+cannot bias future sessions.
+
+## What exists (facts about code, not design law)
+
+Branch code implements the now-rejected experiment. Treat it as inventory for
+the rewrite — things to delete, gut, or (only after first-principles
+re-justification against the new model) keep:
+
+- `internal/bundler/` — bundle/stack/harness types, loaders, resolution, egress
+  floor, basehash, embedded `assets/harnesses/{claude,codex}` +
+  `assets/stacks/{go,node,python,rust}`, monitoring unit loading/validation.
+- `internal/config/` — manifest schemas (`Manifest`/`StackManifest`/`EgressRule`,
+  `MonitoringUnitManifest`), project `stacks:`/`harnesses:` registries (DEAD in
+  the new model), front-door validation.
+- `internal/cmd/{stack,harness}/` register/list/remove front doors (DEAD shape —
+  new model replaces with bundle verbs + convention dirs).
+- `internal/monitor/` units resolution/routing/seeding (`UnitsMarkerFile` ledger
+  survives conceptually as the seeded-set union ledger in the new model).
+- `internal/consts/name.go` — unified naming rule.
+- `docs/stack-contract.mdx` (E1–E22/A1–A11 + conformance badges) and user docs —
+  will be rewritten during implementation of the new model; do not treat as law.
+
+## Files in this folder
+
+| file | purpose |
+|---|---|
+| `harness-research-opencode-pi.md` | Live-verified recon for opencode + pi harness bundles (research facts — still valid). |
+
+## Open work
+
+- Implement the new bundle/install model (see the brainstorm memory — decisions,
+  testing mandate, open items).
+- Skills-plugin multi-agent packaging — merge blocker for the branch.
+- Harness template block names FINALIZED (user-ratified 2026-07-14): `root_after_stacks` (block_1+2 merged — they were adjacent), `user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd`. Naming convention: permission-scope prefix + flanking-event anchor, descriptive never prescriptive.
+- opencode/pi bundles (research memo ready) — after the new model lands.
+
+## 2026-07-15: bundle validate deep-loads components (9c8bfd3d, restructured 27a6bd91)
+
+**27a6bd91 (supersedes the cmd-layer shape below, user: "divergent validation = sloppy"):** component validation is a required `bundle.Manager` dependency — `NewManager(cfg, validate, opts...)`; production validator = new composing package `internal/bundle/componentcheck.Validate` (exists because the consumption loaders' packages import internal/bundle). BOTH `Manager.Validate` and the install prefetch (`fetchIntoCache`, pre-commit) run it: broken bundle now fails install before caching. `Report` carries `ComponentErrs` (the short-lived `Report.Bundle` field is gone). Repo-wide forbidigo bans `panic` — no nil-guard in constructor, doc contract only.
+
+
+`clawker bundle validate` now runs every enumerated component through its consumption-time loader (`bundler.LoadBundle`, `bundler.LoadStackDefinition`, `monitor.LoadMonitoringUnit`) after the structural pass — an invalid component manifest is a hard failure at publish time instead of surfacing on the consumer's `clawker build` / `monitor up`. `bundle.Report` gained a `Bundle *Bundle` field (nil on LoadErr) so the command layer can walk components. Same-day docs accuracy sweep (8 Opus reviewers over the Bundles & extensions group) fixed reserved-namespace list, `.clawker.yaml`→`clawker.yaml`, datapoint_renames copy→move (incl. schema-source struct tags), and completed the auto-update trigger list.

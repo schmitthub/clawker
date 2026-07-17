@@ -1,0 +1,490 @@
+receivers:
+  # Untrusted OTLP ingress for agent containers (harness SDK telemetry)
+  # + host CLI (clawker-cli). No client auth — anyone reachable on
+  # clawker-net or the host loopback can push. Records are dispatched
+  # by routing/untrusted, which forwards only service.name=clawker-cli
+  # plus the service names declared by ACTIVE monitoring units to their
+  # respective indices; every other service.name (including spoofed
+  # envoy/coredns/clawkercp) is dropped at routing. The
+  # resource/untrusted_otlp processor stamps
+  # ingest_source=untrusted_otlp on all records from this receiver so
+  # dashboards can separate forgeable, sender-declared records from
+  # provenance-stamped ones.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
+  # inside the container; the published mapping in compose.yaml binds
+  # the host port to 127.0.0.1 only. Agents on clawker-net can reach
+  # this port over the docker network, but the TLS handshake rejects
+  # any peer whose client cert chain does not validate against the
+  # infra intermediate CA — only CP and infra services (envoy/coredns,
+  # cp) hold leaves signed by that intermediate.
+  #
+  # Trust anchor is the infra intermediate CA, NOT the CLI root. Agent
+  # containers carry leaves signed directly by the CLI root with no
+  # path through the intermediate, so their chain fails validation
+  # even when they present a valid CLI-signed cert.
+  #
+  # service.name on records that arrive here is trusted by virtue of
+  # mTLS having succeeded. routing/trusted dispatches by service.name
+  # to cp/envoy/coredns pipelines. The downstream resource/* processors
+  # stamp ingest_source for cross-index queries; they do NOT overwrite
+  # service.name (a compromised infra service is already game-over for
+  # its own log lane, no extra defense to add here).
+  otlp/infra:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4319
+        tls:
+          cert_file: /etc/otel/tls/server.pem
+          key_file: /etc/otel/tls/server.key
+          # Setting client_ca_file forces tls.RequireAndVerifyClientCert
+          # in configtls.ServerConfig.LoadTLSConfig — handshake fails
+          # when no client cert is presented or when the presented
+          # chain does not validate against this CA. Bind-mount source
+          # is consts.AuthInfraCACertPath() — the infra intermediate.
+          client_ca_file: /etc/otel/tls/ca.pem
+  # Collector self-telemetry. The otel-collector exposes its own
+  # process/pipeline metrics as a Prometheus endpoint on :8888 by
+  # default; scraping them here lets the metrics pipeline ship them
+  # downstream to the same Prometheus instance operators already use.
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['127.0.0.1:8888']
+
+processors:
+  # Cap collector memory below the 200M compose hard limit so burst
+  # load applies backpressure rather than triggering an OOM-kill. Must
+  # be the first processor in every pipeline to be effective.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 150
+    spike_limit_mib: 30
+  # Explicit batch sizing so behavior is predictable under burst. The
+  # 5s timeout keeps forensic indices reasonably near-real-time without
+  # over-shipping tiny batches at low volume.
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+  # Provenance stamp for everything entering on the unauth'd otlp
+  # receiver. Lets queries trivially separate forgeable
+  # sender-declared records from records whose source is anchored by
+  # mTLS handshake. Applied at the start of every untrusted-lane
+  # pipeline; service.name itself is left alone so routing can still
+  # dispatch on it.
+  resource/untrusted_otlp:
+    attributes:
+      - key: ingest_source
+        value: untrusted_otlp
+        action: upsert
+  # Copy project/agent from resource attributes to datapoint attributes.
+  # The Prometheus exporter only surfaces datapoint attributes as metric labels,
+  # so this transform is required for per-project/agent filtering on the
+  # scraped Prometheus series (and any UI built on top — OpenSearch Dashboards
+  # Observability Metrics, Prometheus UI, etc.).
+  # error_mode: ignore so a single malformed datapoint (e.g. an SDK that
+  # emits resource.attributes["project"] as a slice instead of scalar)
+  # drops the offending point rather than killing the pipeline silently.
+  # OTTL errors surface in collector stdout via the default INFO log level.
+  # Rename datapoint attribute `type` -> `kind` (and delete `type`).
+  #
+  # The OpenSearch SQL plugin's experimental direct-query Prometheus
+  # connector (OS 3.6.0) chokes on any Prom label literally named
+  # `type`: its response wrapper uses a `rawResult.contains("\"type\":")`
+  # substring check to decide whether to inject the Jackson polymorphic
+  # discriminator at the JSON root. A label named `type` makes that
+  # check flip false-positive, the wrap is skipped, and Jackson fails
+  # with `MismatchedInputException: missing type id property 'type'`.
+  # Source: direct-query/src/main/java/org/opensearch/sql/directquery/
+  # transport/model/ExecuteDirectQueryActionResponse.java#parseResult.
+  #
+  # Affects the OSD Explore "Metrics" UI for every series whose label
+  # set includes `type` — several coding-agent SDK counters carry one
+  # (token/active-time/lines-of-code breakdowns commonly use it). PPL
+  # form (`source = clawker_prometheus.<metric>`) and the native Prom
+  # UI are unaffected — they take a different code path.
+  #
+  # Rename is unconditional rather than scoped to known metrics so any
+  # producer carrying `type` works without further changes — this is
+  # generic core, NOT a per-unit transform: scoping it to a unit would
+  # break every other unit's series whenever that unit is deactivated.
+  # Remove this block when upstream lands a fix (e.g. switching the
+  # substring check to a JSON-root check) and bump the pinned
+  # OpenSearch / OpenSearch Dashboards version in
+  # internal/monitor/templates.go. Unit-declared datapoint_renames
+  # render below the core statements, scoped to their service names.
+  transform/metrics:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
+          - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
+          - set(attributes["kind"], attributes["type"]) where attributes["type"] != nil
+          - delete_key(attributes, "type") where attributes["type"] != nil
+  # Convert delta-temporality Sum metrics into cumulative before they hit
+  # the Prometheus exporter. Coding-agent SDKs commonly emit counters
+  # with AggregationTemporality=Delta — each export is the increment
+  # since the last export, not the running total. The Prometheus
+  # exporter requires cumulative semantics for `_total` series; without
+  # this processor, each scrape sees only the latest delta instead of
+  # the lifetime sum, silently undercounting delta counters by 10-20×
+  # over a session. Already-cumulative producers pass through untouched.
+  # Spanmetrics-derived RED metrics on the trusted pipeline are also
+  # delta by default, so apply on both metrics pipelines.
+  #
+  # max_stale governs how long a stream's accumulated cumulative value is
+  # kept after its last delta sample; idle streams are evicted past it.
+  # The default (5m) silently drops one-shot/infrequent counters (a
+  # session counter fires exactly once at session start; commit/PR
+  # counters fire only on the rare event), so within minutes their
+  # cumulative value is evicted and the `_total` series vanishes from
+  # the exporter even while the session is still alive. That defeats the
+  # exporter's metric_expiration (8760h) intent for `_total` series.
+  # max_stale=0 is invalid (errors), so align it with metric_expiration
+  # so every counter persists for the life of the (ephemeral, throwaway)
+  # stack; max_streams remains the memory bound.
+  deltatocumulative:
+    max_streams: 10000
+    max_stale: 8760h
+  # Provenance stamps. Each trusted source gets ingest_source=<name>
+  # so cross-index queries can filter on a single field. service.name
+  # is NOT overwritten — mTLS handshake authenticated the sender;
+  # whatever they declared is trusted.
+  resource/cp:
+    attributes:
+      - key: ingest_source
+        value: cp
+        action: upsert
+  resource/envoy:
+    attributes:
+      - key: ingest_source
+        value: envoy
+        action: upsert
+  # Envoy ALS shape-fix processor. Two roles:
+  #
+  #   1. Severity defaults. Envoy's OpenTelemetryAccessLogConfig sink does
+  #      not populate the OTLP log record's Severity{Text,Number} fields —
+  #      the record arrives with empty severity, so the OpenSearch
+  #      Dashboards explore plugin's default logs column 'severityText'
+  #      renders blank on every Envoy record. INFO (severity_number 9) is
+  #      the right floor for access logs since the firewall verdict travels
+  #      on attributes["action"] — operators alerting on denials filter on
+  #      action=denied, not severity. Idempotent: the where-clauses only
+  #      fire when severity is unset, so OTel-emitting infra senders that
+  #      do set severity (CP zerolog bridge, CoreDNS otel plugin, netlogger)
+  #      come through untouched.
+  #
+  #   2. Numeric coercion. Envoy's command-operator substitutions
+  #      (%RESPONSE_CODE%, %BYTES_RECEIVED%, %DURATION%, ...) always
+  #      produce string values, so the access-log AttributeValue arrives
+  #      on the wire as StringValue("200") even though the index template
+  #      maps response_code as `integer`. OS coerces strings to ints via
+  #      mapping for indexing + aggregation, but the raw _source still
+  #      displays as a string in Dashboards which makes the OSD Discover
+  #      table show "200" (quoted) instead of 200. Coercing here means the
+  #      OTLP record arrives at the opensearchexporter as IntValue(200) so
+  #      _source serializes as a JSON int and aggregations don't have to
+  #      lean on the mapping coercion silently. `where != nil` guards
+  #      protect TCP/SSH records that don't carry HTTP-only fields.
+  transform/envoy_logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(severity_text, "INFO") where severity_text == ""
+          - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == 0
+          # %METADATA(ROUTE:clawker:action)% substitutes "-" on responses Envoy
+          # generates BEFORE route matching (path_with_escaped_slashes_action
+          # local-redirect, HCM-rejected requests). These are pre-route events
+          # — distinct from both allowed and denied. Map to "pre_route" so the
+          # firewall action pie surfaces them as a third bucket; an adversary
+          # triggering escaped-slash redirects must not appear as "allowed".
+          - set(attributes["action"], "pre_route") where attributes["action"] == "-"
+          # Strip Envoy "-" sentinels from typed fields before coercion.
+          # Local replies (direct_response, deny chain) leave upstream peer + response-side
+          # timers unset; Envoy substitutes "-" instead of omitting. Without removal the bare
+          # string lands against typed mappings (long / ip) and OS rejects the whole record
+          # (mapper_parsing_exception → forensic data dropped).
+          # ORDER LOAD-BEARING: every delete_key for "-" MUST precede the matching Int() coercion
+          # below. OTTL statements execute in declaration order; a reorder makes Int("-") fire
+          # against the sentinel before deletion → typed-mapping rejection → record dropped.
+          - delete_key(attributes, "response_code") where attributes["response_code"] == "-"
+          - delete_key(attributes, "bytes_sent") where attributes["bytes_sent"] == "-"
+          - delete_key(attributes, "bytes_received") where attributes["bytes_received"] == "-"
+          - delete_key(attributes, "upstream_bytes_sent") where attributes["upstream_bytes_sent"] == "-"
+          - delete_key(attributes, "upstream_bytes_received") where attributes["upstream_bytes_received"] == "-"
+          - delete_key(attributes, "duration_ms") where attributes["duration_ms"] == "-"
+          - delete_key(attributes, "req_duration_ms") where attributes["req_duration_ms"] == "-"
+          - delete_key(attributes, "resp_duration_ms") where attributes["resp_duration_ms"] == "-"
+          - delete_key(attributes, "resp_tx_duration_ms") where attributes["resp_tx_duration_ms"] == "-"
+          - delete_key(attributes, "network.peer.port") where attributes["network.peer.port"] == "-"
+          - delete_key(attributes, "network.peer.address") where attributes["network.peer.address"] == "-"
+          - delete_key(attributes, "client.address") where attributes["client.address"] == "-"
+          - delete_key(attributes, "listener_ip") where attributes["listener_ip"] == "-"
+          - set(attributes["response_code"], Int(attributes["response_code"])) where attributes["response_code"] != nil
+          - set(attributes["bytes_sent"], Int(attributes["bytes_sent"])) where attributes["bytes_sent"] != nil
+          - set(attributes["bytes_received"], Int(attributes["bytes_received"])) where attributes["bytes_received"] != nil
+          - set(attributes["upstream_bytes_sent"], Int(attributes["upstream_bytes_sent"])) where attributes["upstream_bytes_sent"] != nil
+          - set(attributes["upstream_bytes_received"], Int(attributes["upstream_bytes_received"])) where attributes["upstream_bytes_received"] != nil
+          - set(attributes["duration_ms"], Int(attributes["duration_ms"])) where attributes["duration_ms"] != nil
+          - set(attributes["req_duration_ms"], Int(attributes["req_duration_ms"])) where attributes["req_duration_ms"] != nil
+          - set(attributes["resp_duration_ms"], Int(attributes["resp_duration_ms"])) where attributes["resp_duration_ms"] != nil
+          - set(attributes["resp_tx_duration_ms"], Int(attributes["resp_tx_duration_ms"])) where attributes["resp_tx_duration_ms"] != nil
+          - set(attributes["network.peer.port"], Int(attributes["network.peer.port"])) where attributes["network.peer.port"] != nil
+  resource/coredns:
+    attributes:
+      - key: ingest_source
+        value: coredns
+        action: upsert
+  resource/netlogger:
+    attributes:
+      - key: ingest_source
+        value: netlogger
+        action: upsert
+
+exporters:
+  # Stdout pipe-through for diagnosis. Surfaces in `docker logs
+  # clawker-otel-collector`; verbose by design.
+  debug:
+    verbosity: detailed
+  # Traces → OpenSearch (Simple Schema for Observability data model).
+  # sending_queue + retry_on_failure keep batches alive across the
+  # OpenSearch startup window and short outages so forensic data
+  # isn't dropped silently.
+  opensearch/traces:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    dataset: traces
+    namespace: clawker
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # Logs → OpenSearch. Indices split by source because each source has
+  # a different schema shape: clawker emits attributes.event as a scalar
+  # string (logger pattern `Str("event", ...)`); harness SDKs typically
+  # emit the OTEL semantic-conventions nested form `event.name` (each
+  # active monitoring unit owns its index's shape); Envoy ALS lands
+  # HTTP/TLS/TCP fields flat on the record; the CoreDNS otel plugin
+  # emits structured dns.query attributes. The clawker-opensearch-bootstrap
+  # one-shot service PUTs an explicit index template per source (see
+  # templates/opensearch-bootstrap/index-templates/) BEFORE the collector
+  # starts — its compose `depends_on: service_completed_successfully` on
+  # bootstrap is what guarantees that ordering — so each schema is locked
+  # at index creation by the template, not raced by first-ingest dynamic
+  # mapping. sending_queue + retry_on_failure protect against OpenSearch
+  # unavailability windows (boot, GC pause, indexing pressure) where
+  # dropping forensic records would be the worst time.
+  opensearch/logs_cp:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: clawkercp
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_clawker_cli:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: clawker-cli
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_envoy:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: clawker-envoy
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_coredns:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: clawker-coredns
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # netlogger eBPF egress events (service.name=ebpf-egress) — per-decision-point
+  # action + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
+  # same mTLS-gated infra lane the CP zerolog bridge uses. Distinct service.name routes
+  # records into their own index so retention + volume profile are independent of the
+  # operator-facing daemon-health stream on clawkercp.
+  opensearch/logs_netlogger:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: clawker-ebpf-egress
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
+  # config — Prometheus handles its own scrape cadence.
+  #
+  # metric_expiration controls the exporter's staleness window. The
+  # default (5m) reaps cumulative counters that haven't seen a fresh
+  # delta in 5 minutes. Coding-agent SDK counters commonly fire only on
+  # user-action triggers (session/commit/PR/edit counters) — gaps of
+  # hours between deltas are normal, and the default expiration would
+  # silently drop them from `_total` series after their last event.
+  # Foot-gun: `0` does NOT disable expiration — it expires every
+  # metric on every Collect call. Use a long duration instead. The
+  # stack is throwaway (`monitor down --volumes` is the reset), so
+  # one year is "effectively never."
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    metric_expiration: 8760h
+
+connectors:
+  # Derives RED metrics (rate, errors, duration) from spans flowing
+  # through the traces pipeline and re-emits them into the metrics
+  # pipeline. Empty-series until traces actually flow.
+  spanmetrics:
+  # Route untrusted (plaintext OTLP) records. Only clawker-cli and
+  # active monitoring units' declared service names reach their
+  # indices. An agent crafting
+  # `service.name=envoy`/`coredns`/`clawkercp` from the unauth'd
+  # port CANNOT reach the trusted indices — there is no such route
+  # off this connector. default_pipelines catches any other
+  # service.name (e.g. SDK default `unknown_service`, a misconfigured
+  # local script) and routes it to logs/untrusted_unrouted where it
+  # surfaces in collector stdout for debugging — not indexed, since
+  # the records are forgeable.
+  routing/untrusted:
+    error_mode: ignore
+    default_pipelines: [logs/untrusted_unrouted]
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "clawker-cli"
+        pipelines: [logs/clawker-cli]
+  # Route trusted (mTLS-gated) records by sender-declared service.name.
+  # Reachable only by peers whose client cert chains through the infra
+  # intermediate CA. error_mode: propagate so OTTL evaluation errors
+  # on legitimate forensic records surface in collector logs rather
+  # than being silently swallowed. default_pipelines catches any
+  # unmapped service.name and routes it to logs/trusted_unrouted —
+  # operator can grep collector stdout if this fires (it shouldn't,
+  # only cp/envoy/coredns/ebpf-egress hold infra-intermediate leaves today).
+  routing/trusted:
+    error_mode: propagate
+    default_pipelines: [logs/trusted_unrouted]
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "clawkercp"
+        pipelines: [logs/cp]
+      - context: resource
+        condition: attributes["service.name"] == "envoy"
+        pipelines: [logs/envoy]
+      - context: resource
+        condition: attributes["service.name"] == "coredns"
+        pipelines: [logs/coredns]
+      - context: resource
+        condition: attributes["service.name"] == "ebpf-egress"
+        pipelines: [logs/netlogger]
+
+service:
+  pipelines:
+    # Untrusted traces — agent-pushed spans. resource/untrusted_otlp
+    # stamps every record so dashboards can separate forgeable
+    # sender-declared spans from trusted-lane spans (currently none,
+    # but the pattern extends cleanly when a trusted span source is
+    # added).
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
+      exporters: [opensearch/traces, spanmetrics, debug]
+    # Untrusted metrics — anything arriving on the unauth'd otlp
+    # receiver. transform/metrics copies project/agent resource attrs
+    # to datapoint labels; ingest_source=untrusted_otlp is stamped
+    # first so the forgeable labels are always paired with the
+    # provenance marker.
+    metrics/untrusted:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
+      exporters: [prometheus, debug]
+    # Trusted metrics — collector self-scrape and spanmetrics-derived
+    # RED metrics. All sourced locally; no sender-declared resource
+    # attrs to defend.
+    metrics/trusted:
+      receivers: [prometheus/self, spanmetrics]
+      processors: [memory_limiter, transform/metrics, deltatocumulative, batch]
+      exporters: [prometheus, debug]
+    # Untrusted log ingress. Only clawker-cli and active units' lanes
+    # route downstream; other service.name values are dropped at the
+    # routing connector. ingest_source stamped here so it carries through to
+    # the per-source pipelines.
+    logs/in_untrusted:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
+      exporters: [routing/untrusted]
+    logs/clawker-cli:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [opensearch/logs_clawker_cli, debug]
+    # Quarantine for untrusted records whose service.name matches no
+    # route (no active unit claims it, not clawker-cli). Stdout-only
+    # (debug); never indexed
+    # because the lane is unauthenticated and the records are
+    # forgeable. Operator can grep `docker logs clawker-otel-collector`
+    # for the dropped record to spot a misconfigured sender.
+    logs/untrusted_unrouted:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [debug]
+    # Trusted log ingress. mTLS handshake is the auth boundary; the
+    # routing connector dispatches by sender-declared service.name to
+    # the right index. resource/* processors only stamp ingest_source
+    # for cross-index query convenience.
+    logs/in_trusted:
+      receivers: [otlp/infra]
+      processors: [memory_limiter, batch]
+      exporters: [routing/trusted]
+    logs/cp:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/cp]
+      exporters: [opensearch/logs_cp, debug]
+    logs/envoy:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, transform/envoy_logs, resource/envoy]
+      exporters: [opensearch/logs_envoy, debug]
+    logs/coredns:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/coredns]
+      exporters: [opensearch/logs_coredns, debug]
+    logs/netlogger:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/netlogger]
+      exporters: [opensearch/logs_netlogger, debug]
+    # Quarantine for any trusted-lane record with an unmapped
+    # service.name. Should never fire — only cp/envoy/coredns/ebpf-egress hold
+    # infra-intermediate-chained leaves today. If it does, operator
+    # can grep `docker logs clawker-otel-collector` for the debug
+    # output to identify a misconfigured trusted sender.
+    logs/trusted_unrouted:
+      receivers: [routing/trusted]
+      processors: [memory_limiter]
+      exporters: [debug]

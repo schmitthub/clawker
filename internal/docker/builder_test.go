@@ -1,16 +1,32 @@
 package docker
 
 import (
+	"archive/tar"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	dockerimage "github.com/moby/moby/api/types/image"
+
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // testConfig creates a config.Config from a YAML string for tests.
@@ -104,7 +120,8 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 
 		if skipMonitoring {
 			// Check if we've moved to a different section
-			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") &&
+				!strings.HasPrefix(line, monitoringIndent+"\t") {
 				skipMonitoring = false
 			}
 		}
@@ -133,6 +150,361 @@ func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClie
 		ManagedLabel: cfg.EngineManagedLabel(),
 	})
 	return &Client{Engine: engine, cfg: cfg, log: logger.Nop()}, fakeAPI
+}
+
+// testHarnessCfg drops a loose "other" harness into the project's convention
+// dir and returns a config anchored at that project root, plus default
+// monitoring settings. A loose harness resolves by its bare name through the
+// single resolution algorithm — no registration.
+func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
+	t.Helper()
+	// Isolate the user-loose config dir so "other" resolves only from the
+	// project loose dir below, never the host's real config dir.
+	t.Setenv(consts.EnvConfigDir, t.TempDir())
+	root := t.TempDir()
+	bundleDir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), "other")
+	require.NoError(t, os.MkdirAll(bundleDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(bundleDir, "Dockerfile.harness.tmpl"),
+		[]byte(`{{define "user_after_shell_switch"}}RUN echo other-harness-marker{{end}}`),
+		0o644,
+	))
+
+	projectYAML := "agent:\n  editor: nano\n"
+	settingsYAML := `
+monitoring:
+  telemetry:
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`
+	cfg := configmocks.NewFromString(projectYAML, settingsYAML)
+	cfg.ProjectRootFunc = func() string { return root }
+	return cfg
+}
+
+// capturedBuild records one ImageBuild call seen by the fake API.
+type capturedBuild struct {
+	tags       []string
+	labels     map[string]string
+	dockerfile string
+	pull       bool
+}
+
+// captureImageBuilds wires ImageBuildFn to record every build call:
+// tags, labels, pull flag, and the Dockerfile extracted from the tar
+// context (by the per-call Dockerfile name, so the base and harness
+// builds are both captured correctly).
+func captureImageBuilds(t *testing.T, fakeAPI *whailtest.FakeAPIClient) *[]capturedBuild {
+	t.Helper()
+	builds := &[]capturedBuild{}
+	fakeAPI.ImageBuildFn = func(_ context.Context, buildContext io.Reader, opts client.ImageBuildOptions) (client.ImageBuildResult, error) {
+		wantName := opts.Dockerfile
+		if wantName == "" {
+			wantName = "Dockerfile"
+		}
+		var dockerfile string
+		tr := tar.NewReader(buildContext)
+		for {
+			hdr, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			if hdr.Name == wantName {
+				data, readErr := io.ReadAll(tr)
+				require.NoError(t, readErr)
+				dockerfile = string(data)
+			}
+		}
+		*builds = append(*builds, capturedBuild{
+			tags:       opts.Tags,
+			labels:     opts.Labels,
+			dockerfile: dockerfile,
+			pull:       opts.PullParent,
+		})
+		return client.ImageBuildResult{Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+	return builds
+}
+
+// inspectNotFoundError satisfies cerrdefs.IsNotFound so the builder's
+// staleness probe sees "no base image yet".
+type inspectNotFoundError struct{ ref string }
+
+func (e inspectNotFoundError) Error() string { return "No such image: " + e.ref }
+func (e inspectNotFoundError) NotFound()     {}
+
+// setupInspectNotFound makes every ImageInspect miss.
+func setupInspectNotFound(fakeAPI *whailtest.FakeAPIClient) {
+	fakeAPI.ImageInspectFn = func(_ context.Context, image string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{}, inspectNotFoundError{ref: image}
+	}
+}
+
+// setupInspectBaseWithHash makes ImageInspect return a managed base image
+// carrying the given content hash for baseRef, and miss for everything else.
+// The managed key composes prefix+suffix exactly as whail's Engine does.
+//
+//nolint:unparam // baseRef is a fixture knob kept explicit for readability
+func setupInspectBaseWithHash(cfg config.Config, fakeAPI *whailtest.FakeAPIClient, baseRef, hash string) {
+	fakeAPI.ImageInspectFn = func(_ context.Context, image string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		if image != baseRef {
+			return client.ImageInspectResult{}, inspectNotFoundError{ref: image}
+		}
+		labels := map[string]string{
+			cfg.EngineLabelPrefix() + "." + cfg.EngineManagedLabel(): cfg.ManagedLabelValue(),
+			consts.LabelBaseContentHash:                              hash,
+		}
+		return client.ImageInspectResult{
+			InspectResponse: dockerimage.InspectResponse{ //nolint:exhaustruct // fixture — only ID + labels matter
+				ID: "sha256:fake-base-id",
+				Config: &dockerspec.DockerOCIImageConfig{ //nolint:exhaustruct // fixture
+					ImageConfig: ocispec.ImageConfig{Labels: labels}, //nolint:exhaustruct // fixture
+				},
+			},
+		}, nil
+	}
+}
+
+// expectedBaseHash computes the same base content hash the builder will for an
+// arg-free base, via an identically configured generator. The build-arg tests
+// set up an existing base built without any --build-arg (nil), then assert the
+// Build call's arg folds (or does not) into the freshness decision.
+//
+//nolint:unparam // harnessName is a fixture knob kept explicit for readability
+func expectedBaseHash(t *testing.T, cfg config.Config, workDir, harnessName string) string {
+	t.Helper()
+	gen := bundler.NewProjectGenerator(cfg, workDir)
+	gen.Harness = harnessName
+	baseDF, err := gen.GenerateBase()
+	require.NoError(t, err)
+	hash, err := gen.BaseContentHash(baseDF, nil)
+	require.NoError(t, err)
+	return hash
+}
+
+// TestBuild_BuildsBaseThenHarness pins the two-phase build: a missing base
+// image is built first (tagged :base, hash + purpose labels, no harness
+// label, no ENTRYPOINT), then the harness image FROM it (harness label +
+// the same hash label).
+func TestBuild_BuildsBaseThenHarness(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	setupInspectNotFound(fakeAPI)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	workDir := t.TempDir()
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2, "missing base must trigger base build then harness build")
+	base, harnessBuild := (*builds)[0], (*builds)[1]
+
+	assert.Equal(t, []string{"clawker-proj:base"}, base.tags)
+	wantHash := expectedBaseHash(t, cfg, workDir, "other")
+	assert.Equal(t, wantHash, base.labels[consts.LabelBaseContentHash],
+		"base image must carry the content hash label")
+	assert.Equal(t, consts.PurposeBaseImage, base.labels[consts.LabelPurpose])
+	assert.NotContains(t, base.labels, consts.LabelHarness,
+		"base image is harness-agnostic")
+	assert.NotContains(t, base.dockerfile, "ENTRYPOINT",
+		"base Dockerfile carries no entrypoint")
+
+	assert.Equal(t, []string{"clawker-proj:other"}, harnessBuild.tags)
+	assert.Contains(t, harnessBuild.dockerfile, "FROM clawker-proj:base",
+		"harness image must build FROM the shared base")
+	assert.Contains(t, harnessBuild.dockerfile, "other-harness-marker",
+		"selected harness's blocks must render (not the configured default)")
+	assert.Equal(t, "other", harnessBuild.labels[consts.LabelHarness])
+	assert.Equal(t, wantHash, harnessBuild.labels[consts.LabelBaseContentHash],
+		"harness image records the base generation it was cut from")
+}
+
+// TestBuild_SkipsBaseWhenHashMatches pins the freshness gate: an existing
+// base whose hash label matches the computed hash is NOT rebuilt.
+func TestBuild_SkipsBaseWhenHashMatches(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 1, "fresh base must not be rebuilt")
+	assert.Equal(t, []string{"clawker-proj:other"}, (*builds)[0].tags)
+}
+
+// TestBuild_StaleHashRebuildsBase pins the inverse: hash drift rebuilds.
+func TestBuild_StaleHashRebuildsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", "stale-hash")
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2, "hash drift must rebuild the base")
+}
+
+// TestBuild_NoCacheRebuildsBase: --no-cache rebuilds the base even when
+// the hash matches.
+func TestBuild_NoCacheRebuildsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	buildOpts.NoCache = true
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2, "--no-cache must rebuild the base too")
+}
+
+// TestBuild_RelevantBuildArgRebuildsBase: a --build-arg targeting an ARG the
+// base Dockerfile declares (TZ, from the base template's `ARG TZ=UTC`) folds
+// into the base content hash, so a base image built without that arg value is
+// stale and rebuilt end-to-end — matching BuildKit, which cache-keys on arg
+// values. Proves the builder threads BuilderOptions.BuildArgs into the hash.
+func TestBuild_RelevantBuildArgRebuildsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	// The existing base carries the arg-free hash.
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	tz := "America/New_York"
+	buildOpts.BuildArgs = map[string]*string{"TZ": &tz}
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2, "a base-relevant build-arg must rebuild the stale base")
+}
+
+// TestBuild_HarnessOnlyBuildArgSkipsBase is the inverse: a build-arg the base
+// never declares (CLAUDE_CODE_VERSION is a harness-image ARG) must not perturb
+// the base hash, so the fresh base is still skipped — no gratuitous rebuild.
+func TestBuild_HarnessOnlyBuildArgSkipsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	v := "2.1.4"
+	buildOpts.BuildArgs = map[string]*string{"CLAUDE_CODE_VERSION": &v}
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 1, "a harness-only build-arg must not rebuild the fresh base")
+}
+
+// TestBuild_BaseFailureAborts: a failed base build aborts before the
+// harness build starts, with the base tag in the error.
+func TestBuild_BaseFailureAborts(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	setupInspectNotFound(fakeAPI)
+
+	calls := 0
+	fakeAPI.ImageBuildFn = func(_ context.Context, _ io.Reader, _ client.ImageBuildOptions) (client.ImageBuildResult, error) {
+		calls++
+		return client.ImageBuildResult{}, errors.New("boom")
+	}
+
+	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	err := b.Build(context.Background(), "clawker-proj:other", buildOpts)
+	require.ErrorContains(t, err, "clawker-proj:base")
+	assert.Equal(t, 1, calls, "harness build must not start after base failure")
+}
+
+// TestBuild_HarnessBuildNeverPulls: --pull applies to the base build (its
+// parent lives in a registry); the harness build's parent is the
+// local-only :base tag, so pull is forced off there.
+func TestBuild_HarnessBuildNeverPulls(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	setupInspectNotFound(fakeAPI)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	buildOpts.Pull = true
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2)
+	assert.True(t, (*builds)[0].pull, "base build honours --pull")
+	assert.False(t, (*builds)[1].pull, "harness build must never pull — its parent is local-only")
+}
+
+// TestBuild_SelectsHarnessFromOptions proves the harness selected at the
+// command layer (BuilderOptions.HarnessName) is the one whose template
+// blocks render into the generated Dockerfile — not the configured default.
+func TestBuild_SelectsHarnessFromOptions(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	setupInspectNotFound(fakeAPI)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	err := b.Build(context.Background(), "clawker-proj:other", buildOpts)
+	require.NoError(t, err)
+	require.Len(t, *builds, 2)
+	assert.Contains(t, (*builds)[1].dockerfile, "other-harness-marker")
+}
+
+func TestPhaseProgress(t *testing.T) {
+	assert.Nil(t, phaseProgress(nil, "base"), "nil callback passes through as nil")
+
+	var got whail.BuildProgressEvent
+	fn := phaseProgress(func(e whail.BuildProgressEvent) { got = e }, "base")
+	var event whail.BuildProgressEvent
+	event.StepID = "step-1"
+	event.StepName = "RUN apt-get"
+	fn(event)
+	assert.Equal(t, "base:step-1", got.StepID,
+		"step IDs must be namespaced so the two sequential builds' legacy step-N IDs don't collide")
+	assert.Equal(t, "[base] RUN apt-get", got.StepName)
 }
 
 func TestMergeTags(t *testing.T) {
@@ -191,7 +563,6 @@ func TestMergeTags(t *testing.T) {
 func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 	cfg := testConfig(t, `
 build:
-  image: "buildpack-deps:bookworm-scm"
   instructions:
     labels:
       dev.clawker.project: "attacker-project"

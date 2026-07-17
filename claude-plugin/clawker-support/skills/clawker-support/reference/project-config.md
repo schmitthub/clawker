@@ -53,8 +53,8 @@ reference when loaded into context.
 
 | File | Stack | Notes |
 |------|-------|-------|
-| `reference/sample-go.yaml` | Go (clawker's own config) | root_run for syft install, `golang:*` base image, extensive firewall rules, path-level rules |
-| `reference/sample-node.yaml` | Node.js | NVM-based setup, pnpm/typescript, env_file usage, leaner firewall |
+| `reference/sample-go.yaml` | Go (based on clawker's own config) | `build.stacks`, root_run checksum-verified installer, harnesses map, extensive firewall rules, path-level rules |
+| `reference/sample-node.yaml` | Node.js | node stack, pnpm/typescript, env_file usage, pre_run, leaner firewall |
 
 **Read both samples** when helping a user — even if their stack doesn't match
 either one exactly. Together they demonstrate the full range of config
@@ -106,29 +106,34 @@ triggers a build).
 
 1. **Check for user-level config conflicts FIRST**: This is the #1 hidden
    cause of build failures. User-level config (`~/.config/clawker/clawker.yaml`)
-   is merged into every project. If user-level config has build-related fields
-   written for a different distro than the project's base image, the build will
-   fail with confusing errors.
+   is merged into every project. Build entries written for one project
+   (packages, run steps assuming that project's tools or files) leak into
+   every other project's image build.
    ```bash
    cat ~/.config/clawker/clawker.yaml
    ```
    Look for:
-   - Distro-specific package names that don't match the project's base image
-   - Package manager commands targeting the wrong distro
-   - Shell commands assuming tools or behaviors not present on the base image
-   - Any build config at user level that isn't universally distro-agnostic
+   - Packages or run steps that only one project needs
+   - Shell commands assuming tools, files, or paths from a specific project
+   - Any build config at user level that isn't genuinely universal
 
    **If found**: Move the offending entries to the project-level config
    where they belong, or remove them from user-level config entirely.
 
 2. **Identify which layer failed**: The build output shows which Dockerfile
-   step failed. Read the Dockerfile template (`reference/Dockerfile.tmpl`) to
-   map the failing step to the config section that produced it. Look at
-   execution order and root vs user context.
+   step failed. Read the bundled Dockerfile templates
+   (`reference/Dockerfile.base.tmpl`, `reference/Dockerfile.harness-image.tmpl`)
+   to map the failing step to the config section
+   that produced it. Look at execution order and root vs user context.
+   Note there are two images: a shared per-project base image (packages,
+   project stacks, instructions/inject) and a per-harness image layered
+   on top (harness install, harness-declared stacks).
 
-3. **Package not found**: Different base images use different package managers
-   with different package names. Check the project's base image, then research
-   the correct package name for that distro — do not guess.
+3. **Package not found**: Every clawker image builds from a pinned Debian
+   base, so `build.packages` entries are apt package names. Research the
+   correct Debian package name — do not guess. Language runtimes should come
+   from `build.stacks` (e.g. `go`, `node`, `python`, `rust`) rather than
+   apt packages when a shipped stack exists.
 
 4. **Network error during build**: `clawker build` is a host process that
    asks the Docker daemon to build the agent image. Image pulls and

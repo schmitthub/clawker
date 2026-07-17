@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -127,4 +128,22 @@ func dualPlacementPath(dir, filename string) string {
 		return filepath.Join(clawkerDir, filename)
 	}
 	return filepath.Join(dir, "."+filename)
+}
+
+// SiblingTarget returns the write path for filename placed beside an already
+// resolved config file at existingPath, matching that file's own placement
+// form: inside a .clawker/ directory the sibling is plain
+// ({dir}/{filename}); as a flat root dotfile the sibling is dotted
+// ({dir}/.{filename}). It derives purely from the resolved path's directory
+// and dot-prefix, so the sibling always lands in the exact layer the existing
+// file occupies — the same dot-form convention [dualPlacementPath] applies
+// when probing a base directory, expressed for a discovered file rather than a
+// bare directory. A written sibling is rediscoverable by probeDir, whose
+// candidate order accepts both the plain dir form and the flat dotted form.
+func SiblingTarget(existingPath, filename string) string {
+	dir := filepath.Dir(existingPath)
+	if strings.HasPrefix(filepath.Base(existingPath), ".") {
+		return filepath.Join(dir, "."+filename)
+	}
+	return filepath.Join(dir, filename)
 }

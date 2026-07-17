@@ -3,8 +3,9 @@ package config
 import (
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/schmitthub/clawker/internal/storeui"
 )
 
 // --- Schema interface enforcement ---

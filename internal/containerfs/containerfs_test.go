@@ -6,119 +6,64 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/keyring"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // ---------------------------------------------------------------------------
-// ResolveHostConfigDir
+// Fixtures
 // ---------------------------------------------------------------------------
 
-func TestResolveHostConfigDir_EnvVar(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-
-	got, err := ResolveHostConfigDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != dir {
-		t.Errorf("got %q, want %q", got, dir)
-	}
+// claudeSrc composes a claude-bundle-style src using the env-default
+// expansion the real manifest uses.
+func claudeSrc(rel string) string {
+	return "${CLAUDE_CONFIG_DIR:-~/.claude}/" + rel
 }
 
-func TestResolveHostConfigDir_RelativeEnvVar(t *testing.T) {
-	// Multi-account workflows set $CLAUDE_CONFIG_DIR to a relative path
-	// keyed off CWD. Resolve to absolute so workspace.GetClaudeProjectsMount
-	// (filepath.IsAbs guard) doesn't reject the resulting bind source.
-	parent := t.TempDir()
-	rel := "claude-rel-cfg"
-	absDir := filepath.Join(parent, rel)
-	if err := os.Mkdir(absDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(parent); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(cwd) })
-
-	t.Setenv("CLAUDE_CONFIG_DIR", rel)
-
-	got, err := ResolveHostConfigDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !filepath.IsAbs(got) {
-		t.Errorf("got %q, want absolute path", got)
-	}
-	// EvalSymlinks both sides — macOS /var → /private/var.
-	gotResolved, err := filepath.EvalSymlinks(got)
-	if err != nil {
-		t.Fatalf("eval symlinks got: %v", err)
-	}
-	wantResolved, err := filepath.EvalSymlinks(absDir)
-	if err != nil {
-		t.Fatalf("eval symlinks want: %v", err)
-	}
-	if gotResolved != wantResolved {
-		t.Errorf("got %q, want %q", gotResolved, wantResolved)
-	}
-}
-
-func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
-	// env var points to non-existent dir → should return error (not fall through)
-	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
-
-	_, err := ResolveHostConfigDir()
-	if err == nil {
-		t.Fatal("expected error when CLAUDE_CONFIG_DIR is set to non-existent path, got nil")
-	}
-	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR=") {
-		t.Errorf("error should mention CLAUDE_CONFIG_DIR, got: %v", err)
-	}
-}
-
-func TestResolveHostConfigDir_DefaultFallback(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "") // unset
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("get home dir: %v", err)
-	}
-	claudeDir := filepath.Join(home, ".claude")
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
-		t.Skip("~/.claude/ does not exist on this machine")
-	}
-
-	got, err := ResolveHostConfigDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != claudeDir {
-		t.Errorf("got %q, want %q", got, claudeDir)
-	}
-}
-
-func TestResolveHostConfigDir_NeitherExists(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
-	// We need HOME to point to a dir without .claude/ in it
-	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
-
-	_, err := ResolveHostConfigDir()
-	if err == nil {
-		t.Fatal("expected error, got nil")
+// claudeStaging mirrors the claude bundle's staging manifest — the shape
+// these tests originally hardcoded. Keeping the fixture in claude's shape
+// proves the manifest interpreter reproduces the legacy behavior.
+func claudeStaging() config.Staging {
+	return config.Staging{
+		Copy: []config.CopySpec{
+			{
+				Src: claudeSrc("settings.json"), Dest: ".claude/settings.json",
+				JSONKeys: []string{"enabledPlugins"}, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: claudeSrc("CLAUDE.md"), Dest: ".claude/CLAUDE.md",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: claudeSrc("agents"), Dest: ".claude/agents",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: claudeSrc("skills"), Dest: ".claude/skills",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: claudeSrc("commands"), Dest: ".claude/commands",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: claudeSrc("plugins"), Dest: ".claude/plugins",
+				JSONKeys: nil,
+				Skip:     []string{"install-counts-cache.json"},
+				JSONRewrites: []config.JSONRewrite{
+					{File: "known_marketplaces.json", Key: "installPath", Rewrite: config.RewritePrefixSwap},
+					{File: "known_marketplaces.json", Key: "installLocation", Rewrite: config.RewritePrefixSwap},
+					{File: "installed_plugins.json", Key: "installPath", Rewrite: config.RewritePrefixSwap},
+					{File: "installed_plugins.json", Key: "projectPath", Rewrite: config.RewriteReplaceWithWorkdir},
+				},
+			},
+		},
+		Mounts: []config.MountSpec{{Src: claudeSrc("projects"), Dest: ".claude/projects"}},
 	}
 }
 
@@ -134,7 +79,7 @@ func TestResolveHostProjectsDir_Exists(t *testing.T) {
 		t.Fatalf("create projects dir: %v", err)
 	}
 
-	got, ok, err := ResolveHostProjectsDir()
+	got, ok, err := ResolveHostMountSource(claudeSrc("projects"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +96,7 @@ func TestResolveHostProjectsDir_Missing(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 	// No projects subdir created.
 
-	got, ok, err := ResolveHostProjectsDir()
+	got, ok, err := ResolveHostMountSource(claudeSrc("projects"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +112,7 @@ func TestResolveHostProjectsDir_IsFile(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, _, err := ResolveHostProjectsDir()
+	_, _, err := ResolveHostMountSource(claudeSrc("projects"))
 	if err == nil {
 		t.Fatal("expected error when projects exists as file, got nil")
 	}
@@ -192,7 +137,8 @@ func TestPrepareClaudeConfig_SettingsJSON(t *testing.T) {
 	}
 	writeJSON(t, filepath.Join(hostDir, "settings.json"), hostSettings)
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +182,8 @@ func TestPrepareClaudeConfig_DirectoriesCopied(t *testing.T) {
 		}
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -263,7 +210,8 @@ func TestPrepareClaudeConfig_CLAUDEMDCopied(t *testing.T) {
 		t.Fatalf("write CLAUDE.md: %v", err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -299,7 +247,8 @@ func TestPrepareClaudeConfig_PluginsCacheCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,8 +289,15 @@ func TestPrepareClaudeConfig_KnownMarketplacesRewrite(t *testing.T) {
 			"installLocation": filepath.Join(hostDir, "plugins", "marketplaces", "test-marketplace"),
 		},
 		{
-			"name":            "another-plugin",
-			"installPath":     filepath.Join(hostDir, "plugins", "cache", "another-marketplace", "another-plugin", "2.0"),
+			"name": "another-plugin",
+			"installPath": filepath.Join(
+				hostDir,
+				"plugins",
+				"cache",
+				"another-marketplace",
+				"another-plugin",
+				"2.0",
+			),
 			"installLocation": filepath.Join(hostDir, "plugins", "marketplaces", "another-marketplace"),
 			"version":         "2.0",
 		},
@@ -349,7 +305,8 @@ func TestPrepareClaudeConfig_KnownMarketplacesRewrite(t *testing.T) {
 	writeJSON(t, filepath.Join(pluginsDir, "known_marketplaces.json"), marketplace)
 
 	containerHome := "/home/claude"
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, containerHome, "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), containerHome, "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,7 +331,12 @@ func TestPrepareClaudeConfig_KnownMarketplacesRewrite(t *testing.T) {
 		// Check installPath was rewritten
 		if ip, ok := entry["installPath"].(string); ok {
 			if !strings.HasPrefix(ip, containerPluginsPrefix) {
-				t.Errorf("entry %q: installPath not rewritten: got %q, want prefix %q", name, ip, containerPluginsPrefix)
+				t.Errorf(
+					"entry %q: installPath not rewritten: got %q, want prefix %q",
+					name,
+					ip,
+					containerPluginsPrefix,
+				)
 			}
 			if strings.Contains(ip, hostDir) {
 				t.Errorf("entry %q: installPath still contains host path: %q", name, ip)
@@ -384,7 +346,12 @@ func TestPrepareClaudeConfig_KnownMarketplacesRewrite(t *testing.T) {
 		// Check installLocation was rewritten
 		if il, ok := entry["installLocation"].(string); ok {
 			if !strings.HasPrefix(il, containerPluginsPrefix) {
-				t.Errorf("entry %q: installLocation not rewritten: got %q, want prefix %q", name, il, containerPluginsPrefix)
+				t.Errorf(
+					"entry %q: installLocation not rewritten: got %q, want prefix %q",
+					name,
+					il,
+					containerPluginsPrefix,
+				)
 			}
 			if strings.Contains(il, hostDir) {
 				t.Errorf("entry %q: installLocation still contains host path: %q", name, il)
@@ -417,7 +384,14 @@ func TestPrepareClaudeConfig_InstalledPluginsRewrite(t *testing.T) {
 
 	containerHome := "/home/claude"
 	containerWorkDir := "/workspace"
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, containerHome, containerWorkDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(
+		logger.Nop(),
+		claudeStaging(),
+		containerHome,
+		containerWorkDir,
+		"",
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -442,7 +416,12 @@ func TestPrepareClaudeConfig_InstalledPluginsRewrite(t *testing.T) {
 		// installPath should be rewritten with container prefix
 		if ip, ok := entry["installPath"].(string); ok {
 			if !strings.HasPrefix(ip, containerPluginsPrefix) {
-				t.Errorf("entry %q: installPath not rewritten: got %q, want prefix %q", name, ip, containerPluginsPrefix)
+				t.Errorf(
+					"entry %q: installPath not rewritten: got %q, want prefix %q",
+					name,
+					ip,
+					containerPluginsPrefix,
+				)
 			}
 			if strings.Contains(ip, hostDir) {
 				t.Errorf("entry %q: installPath still contains host path: %q", name, ip)
@@ -462,20 +441,17 @@ func TestPrepareClaudeConfig_MissingFilesSkipped(t *testing.T) {
 	hostDir := t.TempDir()
 	// Empty host dir — nothing to copy
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer cleanup()
 
-	// Should succeed with an empty .claude/ dir
-	claudeDir := filepath.Join(stagingDir, ".claude")
-	info, err := os.Stat(claudeDir)
-	if err != nil {
-		t.Fatalf("staging .claude/ should exist: %v", err)
-	}
-	if !info.IsDir() {
-		t.Error("staging .claude/ should be a directory")
+	// Nothing staged: no .claude subtree materializes, and the volume-init
+	// step downstream skips the volume copy for the missing subtree.
+	if _, statErr := os.Stat(filepath.Join(stagingDir, ".claude")); !os.IsNotExist(statErr) {
+		t.Errorf("expected no staged .claude subtree for an empty host dir, got stat err=%v", statErr)
 	}
 }
 
@@ -496,7 +472,8 @@ func TestPrepareClaudeConfig_SymlinksResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -535,7 +512,10 @@ func TestPrepareClaudeConfig_BrokenSymlinkSkipped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cacheDir, "good.md"), []byte("good"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(hostDir, "plugins", "marketplaces", "gone"), filepath.Join(cacheDir, "SKILL.md")); err != nil {
+	if err := os.Symlink(
+		filepath.Join(hostDir, "plugins", "marketplaces", "gone"),
+		filepath.Join(cacheDir, "SKILL.md"),
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -547,11 +527,15 @@ func TestPrepareClaudeConfig_BrokenSymlinkSkipped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agentsDir, "agent.md"), []byte("agent"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(hostDir, "no-such-target"), filepath.Join(agentsDir, "dangling.md")); err != nil {
+	if err := os.Symlink(
+		filepath.Join(hostDir, "no-such-target"),
+		filepath.Join(agentsDir, "dangling.md"),
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -566,90 +550,13 @@ func TestPrepareClaudeConfig_BrokenSymlinkSkipped(t *testing.T) {
 	}
 
 	// Broken symlinks skipped, not staged.
-	if _, err := os.Lstat(filepath.Join(stagingDir, ".claude", "plugins", "cache", "my-plugin", "SKILL.md")); !os.IsNotExist(err) {
+	if _, lstatErr := os.Lstat(
+		filepath.Join(stagingDir, ".claude", "plugins", "cache", "my-plugin", "SKILL.md"),
+	); !os.IsNotExist(lstatErr) {
 		t.Error("broken plugin symlink should be skipped")
 	}
 	if _, err := os.Lstat(filepath.Join(stagingDir, ".claude", "agents", "dangling.md")); !os.IsNotExist(err) {
 		t.Error("broken agents symlink should be skipped")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// PrepareCredentials
-// ---------------------------------------------------------------------------
-
-func TestPrepareCredentials_FromKeyring(t *testing.T) {
-	keyring.MockInit()
-
-	current, err := user.Current()
-	if err != nil {
-		t.Fatalf("get current user: %v", err)
-	}
-
-	// Host blob that omits organizationUuid and carries a key the keyring struct
-	// does not model. The staged file must be a byte-for-byte copy: no
-	// fabricated zero-value organizationUuid, no dropped unknown key.
-	hostBlob := `{"claudeAiOauth":{"accessToken":"test-access","refreshToken":"test-refresh"},"unknownKey":"keepme"}`
-
-	if err := keyring.Set("Claude Code-credentials", current.Username, hostBlob); err != nil {
-		t.Fatalf("seed keyring: %v", err)
-	}
-
-	hostDir := t.TempDir() // not used because keyring succeeds
-
-	stagingDir, cleanup, err := PrepareCredentials(logger.Nop(), hostDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer cleanup()
-
-	credFile := filepath.Join(stagingDir, ".claude", ".credentials.json")
-	data, err := os.ReadFile(credFile)
-	if err != nil {
-		t.Fatalf("read credentials: %v", err)
-	}
-
-	// Verbatim equality subsumes the no-fabrication guarantee: the host blob
-	// omits organizationUuid, so an equal staged file cannot have fabricated one.
-	if string(data) != hostBlob {
-		t.Errorf("keyring blob not copied verbatim:\n got %q\nwant %q", string(data), hostBlob)
-	}
-}
-
-func TestPrepareCredentials_FallbackToFile(t *testing.T) {
-	keyring.MockInit() // mock keyring with no entries
-
-	hostDir := t.TempDir()
-	credContent := `{"claudeAiOauth":{"accessToken":"from-file"},"organizationUuid":"550e8400-e29b-41d4-a716-446655440000"}`
-	if err := os.WriteFile(filepath.Join(hostDir, ".credentials.json"), []byte(credContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	stagingDir, cleanup, err := PrepareCredentials(logger.Nop(), hostDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer cleanup()
-
-	credFile := filepath.Join(stagingDir, ".claude", ".credentials.json")
-	data, err := os.ReadFile(credFile)
-	if err != nil {
-		t.Fatalf("read credentials: %v", err)
-	}
-
-	if string(data) != credContent {
-		t.Errorf("credentials content mismatch: got %q", string(data))
-	}
-}
-
-func TestPrepareCredentials_NeitherSource(t *testing.T) {
-	keyring.MockInit() // mock keyring with no entries
-
-	hostDir := t.TempDir() // no .credentials.json file
-
-	_, _, err := PrepareCredentials(logger.Nop(), hostDir)
-	if err == nil {
-		t.Fatal("expected error, got nil")
 	}
 }
 
@@ -695,8 +602,9 @@ func TestPrepareHookTar(t *testing.T) {
 				hdr.Uid, hdr.Gid, cfg.ContainerUID(), cfg.ContainerGID())
 		}
 		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
-			t.Fatalf("read tar entry: %v", err)
+		// nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
+		if _, copyErr := io.Copy(&buf, tr); copyErr != nil {
+			t.Fatalf("read tar entry: %v", copyErr)
 		}
 		if _, err := tr.Next(); err != io.EOF {
 			t.Errorf("expected EOF after single file, got: %v", err)
@@ -745,7 +653,8 @@ func TestPrepareClaudeConfig_SettingsNoEnabledPlugins(t *testing.T) {
 		"theme": "dark",
 	})
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -775,11 +684,16 @@ func TestPrepareClaudeConfig_NestedPluginDirs(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(pluginsDir, "cache", "nested"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginsDir, "cache", "nested", "file.dat"), []byte("cached"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(pluginsDir, "cache", "nested", "file.dat"),
+		[]byte("cached"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -822,25 +736,104 @@ func TestPrepareClaudeConfig_KnownMarketplacesNonStringInstallPath(t *testing.T)
 	}
 	writeJSON(t, filepath.Join(pluginsDir, "known_marketplaces.json"), marketplace)
 
-	_, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	_, cleanup, err := PrepareConfig(logger.Nop(), claudeStaging(), "/home/claude", "/workspace", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer cleanup()
 }
 
-func TestPrepareCredentials_NeitherSourceErrorMessage(t *testing.T) {
-	keyring.MockInit()
-	hostDir := t.TempDir()
+// ---------------------------------------------------------------------------
+// Explicit-copy vocabulary: globs, renames, workspace guard
+// ---------------------------------------------------------------------------
 
-	_, _, err := PrepareCredentials(logger.Nop(), hostDir)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+// copyOnly builds a staging manifest holding exactly one copy directive.
+func copyOnly(c config.CopySpec) config.Staging {
+	return config.Staging{
+		Copy:   []config.CopySpec{c},
+		Mounts: nil,
+	}
+}
+
+func TestStageCopy_GlobFansOutUnderDest(t *testing.T) {
+	hostDir := t.TempDir()
+	for _, name := range []string{"a.md", "b.md", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(hostDir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	want := "no claude code credentials found"
-	if got := err.Error(); !strings.Contains(got, want) {
-		t.Errorf("error message should contain %q, got %q", want, got)
+	staging := copyOnly(config.CopySpec{
+		Src: claudeSrc("*.md"), Dest: ".claude/notes",
+		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+	})
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), staging, "/home/claude", "/workspace", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	for _, want := range []string{"a.md", "b.md"} {
+		if _, statErr := os.Stat(filepath.Join(stagingDir, ".claude", "notes", want)); statErr != nil {
+			t.Errorf("glob match %s not staged under dest: %v", want, statErr)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(stagingDir, ".claude", "notes", "c.txt")); !os.IsNotExist(statErr) {
+		t.Error("c.txt must not match the *.md glob")
+	}
+}
+
+func TestStageCopy_SingleLiteralSrcCopiesToExactDest(t *testing.T) {
+	hostDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hostDir, "AGENTS.md"), []byte("global"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename in flight: dest basename differs from src basename.
+	staging := copyOnly(config.CopySpec{
+		Src: claudeSrc("AGENTS.md"), Dest: ".claude/instructions.md",
+		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+	})
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	stagingDir, cleanup, err := PrepareConfig(logger.Nop(), staging, "/home/claude", "/workspace", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	data, readErr := os.ReadFile(filepath.Join(stagingDir, ".claude", "instructions.md"))
+	if readErr != nil {
+		t.Fatalf("renamed dest not staged: %v", readErr)
+	}
+	if string(data) != "global" {
+		t.Errorf("staged content = %q, want %q", data, "global")
+	}
+}
+
+func TestStageCopy_WorkspaceSrcRejected(t *testing.T) {
+	hostDir := t.TempDir()
+	projectRoot := filepath.Join(hostDir, "repo")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(projectRoot, "AGENTS.md")
+	if err := os.WriteFile(inside, []byte("repo file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	staging := copyOnly(config.CopySpec{
+		Src: inside, Dest: ".claude/AGENTS.md",
+		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+	})
+	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	_, _, err := PrepareConfig(logger.Nop(), staging, "/home/claude", "/workspace", projectRoot)
+	if err == nil {
+		t.Fatal("expected workspace-src rejection, got nil")
+	}
+	if !strings.Contains(err.Error(), "inside the project workspace") {
+		t.Errorf("error = %q, want workspace-guard message", err)
 	}
 }
 

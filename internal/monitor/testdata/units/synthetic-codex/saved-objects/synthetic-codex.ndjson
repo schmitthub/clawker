@@ -1,0 +1,2 @@
+{"type":"index-pattern","id":"synthetic-codex","attributes":{"title":"synthetic-codex"},"references":[]}
+{"type":"dashboard","id":"synthetic-codex-main","attributes":{"title":"Synthetic Codex"},"references":[{"id":"synthetic-codex","type":"index-pattern"}]}

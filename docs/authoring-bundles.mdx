@@ -1,0 +1,150 @@
+---
+title: "Authoring Bundles"
+description: "Package harnesses, stacks, and monitoring extensions into a distributable bundle — layout, the bundle.yaml manifest, validation, and publishing"
+icon: "box-open"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "bundle", "authoring", "publishing"]
+---
+
+A **bundle** is a git repository (or a subdirectory of one) that packages any
+mix of harnesses, stacks, and monitoring extensions for others to install. This
+page covers the bundle envelope — layout, the manifest, validation, and
+publishing. The component manifests themselves are covered in
+[Authoring stacks](/authoring-stacks),
+[Authoring harnesses](/authoring-harnesses), and
+[Authoring monitoring extensions](/authoring-monitoring).
+
+## Layout
+
+A bundle is a marker directory plus one or more convention directories:
+
+```
+my-bundle/
+├── .clawker-bundle/
+│   └── bundle.yaml          # the bundle manifest — pure metadata
+├── harnesses/
+│   └── <name>/              # the directory name IS the component name
+│       └── harness.yaml
+├── stacks/
+│   └── <name>/
+│       └── stack.yaml
+└── monitoring/
+    └── <name>/
+        └── monitoring.yaml
+```
+
+Components are discovered purely by convention directory. Include any subset of
+`harnesses/`, `stacks/`, and `monitoring/` — a bundle needs at least one
+component and may ship many. Each component is a subdirectory whose **name is the
+component name**, containing that component's own manifest (plus whatever else
+the component ships).
+
+A single-component bundle is exactly the same shape — one convention directory
+with one component, plus the marker directory. There is no bare-manifest-at-root
+form; the layout is identical whether a bundle ships one component or a dozen,
+and identical to the [loose local](/bundles#where-components-come-from)
+convention directories.
+
+Unknown top-level directories are an advisory warning, never an error.
+
+## The manifest
+
+`.clawker-bundle/bundle.yaml` is pure metadata — it declares the bundle's
+identity and nothing about its components (those are discovered from the
+convention directories):
+
+```yaml
+# .clawker-bundle/bundle.yaml
+namespace: acme          # required — your branding
+name: tools              # required — the bundle name
+version: 1.2.0           # optional — used only for update change-detection
+description: Acme's coding-agent toolchain
+author: Acme Engineering
+repository: https://github.com/acme/tools
+license: MIT
+```
+
+| Field | Required | Purpose |
+|-------|:---:|---------|
+| `namespace` | yes | Maintainer branding — an org, handle, or umbrella. Combines with `name` to form the bundle's identity. Lowercase letters, digits, and internal hyphens. |
+| `name` | yes | The bundle name. Same charset. Never derived from the source URL. |
+| `version` | no | Used **only** to detect that the bundle changed for update decisions — no compatibility semantics. When absent, the resolved source commit is the version. |
+| `description` | no | A human-readable summary. |
+| `author` | no | Author or maintainer. |
+| `repository` | no | Informational source URL. |
+| `license` | no | License identifier. |
+
+### Identity
+
+A bundle's identity is the **`(namespace, name)` pair from the manifest, and
+only that** — never the repository owner, URL, or path. Two bundles from
+different sources that declare the same `(namespace, name)` are a hard error when
+both are declared; keep your pair distinct.
+
+The `namespace` is self-declared — there is no central registry enforcing
+ownership — so pick a distinctive one. The `clawker` namespace, impersonation
+forms of it (`clawker-*`, `*-clawker`), and `official` are reserved and
+rejected.
+
+### Addressing
+
+A component in your bundle is addressed globally as
+`namespace.bundle.component` — for `acme`/`tools` shipping a stack named `node`,
+that is `acme.tools.node`. This is the one spelling everywhere: `build.stacks`
+entries, `monitor.extensions`, the `-t`/`@:` harness selector, and image tags.
+The name charset contains no dot, so the three segments always split cleanly.
+
+## Validating
+
+Validate a bundle directory before publishing — locally, with no network:
+
+```bash
+clawker bundle validate ./my-bundle
+clawker bundle validate ./my-bundle --strict   # for CI: warnings become failures
+```
+
+Validation is split:
+
+- **Hard failures** — a missing or malformed `bundle.yaml`, a missing required
+  field (`namespace`/`name`), a reserved namespace, a malformed component
+  name, or an invalid component: every harness, stack, and monitoring
+  extension is loaded through the same front door the consuming commands use,
+  so a manifest that would break at `clawker build` or `clawker monitor up`
+  fails here instead.
+- **Advisory warnings** — unknown top-level directories (with typo suggestions)
+  and empty convention directories.
+
+`--strict` turns every warning into a failure, which is what you want in a
+publish pipeline.
+
+## Publishing and the dev loop
+
+There is no registry to publish to — a bundle is just a git repository. Tag a
+release and share the URL; consumers declare it in `bundles:` and install it:
+
+```bash
+clawker bundle install https://github.com/acme/tools.git --ref v1.2.0
+```
+
+While you are authoring, skip the fetch cycle entirely: declare your working
+directory as a local `path:` source so it loads in place, and your edits take
+effect with no reinstall:
+
+```yaml
+# clawker.yaml
+bundles:
+  - path: ./my-bundle
+```
+
+An identity is claimed by exactly one source at a time, and a cached bundle
+resolves only while its `bundles:` declaration is live. Switching into the dev
+loop is just swapping declarations: replace the `url:` entry with the `path:`
+entry and the cached copy of your published release goes inert — no purge
+needed. Restore the `url:` declaration when you are done and the installed
+release is active again instantly; nothing is refetched. Declaring both at once
+is an identity collision: clawker refuses to resolve until you drop one of the
+two declarations (or purge the cached copy with
+`clawker bundle remove <namespace>.<name>`). A local directory never silently
+stands in for an installed bundle.
+
+Consumers reproduce an exact build by pinning a `sha` instead of a `ref`. See
+[Bundles](/bundles) for the full install / update / remove flow.

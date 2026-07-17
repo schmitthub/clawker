@@ -4,7 +4,7 @@
 // the no-hardcoded-strings policy. See internal/hostproxy/internals/CLAUDE.md.
 //
 // callback-forwarder polls the host proxy for captured OAuth callback data and
-// forwards it to the local HTTP server (Claude Code's callback listener).
+// forwards it to the local HTTP server (the in-container agent's callback listener).
 //
 // Usage:
 //

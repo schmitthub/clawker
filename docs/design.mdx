@@ -1,7 +1,7 @@
 ---
 title: "Design Philosophy"
 description: "Security model, core concepts, and key design decisions"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "design philosophy", "secure by default"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "self-hosted", "open source", "design philosophy", "secure by default"]
 ---
 
 # Design Philosophy
@@ -59,22 +59,19 @@ An agent is a named container instance. One project can have multiple agents, ea
 
 ### Credential Handling
 
-- API keys passed via environment variables
-- Subscription users authenticate via the host proxy (OAuth callback interception)
-- Git HTTPS credentials forwarded through the host proxy
-- SSH keys forwarded via agent socket (never copied)
+API keys pass via environment variables; subscription auth (OAuth callback interception) and Git HTTPS credentials are brokered through the host proxy, and SSH keys are forwarded via the agent socket rather than copied. See [Credential Forwarding](/credentials).
 
 ### Firewall
 
-The firewall is deny-by-default. Outbound TCP is redirected to an Envoy egress proxy via eBPF cgroup programs (attached to each agent container's cgroup from outside, by the clawker control plane). DNS is redirected to a custom CoreDNS that returns NXDOMAIN for any domain not in the allowlist. Allowed domains are configured per project (`security.firewall` in `.clawker.yaml`) and merged with a minimal hardcoded system list (Anthropic API, OAuth, telemetry). See the [Firewall](/firewall) guide for the full design.
+Deny-by-default egress: eBPF cgroup programs (attached from outside each agent container by the control plane) redirect outbound TCP to an Envoy proxy, while agent containers point their resolver at a custom CoreDNS that returns NXDOMAIN for anything unlisted. Allowed domains compose the selected harness's minimal egress floor with your per-project `security.firewall` rules. See the [Firewall](/firewall) guide for the full design.
 
 ### Control Plane
 
-The clawker control plane (`cmd/clawkercp`, PID 1 of the `clawker-controlplane` container) is the authoritative supervisor. It owns the firewall lifecycle, eBPF program lifetime, agent identity registry, and the mTLS Session over which it dispatches in-container commands to `clawkerd`. CP is not the firewall — it is the host-level daemon that, among other things, manages the firewall. The Ory stack (Hydra, Kratos, Oathkeeper) runs as subprocesses inside CP; the CLI exchanges OAuth2 tokens with Hydra and calls AdminService gRPC over mTLS for every privileged operation. See [Control Plane](/control-plane) for the user-facing guide and [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the in-container counterpart.
+The `clawker-controlplane` container (`cmd/clawkercp`, its PID 1) is the authoritative host-level supervisor — it owns the firewall lifecycle, eBPF program lifetime, the agent registry, and the mTLS Session over which it dispatches commands to `clawkerd`. CP is not the firewall; it is the daemon that, among other things, manages it. See [Control Plane](/control-plane) for the full design.
 
 ### Egress Observability
 
-Every firewall decision — `allowed`, `denied`, or `bypassed` — emits a structured OTLP log record from the netlogger subsystem. Records carry container attribution, the destination 4-tuple, and the resolved domain when available; they land in the `clawker-ebpf-egress` OpenSearch index (`service.name=ebpf-egress`) on the trusted infra OTLP lane. The headline guarantee is that bypass mode (`clawker firewall bypass`) is no longer a forensic blind spot — bypassed traffic still produces a per-decision record even though it skips Envoy and CoreDNS enforcement. See [Egress Observability](/observability) for the record shape and per-attribute reference.
+Every firewall decision — `allowed`, `denied`, or `bypassed` — emits a structured OTLP record (container attribution + destination 4-tuple + resolved domain) into the `clawker-ebpf-egress` OpenSearch index on the trusted infra lane, so bypass windows are not a forensic blind spot. See [Egress Observability](/observability) for the record shape.
 
 ## Key Design Decisions
 
@@ -104,7 +101,7 @@ Commands mirror Docker's CLI structure:
 | `clawker <verb>` | `run`, `stop`, `build` |
 | `clawker <noun> <verb>` | `container ls`, `volume rm`, `image build` |
 
-Top-level shortcuts: `init`, `build`, `run`, `start`, `generate`, `monitor *`, `version`
+Top-level shortcuts: `init`, `build`, `run`, `start`, `monitor *`, `version`
 
 Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`, `controlplane`, `auth`, `settings`, `skill`
 

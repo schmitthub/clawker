@@ -3,14 +3,18 @@ package install
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/cmd/skill/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdInstall_DefaultScope(t *testing.T) {
@@ -89,6 +93,7 @@ func TestInstallRun_CLINotFound(t *testing.T) {
 	opts := &InstallOptions{
 		IOStreams: tio,
 		Scope:     "user",
+		Harness:   shared.HarnessClaude,
 		CheckCLI: func() error {
 			return fmt.Errorf("claude CLI not found in PATH")
 		},
@@ -109,10 +114,13 @@ func TestInstallRun_MarketplaceAddFails(t *testing.T) {
 	opts := &InstallOptions{
 		IOStreams: tio,
 		Scope:     "user",
+		Harness:   shared.HarnessClaude,
 		CheckCLI:  func() error { return nil },
 		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, args ...string) error {
 			if len(args) > 1 && args[1] == "marketplace" {
-				return fmt.Errorf("claude plugin marketplace add exited with status 1 — check the output above for details")
+				return errors.New(
+					"claude plugin marketplace add exited with status 1 — check the output above for details",
+				)
 			}
 			return nil
 		},
@@ -129,6 +137,7 @@ func TestInstallRun_PluginInstallFails(t *testing.T) {
 	opts := &InstallOptions{
 		IOStreams: tio,
 		Scope:     "project",
+		Harness:   shared.HarnessClaude,
 		CheckCLI:  func() error { return nil },
 		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, args ...string) error {
 			callCount++
@@ -152,6 +161,7 @@ func TestInstallRun_Success(t *testing.T) {
 	opts := &InstallOptions{
 		IOStreams: tio,
 		Scope:     "user",
+		Harness:   shared.HarnessClaude,
 		CheckCLI:  func() error { return nil },
 		RunClaude: func(_ context.Context, _ *iostreams.IOStreams, args ...string) error {
 			calls = append(calls, args)
@@ -165,4 +175,49 @@ func TestInstallRun_Success(t *testing.T) {
 	assert.Equal(t, []string{"plugin", "marketplace", "add", shared.MarketplaceSource}, calls[0])
 	assert.Equal(t, []string{"plugin", "install", "--scope", "user", shared.PluginName}, calls[1])
 	assert.Contains(t, stderr.String(), "installed successfully")
+}
+
+func TestInstallRun_CopyLaneInstallsSkills(t *testing.T) {
+	tio, _, stdout, _ := iostreams.Test()
+	src := t.TempDir()
+	dst := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "clawker-support"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "clawker-support", "SKILL.md"), []byte("body"), 0o644))
+
+	opts := &InstallOptions{
+		IOStreams: tio,
+		Scope:     "user",
+		Harness:   shared.HarnessCodex,
+		CheckCLI:  func() error { t.Fatal("claude CLI must not be consulted on the copy lane"); return nil },
+		RunClaude: nil,
+		FetchSkills: func(_ context.Context) (*shared.FetchedSkills, error) {
+			return &shared.FetchedSkills{Dir: src, Names: []string{"clawker-support"}, Cleanup: func() {}}, nil
+		},
+		SkillsDir: func(harness string) (string, error) {
+			assert.Equal(t, shared.HarnessCodex, harness)
+			return dst, nil
+		},
+	}
+
+	err := installRun(context.Background(), opts)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dst, "clawker-support", "SKILL.md"))
+	assert.Contains(t, stdout.String(), "Installed skill clawker-support for codex")
+}
+
+func TestInstallRun_InvalidHarness(t *testing.T) {
+	tio, _, stdout, _ := iostreams.Test()
+	opts := &InstallOptions{
+		IOStreams:   tio,
+		Scope:       "user",
+		Harness:     "cursor",
+		CheckCLI:    nil,
+		RunClaude:   nil,
+		FetchSkills: nil,
+		SkillsDir:   nil,
+	}
+	err := installRun(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--harness must be one of")
+	assert.Empty(t, stdout.String())
 }

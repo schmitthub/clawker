@@ -1062,7 +1062,7 @@ func withVar[T any](t *testing.T, target *T, v T) {
 // only — session is parallel-safe because each test owns its session.
 // t.Cleanup is unnecessary (the session struct is dropped at end of
 // test scope).
-func withSpawnEntry(t *testing.T, s *session, fn func() error) {
+func withSpawnEntry(t *testing.T, s *session, fn func(string) error) {
 	t.Helper()
 	s.spawnEntry = fn
 }
@@ -1074,14 +1074,14 @@ func withSpawnEntry(t *testing.T, s *session, fn func() error) {
 func TestHandleAgentReady_TriggersSpawn_DoneZero(t *testing.T) {
 	var calls atomic.Int32
 	s, _ := newTestSession()
-	withSpawnEntry(t, s, func() error {
+	withSpawnEntry(t, s, func(string) error {
 		calls.Add(1)
 		return nil
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-spawn")
+	s.handleAgentReady(ctx, "ar-spawn", "claude")
 
 	resp := waitOneResponse(t, s, time.Second)
 	assert.Equal(t, "ar-spawn", resp.CommandId)
@@ -1098,11 +1098,11 @@ func TestHandleAgentReady_TriggersSpawn_DoneZero(t *testing.T) {
 // CP's plan completes rather than retry-looping.
 func TestHandleAgentReady_AlreadySpawned_ReplyDone(t *testing.T) {
 	s, logBuf := newTestSession()
-	withSpawnEntry(t, s, func() error { return errAlreadySpawned })
+	withSpawnEntry(t, s, func(string) error { return errAlreadySpawned })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-reconnect")
+	s.handleAgentReady(ctx, "ar-reconnect", "claude")
 
 	resp := waitOneResponse(t, s, time.Second)
 	assert.Equal(t, "ar-reconnect", resp.CommandId)
@@ -1120,11 +1120,11 @@ func TestHandleAgentReady_AlreadySpawned_ReplyDone(t *testing.T) {
 func TestHandleAgentReady_SpawnFails_IOError(t *testing.T) {
 	wantErr := errors.New("synthetic spawn failure")
 	s, logBuf := newTestSession()
-	withSpawnEntry(t, s, func() error { return wantErr })
+	withSpawnEntry(t, s, func(string) error { return wantErr })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-fail")
+	s.handleAgentReady(ctx, "ar-fail", "claude")
 
 	resp := waitOneResponse(t, s, time.Second)
 	assert.Equal(t, "ar-fail", resp.CommandId)
@@ -1151,7 +1151,7 @@ func TestHandleAgentReady_Unwired_IOError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-unwired")
+	s.handleAgentReady(ctx, "ar-unwired", "claude")
 
 	resp := waitOneResponse(t, s, time.Second)
 	assert.Equal(t, "ar-unwired", resp.CommandId)
@@ -1167,13 +1167,13 @@ func TestHandleAgentReady_Unwired_IOError(t *testing.T) {
 // Recover must surface Error{IO_ERROR} so CP sees a terminal Response.
 func TestHandleAgentReady_Panic_RepliesIOError(t *testing.T) {
 	s, logBuf := newTestSession()
-	withSpawnEntry(t, s, func() error {
+	withSpawnEntry(t, s, func(string) error {
 		panic("synthetic spawn panic")
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	s.handleAgentReady(ctx, "ar-panic")
+	s.handleAgentReady(ctx, "ar-panic", "claude")
 
 	resp := waitOneResponse(t, s, time.Second)
 	assert.Equal(t, "ar-panic", resp.CommandId)

@@ -15,45 +15,83 @@ import (
 // userHomeDir is injectable for testing (avoids writing to real home dir in tests).
 var userHomeDir = os.UserHomeDir
 
-// ResolveAgentEnv merges env_file, from_env, and env into a single map.
-// Precedence (lowest to highest): env_file < from_env < env.
-// The projectDir is used to resolve relative paths in env_file entries.
+// ResolveAgentEnv merges the shared agent env spec with the selected
+// harness's env spec into a single map. Within each spec, precedence (lowest
+// to highest) is env_file < from_env < env; the harness spec as a whole
+// overrides the agent base on key collision. A nil harness config applies the
+// base spec only. The projectDir is used to resolve relative paths in
+// env_file entries; harnessName scopes harness-layer diagnostics.
 // Returns the merged env map, any warnings (e.g. unset from_env vars), and an error.
-func ResolveAgentEnv(agent config.AgentConfig, projectDir string, log *logger.Logger) (map[string]string, []string, error) {
+func ResolveAgentEnv(
+	agent config.AgentConfig,
+	harnessCfg *config.HarnessConfig,
+	harnessName, projectDir string,
+	log *logger.Logger,
+) (map[string]string, []string, error) {
 	result := make(map[string]string)
+
+	warnings, err := applyEnvSpec(result, "agent", agent.EnvFile, agent.FromEnv, agent.Env, projectDir, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if harnessCfg != nil {
+		scope := "harnesses." + harnessName
+		harnessWarnings, specErr := applyEnvSpec(
+			result, scope, harnessCfg.EnvFile, harnessCfg.FromEnv, harnessCfg.Env, projectDir, log)
+		if specErr != nil {
+			return nil, nil, specErr
+		}
+		warnings = append(warnings, harnessWarnings...)
+	}
+
+	if len(result) == 0 {
+		return nil, warnings, nil
+	}
+	return result, warnings, nil
+}
+
+// applyEnvSpec layers one env spec (env_file < from_env < env) onto result.
+// scope prefixes diagnostics so agent-level and harness-level issues are
+// distinguishable (e.g. "agent.env_file" vs "harnesses.codex.env_file").
+func applyEnvSpec(
+	result map[string]string,
+	scope string,
+	envFile, fromEnv []string,
+	env map[string]string,
+	projectDir string,
+	log *logger.Logger,
+) ([]string, error) {
 	var warnings []string
 
 	// Layer 1: env_file (lowest precedence)
-	for _, path := range agent.EnvFile {
+	for _, path := range envFile {
 		resolved, err := resolvePath(path, projectDir)
 		if err != nil {
-			return nil, nil, fmt.Errorf("agent.env_file %q: %w", path, err)
+			return nil, fmt.Errorf("%s.env_file %q: %w", scope, path, err)
 		}
 		fileEnv, err := parseEnvFile(resolved, log)
 		if err != nil {
-			return nil, nil, fmt.Errorf("agent.env_file %q: %w", path, err)
+			return nil, fmt.Errorf("%s.env_file %q: %w", scope, path, err)
 		}
 		maps.Copy(result, fileEnv)
 	}
 
 	// Layer 2: from_env (overrides file values)
-	for _, name := range agent.FromEnv {
+	for _, name := range fromEnv {
 		val, ok := os.LookupEnv(name)
 		if !ok {
-			log.Debug().Str("var", name).Msg("agent.from_env: variable not set on host, skipping")
-			warnings = append(warnings, fmt.Sprintf("agent.from_env: variable %q not set on host, skipping", name))
+			log.Debug().Str("var", name).Str("scope", scope).Msg("from_env: variable not set on host, skipping")
+			warnings = append(warnings, fmt.Sprintf("%s.from_env: variable %q not set on host, skipping", scope, name))
 			continue
 		}
 		result[name] = val
 	}
 
 	// Layer 3: env (highest precedence — explicit static values win)
-	maps.Copy(result, agent.Env)
+	maps.Copy(result, env)
 
-	if len(result) == 0 {
-		return nil, warnings, nil
-	}
-	return result, warnings, nil
+	return warnings, nil
 }
 
 // parseEnvFile reads an env file and returns key-value pairs.
