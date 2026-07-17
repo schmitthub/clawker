@@ -337,7 +337,7 @@ func TestBuildUnitRoutings(t *testing.T) {
 			seededPin("acme.tools.alpha", "src-2", shared, nil),
 		})
 		require.NoError(t, err)
-		var lanes []monitor.UnitLogLane
+		lanes := make([]monitor.UnitLogLane, 0, len(routings))
 		for _, r := range routings {
 			lanes = append(lanes, r.Lanes...)
 		}
