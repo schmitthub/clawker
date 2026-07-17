@@ -319,7 +319,7 @@ type EgressRule struct {
 	// path, so a bad port fails the operation rather than silently widening
 	// access. The defensive NormalizeAndDedup path drops-with-warning only if
 	// invalid data somehow reaches the store.
-	Port        string     `yaml:"port,omitempty"         label:"Port"         desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default"`
+	Port        string     `yaml:"port,omitempty"         label:"Port"         desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default" jsontype:"string,integer"`
 	Action      string     `yaml:"action,omitempty"       label:"Action"       desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty"   label:"Path Rules"   desc:"Fine-grained path filtering (only applies to http/https/ws/wss)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`

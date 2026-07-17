@@ -97,6 +97,22 @@ func jsonSchemaForField(f reflect.StructField) map[string]any {
 
 	schema := jsonSchemaForType(ft)
 
+	// A `jsontype` tag overrides the reflected JSON type — for fields whose
+	// YAML accepts several scalar shapes (e.g. a port spec written as 443 or
+	// "9000-9100"). Comma-separated values become a type union.
+	if jt := f.Tag.Get("jsontype"); jt != "" {
+		types := strings.Split(jt, ",")
+		if len(types) == 1 {
+			schema[keyType] = types[0]
+		} else {
+			union := make([]any, 0, len(types))
+			for _, t := range types {
+				union = append(union, strings.TrimSpace(t))
+			}
+			schema[keyType] = union
+		}
+	}
+
 	if label := f.Tag.Get("label"); label != "" {
 		schema["title"] = label
 	}

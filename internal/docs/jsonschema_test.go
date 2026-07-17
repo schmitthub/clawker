@@ -67,6 +67,9 @@ func TestGenJSONSchema_Project(t *testing.T) {
 	assert.Equal(t, false, items["additionalProperties"])
 	itemProps := obj(t, items, "properties")
 	assert.Equal(t, "string", obj(t, itemProps, "dst")["type"])
+	// jsontype tag overrides the reflected type with a union — a port is
+	// written as 443 or "9000-9100" and both must validate in editors.
+	assert.Equal(t, []any{"string", "integer"}, obj(t, itemProps, "port")["type"])
 	// Nested struct slice within the element (path_rules) recurses too.
 	pathRules := obj(t, itemProps, "path_rules")
 	assert.Equal(t, "array", pathRules["type"])
