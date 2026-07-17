@@ -10,6 +10,11 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [Unreleased]
+
+- **Changed:** `clawker skill` is now `clawker plugin` — the command manages the clawker-support plugin (a collection of agent skills), so the name now matches what it installs. Every `clawker skill` invocation keeps working as an alias.
+- **Changed:** The clawker-support plugin moved to its own repository, `schmitthub/clawker-plugin`. Existing installs keep updating through the marketplace unchanged; manual marketplace adds should use the new repository name.
+
 ## [2026.7.1] - 2026-07-17
 
 ### **⚠ MAJOR UPDATE — BREAKING CHANGES — multi-harness support, bundles**
