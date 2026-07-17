@@ -50,7 +50,7 @@ type ManagedPromptSpec struct {
 }
 
 // VolumeSpec declares one persisted directory: a named volume
-// (clawker.<project>.<agent>-<name>) mounted at Path under the container
+// (clawker.<project>.<agent>-<harness>.<name>) mounted at Path under the container
 // home. Every persisted dir is an explicit declaration — clawker assumes
 // nothing about where a harness keeps state. Name is the volume-name
 // suffix; Path is container-home-relative.

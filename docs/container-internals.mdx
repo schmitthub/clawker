@@ -98,7 +98,9 @@ Each harness bundle declares the directories it persists as a list of `{name, pa
 - The **claude** bundle declares a `config` volume at `~/.claude` — session transcripts (JSONL files under `projects/<mangled-cwd>/`), the `.config.json` state file, plugins, and settings
 - The **codex** bundle declares a `config` volume at `~/.codex` — everything Codex keeps under `$CODEX_HOME`
 
-Volumes are named `clawker.<project>.<agent>-<name>` (e.g. `clawker.myapp.dev-config`). Because these are Docker volumes, they survive container removal and recreation. As long as you use the same project and agent name, your harness state — including the auth token from your in-container login — is preserved.
+Volumes are named `clawker.<project>.<agent>-<harness>.<name>` (e.g. `clawker.myapp.dev-claude.config`). The harness segment is added automatically — bundles declare only the `name`, and cannot opt out. It keeps each harness's state on its own volume, so Claude's `~/.claude` can never land on the volume Codex writes to. For a bundled harness the segment is the fully qualified `<namespace>.<bundle>.<component>` spelling you selected it by.
+
+Because these are Docker volumes, they survive container removal and recreation. As long as you use the same project, agent, and harness, your harness state — including the auth token from your in-container login — is preserved.
 
 ### History Volume
 
@@ -106,7 +108,7 @@ A `clawker.<project>.<agent>-history` volume preserves shell command history at 
 
 ### Lifecycle Volume
 
-A `clawker.<project>.<agent>-clawker` volume backs `~/.clawker` inside the container. It holds Clawker's lifecycle state: delivered hook scripts (`post-init.sh`, `pre-run.sh`), the harness's staged config seeds plus their manifest, and the post-init marker. It lives on its own volume — with the same lifetime as the config volumes that `post_init` mutates — so a recreated container doesn't re-run one-time initialization against volumes that were already initialized.
+A `clawker.<project>.<agent>-<harness>.clawker` volume backs `~/.clawker` inside the container. It is harness-scoped for the same reason the config volumes are: it carries that harness's staged seeds and its post-init marker. It holds Clawker's lifecycle state: delivered hook scripts (`post-init.sh`, `pre-run.sh`), the harness's staged config seeds plus their manifest, and the post-init marker. It lives on its own volume — with the same lifetime as the config volumes that `post_init` mutates — so a recreated container doesn't re-run one-time initialization against volumes that were already initialized.
 
 ### First-Boot Config Seeding
 
@@ -164,12 +166,14 @@ Clawker uses a consistent naming scheme for all Docker resources:
 | Resource | Pattern | Example |
 |----------|---------|---------|
 | Container | `clawker.<project>.<agent>` | `clawker.myapp.dev` |
-| Harness config volume(s) | `clawker.<project>.<agent>-<name>` (one per bundle-declared dir) | `clawker.myapp.dev-config` |
+| Harness config volume(s) | `clawker.<project>.<agent>-<harness>.<name>` (one per bundle-declared dir) | `clawker.myapp.dev-claude.config` |
 | History volume | `clawker.<project>.<agent>-history` | `clawker.myapp.dev-history` |
-| Lifecycle volume | `clawker.<project>.<agent>-clawker` | `clawker.myapp.dev-clawker` |
+| Lifecycle volume | `clawker.<project>.<agent>-<harness>.clawker` | `clawker.myapp.dev-claude.clawker` |
 | Workspace volume | `clawker.<project>.<agent>-workspace` | `clawker.myapp.dev-workspace` (snapshot mode only) |
 
-All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`; containers and images also carry `dev.clawker.harness`) for filtering and management. The `clawker container ls` command uses these labels to show only Clawker-managed containers.
+The history and workspace volumes carry no harness segment on purpose: shell history and your workspace snapshot belong to the agent, not to whichever harness is driving it, and stay shared when you switch harnesses.
+
+All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`) for filtering and management. Anything created under a harness's directive — its containers, its harness image, and its harness-scoped volumes — additionally carries `dev.clawker.harness`, recording which harness made it. That makes `docker volume inspect` answer "which harness owns this?" without guessing at the name. The `clawker container ls` command uses these labels to show only Clawker-managed containers.
 
 ### Volume Lifecycle
 

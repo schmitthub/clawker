@@ -256,9 +256,10 @@ All containers get named volume mounts for the harness's config directories (dec
 ```bash
 $ clawker volume ls
 VOLUME NAME                                  DRIVER  MOUNTPOINT
-clawker.clawker.example-config               local   ...er/volumes/clawker.clawker.example-config/_data
+clawker.clawker.example-claude.config        local   ...volumes/clawker.clawker.example-claude.config/_data
 clawker.clawker.example-history              local   ...r/volumes/clawker.clawker.example-history/_data
-# You can see the resources naming conventions here (clawker.{project}.{agent}). Labeling works similarly
+# You can see the resources naming conventions here (clawker.{project}.{agent}). Labeling works
+# similarly. Volumes a harness owns carry its name too, so each harness keeps its own config.
 ```
 
 You can also see how clawker is jailed from other docker resource access...
