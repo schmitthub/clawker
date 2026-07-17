@@ -13,7 +13,9 @@ import (
 // internal/bundle/assets, structurally identical to a loose tier.
 func TestFloorNames(t *testing.T) {
 	assert.Equal(t, []string{"claude", "codex"}, FloorNames(ComponentHarness))
-	assert.Equal(t, []string{"go", "node", "python", "rust"}, FloorNames(ComponentStack))
+	assert.Equal(t,
+		[]string{"cpp", "dotnet", "go", "java", "node", "python", "ruby", "rust"},
+		FloorNames(ComponentStack))
 	assert.Equal(t, []string{"claude-code"}, FloorNames(ComponentMonitoring),
 		"monitoring moved out of the harness dir into a peer floor dir")
 }

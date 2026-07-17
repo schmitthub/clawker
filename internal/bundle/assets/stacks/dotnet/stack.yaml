@@ -1,0 +1,5 @@
+description: >-
+  The .NET SDK via Microsoft's official dotnet-install script into a
+  system-wide DOTNET_ROOT (/usr/local/share/dotnet), with dotnet on PATH
+  for every user; floats on the LTS channel unless DOTNET_CHANNEL pins a
+  line. Skips itself when the image already provides dotnet.

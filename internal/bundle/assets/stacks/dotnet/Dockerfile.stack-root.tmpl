@@ -1,0 +1,30 @@
+# .NET SDK via Microsoft's official dotnet-install script (dot.net over
+# TLS) into a system-wide DOTNET_ROOT, symlinked onto PATH for every user
+# (DOTNET_ROOT is what lets the symlinked binary find its SDK).
+# DOTNET_CHANNEL floats on the LTS channel so rebuilds pick up security
+# patches (dep-rot rationale: docs/threat-model.mdx); set it (e.g. 8.0) to
+# pin a line. libicu72 is the SDK's one runtime dependency the slim
+# bookworm substrate lacks — revisit the package name when SubstrateImage
+# moves off bookworm. Per-user state (the nuget cache, `dotnet tool
+# install -g`) lives under the user's home, so the unprivileged user needs
+# no write access to DOTNET_ROOT.
+# Guarded: an existing dotnet skips the install.
+ARG DOTNET_CHANNEL=LTS
+ENV DOTNET_ROOT=/usr/local/share/dotnet
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v dotnet >/dev/null 2>&1; then \
+{{- else}}
+RUN if command -v dotnet >/dev/null 2>&1; then \
+{{- end}}
+      echo "clawker stack dotnet: existing $(dotnet --version) — skipping install"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends libicu72 && \
+      curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
+      bash /tmp/dotnet-install.sh --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_ROOT" && \
+      rm /tmp/dotnet-install.sh && \
+      ln -s "$DOTNET_ROOT/dotnet" /usr/local/bin/dotnet && \
+      dotnet --version ; \
+    fi

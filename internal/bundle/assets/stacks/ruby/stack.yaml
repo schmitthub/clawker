@@ -1,0 +1,6 @@
+description: >-
+  The Ruby toolchain from Debian's ruby-full line plus build-essential for
+  native gem extensions, installed via apt (distro-signature-verified).
+  Gems install to a shared world-writable GEM_HOME
+  (/usr/local/share/gems) with its bin dir on PATH, so any user can `gem
+  install` at runtime. Skips itself when the image already provides ruby.

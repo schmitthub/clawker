@@ -1,0 +1,17 @@
+# Java via Debian's default OpenJDK line (default-jdk) + Maven — apt-managed,
+# so packages are distro-signature-verified and track Debian security updates
+# on rebuild. Maven resolves java from PATH; no JAVA_HOME is exported so an
+# image that ships its own JDK keeps its layout untouched.
+# Guarded: an existing javac skips the install.
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if command -v javac >/dev/null 2>&1; then \
+{{- else}}
+RUN if command -v javac >/dev/null 2>&1; then \
+{{- end}}
+      echo "clawker stack java: existing $(javac -version 2>&1) — skipping install"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends default-jdk maven && \
+      javac -version && mvn -version ; \
+    fi
