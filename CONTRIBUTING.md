@@ -15,6 +15,7 @@ Thanks for your interest in contributing to Clawker! This project is currently i
 ```bash
 git clone https://github.com/schmitthub/clawker.git
 cd clawker
+git submodule update --init
 make clawker
 export PATH="$PWD/bin:$PATH"
 ```
