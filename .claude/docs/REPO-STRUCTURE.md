@@ -14,6 +14,8 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
 │   └── gen-docs/              # CLI doc generator
 ├── clawkerd/                  # Per-container agent daemon (package clawkerd: listener/session/spawn/register/...); embed in clawkerd/embed (clawkerdembed.Binary)
+├── clawker-plugin/            # clawker-support plugin (git submodule; skills distributed via clawker plugin install)
+├── clawker-test-bundle/       # Example harness bundle (git submodule; workspace management only)
 ├── controlplane/              # CP domains + infra (top-level; orchestrator lives in internal/controlplane)
 │   ├── adminclient/           # CLI-side AdminService gRPC dial (mTLS + OAuth2)
 │   ├── agent/                 # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, AgentEvent + state repo
@@ -39,7 +41,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── cmd/                   # Cobra commands
 │   │   ├── factory/           # Factory constructor
 │   │   ├── settings/          # Settings commands
-│   │   ├── skill/             # Skill plugin management
+│   │   ├── plugin/            # Plugin (skill collection) management
 │   │   └── project/edit/      # Project edit subcommand
 │   ├── cmdutil/               # Factory struct, error types, arg validators
 │   ├── config/                # Store[T] config engine (see internal/config/CLAUDE.md)

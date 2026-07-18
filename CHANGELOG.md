@@ -18,7 +18,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 - **Changed:** The unprivileged container user is now `clawker` instead of `claude` — the same identity across every harness, matching the multi-harness model. Existing containers and volumes must be recreated (see the alert above).
 - **Changed:** `clawker skill` is now `clawker plugin`. Every `clawker skill` invocation keeps working as an alias.
-- **Added:** The clawker-support plugin now supports most harnesses and is located at `schmitthub/clawker-plugin`. Or install it with `clawker plugin install --harness <name>` if you are using a supported harness.
+- **Added:** The clawker-support plugin supports the claude, codex, opencode, and pi harnesses and lives at `schmitthub/clawker-plugin`. Install it with `clawker plugin install --harness <name>`.
 
 ## [2026.7.1] - 2026-07-17
 

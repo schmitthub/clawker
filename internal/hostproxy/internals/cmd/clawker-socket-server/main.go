@@ -15,7 +15,7 @@
 //
 // Environment:
 //   - CLAWKER_REMOTE_SOCKETS: JSON array of socket configs, e.g.:
-//     [{"path": "/home/claude/.gnupg/S.gpg-agent", "type": "gpg-agent"}]
+//     [{"path": "/home/<user>/.gnupg/S.gpg-agent", "type": "gpg-agent"}]
 //
 // Protocol:
 //
@@ -132,7 +132,7 @@ type Forwarder struct {
 	stdout   *bufio.Writer
 }
 
-// getTargetUserFromPath extracts the username from a path like /home/claude/.gnupg
+// getTargetUserFromPath extracts the username from a path like /home/<user>/.gnupg
 // and returns the UID and GID for that user. Returns -1, -1 if user lookup fails.
 func getTargetUserFromPath(path string) (int, int) {
 	// Parse username from /home/<username>/... path
@@ -313,7 +313,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 		return fmt.Errorf("no GPG socket configured")
 	}
 
-	// Get target user from socket path (e.g., /home/claude/.gnupg -> claude)
+	// Get target user from socket path (e.g., /home/<user>/.gnupg -> <user>)
 	uid, gid := getTargetUserFromPath(gnupgDir)
 
 	// Create .gnupg directory

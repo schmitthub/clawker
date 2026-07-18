@@ -288,7 +288,7 @@
                     "type": "string"
                   },
                   "chown": {
-                    "description": "Set file ownership (e.g. claude:claude, the unprivileged container user)",
+                    "description": "Set file ownership (user:group, e.g. the unprivileged container user)",
                     "title": "Chown",
                     "type": "string"
                   },
