@@ -51,6 +51,14 @@ Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers
 >
 > Hiding the secret in transit is not the same as containing the agent. Containment means scoping **where** authenticated requests can go — `github.com/your-org/` with method gating and a per-request audit log — and mediating the primitive itself (SSH/GPG agent sockets) so no replayable token exists in the first place. clawker does both.
 
+> **Why host-only allowlists — and IP/iptables enforcement — both leak**
+>
+> Two coarse shortcuts show up again and again. The first is allowlisting by **host only**: "allow `github.com`." But *all* of `github.com` includes `github.com/attacker/exfil` — a read from your private repo and a push to theirs ride the exact same approved host. Real containment needs granularity *below* the hostname: path and method scoping, so `github.com/your-org/` is reachable and nothing else is.
+>
+> The second is enforcing domain rules by resolving them to IPs once and pinning those in **iptables/nftables**. That leaks two ways. Load-balanced and CDN-fronted endpoints rotate IPs constantly, so the snapshot goes stale — legitimate traffic breaks, or you widen to whole CIDR ranges to compensate. And shared front-ends (Cloudflare, Fastly) sit thousands of unrelated sites behind the same addresses — allow one, allow them all. An IP rule can't even express `github.com/your-org/`; it has no idea what hostname the packet was ever for.
+>
+> clawker enforces against the **name, at request time** — unlisted domains die at the DNS tier, and allowed ones are matched by SNI/Host at an L7 proxy that never trusts a resolve-once IP set. Rules stay bound to the domain, survive IP churn, and scope beneath the host.
+
 > **Why there's no "syscall filtering" column**
 >
 > Some sandboxes lead with seccomp/AppArmor/Landlock syscall confinement. It's genuinely useful defense-in-depth, and it's on clawker's roadmap — but it sits *upstream* of where the real damage happens. Blocking a syscall only matters if the thing it enables reaches a risk sink: **exfiltration, data loss, persistence, or corruption**. clawker already closes those sinks directly — deny-by-default egress at the DNS/L7/kernel layers stops exfil, disposable containers make local corruption a `git revert` or a rebuild, and the workspace is the only thing that survives.
