@@ -79,7 +79,7 @@ RUN echo installed-acme-node
 
 
 
-ARG USERNAME=claude
+ARG USERNAME=clawker
 
 # Setup non-root user
 

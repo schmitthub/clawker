@@ -13,7 +13,7 @@ Each project gets a shared **base image** plus one **harness image** per coding-
 
 | Image | Tag | Contents |
 |-------|-----|----------|
-| Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared stacks, your `instructions` and base-stage `inject` points, the unprivileged container user (`claude`) |
+| Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared stacks, your `instructions` and base-stage `inject` points, the unprivileged container user (`clawker`) |
 | Harness image | `clawker-<project>:<harness>` | Built `FROM` the base: the harness's own stacks and install steps, config seeds, harness-stage `inject` points, and Clawker's runtime assets (`clawkerd`, credential helpers, firewall CA) |
 
 The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, the Docker CLI (for socket-mount workflows), and `git-delta`. Your `build.packages` install into the same apt layer.
@@ -101,8 +101,8 @@ build:
   instructions:
     copy:
       - src: "./config/eslint.json"
-        dest: "/home/claude/.eslintrc.json"
-        chown: "claude:claude"
+        dest: "/home/clawker/.eslintrc.json"
+        chown: "clawker:clawker"
       - src: "./scripts/setup.sh"
         dest: "/usr/local/bin/setup.sh"
         chmod: "755"
@@ -171,9 +171,9 @@ build:
     after_packages:
       - "RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
     after_user_setup:
-      - "RUN mkdir -p /home/claude/.config"
+      - "RUN mkdir -p /home/clawker/.config"
     after_user_switch:
-      - "COPY --chown=claude:claude ./dotfiles/ /home/claude/"
+      - "COPY --chown=clawker:clawker ./dotfiles/ /home/clawker/"
     user_commands:
       - "RUN claude mcp add memory -- npx -y @modelcontextprotocol/server-memory"
     before_entrypoint:
@@ -191,7 +191,7 @@ build:
 5. Project-declared stacks (root scope), then your `root_run`
 6. Container user creation
 7. `after_user_setup` — directories, permissions, services (still root)
-8. `USER` switch to the unprivileged container user (`claude`)
+8. `USER` switch to the unprivileged container user (`clawker`)
 9. `after_user_switch` — dotfiles, shell config
 10. Project-declared stacks (user scope), then your `user_run`, then `copy`
 
@@ -244,8 +244,8 @@ build:
       NODE_ENV: "development"
     copy:
       - src: ".npmrc"
-        dest: "/home/claude/.npmrc"
-        chown: "claude:claude"
+        dest: "/home/clawker/.npmrc"
+        chown: "clawker:clawker"
     root_run:
       - "apt-get install -y libsqlite3-dev"
     user_run:

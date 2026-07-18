@@ -79,11 +79,11 @@ Install the **clawker-support** plugin to get hands-on help from a clawker speci
 
 <CodeGroup>
 ```bash clawker CLI
-clawker skill install
+clawker plugin install
 ```
 
 ```bash manual
-claude plugin marketplace add schmitthub/claude-plugins
+claude plugin marketplace add schmitthub/clawker-plugin
 claude plugin install clawker-support@schmitthub-plugins
 ```
 </CodeGroup>
@@ -126,6 +126,10 @@ Anything after the `@` is passed to the harness CLI as normal arguments, and arg
 
 There are also per-harness aliases that pick the harness and skip its permission prompts in one word: `clawker claude dev` (Claude Code with `--dangerously-skip-permissions`) and `clawker codex dev` (Codex with `--yolo`).
 
+<Tip>
+Want to try the experimental harnesses under development — codex, opencode, and pi? Install the [example bundle](https://github.com/schmitthub/clawker-bundle-example): `clawker bundle install schmitthub/clawker-bundle-example`. Fork the repo, or use it as a reference to tweak your own bundle with the clawker plugin's `bundle-creator` skill.
+</Tip>
+
 
 Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 </Tip>
@@ -138,7 +142,7 @@ When you run this command, Clawker:
 2. Brings up the clawker **control plane** if it isn't already running — a long-lived per-host daemon that owns the firewall lifecycle, eBPF program attachment, and the mTLS command channel to every agent — and waits for it to be fully ready (including a host↔CP clock-sync check) before starting the container
 3. Starts the container with `clawkerd` as PID 1; the control plane attaches eBPF firewall programs from outside and dials into `clawkerd` over mTLS to drive in-container init. When the monitoring stack is running, every firewall decision from those eBPF programs (allowed / denied / bypassed) begins streaming to the `clawker-ebpf-egress` OpenSearch index — see [Egress Observability](/observability)
 4. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host, stages the harness's managed config from your host (for the claude harness: settings, plugins, skills, agents — never credentials; you authenticate once inside the container and the token persists in the config volume), runs any `post_init` script you've configured
-5. Signals the agent is ready, at which point the agent daemon forks the harness CLI as the unprivileged container user (`claude`) — a kernel-side privilege drop
+5. Signals the agent is ready, at which point the agent daemon forks the harness CLI as the unprivileged container user (`clawker`) — a kernel-side privilege drop
 
 When running the Claude Code harness, an automatically loaded prompt exists at `/etc/claude-code/CLAUDE.md`, so the agent knows it's in a clawker container and can help troubleshoot issues and provide guidance when running into constraints.
 

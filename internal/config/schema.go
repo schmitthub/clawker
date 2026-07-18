@@ -91,7 +91,7 @@ type DockerInstructions struct {
 type CopyInstruction struct {
 	Src   string `yaml:"src"             label:"Source"      desc:"File or directory to copy from your project"`
 	Dest  string `yaml:"dest"            label:"Destination" desc:"Where to place it inside the container"`
-	Chown string `yaml:"chown,omitempty" label:"Chown"       desc:"Set file ownership (e.g. claude:claude, the unprivileged container user)"`
+	Chown string `yaml:"chown,omitempty" label:"Chown"       desc:"Set file ownership (user:group, e.g. the unprivileged container user)"`
 	Chmod string `yaml:"chmod,omitempty" label:"Chmod"       desc:"Set file permissions (e.g. 0644)"`
 }
 

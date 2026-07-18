@@ -55,7 +55,7 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 ## High-Level Feature Overview
 
 - **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle (a manifest + Dockerfile fragment + optional assets) and declaring it in your project's `clawker.yaml`. Images are harness-keyed: `clawker build -t codex` builds a specific harness, `clawker run @:codex` runs it, and the default harness carries a `:default` alias so bare `@` just works
-- **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, language **stacks** (go, node, python, rust, java, ruby, cpp, dotnet), and custom instructions, with a thin per-harness image layered on top. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `claude` user kernel-side, and supervises the harness for the container's lifetime
+- **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, language **stacks** (go, node, python, rust, java, ruby, cpp, dotnet), and custom instructions, with a thin per-harness image layered on top. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `clawker` user kernel-side, and supervises the harness for the container's lifetime
 - **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry (sqlite), mTLS auth, and the command channel to every agent's `clawkerd`. The CLI talks to it over mTLS gRPC + OAuth2; see `clawker controlplane status`, `clawker controlplane agents`
 - **Injectable build-time instructions** to customize images per project: packages, environment variables, root run commands, user run commands, and more
 - **Bind or snapshot workspace modes**: mount your repository to the container for live editing, or copy it at runtime for pure isolation
@@ -147,7 +147,7 @@ clawker go dev
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
-You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
+You can ask your coding agent to assist you in writing a more appropriate config file for the project using the support skill `clawker plugin install` (recommended) or this prompt:  
 
 ```text
 create a `./.clawker.yaml` file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
@@ -169,10 +169,10 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > **Tip:** Install the **clawker-support plugin** to get hands-on help from a clawker specialist agent. It can walk you through configuration, MCP wiring, firewall rules, troubleshooting, and more — it reads the real build templates and config schema and gives you the exact YAML you need.
 > ```bash
 > # Via clawker CLI (recommended)
-> clawker skill install
+> clawker plugin install
 >
 > # Or manually
-> claude plugin marketplace add schmitthub/claude-plugins
+> claude plugin marketplace add schmitthub/clawker-plugin
 > claude plugin install clawker-support@schmitthub-plugins
 > ```
 > You can also customize your image using `clawker project edit` or point your agent at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
@@ -383,11 +383,11 @@ clawker auth rotate                     # Rotate CA, server certs, and OAuth2 si
 clawker project edit                    # Interactive TUI editor for .clawker.yaml
 clawker settings edit                   # Interactive TUI editor for settings.yaml
 
-# Skill plugin management
-clawker skill install                   # Install the clawker-support agent skills plugin
-clawker skill install --scope project   # Install with project scope
-clawker skill show                      # Show manual install commands
-clawker skill remove                    # Remove the clawker-support plugin
+# Plugin management (alias: clawker skill)
+clawker plugin install                  # Install the clawker-support agent skills plugin
+clawker plugin install --scope project  # Install with project scope
+clawker plugin show                     # Show manual install commands
+clawker plugin remove                   # Remove the clawker-support plugin
 ```
 
 ## Monitoring 
@@ -416,7 +416,7 @@ Once the stack is up:
 
 ## Roadmap / Known Issues
 
-- More shipped harness bundles are on the way (opencode, pi) — and you can author your own bundle today
+- More shipped harness bundles are on the way — experimental versions under development (codex, opencode, pi) live in the [example bundle](https://github.com/schmitthub/clawker-bundle-example). Try them with `clawker bundle install schmitthub/clawker-bundle-example`, and fork the repo or use it as a reference to tweak your own with the clawker plugin's `bundle-creator` skill
 - Linux works but hasn't been exercised as extensively as macOS
 
 See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen) for current known issues and limitations.
@@ -431,7 +431,7 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 Clawker is free software: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](LICENSE).
 
-One subproject is the exception: the `claude-plugin/clawker-support/` plugin is licensed separately under the MIT License — see [its LICENSE](claude-plugin/clawker-support/LICENSE). Everything else in this repository is AGPL-3.0-or-later as described below.
+One subproject is the exception: the clawker-support plugin, tracked as the `clawker-plugin/` git submodule ([schmitthub/clawker-plugin](https://github.com/schmitthub/clawker-plugin)), is licensed separately under the MIT License — see its LICENSE. Everything else in this repository is AGPL-3.0-or-later as described below.
 
 The AGPL's network-use clause (section 13) is deliberate: if you run a modified Clawker as a network service, you must offer its source to users of that service. This keeps Clawker free and open — for learning from and building on, not for closed SaaS wrappers.
 

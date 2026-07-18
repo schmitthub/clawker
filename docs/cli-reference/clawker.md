@@ -41,6 +41,7 @@ Workspace modes:
 * [clawker monitor](clawker_monitor) - Manage local observability stack
 * [clawker network](clawker_network) - Manage networks
 * [clawker pause](clawker_pause) - Pause all processes within one or more containers
+* [clawker plugin](clawker_plugin) - Manage the clawker agent skills plugin
 * [clawker project](clawker_project) - Manage clawker projects
 * [clawker ps](clawker_ps) - List containers
 * [clawker rename](clawker_rename) - Rename a container
@@ -49,7 +50,6 @@ Workspace modes:
 * [clawker rmi](clawker_rmi) - Remove one or more images
 * [clawker run](clawker_run) - Create and run a new container
 * [clawker settings](clawker_settings) - Manage clawker user settings
-* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
 * [clawker stack](clawker_stack) - Inspect resolvable stacks
 * [clawker start](clawker_start) - Start one or more stopped containers
 * [clawker stats](clawker_stats) - Display a live stream of container resource usage statistics

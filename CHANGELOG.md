@@ -10,6 +10,16 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.7.2] - 2026-07-17
+
+### **⚠ BREAKING — container user renamed**
+
+> **Action required:** the unprivileged container user is now `clawker` (home `/home/clawker`) instead of `claude`. Images, containers, and volumes from earlier releases reference the old user and home path, so they must be recreated: remove existing agent containers (`clawker container remove`) and their volumes (`clawker volume remove` or `clawker volume prune`), then `clawker build` and start fresh agents. Harness logins and config stored in old volumes don't carry over — authenticate again in the new container.
+
+- **Changed:** The unprivileged container user is now `clawker` instead of `claude` — the same identity across every harness, matching the multi-harness model. Existing containers and volumes must be recreated (see the alert above).
+- **Changed:** `clawker skill` is now `clawker plugin`. Every `clawker skill` invocation keeps working as an alias.
+- **Added:** The clawker-support plugin supports the claude, codex, opencode, and pi harnesses and lives at `schmitthub/clawker-plugin`. Install it with `clawker plugin install --harness <name>`.
+
 ## [2026.7.1] - 2026-07-17
 
 ### **⚠ MAJOR UPDATE — BREAKING CHANGES — multi-harness support, bundles**

@@ -157,7 +157,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	defer progress.Stop()
 
 	// Resolve the unprivileged user the spawn child will run as.
-	// Default to consts.ContainerUser ("claude") when CLAWKER_USER is
+	// Default to consts.ContainerUser when CLAWKER_USER is
 	// unset so a hand-built image without the Dockerfile-set env
 	// still gets a sensible identity.
 	userSpec := os.Getenv(consts.EnvClawkerUser)

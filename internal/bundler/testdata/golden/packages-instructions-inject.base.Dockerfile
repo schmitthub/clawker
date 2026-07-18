@@ -83,7 +83,7 @@ RUN locale-gen en_US.UTF-8
 
 RUN echo root-step
 
-ARG USERNAME=claude
+ARG USERNAME=clawker
 
 # Setup non-root user
 

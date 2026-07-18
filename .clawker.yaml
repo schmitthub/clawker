@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v0.12.11/docs/schemas/clawker.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v2026.7.1/docs/schemas/clawker.schema.json
 agent:
   editor: nano
   enable_shared_dir: true
@@ -144,8 +144,8 @@ build:
     - netcat-openbsd
     - cmake
 monitor:
-    extensions:
-      - claude-code
+  extensions:
+    - claude-code
 security:
   docker_socket: false
   firewall:
@@ -265,7 +265,7 @@ security:
           - action: allow
             path: ~/repos/nvm-sh/nvm(/.*)?
           - action: allow
-            path: ~/repos/schmitthub/(clawker|claude-plugins)(/.*)?
+            path: ~/repos/schmitthub/(clawker|clawker-plugin)(/.*)?
           - action: allow
             path: /repos/schmitthub/contributor-assistant
           - action: allow
@@ -381,3 +381,6 @@ security:
     forward_ssh: true
 workspace:
   default_mode: bind
+bundles:
+  - url: https://github.com/schmitthub/clawker-bundle-example.git
+    auto_update: true

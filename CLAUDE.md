@@ -131,7 +131,7 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-
 See `docs/cli-reference/` for auto-generated command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `version`
-**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
+**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `plugin *` (alias `skill`)
 
 ## Configuration
 
@@ -217,7 +217,7 @@ All tests must pass before any change is complete. See `.claude/rules/testing.md
 ### Completion Gate
 
 After bug fixes or feature changes:
-- Check if fix addresses an issue in `claude-plugin/clawker-support/skills/clawker-support/reference/known-issues.md`
+- Check if fix addresses an issue in `clawker-plugin/skills/clawker-support/reference/known-issues.md` (git submodule — fixes there are committed in the clawker-plugin repo, then the submodule pointer is bumped here)
 - Update relevant Mintlify docs in `docs/` if user-facing behavior changed
 
 ### Mintlify (docs.clawker.dev)

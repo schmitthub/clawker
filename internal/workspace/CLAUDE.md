@@ -90,7 +90,7 @@ When `HarnessConfig.MountProjectsEnabled()` (default true), `SetupMounts` append
 Failure handling:
 - Src expansion or stat error (misconfigured env reference, path-is-file) — **hard error**; the message points at `mount_projects: false` for the harness as the opt-out.
 - Host dir does not exist — silent debug log, mount skipped (the harness creates it on first session).
-- UID mismatch is not surfaced. The container `claude` user's UID/GID are baked into the agent image at build time from the host invoker's `os.Getuid()` / `os.Getgid()` via `consts.ContainerUID()` / `consts.ContainerGID()`. CP-driven shell dispatch (`userStage` in `internal/controlplane/agent/init.go`) drops to the same UID via `consts.HostUID()` / `consts.HostGID()`, which the CP daemon reads from the `CLAWKER_HOST_UID` / `CLAWKER_HOST_GID` env vars the CLI sets on the CP container at boot. Host and container UIDs match by construction; bind-mount writes from inside the container land at the host invoker's UID. If the CP env vars come through invalid (unset / malformed / non-positive), the CP daemon's `logHostIdentity` emits `event=host_id_unavailable` at warn (the `env` field on the record names `CLAWKER_HOST_UID` or `CLAWKER_HOST_GID`) so an operator can correlate a downstream EACCES with the boot-time env drop.
+- UID mismatch is not surfaced. The container user's UID/GID are baked into the agent image at build time from the host invoker's `os.Getuid()` / `os.Getgid()` via `consts.ContainerUID()` / `consts.ContainerGID()`. CP-driven shell dispatch (`userStage` in `internal/controlplane/agent/init.go`) drops to the same UID via `consts.HostUID()` / `consts.HostGID()`, which the CP daemon reads from the `CLAWKER_HOST_UID` / `CLAWKER_HOST_GID` env vars the CLI sets on the CP container at boot. Host and container UIDs match by construction; bind-mount writes from inside the container land at the host invoker's UID. If the CP env vars come through invalid (unset / malformed / non-positive), the CP daemon's `logHostIdentity` emits `event=host_id_unavailable` at warn (the `env` field on the record names `CLAWKER_HOST_UID` or `CLAWKER_HOST_GID`) so an operator can correlate a downstream EACCES with the boot-time env drop.
 
 `SetupMounts` is the main entry point -- loads ignore patterns (via `docker.LoadIgnorePatterns` from the caller-resolved `IgnoreFile` path), then combines workspace, worktree `.git`, harness config/history/lifecycle volumes, host-state binds, share volume, and Docker socket mounts into a single mount list. (Git credential mounts are separate — `SetupGitCredentials` below, called by `CreateContainer`.) The caller resolves the ignore-file path from the registry-backed project root and passes it as a primitive — an empty `IgnoreFile` (no registered project) means no ignore patterns (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
@@ -136,7 +136,7 @@ Only available when `security.docker_socket: true`.
 
 ```go
 const SharePurpose = "share"
-const ShareStagingPath = "/home/claude/.clawker-share"
+const ShareStagingPath = consts.ContainerHomeDir + "/.clawker-share"
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 

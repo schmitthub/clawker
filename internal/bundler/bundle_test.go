@@ -169,7 +169,7 @@ managed_prompt: { dest: /etc/x.md, mode: "77777" }
 			manifest: `
 version: { resolver: none }
 volumes: [{ name: config, path: .acme }]
-managed_prompt: { dest: /home/claude/.acme/AGENTS.md }
+managed_prompt: { dest: /home/clawker/.acme/AGENTS.md }
 `,
 			wantErr: "volume",
 		},

@@ -255,7 +255,7 @@ func stageCopyDir(
 }
 
 // PrepareHookTar tars a shell-wrapped user hook script to .clawker/<name>.sh
-// (mode 0755) for extraction at /home/claude. An empty script yields a valid
+// (mode 0755) for extraction at the container home. An empty script yields a valid
 // no-op wrapper ("#!/bin/$shell\nset -e\n"), letting callers deliver a
 // guaranteed-present script even when the hook is unset (overwriting any stale
 // prior content).
