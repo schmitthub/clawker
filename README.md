@@ -30,6 +30,7 @@ Every cell below is sourced from the vendor's official documentation (assessed 2
 | ***Egress control*** |  |  |  |  |  |  |  |
 | Deny-by-default | ✅ | ⚠️<sup>3</sup> | ✅ | ❌<sup>4</sup> | ❌<sup>4</sup> | ⚠️<sup>5</sup> | ❌ |
 | DNS-level blocking | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Domain-native rules (no IP pinning) | ✅ | ⚠️<sup>15</sup> | ✅ | ✅ | ⚠️<sup>†</sup> | ✅ | ❌ |
 | TLS inspection (MITM) | ✅ | ✅ | ⚠️ | ⚠️<sup>6</sup> | ❌ | ✅ | ❌ |
 | Path-scoped rules | ✅ | ❌ | ❌ | ⚠️<sup>†</sup> | ❌ | ❌ | ❌ |
 | Regex path rules | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -71,6 +72,7 @@ Assessed against each vendor's official documentation, 2026-07. ❌ means the ca
 12. Auto-discovers `~/.claude` skills and commands.
 13. Claude Code only.
 14. The underlying sandbox-runtime (srt) is open source; Claude Code itself is not.
+15. Domain rules are resolved to IP addresses and checked as CIDR rules by the host proxy — per-request resolution, but IP-set semantics (shared-IP/CDN over-permission applies). Solutions that snapshot IPs once at setup (e.g. the reference devcontainer firewall) break on load-balancer rotation and over-open CDN ranges; clawker enforces hostnames end-to-end (DNS policy + SNI/Host matching).
 
 </details>
 
