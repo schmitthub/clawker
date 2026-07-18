@@ -253,7 +253,7 @@ func TestRuntimeEnv_SSHForwardingEnabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/claude/.ssh/agent.sock",
+	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/clawker/.ssh/agent.sock",
 		"SSH_AUTH_SOCK should be set when SSH forwarding enabled")
 
 	// Should also have CLAWKER_REMOTE_SOCKETS with ssh-agent entry
@@ -262,7 +262,7 @@ func TestRuntimeEnv_SSHForwardingEnabled(t *testing.T) {
 		if val, ok := strings.CutPrefix(e, "CLAWKER_REMOTE_SOCKETS="); ok {
 			found = true
 			assert.Contains(t, val, `"type":"ssh-agent"`)
-			assert.Contains(t, val, `"path":"/home/claude/.ssh/agent.sock"`)
+			assert.Contains(t, val, `"path":"/home/clawker/.ssh/agent.sock"`)
 		}
 	}
 	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
@@ -286,7 +286,7 @@ func TestRuntimeEnv_GPGForwardingEnabled(t *testing.T) {
 		if val, ok := strings.CutPrefix(e, "CLAWKER_REMOTE_SOCKETS="); ok {
 			found = true
 			assert.Contains(t, val, `"type":"gpg-agent"`)
-			assert.Contains(t, val, `"path":"/home/claude/.gnupg/S.gpg-agent"`)
+			assert.Contains(t, val, `"path":"/home/clawker/.gnupg/S.gpg-agent"`)
 		}
 	}
 	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
@@ -304,7 +304,7 @@ func TestRuntimeEnv_BothForwardingEnabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/claude/.ssh/agent.sock")
+	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/clawker/.ssh/agent.sock")
 
 	// Should have both sockets in CLAWKER_REMOTE_SOCKETS
 	var found bool

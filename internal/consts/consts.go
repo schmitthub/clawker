@@ -602,14 +602,14 @@ const (
 
 // Container user identity.
 const (
-	ContainerUser = "claude"
+	ContainerUser = "clawker"
 	// ContainerHomeDir is the unprivileged container user's home,
 	// fixed by the bundler's Dockerfile template. CP-side init scripts
 	// reference $HOME, but PipeStage.Env must set HOME explicitly per
 	// stage because Linux's setuid syscall does not update HOME/USER.
 	ContainerHomeDir = "/home/" + ContainerUser
 	// fallbackContainerUID is the last-resort default for the
-	// container's claude user when no host-derived value is available.
+	// container user when no host-derived value is available.
 	// Most container ops still work at this value; only host
 	// ~/.claude/projects bind-mount writes (auto-memory + session
 	// jsonls) fail with EACCES when the host UID differs.
@@ -776,7 +776,7 @@ const (
 	// runs as. Set by the Dockerfile to ContainerUser at image build;
 	// clawkerd resolves it against /etc/passwd to fill
 	// SysProcAttr.Credential when forking the user CMD. Empty/unset
-	// falls back to ContainerUser ("claude").
+	// falls back to ContainerUser.
 	EnvClawkerUser = "CLAWKER_USER"
 	// EnvWorkspaceMode carries the workspace mode ("bind" or "snapshot")
 	// into the container for agent self-diagnosis.

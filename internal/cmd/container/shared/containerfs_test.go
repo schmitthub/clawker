@@ -112,7 +112,7 @@ func TestInitContainerConfig_CopyStrategy(t *testing.T) {
 
 	call := tracker.calls()[0]
 	assert.Equal(t, "clawker.myapp.dev-claude.config", call.volumeName)
-	assert.Equal(t, "/home/claude/.claude", call.destPath)
+	assert.Equal(t, "/home/clawker/.claude", call.destPath)
 
 	// Verify the source directory contained staged content at call time
 	assert.NotEmpty(t, call.srcDirEntries, "staged .claude dir should have had content at copy time")
@@ -240,7 +240,7 @@ func TestInjectPostInitScript(t *testing.T) {
 	require.Equal(t, 1, tracker.callCount())
 	call := tracker.calls()[0]
 	assert.Equal(t, "abc123", call.containerID)
-	assert.Equal(t, "/home/claude", call.destPath)
+	assert.Equal(t, "/home/clawker", call.destPath)
 	assert.NotNil(t, call.content, "tar content should not be nil")
 }
 

@@ -224,7 +224,7 @@ const (
 	// SharePurpose is the volume purpose label for the shared volume.
 	SharePurpose = "share"
 	// ShareStagingPath is the container mount point for the shared volume.
-	ShareStagingPath = "/home/claude/.clawker-share"
+	ShareStagingPath = consts.ContainerHomeDir + "/.clawker-share"
 )
 
 // GetShareVolumeMount returns the mount for the global shared volume (read-only).

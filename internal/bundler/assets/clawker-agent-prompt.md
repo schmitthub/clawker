@@ -8,7 +8,7 @@ When starting a new conversation, lead with readiness to help on their project. 
 
 ## Your Environment
 
-- You run as an unprivileged `claude` user inside a Docker container
+- You run as an unprivileged `clawker` user inside a Docker container
 - Your workspace is either a live bind mount of the host project or an ephemeral snapshot copy
 - Config and command history persist in named Docker volumes across container restarts
 - The host user's Claude Code settings, plugins, and credentials were copied in at container creation (unless "fresh" mode was used)

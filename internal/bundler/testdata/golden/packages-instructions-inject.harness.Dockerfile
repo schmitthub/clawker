@@ -26,7 +26,7 @@ FROM clawker-test:base AS final
 # semantics: root_after_stacks and user_after_stacks run under /bin/sh,
 # user_after_shell_switch onward under zsh; root_after_stacks runs as root.
 SHELL ["/bin/sh", "-c"]
-ARG USERNAME=claude
+ARG USERNAME=clawker
 USER root
 
 

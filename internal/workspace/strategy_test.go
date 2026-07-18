@@ -284,8 +284,8 @@ func TestShareConstants(t *testing.T) {
 		t.Errorf("SharePurpose = %q, want %q", SharePurpose, "share")
 	}
 
-	if ShareStagingPath != "/home/claude/.clawker-share" {
-		t.Errorf("ShareStagingPath = %q, want %q", ShareStagingPath, "/home/claude/.clawker-share")
+	if ShareStagingPath != "/home/clawker/.clawker-share" {
+		t.Errorf("ShareStagingPath = %q, want %q", ShareStagingPath, "/home/clawker/.clawker-share")
 	}
 }
 

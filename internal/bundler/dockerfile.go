@@ -27,6 +27,7 @@ import (
 	// to avoid shadowing it.
 	bundlepkg "github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -86,7 +87,7 @@ var (
 // Default values for container configuration
 const (
 	DefaultHarnessVersion = "latest"
-	DefaultUsername       = "claude"
+	DefaultUsername       = consts.ContainerUser
 	DefaultShell          = "/bin/zsh"
 	// SubstrateImage is the single base image every generated base Dockerfile
 	// builds FROM. Clawker owns the substrate: users extend it with packages,

@@ -136,7 +136,7 @@ Only available when `security.docker_socket: true`.
 
 ```go
 const SharePurpose = "share"
-const ShareStagingPath = "/home/claude/.clawker-share"
+const ShareStagingPath = consts.ContainerHomeDir + "/.clawker-share"
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
