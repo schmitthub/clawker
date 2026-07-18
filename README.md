@@ -23,7 +23,7 @@
 
 clawker runs the coding-agent CLIs you already use — Claude Code, Codex, and more — inside a locked-down container: a deny-by-default egress firewall enforced in the kernel, network and agent observability, and host-seamless DX. Here's how that stacks up against the CLIs' own built-in sandboxing and other tools built to contain a coding agent.
 
-❌ means the capability is absent or undocumented. Sourced from vendor documentation (2026-07); cited notes in-repo. Wide table — scroll horizontally →
+Wide table — scroll horizontally →
 
 | Solution | Cost | Local | Open source | Self-hostable | Deny-by-default egress | Allowlist exists | Domain allowlist rules | Subdomain wildcard | IP/CIDR | Port scoping | Deny rules | HTTP path | HTTP method | Regex path | DNS-level block | Domain-native | TLS MITM | Kernel-level enforcement | Fail-closed firewall | Live firewall reload | Timed auto-bypass | Filters DNS | Filters TCP | Filters UDP | Filters QUIC | Filters ICMP | Filters SSH | Filters WebSocket | Per-request audit log | Metrics dashboard | Harness telemetry capture | Extensible monitoring | Active supervision | Fleet registry | SSH-agent fwd | GPG-agent fwd | Git-cred fwd | Cred-injection proxy | Host-browser auth | Live bind-mount | Ephemeral snapshot | Git-worktree mgmt | Harness seeding | Shared host state | Declarative config | Custom image/Dockerfile | Lifecycle hooks | Plugin/bundle system | Any agent CLI | Durable agent state |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
