@@ -47,6 +47,10 @@ yes→✅, partial→⚠️, no→❌, unknown→?, na→—. Maintainers may al
 - Self-evident facts (bare host has no isolation) may skip URL but prose must explain reasoning.
 - Version/date-sensitive claims: note version or doc date. As-of date: 2026-07-18.
 
+## Fully-decomposed boolean table (rev 7, 2026-07-18)
+
+Final table is ALL BINARY — no "partial" values exist. Every criterion is decomposed until it is a narrow yes/no fact checkable against official docs. If a verdict wants to be "partial", that is the signal to SPLIT it into more columns, not to record a middle value. Unknown/undocumented → NO (legend: "no or not documented"). Every YES must name the implementing mechanism (from official docs) in a hover ≤110 chars; a YES with no nameable mechanism is a NO. This supersedes the earlier partial-allowed guidance for the published table (writeups may still carry nuance in prose).
+
 ## Attribution rule
 
 Credit a capability to the layer that IMPLEMENTS it. A harness feature (e.g. Claude Code's subagent git-worktree fan-out) surfacing inside a sandbox does NOT make it a sandbox capability — "a VM with git installed" has no worktree feature. Ask: if you swapped the harness out, would the capability still exist? If no → it belongs to the harness, score the sandbox on its OWN contribution (which may be No, even evidenced-No if the product documents a limitation).
