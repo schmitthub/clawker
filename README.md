@@ -19,6 +19,61 @@
   <img src="docs/assets/system-diagram.png" alt="system diagram" width="700">
 </div>
 
+## How clawker compares
+
+Every cell below is sourced from the vendor's official documentation (assessed 2026-07). ✅ yes · ⚠️ partial (see footnotes) · ❌ no or not documented · — not applicable.
+
+|  | **clawker** | Docker Sandboxes | Claude Code sandbox | E2B | Modal | Microsandbox | Sculptor |
+|---|---|---|---|---|---|---|---|
+| **Built on** | containers | microVM<sup>1</sup> | OS sandbox | Firecracker | gVisor | libkrun | worktrees<sup>2</sup> |
+| **Local-first** | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| ***Egress control*** |  |  |  |  |  |  |  |
+| Deny-by-default | ✅ | ⚠️<sup>3</sup> | ✅ | ❌<sup>4</sup> | ❌<sup>4</sup> | ⚠️<sup>5</sup> | ❌ |
+| DNS-level blocking | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| TLS inspection (MITM) | ✅ | ✅ | ⚠️ | ⚠️<sup>6</sup> | ❌ | ✅ | ❌ |
+| Path-scoped rules | ✅ | ❌ | ❌ | ⚠️<sup>†</sup> | ❌ | ❌ | ❌ |
+| Regex path rules | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| HTTP method whitelisting | ✅ | ❌ | ❌ | ❌<sup>†</sup> | ❌ | ❌ | ❌ |
+| Protocol breadth (DNS→QUIC) | ✅<sup>7</sup> | ⚠️<sup>8</sup> | ⚠️ | ⚠️<sup>9</sup> | ⚠️ | ⚠️<sup>10</sup> | — |
+| Live rule reload | ✅ | ✅ | ⚠️ | ✅ | ✅ | ❌ | — |
+| Timed bypass escape hatch | ✅ | ⚠️<sup>†</sup> | ✅ | ⚠️ | ❌ | ❌ | — |
+| Kernel-level fail-closed | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌<sup>†</sup> | — |
+| Per-request egress audit | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ⚠️ | ❌ |
+| ***Oversight*** |  |  |  |  |  |  |  |
+| Active supervision | ✅ | ❌<sup>†</sup> | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Monitoring dashboards | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ |
+| ***Host ↔ sandbox DX*** |  |  |  |  |  |  |  |
+| Harness seeding (settings, plugins, memories) | ✅ | ❌<sup>†</sup> | —<sup>11</sup> | ❌ | ❌ | ❌<sup>†</sup> | ⚠️<sup>12</sup> |
+| SSH/GPG/git cred forwarding | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ | ⚠️ |
+| Host-browser auth proxy | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ |
+| Live bind-mount workspace | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ⚠️ |
+| Any coding agent | ✅ | ⚠️ | ⚠️<sup>13</sup> | ✅ | ✅ | ✅ | ⚠️ |
+| Policy-driven, per-run overrides | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Open source | ✅ AGPL | ❌ | ⚠️<sup>14</sup> | ✅ | ❌ | ✅ | ✅ MIT |
+| Price | free | Docker sub | free | usage | usage | free | free |
+
+<details>
+<summary>Footnotes & methodology</summary>
+
+Assessed against each vendor's official documentation, 2026-07. ❌ means the capability is either confirmed absent or not documented anywhere official. Cells marked <sup>†</sup> are pending a final verification pass before this table is considered stable. Full per-provider research notes with source citations available on request.
+
+1. Hypervisor technology is not named in Docker's documentation.
+2. Sculptor's repo history documents moving away from per-agent Docker containers; agents share the host via git worktrees. Its marketing page still describes container isolation.
+3. UDP and ICMP are unconditionally blocked (no opt-in); HTTP policy is opt-in per sandbox.
+4. Open egress by default; allowlist is opt-in configuration.
+5. Public internet allowed by default; private ranges denied.
+6. SNI inspection plus header injection — not full TLS interception.
+7. DNS policy + query logs, TCP and UDP (incl. QUIC) routed through the firewall, ICMP blocked outright via raw-socket denial, and an extensible opaque-L7 rule model (proto + port).
+8. UDP/ICMP hard-blocked with no policy opt-in; non-HTTP TCP rules require raw IPs.
+9. QUIC/HTTP3 explicitly unsupported for domain filtering; DNS pinned open to 8.8.8.8.
+10. TLS interception does not cover QUIC/HTTP3.
+11. Not applicable — it is Claude Code.
+12. Auto-discovers `~/.claude` skills and commands.
+13. Claude Code only.
+14. The underlying sandbox-runtime (srt) is open source; Claude Code itself is not.
+
+</details>
+
 > Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
 
 > ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
