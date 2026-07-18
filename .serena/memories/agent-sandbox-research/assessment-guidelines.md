@@ -15,11 +15,11 @@ OUT OF SCOPE — different class of tool; do NOT write up or compare:
 - **Code-execution / handoff sandboxes** — run AI-*generated* code, a REPL-as-a-service (E2B, Vercel Sandbox, Modal, Daytona, Cloudflare Sandbox SDK, CodeSandbox SDK, Morph, Runloop, Northflank, Blaxel, Beam, Dagger container-use). They don't secure an agent's workflow.
 - **Programmatic sandbox SDKs / APIs** — you write code to provision/secure it (OpenAI Agents SDK sandbox). "How do I build security myself" ≠ "a sandbox I run my CLI in."
 - **Build-your-own orchestration primitives** — K8s CRDs/controllers, control planes, protocol runtimes (k8s-agent-sandbox, agent-sandbox/agent-sandbox, OpenSandbox). Infra you assemble, not a turnkey run-my-CLI tool.
-- **Runtimes/microVM libraries that are SDK-forward** — a `run` CLI alone isn't enough if the product is positioned as a programmable runtime for agent code (Microsandbox).
+- **Runtimes/microVM libraries** — a `run` CLI or first-class harness support alone isn't enough if the product is fundamentally a microVM/execution runtime rather than a coding-agent security-sandbox product (Microsandbox, SmolVM — both branded as microVM runtimes, not agent-sandboxing tools).
 
 Two litmus questions: *"Would a solo dev run `X run claude-code` and get a contained agent, or would they have to program it?"* — program-it → out. *"Is it protecting against a prompt-injected/mistaken agent, or just running code?"* — just running code → out.
 
-FROZEN roster (10), all passing the test: clawker, docker-sandboxes, nono, mattolson-agent-sandbox (Agentbox), sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime (srt). (nono 3042★ + mattolson/agent-sandbox 191★ added 2026-07-18 after a github stars sweep; both classified in-class and researched.) Writeups for the 17 out-of-scope entries were DELETED (recoverable in git history) — do not resurrect them. A new candidate enters only by passing all three IN-SCOPE conditions above.
+FROZEN roster (9), all passing the test: clawker, docker-sandboxes, nono, mattolson-agent-sandbox (Agentbox), sculptor-imbue, devcontainers, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime (srt). (SmolVM removed 2026-07-18 — a microVM runtime branded as such, not a coding-agent security-sandbox product, same class as the dropped Microsandbox.) (nono 3042★ + mattolson/agent-sandbox 191★ added 2026-07-18 after a github stars sweep; both classified in-class and researched.) Writeups for the 17 out-of-scope entries were DELETED (recoverable in git history) — do not resurrect them. A new candidate enters only by passing all three IN-SCOPE conditions above.
 
 ## Operational security note (fleet run, 2026-07-18)
 
