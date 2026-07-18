@@ -55,7 +55,7 @@ DO NOT trust a single subagent pass blind — this session the subagent made ≥
 feat/comparison-chart — commits: README table + research memories + attribution corrections + domain-native + cred callout, all pushed. README section "How clawker compares" after system-diagram img.
 
 ## Providers (FROZEN roster = 8; 17 out-of-scope writeups DELETED)
-clawker, docker-sandboxes, nono, mattolson-agent-sandbox, sculptor-imbue, devcontainers, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime. (9 rows; SmolVM dropped 2026-07-18 as a microVM runtime, not an agent-sandbox product.) (10 rows; Cost is now first column. nono+mattolson added via github-stars sweep 2026-07-18; single-pass research, user scrutinizing.)
+clawker, docker-sandboxes, nono, mattolson-agent-sandbox, devcontainers, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime. (8 rows; Cost is first column.) DROPPED 2026-07-18: SmolVM (microVM runtime, not an agent-sandbox product) and sculptor-imbue (NOT a sandbox — git-worktree on host FS, agent runs as ordinary host process, zero egress/FS/cred containment; a parallel-agent orchestration UI, same class as a harness; writeup deleted, recoverable in git). nono+mattolson added via github-stars sweep 2026-07-18.
 Classification criteria for who qualifies (agent-harness security sandbox vs code-exec/SDK/primitive) now live in `agent-sandbox-research/assessment-guidelines` → "Classification" section. Do not re-add dropped entries.
 
 ## Backlog after boolean table
