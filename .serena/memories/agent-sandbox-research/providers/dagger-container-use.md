@@ -183,7 +183,7 @@ Sources:
 - https://container-use.com/environment-workflow.md — review/merge/apply are explicit, discrete actions, not live sync
 
 ### cred_forwarding
-cred_forwarding: Partial — credentials reach the container only through the explicit secrets mechanism (`op://`, `env://`, `vault://`, `file://` references configured per-key), which can reference an SSH key or cert via `file://`. There is no documented automatic ssh-agent-socket or gpg-agent-socket forwarding (agent-forwarding mediation) — it's copy-a-reference-in, not live-agent-socket mediation.
+cred_forwarding: No — (corrected 2026-07-18, attribution audit) credentials reach the container only through the explicit secrets mechanism (`op://`, `env://`, `vault://`, `file://` references configured per-key, resolved to a raw value injected as a plain container env var), which can reference an SSH key or cert via `file://`. There is no documented ssh-agent-socket or gpg-agent-socket forwarding, and no proxy header-injection with sentinel values — per the cred_forwarding rule, a resolved secret reference copied in as a plain env var is not a mediated forwarding mechanism.
 Sources:
 - https://container-use.com/secrets.md — "File References: Uses file:// schema to read secrets from local files (SSH keys, certificates, credential files)"
 

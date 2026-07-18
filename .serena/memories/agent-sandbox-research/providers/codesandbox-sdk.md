@@ -178,7 +178,7 @@ Sources:
 - https://raw.githubusercontent.com/codesandbox/docs/main/packages/projects-docs/pages/sdk/filesystem.mdx — "Files transfer between local and sandbox environments using read/write methods."
 
 ### cred_forwarding
-cred_forwarding: Partial — git access tokens and env vars can be configured per user/session through the SDK (`users.mdx`), but this is static credential injection copied into the VM, not ssh-agent/gpg-agent-style forwarding/mediation from the host. Docs' own warning ("do not write git/env configuration to public Sandboxes ... if multiple users has access") confirms these are persisted, reachable secrets inside the VM once set, not brokered per-request.
+cred_forwarding: No — (corrected 2026-07-18, attribution audit) git access tokens and env vars configured per user/session through the SDK (`users.mdx`) are static credential injection copied into the VM, not a mediated forwarding mechanism (no ssh-agent/gpg-agent socket forwarding, no proxy header-injection with sentinel values). Per the cred_forwarding rule, "env vars you pass yourself" do not count as forwarding — that's just no isolation. Docs' own warning ("do not write git/env configuration to public Sandboxes ... if multiple users has access") confirms these are persisted, reachable secrets inside the VM once set, not brokered per-request.
 Sources:
 - https://raw.githubusercontent.com/codesandbox/docs/main/packages/projects-docs/pages/sdk/users.mdx — "Git Configuration - Set email, name, and optional credentials (access tokens, provider details)"
 

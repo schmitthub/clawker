@@ -189,7 +189,7 @@ Sources:
 - https://northflank.com/docs/v1/application/build/build-code-from-a-git-repository — git-based build path as the documented code-delivery mechanism
 
 ### cred_forwarding
-cred_forwarding: Unknown — no ssh-agent, GPG-agent, or git-credential forwarding/mediation feature is documented for sandboxes. Secrets are supplied by explicit env-var/secret-group injection instead (see credential_theft above), which is a different mechanism (copied value vs. mediated/forwarded agent).
+cred_forwarding: No — (corrected 2026-07-18, attribution audit) the mechanism actually documented (explicit env-var/secret-group injection) is confirmed, and is exactly the "creds you pass yourself" pattern the rule excludes — not an unresolved unknown. No ssh-agent, GPG-agent, or git-credential forwarding/mediation feature is documented anywhere for sandboxes.
 Sources: none found describing agent forwarding; docs describe only secret injection.
 
 ### browser_auth

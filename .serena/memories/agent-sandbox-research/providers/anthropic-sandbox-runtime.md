@@ -201,7 +201,7 @@ Sources:
 - https://github.com/anthropic-experimental/sandbox-runtime/blob/main/README.md — git-related mentions are limited to the mandatory-deny-paths list; no worktree concept present
 
 ### nested_containers
-nested_containers: Partial — an explicit `enableWeakerNestedSandbox` mode exists on Linux specifically so `srt` can run "inside of Docker environments without privileged namespaces," but the docs state this "considerably weakens security and should only be used in cases where additional isolation is otherwise enforced." No equivalent nested-container accommodation is documented for macOS or Windows.
+nested_containers: No — (corrected 2026-07-18, attribution audit) the only cited mechanism, `enableWeakerNestedSandbox`, runs in the opposite direction: it lets `srt` itself function when nested *inside* an outer Docker container ("enables it to work inside of Docker environments without privileged namespaces"), not a container runtime provided *inside* the srt sandbox for the wrapped process to use. The only mention of Docker reachable from within the sandbox is `allowUnixSockets` exposing `/var/run/docker.sock`, which the docs frame strictly as a misconfiguration risk ("would effectively grant access to the host system"), not a supported feature — this is the DIY/unstated case the nested_containers rule explicitly excludes, not documented DinD support.
 Sources:
 - https://github.com/anthropic-experimental/sandbox-runtime/blob/main/README.md — "enables it to work inside of Docker environments without privileged namespaces. This option considerably weakens security..."
 

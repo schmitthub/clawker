@@ -189,7 +189,7 @@ Sources:
 - https://docs.blaxel.ai/Sandboxes/Filesystem — page documents file CRUD operations (read/write/copy/delete/watch) via SDK/API only; no host-sync/upload/mount mechanism described
 
 ### cred_forwarding
-No — no ssh-agent or GPG forwarding mechanism is documented. The recommended pattern for credentials is proxy-mediated secret injection (`{{SECRET:name}}` resolved server-side into outbound HTTPS requests) or build-time secrets via `.env.build`; both are structurally different from live host-agent forwarding and don't cover, e.g., signing commits with a host GPG key or `git clone` over SSH using a forwarded agent.
+Partial — (corrected 2026-07-18, attribution audit) no ssh-agent/GPG socket forwarding is documented, but the proxy-mediated secret injection (`{{SECRET:name}}` resolved server-side into outbound HTTPS requests, "the sandbox runtime never sees raw secret values") IS exactly the rule's own "proxy header-injection with sentinel values that never expose the raw secret inside the sandbox" category — a real mediated-forwarding mechanism, just scoped to configured `ProxyTarget` HTTPS routes rather than general-purpose like ssh-agent/GPG, and it doesn't cover git-over-SSH or commit signing.
 Sources:
 - https://docs.blaxel.ai/Sandboxes/Proxy-secrets-injection — secrets model is proxy-injection into HTTP(S) requests, not agent forwarding
 - https://docs.blaxel.ai/Sandboxes/Variables-and-secrets — env-var and build-time-secret mechanisms only; no ssh-agent/GPG forwarding described

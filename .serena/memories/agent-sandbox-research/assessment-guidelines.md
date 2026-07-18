@@ -47,6 +47,10 @@ yes→✅, partial→⚠️, no→❌, unknown→?, na→—. Maintainers may al
 - Self-evident facts (bare host has no isolation) may skip URL but prose must explain reasoning.
 - Version/date-sensitive claims: note version or doc date. As-of date: 2026-07-18.
 
+## Attribution rule
+
+Credit a capability to the layer that IMPLEMENTS it. A harness feature (e.g. Claude Code's subagent git-worktree fan-out) surfacing inside a sandbox does NOT make it a sandbox capability — "a VM with git installed" has no worktree feature. Ask: if you swapped the harness out, would the capability still exist? If no → it belongs to the harness, score the sandbox on its OWN contribution (which may be No, even evidenced-No if the product documents a limitation).
+
 ## Generic/DIY approach rules
 
 Record what a competent developer gets **out of the box** with standard tooling. Capability achievable only via significant custom glue (hand-rolled proxy, iptables scripting, custom audit logging) = "no", with prose stating what glue would be needed. "Possible" ≠ "provided".
@@ -100,7 +104,7 @@ Other:
 ### G. DX — host↔sandbox integration
 - **bind_mount_sharing** — changes shared live with host, or one-way copy?
 - **cred_forwarding** — ssh-agent / gpg / git creds mediated into sandbox.
-- **browser_auth** — host-browser proxying: sandboxed process triggers a browser-open on the host (OAuth login, device-code flow, any URL-open event) and the response/callback is forwarded back into the sandbox. Most coding-agent CLIs (`gh auth login`, `claude` login, etc.) depend on this for auth — without it, headless-auth workarounds or copied tokens. Prose: which flows work, mechanism (proxy/socket bridge), any manual steps.
+- **browser_auth** — host-browser proxying: sandboxed process triggers a browser-open on the host (OAuth login, device-code flow, any URL-open event) and the response/callback is forwarded back into the sandbox AUTOMATICALLY. Sharp test: seamless open-approve-done = Yes; user copies URL from terminal into browser and pastes a code back = No (that's every CLI's fallback, not a sandbox feature). No boundary to cross (agent runs directly on host) = no mechanism = not creditable. Most coding-agent CLIs (`gh auth login`, `claude` login, etc.) depend on this for auth — without it, headless-auth workarounds or copied tokens. Prose: which flows work, mechanism (proxy/socket bridge), any manual steps.
 - **shared_dirs** — additional host dirs/volumes beyond workspace.
 - **git_worktrees** — first-class worktree support.
 - **nested_containers** — container runtime available inside the sandbox (docker socket opt-in / DinD / microVM-nested / none) — agents often need it for integration tests.

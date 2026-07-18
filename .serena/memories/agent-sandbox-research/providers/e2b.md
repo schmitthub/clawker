@@ -182,7 +182,7 @@ Sources:
 - https://e2b.mintlify.app/docs/filesystem.md — filesystem operations documented are read/write/upload/download; no bind-mount option
 
 ### cred_forwarding
-cred_forwarding: Partial — no ssh-agent/gpg-agent-style live credential mediation is documented. Git HTTP(S) credentials can be passed inline per-command (username/token) or, via an explicitly-named `dangerouslyAuthenticate()`/`dangerouslyStoreCredentials` opt-in, written to disk inside the sandbox (the docs' own naming signals this is discouraged). No SSH key forwarding or GPG signing forwarding is documented anywhere in the fetched docs set.
+cred_forwarding: No — (corrected 2026-07-18, attribution audit) no mediated forwarding mechanism (ssh-agent socket, GPG agent, sentinel-value credential proxy) is documented; the only mechanisms found are Git HTTP(S) credentials passed inline per-command (username/token) or, via the explicitly-named `dangerouslyAuthenticate()`/`dangerouslyStoreCredentials` opt-in, written to disk inside the sandbox — both are "creds you pass yourself," not forwarding, per the attribution rule. No SSH key forwarding or GPG signing forwarding is documented anywhere in the fetched docs set.
 Sources:
 - https://e2b.mintlify.app/docs/sandbox/git-integration.md — "store them in the git credential helper inside the sandbox using dangerouslyAuthenticate()... Stores credentials on disk inside the sandbox."
 

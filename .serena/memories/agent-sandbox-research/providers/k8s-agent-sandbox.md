@@ -184,7 +184,7 @@ Sources:
 - https://agent-sandbox.sigs.k8s.io/docs/filesystem/ — filesystem access modeled as discrete `read`/`write`/`list`/`exists`/upload/download SDK calls, not a mount
 
 ### cred_forwarding
-Partial — in-cluster identity via Kubernetes ServiceAccount tokens + RBAC, scopable per-sandbox (distinct KSA per pod) or disabled (`automountServiceAccountToken: false`). Google Cloud resource access is documented via Workload Identity Federation (GKE-specific). No documented ssh-agent/GPG-agent socket forwarding for a developer's own git/signing credentials — external secrets go in as copied Kubernetes Secrets.
+No — (corrected 2026-07-18, attribution audit) the in-cluster identity documented (Kubernetes ServiceAccount tokens + RBAC, distinct KSA per pod, Workload Identity Federation for GCP) mediates the *sandbox's own* access to cluster/cloud resources — it does not forward a developer's own git/ssh/gpg credentials into the pod, so it doesn't satisfy the cred_forwarding sharp test. The mechanism actually documented for a developer's own credentials is copied Kubernetes Secrets (env vars/files), which the rule explicitly excludes as "creds you pass yourself," not forwarding.
 Sources:
 - https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/sandbox-ksa — distinct KSA per pod, verified via `/var/run/secrets/kubernetes.io/serviceaccount/token`
 - https://docs.cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox — "use an IAM policy with Workload Identity Federation for GKE" (GKE-specific)

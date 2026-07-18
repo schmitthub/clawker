@@ -194,11 +194,11 @@ Sources:
 - https://learn.chatgpt.com/docs/sandboxing — "Commands execute locally on the user's machine within enforced constraints"
 
 ### cred_forwarding
-cred_forwarding: NA/Partial — because the local sandbox constrains an ordinary **host process** rather than a remote/virtualized environment, there is no "forwarding bridge" concept the way a container-based tool needs one: `~/.ssh`, `~/.gnupg`, and git credential helpers are already present on the host and are reachable by the sandboxed process **by default** (see credential_theft) unless the user explicitly adds `deny` filesystem rules. No dedicated ssh-agent/gpg-agent forwarding mechanism is documented because none is architecturally needed for local mode.
+cred_forwarding: NA — (corrected 2026-07-18, attribution audit) local execution is an ordinary host process with no sandbox/VM boundary to forward credentials across: `~/.ssh`, `~/.gnupg`, and git credential helpers are already present on the host and reachable by the sandboxed process by default (see credential_theft) unless the user explicitly adds `deny` filesystem rules. Per the cred_forwarding rule, "creds work because it's a host process with no boundary" does not count as forwarding — that's just no isolation, not a mediated mechanism.
 Sources: see credential_theft above (same evidence).
 
 ### browser_auth
-browser_auth: Yes — `codex` opens a local browser window for ChatGPT OAuth sign-in and the browser returns an access token to the CLI; this works natively (no proxy/socket-bridge needed) because the CLI process runs directly on the host, not inside a remote/virtualized sandbox.
+browser_auth: NA — (corrected 2026-07-18, attribution audit) `codex` opens a local browser window for ChatGPT OAuth sign-in and the browser returns an access token directly to the CLI process; this happens natively with no proxy/socket-bridge because the CLI runs directly on the host, not inside a remote/virtualized sandbox. Per the browser_auth sharp test, "no boundary to cross ... = no mechanism = not creditable" — local mode has no sandbox/container/VM boundary for a proxying mechanism to cross, so this is not a creditable sandbox capability.
 Sources:
 - (search synthesis of official auth docs) "Codex opens a browser window, you sign in with your ChatGPT account, and the browser returns an access token."
 

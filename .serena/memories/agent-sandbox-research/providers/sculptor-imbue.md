@@ -180,13 +180,14 @@ Sources:
 - https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/help/README.md — "Your current branch and uncommitted work are never touched"
 
 ### cred_forwarding
-cred_forwarding: Partial — GitHub auth goes through `gh auth login` (GitHub CLI, typically browser/device-flow OAuth); Claude CLI auth is either a managed install or a user-supplied custom binary path; Pi/model API keys are read from `.env` files into the agent's env. No ssh-agent or GPG-specific forwarding/mediation is documented (silence — treated as unknown for those two, not asserted as unsupported).
+cred_forwarding: No — (corrected 2026-07-18, attribution audit) none of the documented mechanisms are mediated forwarding: `gh auth login` is gh's own host-process device-flow with no sandbox boundary to cross in Sculptor's default mode; Pi/model API keys read from `.env` files are the caller passing its own env vars, not a forwarding mechanism (explicitly excluded by the cred_forwarding rule); Claude CLI's custom-binary-path option is unrelated to credential transport. In the one mode with an actual boundary (experimental container backend), the documented behavior is the opposite of forwarding — host Keychain credentials are unreachable and the user must manually re-authenticate `claude` inside the container.
 Sources:
 - https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/help/pull_requests.md — "Sculptor uses the GitHub CLI (`gh`) under the hood. The first time, you may need to run `gh auth login`"
 - https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/specs/SPEC.md — "Credentials and keys the app needs to do its work are handled locally on your behalf"
+- https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/help/experimental/container_backend.md — "Claude Code stores credentials in the system keychain... the container cannot access host credentials. Users must manually authenticate `claude` within the container environment"
 
 ### browser_auth
-browser_auth: Yes — GitHub authentication uses `gh auth login`, which drives the standard GitHub CLI OAuth/device-code flow (browser opens on host, user authorizes, control returns to the CLI). Documented gap in the opt-in experimental container-backend mode only: Claude Code's Keychain-stored credentials aren't reachable there, requiring a separate manual `claude` login inside that container.
+browser_auth: No — (corrected 2026-07-18, attribution rule) the browser opening during `gh auth login` is gh's own flow running as an ordinary HOST process — there is no sandbox boundary in Sculptor's default mode, hence no proxying mechanism to credit. In the one mode with a real boundary (experimental container backend), the documented behavior is the opposite of proxying: host Keychain credentials unreachable, user must manually re-authenticate `claude` inside the container.
 Sources:
 - https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/help/pull_requests.md — "you may need to run `gh auth login` in a terminal"
 - https://raw.githubusercontent.com/imbue-ai/sculptor/main/docs/help/experimental/container_backend.md — "Users must manually authenticate `claude` within the container environment"

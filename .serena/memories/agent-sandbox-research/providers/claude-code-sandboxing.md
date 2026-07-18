@@ -186,7 +186,7 @@ Sources:
 - https://code.claude.com/docs/en/sandboxing — "Privilege escalation via Unix sockets: the `allowUnixSockets` configuration can inadvertently grant access to powerful system services..."
 
 ### browser_auth
-browser_auth: Partial — browser-triggered auth flows are not smoothly supported by default: on macOS, "`open`, `osascript`, or browser-based auth flows fail with error `-600`... the sandbox blocks Apple Events by default." The documented fix, `allowAppleEvents: true`, explicitly trades away isolation to get it working: "it removes code-execution isolation: sandboxed commands can launch other applications unsandboxed with no user prompt." Behavior on Linux/bubblewrap for equivalent flows is not documented (Unknown).
+browser_auth: No — (corrected 2026-07-18, attribution audit) no mediated browser-auth relay/proxy exists; the sandbox merely blocks Apple-Events-based process launching by default (`open`/`osascript`/browser flows fail with error `-600`), and the only documented fix, `allowAppleEvents: true`, doesn't mediate or proxy anything — it "removes code-execution isolation" wholesale so the OS's normal (sandbox-unrelated) flow can proceed. Per the sharp test, a blanket isolation bypass is not a seamless open-approve-done mechanism — there's no forwarding/callback relay, just isolation being turned off. Behavior on Linux/bubblewrap for equivalent flows remains undocumented.
 Sources:
 - https://code.claude.com/docs/en/sandboxing — "`open`, `osascript`, or browser-based auth flows fail with error -600 on macOS: the sandbox blocks Apple Events by default."
 

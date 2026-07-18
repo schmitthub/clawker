@@ -195,7 +195,7 @@ Sources:
 - WebSearch summary of Git Provider Integration docs — OAuth-based, provider-agnostic interface
 
 ### browser_auth
-browser_auth: Partial — no host-browser-triggered proxy-back mechanism (like a local tool auto-opening the developer's own browser for an OAuth callback) is documented. Two partial substitutes exist: Preview URLs can expose a locally-listening OAuth callback port (3000-9999) from inside the sandbox to a public URL, and "computer use" sandboxes provide an actual browser running inside the sandbox itself (accessible via the sandbox's own desktop session) for flows that need an interactive browser. Neither is the "host browser opens automatically" pattern.
+browser_auth: No — (corrected 2026-07-18, attribution audit) no host-browser-triggered proxy-back mechanism (like a local tool auto-opening the developer's own browser for an OAuth callback, with the response forwarded back automatically) is documented. Two substitutes exist — Preview URLs exposing a locally-listening OAuth callback port (3000-9999) as a public URL, and "computer use" sandboxes providing an actual browser running inside the sandbox's own desktop session — but per the browser_auth sharp test neither is the seamless "host browser opens automatically" pattern, so neither is creditable.
 Sources:
 - WebSearch summary of https://www.daytona.io/docs/en/preview/ — preview URL exposes sandbox-internal listening ports
 - WebSearch summary of computer-use / Agents SDK integration docs — sandbox desktop session with a controllable Chromium/browser process

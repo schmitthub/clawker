@@ -189,7 +189,7 @@ Sources:
 - https://developers.cloudflare.com/sandbox/guides/mount-buckets/ — bucket mount as the closest analogue, explicitly a sync/mount-overlay model, not a host-directory bind mount
 
 ### cred_forwarding
-cred_forwarding: No — no ssh-agent, GPG, or system git-credential forwarding mechanism from a developer's machine is documented anywhere in the SDK. The documented patterns for credentials inside a sandbox are: (a) plain environment variables passed via Worker bindings, (b) a personal access token embedded in a git URL, or (c) the recommended JWT-proxy pattern where the Worker injects the real credential at request time so it never enters the sandbox at all. None of these is agent-socket-style mediated forwarding of a host's existing SSH/GPG identity.
+cred_forwarding: Partial — (corrected 2026-07-18, attribution audit) no ssh-agent/GPG socket forwarding is documented, but pattern (c) — the JWT-proxy mechanism, where the sandbox holds only a short-lived JWT and "the Worker validates the JWT and injects the real credential before forwarding the request... real credentials never enter the sandbox" — is exactly the rule's "proxy header-injection with sentinel values that never expose the raw secret inside the sandbox" category, a real mediated-forwarding mechanism (opt-in, developer-implemented, HTTP-only — not general-purpose like ssh-agent/GPG, and doesn't cover git-over-SSH).
 Sources:
 - https://developers.cloudflare.com/sandbox/guides/git-workflows/ — "Use a personal access token in the URL" (no SSH key forwarding option documented)
 - https://developers.cloudflare.com/sandbox/guides/proxy-requests/ — JWT-proxy pattern for HTTP APIs; no SSH/GPG equivalent documented
