@@ -304,22 +304,22 @@ func captureRouter(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":        "captured",
-		"test":          testID,
-		"decode_type":   spec.Decode,
-		"desc":          spec.Desc,
-		"bytes":         len(decoded),
-		"preview":       truncate(decoded, 200),
-		"method":        r.Method,
-		"path":          r.URL.Path,
-		"query":         r.URL.RawQuery,
-		"proto":         r.Proto,
-		"host":          r.Host,
-		"remote_addr":   r.RemoteAddr,
-		"tls":           r.TLS != nil,
-		"content_type":  r.Header.Get("Content-Type"),
+		"status":         "captured",
+		"test":           testID,
+		"decode_type":    spec.Decode,
+		"desc":           spec.Desc,
+		"bytes":          len(decoded),
+		"preview":        truncate(decoded, 200),
+		"method":         r.Method,
+		"path":           r.URL.Path,
+		"query":          r.URL.RawQuery,
+		"proto":          r.Proto,
+		"host":           r.Host,
+		"remote_addr":    r.RemoteAddr,
+		"tls":            r.TLS != nil,
+		"content_type":   r.Header.Get("Content-Type"),
 		"forwarded_port": port,
-		"ts":            time.Now().UTC().Format(time.RFC3339),
+		"ts":             time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -1344,11 +1344,11 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	tlsInfo := map[string]any{"active": false}
 	if r.TLS != nil {
 		tlsInfo = map[string]any{
-			"active":          true,
-			"version":         r.TLS.Version,
-			"server_name":     r.TLS.ServerName,
+			"active":           true,
+			"version":          r.TLS.Version,
+			"server_name":      r.TLS.ServerName,
 			"negotiated_proto": r.TLS.NegotiatedProtocol,
-			"cipher_suite":    r.TLS.CipherSuite,
+			"cipher_suite":     r.TLS.CipherSuite,
 		}
 	}
 
