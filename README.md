@@ -19,6 +19,44 @@
   <img src="docs/assets/system-diagram.png" alt="system diagram" width="700">
 </div>
 
+## How clawker compares
+
+clawker runs the coding-agent CLIs you already use — Claude Code, Codex, and more — inside a locked-down container: a deny-by-default egress firewall enforced in the kernel, network and agent observability, and host-seamless DX. Here's how that stacks up against the CLIs' own built-in sandboxing and other tools built to contain a coding agent.
+
+Wide table — scroll horizontally →
+
+| Solution | Cost | Local | Open source | Self-hostable | Deny-by-default egress | Allowlist exists | Domain allowlist rules | Subdomain wildcard | IP/CIDR | Port scoping | Deny rules | HTTP path | HTTP method | Regex path | DNS-level block | Domain-native | TLS MITM | Kernel-level enforcement | Fail-closed firewall | Live firewall reload | Timed auto-bypass | Filters DNS | Filters TCP | Filters UDP | Filters QUIC | Filters ICMP | Filters SSH | Filters WebSocket | Per-request audit log | Metrics dashboard | Harness telemetry capture | Extensible monitoring | Active supervision | Fleet registry | SSH-agent fwd | GPG-agent fwd | Git-cred fwd | Cred-injection proxy | Host-browser auth | Live bind-mount | Ephemeral snapshot | Git-worktree mgmt | Harness seeding | Shared host state | Declarative config | Custom image/Dockerfile | Lifecycle hooks | Plugin/bundle system | Any agent CLI | Durable agent state |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **clawker** | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Docker Sandboxes | Free / $ org tier | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Nono | Free (OSS) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Agentbox (mattolson) | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Dev Containers | Free (OSS) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Claude Code sandbox | Free (needs Claude Code) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Codex CLI sandbox | Free (needs Codex) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Anthropic srt | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+
+<details>
+<summary>How this was assessed</summary>
+
+Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers both absent and undocumented capabilities. The comparison covers tools that sandbox a coding-agent CLI, plus the CLIs' own built-in sandboxing — code-execution sandboxes and programmatic SDKs are a separate category. Full per-provider notes with citations are in-repo under `.serena/memories/agent-sandbox-research/`.
+
+</details>
+
+> **Why "credential injection" isn't containment**
+>
+> Some sandboxes keep secrets on the host and inject them into outbound requests, so the agent never sees the raw value. It reads well — until you notice the agent-facing CLIs mint live tokens on demand: `gh auth token`, `aws configure export-credentials`, `az account get-access-token`, `gcloud auth print-access-token`. Now the agent holds a real, replayable credential.
+>
+> If egress is allowed at the *domain* level — all of `github.com`, all of `s3.amazonaws.com` — that token (and any repo it can read) goes straight to an attacker-controlled bucket, repo, or gist on the very same trusted domain. The injection layer was never in the path.
+>
+> Hiding the secret in transit is not the same as containing the agent. Containment means scoping **where** authenticated requests can go — `github.com/your-org/` with method gating and a per-request audit log — and mediating the primitive itself (SSH/GPG agent sockets) so no replayable token exists in the first place. clawker does both.
+
+> **Why there's no "syscall filtering" column**
+>
+> Some sandboxes lead with seccomp/AppArmor/Landlock syscall confinement. It's genuinely useful defense-in-depth, and it's on clawker's roadmap — but it sits *upstream* of where the real damage happens. Blocking a syscall only matters if the thing it enables reaches a risk sink: **exfiltration, data loss, persistence, or corruption**. clawker already closes those sinks directly — deny-by-default egress at the DNS/L7/kernel layers stops exfil, disposable containers make local corruption a `git revert` or a rebuild, and the workspace is the only thing that survives.
+>
+> Lock the jewelry in a safe and it's a good idea — but it barely matters when the storefront is bulletproof glass on an airgap that slams shut the instant someone breaks it. Confine the syscalls and you've hardened a path to damage clawker has already sealed at the exit. Worth doing, ranked accordingly.
+
 > Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
 
 > ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
