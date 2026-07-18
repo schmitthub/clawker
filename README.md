@@ -21,60 +21,63 @@
 
 ## How clawker compares
 
-Every cell below is sourced from the vendor's official documentation (assessed 2026-07). ✅ yes · ⚠️ partial (see footnotes) · ❌ no or not documented · — not applicable.
+Every cell is sourced from the vendor's official documentation (assessed 2026-07, full research notes with citations in-repo). ✅ yes · ⚠️ partial · ❌ no **or not documented** · — not applicable · † verification pending.
 
-|  | **clawker** | Docker Sandboxes | Claude Code sandbox | E2B | Modal | Microsandbox | Sculptor |
-|---|---|---|---|---|---|---|---|
-| **Built on** | containers | microVM<sup>1</sup> | OS sandbox | Firecracker | gVisor | libkrun | worktrees<sup>2</sup> |
-| **Local-first** | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| ***Egress control*** |  |  |  |  |  |  |  |
-| Deny-by-default | ✅ | ⚠️<sup>3</sup> | ✅ | ❌<sup>4</sup> | ❌<sup>4</sup> | ⚠️<sup>5</sup> | ❌ |
-| DNS-level blocking | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Domain-native rules (no IP pinning) | ✅ | ⚠️<sup>15</sup> | ✅ | ✅ | ⚠️<sup>†</sup> | ✅ | ❌ |
-| TLS inspection (MITM) | ✅ | ✅ | ⚠️ | ⚠️<sup>6</sup> | ❌ | ✅ | ❌ |
-| Path-scoped rules | ✅ | ❌ | ❌ | ⚠️<sup>†</sup> | ❌ | ❌ | ❌ |
-| Regex path rules | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| HTTP method whitelisting | ✅ | ❌ | ❌ | ❌<sup>†</sup> | ❌ | ❌ | ❌ |
-| Protocol breadth (DNS→QUIC) | ✅<sup>7</sup> | ⚠️<sup>8</sup> | ⚠️ | ⚠️<sup>9</sup> | ⚠️ | ⚠️<sup>10</sup> | — |
-| Live rule reload | ✅ | ✅ | ⚠️ | ✅ | ✅ | ❌ | — |
-| Timed bypass escape hatch | ✅ | ⚠️<sup>†</sup> | ✅ | ⚠️ | ❌ | ❌ | — |
-| Kernel-level fail-closed | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌<sup>†</sup> | — |
-| Per-request egress audit | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ⚠️ | ❌ |
-| ***Oversight*** |  |  |  |  |  |  |  |
-| Active supervision | ✅ | ❌<sup>†</sup> | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ |
-| Monitoring dashboards | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ |
-| ***Host ↔ sandbox DX*** |  |  |  |  |  |  |  |
-| Harness seeding (settings, plugins, memories) | ✅ | ❌<sup>†</sup> | —<sup>11</sup> | ❌ | ❌ | ❌<sup>†</sup> | ⚠️<sup>12</sup> |
-| SSH/GPG/git cred forwarding | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ | ⚠️ |
-| Host-browser auth proxy | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ |
-| Live bind-mount workspace | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ⚠️ |
-| Any coding agent | ✅ | ⚠️ | ⚠️<sup>13</sup> | ✅ | ✅ | ✅ | ⚠️ |
-| Policy-driven, per-run overrides | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
-| Open source | ✅ AGPL | ❌ | ⚠️<sup>14</sup> | ✅ | ❌ | ✅ | ✅ MIT |
-| Price | free | Docker sub | free | usage | usage | free | free |
+| | Local | Deny‑default egress | Allow‑list | DNS block | Domain‑native | MITM | Path/ method rules | Proto breadth | Live reload | Timed bypass | Fail closed | Per‑req audit | Super­vision | Dash­boards | Fleet | Cred fwd | Browser auth | Bind mount | Work­trees | Nested Docker | Any agent | Snap­shots |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **clawker** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| ***Local‑first*** |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| Docker Sandboxes | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅ | ❌ | ⚠️ | ✅ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ✅ | ⚠️ | ✅ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ |
+| Claude Code sandbox | ✅ | ✅ | ⚠️ | ❌ | ✅ | ⚠️ | ❌ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ✅ | ✅ | ❌ | ⚠️ | ❌ |
+| Codex CLI sandbox | ✅ | ✅ | ⚠️ | ❌ | † | ❌ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ | ❌ | ⚠️ | ⚠️ | — | — | ✅ | ✅ | ❌ | ❌ | ⚠️ |
+| Anthropic srt | ✅ | ✅ | ⚠️ | ❌ | † | ⚠️ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ✅ | — |
+| Microsandbox | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ❌ | ✅ | ❌ | ⚠️ | ✅ | ✅ |
+| SmolVM | ✅ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ✅ | ❌ | ❌ | ⚠️ | ✅ |
+| Dagger container‑use | ✅ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | — | — | — | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ |
+| Dev Containers | ✅ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ⚠️ |
+| Sculptor (Imbue) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — | — | — | — | ❌ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ |
+| ***Cloud / remote*** |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| E2B | ❌ | ❌ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Modal | ❌ | ❌ | ⚠️ | ❌ | † | ❌ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ✅ |
+| Cloudflare Sandbox SDK | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ✅ |
+| Vercel Sandbox | ❌ | ❌ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Daytona | ❌ | ⚠️ | ✅ | ❌ | † | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| CodeSandbox SDK | ❌ | ❌ | ❌ | ❌ | † | ❌ | ❌ | ❌ | — | — | — | ❌ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Morph | ❌ | ❌ | ❌ | ❌ | † | ❌ | ❌ | ❌ | — | — | — | ❌ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ⚠️ | ✅ |
+| Runloop | ❌ | ❌ | ⚠️ | ❌ | † | ❌ | ❌ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Northflank | ❌ | ❌ | ⚠️ | ❌ | † | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ⚠️ |
+| Blaxel | ❌ | ⚠️ | ⚠️ | ❌ | † | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ✅ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Beam (beta9) | ❌ | ❌ | ⚠️ | ❌ | † | ❌ | ❌ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| OpenAI API sandboxes | ❌ | ⚠️ | ⚠️ | ❌ | † | ❌ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ❌ | ⚠️ | ✅ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| ***Orchestration / self‑hosted platforms*** |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| K8s agent‑sandbox (SIG) | ❌ | ❌ | ⚠️ | ⚠️ | † | ❌ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| agent‑sandbox (org) | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ | ❌ | — | — | — | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ⚠️ |
+| OpenSandbox (Alibaba) | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ❌ | ✅ | ❌ | ❌ | ✅ | ⚠️ |
 
 <details>
-<summary>Footnotes & methodology</summary>
+<summary>Selected cell nuances & methodology</summary>
 
-Assessed against each vendor's official documentation, 2026-07. ❌ means the capability is either confirmed absent or not documented anywhere official. Cells marked <sup>†</sup> are pending a final verification pass before this table is considered stable. Full per-provider research notes with source citations available on request.
+Assessed against official documentation only; ❌ covers both confirmed absence and undocumented capability. † cells await a targeted verification pass. Per-provider research notes with per-claim citations live in `.serena/memories/agent-sandbox-research/`.
 
-1. Hypervisor technology is not named in Docker's documentation.
-2. Sculptor's repo history documents moving away from per-agent Docker containers; agents share the host via git worktrees. Its marketing page still describes container isolation.
-3. UDP and ICMP are unconditionally blocked (no opt-in); HTTP policy is opt-in per sandbox.
-4. Open egress by default; allowlist is opt-in configuration.
-5. Public internet allowed by default; private ranges denied.
-6. SNI inspection plus header injection — not full TLS interception.
-7. DNS policy + query logs, TCP and UDP (incl. QUIC) routed through the firewall, ICMP blocked outright via raw-socket denial, and an extensible opaque-L7 rule model (proto + port).
-8. UDP/ICMP hard-blocked with no policy opt-in; non-HTTP TCP rules require raw IPs.
-9. QUIC/HTTP3 explicitly unsupported for domain filtering; DNS pinned open to 8.8.8.8.
-10. TLS interception does not cover QUIC/HTTP3.
-11. Not applicable — it is Claude Code.
-12. Auto-discovers `~/.claude` skills and commands.
-13. Claude Code only.
-14. The underlying sandbox-runtime (srt) is open source; Claude Code itself is not.
-15. Domain rules are resolved to IP addresses and checked as CIDR rules by the host proxy — per-request resolution, but IP-set semantics (shared-IP/CDN over-permission applies). Solutions that snapshot IPs once at setup (e.g. the reference devcontainer firewall) break on load-balancer rotation and over-open CDN ranges; clawker enforces hostnames end-to-end (DNS policy + SNI/Host matching).
+- **Docker Sandboxes**: hypervisor unnamed in docs; UDP/ICMP unconditionally blocked with no policy opt-in; domain rules resolved to IPs and checked as CIDR (per-request, but IP-set semantics); host-worktree input explicitly rejected; harness list is curated (Claude Code, Codex, etc.).
+- **Claude Code sandbox**: deny-by-default proxy, but host/domain rules only — no path/method granularity; Claude Code only.
+- **E2B**: open egress by default; domain filtering = HTTP Host + TLS SNI only, QUIC/HTTP3 explicitly unsupported, DNS pinned open to 8.8.8.8; path cell is header-transform rules, not allow/deny path policy.
+- **Microsandbox**: full MITM with guest-trusted CA, DNS-level blocking with rebind protection — but public internet allowed by default, no live reload, no escape hatch.
+- **Sculptor**: repo history documents moving away from per-agent containers (agents share host via worktrees); marketing page still says containers.
+- **Dev Containers**: reference firewall resolves domains to IP sets once at setup — breaks on load-balancer rotation, over-opens shared CDN ranges.
+- **Vercel Sandbox**: deny-all + live-updatable policies exist but are opt-in; enforcement is SNI-peek + selective TLS termination in Vercel's infra.
+- **OpenSandbox**: real DNS proxy returning NXDOMAIN + nftables; MITM experimental, fixed to ports 80/443; IPv6 disabled rather than filtered.
+- **Cells `—`**: criterion presupposes a subsystem the product lacks entirely (e.g. reload/bypass/fail-closed with no firewall; cred forwarding with no boundary).
 
 </details>
+
+> **Why "credential injection" isn't containment**
+>
+> Some sandboxes keep secrets on the host and inject them into outbound requests, so the agent never sees the raw value. It reads well — until you notice the agent-facing CLIs mint live tokens on demand: `gh auth token`, `aws configure export-credentials`, `az account get-access-token`, `gcloud auth print-access-token`. Now the agent holds a real, replayable credential.
+>
+> If egress is allowed at the *domain* level — all of `github.com`, all of `s3.amazonaws.com` — that token (and any repo it can read) goes straight to an attacker-controlled bucket, repo, or gist on the very same trusted domain. The injection layer was never in the path.
+>
+> Hiding the secret in transit is not the same as containing the agent. Containment means scoping **where** authenticated requests can go — `github.com/your-org/` with method gating and a per-request audit log — and mediating the primitive itself (SSH/GPG agent sockets) so no replayable token exists in the first place. clawker does both.
 
 > Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
 
