@@ -19,7 +19,7 @@ OUT OF SCOPE — different class of tool; do NOT write up or compare:
 
 Two litmus questions: *"Would a solo dev run `X run claude-code` and get a contained agent, or would they have to program it?"* — program-it → out. *"Is it protecting against a prompt-injected/mistaken agent, or just running code?"* — just running code → out.
 
-FROZEN roster (8), all passing the test: clawker, docker-sandboxes, sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime (srt). Writeups for the 17 out-of-scope entries were DELETED (recoverable in git history) — do not resurrect them. A new candidate enters only by passing all three IN-SCOPE conditions above.
+FROZEN roster (10), all passing the test: clawker, docker-sandboxes, nono, mattolson-agent-sandbox (Agentbox), sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime (srt). (nono 3042★ + mattolson/agent-sandbox 191★ added 2026-07-18 after a github stars sweep; both classified in-class and researched.) Writeups for the 17 out-of-scope entries were DELETED (recoverable in git history) — do not resurrect them. A new candidate enters only by passing all three IN-SCOPE conditions above.
 
 ## Operational security note (fleet run, 2026-07-18)
 
