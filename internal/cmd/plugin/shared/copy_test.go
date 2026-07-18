@@ -78,22 +78,59 @@ func TestCopySkills_InstallsAndReplacesWholesale(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0o755))
 	require.NoError(t, os.WriteFile(stale, []byte("old"), 0o644))
 
-	require.NoError(t, shared.CopySkills(src, dst, []string{"clawker-support"}))
+	skipped, err := shared.CopySkills(src, dst, []string{"clawker-support"})
+	require.NoError(t, err)
+	assert.Zero(t, skipped)
 
 	assert.FileExists(t, filepath.Join(dst, "clawker-support", "SKILL.md"))
 	assert.FileExists(t, filepath.Join(dst, "clawker-support", "reference", "notes.md"))
 	assert.NoFileExists(t, stale)
 }
 
+func TestCopySkills_PreservesExecBits(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	writeSkill(t, src, "clawker-support")
+	script := filepath.Join(src, "clawker-support", "scripts", "run.sh")
+	require.NoError(t, os.MkdirAll(filepath.Dir(script), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755))
+
+	skipped, err := shared.CopySkills(src, dst, []string{"clawker-support"})
+	require.NoError(t, err)
+	assert.Zero(t, skipped)
+
+	info, err := os.Stat(filepath.Join(dst, "clawker-support", "scripts", "run.sh"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+}
+
+func TestCopySkills_CountsSkippedNonRegularEntries(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	writeSkill(t, src, "clawker-support")
+	link := filepath.Join(src, "clawker-support", "escape")
+	require.NoError(t, os.Symlink("/etc/passwd", link))
+
+	skipped, err := shared.CopySkills(src, dst, []string{"clawker-support"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, skipped)
+	assert.NoFileExists(t, filepath.Join(dst, "clawker-support", "escape"))
+}
+
 func TestRemoveSkills_DeletesAndIsIdempotent(t *testing.T) {
 	dst := t.TempDir()
 	writeSkill(t, dst, "clawker-support")
 
-	require.NoError(t, shared.RemoveSkills(dst, []string{"clawker-support"}))
+	removed, err := shared.RemoveSkills(dst, []string{"clawker-support"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"clawker-support"}, removed)
 	assert.NoDirExists(t, filepath.Join(dst, "clawker-support"))
 
-	// Second removal of a now-missing skill is not an error.
-	require.NoError(t, shared.RemoveSkills(dst, []string{"clawker-support"}))
+	// Second removal of a now-missing skill is not an error and reports
+	// nothing removed.
+	removed, err = shared.RemoveSkills(dst, []string{"clawker-support"})
+	require.NoError(t, err)
+	assert.Empty(t, removed)
 }
 
 // fakeFetcher satisfies fetch.Fetcher by materializing pre-registered trees
@@ -199,7 +236,49 @@ func TestFetchPluginSkills_RejectsTraversingRelativeSource(t *testing.T) {
 
 	_, err := shared.FetchPluginSkills(context.Background(), fetcher)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "traverse")
+	assert.ErrorIs(t, err, shared.ErrSourceTraversal)
+}
+
+func TestFetchPluginSkills_AllowsDotDotInsideName(t *testing.T) {
+	// ".." as a substring of a path segment is a legitimate name, not a
+	// traversal — only a whole ".." segment climbs out.
+	manifest := []byte(`{"plugins":[{"name":"clawker-support","source":"./my..dir"}]}`)
+	fetcher := &fakeFetcher{trees: map[string]func(string) error{
+		shared.MarketplaceGitURL: func(dir string) error {
+			if fillErr := marketplaceTree(t, manifest)(dir); fillErr != nil {
+				return fillErr
+			}
+			writeSkill(t, filepath.Join(dir, "my..dir", "skills"), "clawker-support")
+			return nil
+		},
+	}}
+
+	fetched, err := shared.FetchPluginSkills(context.Background(), fetcher)
+	require.NoError(t, err)
+	defer fetched.Cleanup()
+	assert.Equal(t, []string{"clawker-support"}, fetched.Names)
+}
+
+func TestFetchPluginSkills_EntryWithoutSourceFails(t *testing.T) {
+	manifest := []byte(`{"plugins":[{"name":"clawker-support"}]}`)
+	fetcher := &fakeFetcher{trees: map[string]func(string) error{
+		shared.MarketplaceGitURL: marketplaceTree(t, manifest),
+	}}
+
+	_, err := shared.FetchPluginSkills(context.Background(), fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no source")
+}
+
+func TestFetchPluginSkills_MalformedSourceFails(t *testing.T) {
+	manifest := []byte(`{"plugins":[{"name":"clawker-support","source":42}]}`)
+	fetcher := &fakeFetcher{trees: map[string]func(string) error{
+		shared.MarketplaceGitURL: marketplaceTree(t, manifest),
+	}}
+
+	_, err := shared.FetchPluginSkills(context.Background(), fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing plugin source object")
 }
 
 func TestFetchPluginSkills_UnknownPluginFails(t *testing.T) {

@@ -109,7 +109,7 @@ func installClaude(ctx context.Context, opts *InstallOptions) error {
 		)
 	}
 
-	fmt.Fprintf(ios.ErrOut, "%s Clawker skill plugin installed successfully\n", cs.SuccessIcon())
+	fmt.Fprintf(ios.ErrOut, "%s Plugin %s installed successfully\n", cs.SuccessIcon(), shared.MarketplacePluginName)
 	return nil
 }
 
@@ -134,8 +134,12 @@ func installByCopy(ctx context.Context, opts *InstallOptions) error {
 	}
 	defer fetched.Cleanup()
 
-	if copyErr := shared.CopySkills(fetched.Dir, dstDir, fetched.Names); copyErr != nil {
+	skipped, copyErr := shared.CopySkills(fetched.Dir, dstDir, fetched.Names)
+	if copyErr != nil {
 		return fmt.Errorf("installing skills for %s: %w", opts.Harness, copyErr)
+	}
+	if skipped > 0 {
+		fmt.Fprintf(ios.ErrOut, "%s %d non-regular file(s) skipped\n", cs.WarningIcon(), skipped)
 	}
 
 	for _, name := range fetched.Names {

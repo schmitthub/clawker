@@ -3,14 +3,22 @@ package shared
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/bundle/fetch"
 )
+
+// ErrSourceTraversal marks a marketplace plugin source whose relative path
+// would escape the marketplace checkout.
+var ErrSourceTraversal = errors.New("relative plugin source must not traverse outside the marketplace")
 
 // Copy-lane installs: every harness other than Claude Code treats a skill as
 // installed when its directory sits in the harness's skills dir, so install
@@ -90,8 +98,8 @@ type marketplacePluginSource struct {
 func (s *marketplacePluginSource) UnmarshalJSON(data []byte) error {
 	var rel string
 	if err := json.Unmarshal(data, &rel); err == nil {
-		if strings.Contains(rel, "..") {
-			return fmt.Errorf("relative plugin source %q must not traverse outside the marketplace", rel)
+		if traversesOutside(rel) {
+			return fmt.Errorf("relative plugin source %q: %w", rel, ErrSourceTraversal)
 		}
 		var src marketplacePluginSource
 		src.RelPath = rel
@@ -105,6 +113,13 @@ func (s *marketplacePluginSource) UnmarshalJSON(data []byte) error {
 	}
 	*s = marketplacePluginSource(obj)
 	return nil
+}
+
+// traversesOutside reports whether the slash-separated relative path escapes
+// its root: after cleaning, any remaining ".." path segment climbs out.
+// Comparison is per segment, so names that merely contain dots (my..dir) pass.
+func traversesOutside(rel string) bool {
+	return slices.Contains(strings.Split(path.Clean(rel), "/"), "..")
 }
 
 // FetchedSkills is the result of resolving and fetching the plugin's source:
@@ -200,9 +215,13 @@ func skillNames(dir string) ([]string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if _, statErr := os.Stat(filepath.Join(dir, e.Name(), skillManifestName)); statErr == nil {
-			names = append(names, e.Name())
+		if _, statErr := os.Stat(filepath.Join(dir, e.Name(), skillManifestName)); statErr != nil {
+			if errors.Is(statErr, fs.ErrNotExist) {
+				continue // no skill manifest — not a skill dir
+			}
+			return nil, fmt.Errorf("checking skill %s: %w", e.Name(), statErr)
 		}
+		names = append(names, e.Name())
 	}
 	if len(names) == 0 {
 		return nil, fmt.Errorf("no skills found under %s", dir)
@@ -212,40 +231,58 @@ func skillNames(dir string) ([]string, error) {
 
 // CopySkills installs each named skill from srcDir into dstDir, replacing any
 // existing copy of the same skill wholesale so removals in the source
-// propagate. Symlinks are skipped defensively.
-func CopySkills(srcDir, dstDir string, names []string) error {
+// propagate. Non-regular entries (symlinks, FIFOs) are skipped defensively
+// for fetched repo content; the returned count reports how many were dropped
+// so callers can surface it.
+func CopySkills(srcDir, dstDir string, names []string) (int, error) {
+	skipped := 0
 	for _, name := range names {
 		dst := filepath.Join(dstDir, name)
 		if rmErr := os.RemoveAll(dst); rmErr != nil {
-			return fmt.Errorf("replacing existing skill %s: %w", name, rmErr)
+			return skipped, fmt.Errorf("replacing existing skill %s: %w", name, rmErr)
 		}
-		if copyErr := copyDir(filepath.Join(srcDir, name), dst); copyErr != nil {
-			return fmt.Errorf("copying skill %s: %w", name, copyErr)
+		n, copyErr := copyDir(filepath.Join(srcDir, name), dst)
+		skipped += n
+		if copyErr != nil {
+			return skipped, fmt.Errorf("copying skill %s: %w", name, copyErr)
 		}
 	}
-	return nil
+	return skipped, nil
 }
 
-// RemoveSkills deletes each named skill directory from dstDir. Missing
-// entries are not errors — remove is idempotent.
-func RemoveSkills(dstDir string, names []string) error {
+// RemoveSkills deletes each named skill directory from dstDir and returns the
+// names that were actually present. Missing entries are not errors — remove
+// is idempotent.
+func RemoveSkills(dstDir string, names []string) ([]string, error) {
+	var removed []string
 	for _, name := range names {
-		if rmErr := os.RemoveAll(filepath.Join(dstDir, name)); rmErr != nil {
-			return fmt.Errorf("removing skill %s: %w", name, rmErr)
+		dir := filepath.Join(dstDir, name)
+		if _, statErr := os.Stat(dir); statErr != nil {
+			if errors.Is(statErr, fs.ErrNotExist) {
+				continue // already absent — nothing to remove
+			}
+			return removed, fmt.Errorf("checking skill %s: %w", name, statErr)
 		}
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			return removed, fmt.Errorf("removing skill %s: %w", name, rmErr)
+		}
+		removed = append(removed, name)
 	}
-	return nil
+	return removed, nil
 }
 
-func copyDir(src, dst string) error {
-	//nolint:wrapcheck // the WalkDirFunc below wraps every error it returns
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+// copyDir mirrors the regular files and directories under src into dst,
+// preserving file permission bits (skill scripts keep their exec bits).
+// It returns how many non-regular entries were skipped.
+func copyDir(src, dst string) (int, error) {
+	skipped := 0
+	walkErr := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("walking %s: %w", path, err)
+			return fmt.Errorf("walking %s: %w", p, err)
 		}
-		rel, relErr := filepath.Rel(src, path)
+		rel, relErr := filepath.Rel(src, p)
 		if relErr != nil {
-			return fmt.Errorf("relativizing %s: %w", path, relErr)
+			return fmt.Errorf("relativizing %s: %w", p, relErr)
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
@@ -255,19 +292,29 @@ func copyDir(src, dst string) error {
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			skipped++
 			return nil
 		}
-		return copyFile(path, target)
+		return copyFile(p, target, d)
 	})
+	//nolint:wrapcheck // the WalkDirFunc above wraps every error it returns
+	return skipped, walkErr
 }
 
-func copyFile(src, dst string) error {
+// copyFile copies src to dst, creating dst with src's permission bits. The
+// destination tree is freshly created (CopySkills removes it first), so the
+// bits apply verbatim.
+func copyFile(src, dst string, d os.DirEntry) error {
+	info, err := d.Info()
+	if err != nil {
+		return fmt.Errorf("stating %s: %w", src, err)
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }() // read-side close after full copy is unactionable
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", dst, err)
 	}

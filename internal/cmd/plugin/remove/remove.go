@@ -2,7 +2,12 @@ package remove
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -96,7 +101,7 @@ func removeClaude(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("removing plugin: %w", err)
 	}
 
-	fmt.Fprintf(ios.ErrOut, "%s Clawker skill plugin removed successfully\n", cs.SuccessIcon())
+	fmt.Fprintf(ios.ErrOut, "%s Plugin %s removed successfully\n", cs.SuccessIcon(), shared.MarketplacePluginName)
 	return nil
 }
 
@@ -117,12 +122,51 @@ func removeByCopy(ctx context.Context, opts *RemoveOptions) error {
 	}
 	defer fetched.Cleanup()
 
-	if rmErr := shared.RemoveSkills(dstDir, fetched.Names); rmErr != nil {
+	removed, rmErr := shared.RemoveSkills(dstDir, fetched.Names)
+	if rmErr != nil {
 		return fmt.Errorf("removing skills for %s: %w", opts.Harness, rmErr)
 	}
 
 	for _, name := range fetched.Names {
-		fmt.Fprintf(ios.Out, "%s Removed skill %s from %s (%s)\n", cs.SuccessIcon(), name, opts.Harness, dstDir)
+		if slices.Contains(removed, name) {
+			fmt.Fprintf(ios.Out, "%s Removed skill %s from %s (%s)\n", cs.SuccessIcon(), name, opts.Harness, dstDir)
+		} else {
+			fmt.Fprintf(ios.Out, "%s Skill %s not installed for %s, skipped\n", cs.InfoIcon(), name, opts.Harness)
+		}
+	}
+
+	strays, strayErr := straySkills(dstDir, fetched.Names)
+	if strayErr != nil {
+		return strayErr
+	}
+	if len(strays) > 0 {
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Skill directories in %s not in the current catalog (left in place): %s\n",
+			cs.WarningIcon(),
+			dstDir,
+			strings.Join(strays, ", "),
+		)
 	}
 	return nil
+}
+
+// straySkills lists directories under dstDir absent from the current catalog
+// — skills a past release installed that the catalog no longer ships, which
+// this remove cannot clean up. A missing dstDir has no strays.
+func straySkills(dstDir string, catalog []string) ([]string, error) {
+	entries, err := os.ReadDir(dstDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scanning %s: %w", dstDir, err)
+	}
+	var strays []string
+	for _, e := range entries {
+		if e.IsDir() && !slices.Contains(catalog, e.Name()) {
+			strays = append(strays, e.Name())
+		}
+	}
+	return strays, nil
 }

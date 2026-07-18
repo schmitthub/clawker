@@ -1,12 +1,12 @@
-package shared
+package shared_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/cmd/plugin/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 )
 
@@ -24,11 +24,11 @@ func TestValidateScope(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateScope(tt.scope)
+			err := shared.ValidateScope(tt.scope)
 			if tt.wantErr {
 				require.Error(t, err)
 				var flagErr *cmdutil.FlagError
-				assert.True(t, errors.As(err, &flagErr), "expected FlagError, got %T", err)
+				require.ErrorAs(t, err, &flagErr, "expected FlagError, got %T", err)
 				assert.Contains(t, err.Error(), tt.scope)
 			} else {
 				assert.NoError(t, err)

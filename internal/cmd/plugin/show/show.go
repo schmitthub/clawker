@@ -3,6 +3,8 @@ package show
 import (
 	"context"
 	"fmt"
+	"path"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,8 +78,11 @@ func showRun(_ context.Context, opts *ShowOptions) error {
 		cs.InfoIcon(),
 		opts.Harness,
 	)
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("git clone --depth 1 https://github.com/schmitthub/clawker-plugin.git"))
-	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("cp -r clawker-plugin/skills/. "+dstDir+"/"))
+	// The clone lands in a directory named after the repo — derive it from the
+	// marketplace URL so the instructions can never drift from the const.
+	repoDir := strings.TrimSuffix(path.Base(shared.MarketplaceGitURL), ".git")
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("git clone --depth 1 "+shared.MarketplaceGitURL))
+	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("cp -r "+repoDir+"/skills/. "+dstDir+"/"))
 	fmt.Fprintln(ios.Out)
 	fmt.Fprintf(ios.ErrOut, "%s Or let clawker do it (installs from the marketplace):\n\n", cs.InfoIcon())
 	fmt.Fprintf(ios.Out, "  %s\n", cs.Cyan("clawker plugin install --harness "+opts.Harness))

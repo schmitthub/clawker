@@ -158,3 +158,53 @@ func TestRemoveRun_CopyLaneRemovesSkills(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(dst, "clawker-support"))
 	assert.Contains(t, stdout.String(), "Removed skill clawker-support from pi")
 }
+
+func TestRemoveRun_CopyLaneSkipsNotInstalledSkill(t *testing.T) {
+	tio, _, stdout, stderr := iostreams.Test()
+	dst := t.TempDir() // skill was never installed here
+
+	opts := &RemoveOptions{
+		IOStreams: tio,
+		Scope:     "user",
+		Harness:   shared.HarnessCodex,
+		CheckCLI:  nil,
+		RunClaude: nil,
+		FetchSkills: func(_ context.Context) (*shared.FetchedSkills, error) {
+			return &shared.FetchedSkills{Dir: t.TempDir(), Names: []string{"clawker-support"}, Cleanup: func() {}}, nil
+		},
+		SkillsDir: func(string) (string, error) { return dst, nil },
+	}
+
+	err := removeRun(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Skill clawker-support not installed for codex, skipped")
+	assert.NotContains(t, stdout.String(), "Removed skill")
+	assert.Empty(t, stderr.String(), "no stray warning for an empty skills dir")
+}
+
+func TestRemoveRun_CopyLaneWarnsAboutStrays(t *testing.T) {
+	tio, _, stdout, stderr := iostreams.Test()
+	dst := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "clawker-support"), 0o755))
+	// A skill dir the catalog no longer ships — remove must leave it but warn.
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "clawker-legacy"), 0o755))
+
+	opts := &RemoveOptions{
+		IOStreams: tio,
+		Scope:     "user",
+		Harness:   shared.HarnessCodex,
+		CheckCLI:  nil,
+		RunClaude: nil,
+		FetchSkills: func(_ context.Context) (*shared.FetchedSkills, error) {
+			return &shared.FetchedSkills{Dir: t.TempDir(), Names: []string{"clawker-support"}, Cleanup: func() {}}, nil
+		},
+		SkillsDir: func(string) (string, error) { return dst, nil },
+	}
+
+	err := removeRun(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Removed skill clawker-support from codex")
+	assert.Contains(t, stderr.String(), "not in the current catalog")
+	assert.Contains(t, stderr.String(), "clawker-legacy")
+	assert.DirExists(t, filepath.Join(dst, "clawker-legacy"))
+}
