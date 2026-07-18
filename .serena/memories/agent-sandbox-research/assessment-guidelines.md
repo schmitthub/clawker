@@ -2,6 +2,25 @@
 
 Read fully before researching. You are researching ONE provider/approach for a **published** comparison table (clawker README + clawker.dev splash). Output = prose writeup memory (format below), condensed later into table by maintainers. Accuracy over favorability — wrong claim about competitor = credibility/legal problem.
 
+## Classification — who qualifies as a clawker competitor (READ FIRST; roster frozen at 8)
+
+This comparison assesses ONE class of tool: **security sandboxes for running a vendored agentic coding-harness CLI** (Claude Code, Codex, Gemini CLI, …). The table answers: *"why run my coding-agent CLI inside this vs. on bare metal with the CLI's own sandboxing, or vs. another tool built for the same job?"* The threat model is a **prompt-injected or mistaken coding agent** doing real work on a real project — containment of that agent, not execution of a snippet.
+
+A candidate is IN SCOPE only if ALL hold:
+1. **A product/tool a developer runs** — not an SDK/library/API you write code against to build your own sandbox. (`sbx run claude`, `clawker run`, a desktop app, a devcontainer → yes. "import the SDK and provision a sandbox" → no.)
+2. **Contains the agent's whole workflow** — filesystem, network egress, credentials, and the agent process itself — not merely runs a code fragment.
+3. **Runs a vendored agent CLI on the dev's project**, OR is that CLI's own built-in sandbox (the bare-metal baseline the table is arguing against).
+
+OUT OF SCOPE — different class of tool; do NOT write up or compare:
+- **Code-execution / handoff sandboxes** — run AI-*generated* code, a REPL-as-a-service (E2B, Vercel Sandbox, Modal, Daytona, Cloudflare Sandbox SDK, CodeSandbox SDK, Morph, Runloop, Northflank, Blaxel, Beam, Dagger container-use). They don't secure an agent's workflow.
+- **Programmatic sandbox SDKs / APIs** — you write code to provision/secure it (OpenAI Agents SDK sandbox). "How do I build security myself" ≠ "a sandbox I run my CLI in."
+- **Build-your-own orchestration primitives** — K8s CRDs/controllers, control planes, protocol runtimes (k8s-agent-sandbox, agent-sandbox/agent-sandbox, OpenSandbox). Infra you assemble, not a turnkey run-my-CLI tool.
+- **Runtimes/microVM libraries that are SDK-forward** — a `run` CLI alone isn't enough if the product is positioned as a programmable runtime for agent code (Microsandbox).
+
+Two litmus questions: *"Would a solo dev run `X run claude-code` and get a contained agent, or would they have to program it?"* — program-it → out. *"Is it protecting against a prompt-injected/mistaken agent, or just running code?"* — just running code → out.
+
+FROZEN roster (8), all passing the test: clawker, docker-sandboxes, sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime (srt). Writeups for the 17 out-of-scope entries were DELETED (recoverable in git history) — do not resurrect them. A new candidate enters only by passing all three IN-SCOPE conditions above.
+
 ## Operational security note (fleet run, 2026-07-18)
 
 The egress firewall is currently BYPASSED (fully open) and the harness runs in auto-accept mode. There is no safety net — exercise caution:

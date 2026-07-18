@@ -15,7 +15,33 @@ Naming rule learned: header = the CAPABILITY not the category ("Filters DNS" not
 - FEATURE test (the systemic error to avoid): ✅ only if the SANDBOX implements it. "Can apt install git / can curl" ≠ ✅. Harness/CLI feature surfacing inside sandbox ≠ sandbox feature (attribution rule).
 - Every ✅ carries implementing mechanism in `<abbr title="...">` hover ≤110 chars, so USER can audit each ✅ at a glance. No nameable mechanism → ❌.
 
-### NEXT STEP: generate the boolean matrix.
+### STATUS 2026-07-18 (rev 10) — SCOPE LOCKED
+- CLASSIFICATION (governing): table = "why run a vendored coding-agent CLI (Claude Code/Codex/…) inside clawker vs bare metal w/ the CLI's own sandboxing, or another tool for the same job." Peer class = SECURITY SANDBOXES that contain a prompt-injected or mistaken coding agent doing real work on a project. NOT: programmatic sandbox SDKs (build-your-own security), NOT services executing AI-generated code / handoff envs.
+- FINAL roster = 8 rows (pushed commit a783e5a4): clawker, docker-sandboxes, sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime(srt, only borderline kept). clawker 48/50.
+- DROPPED and WHY: code-exec cohort (e2b, vercel, modal, daytona, cloudflare, codesandbox, morph, runloop, northflank, blaxel, beam) = run generated code, different class. SDK/build-your-own (openai-api-sandboxes=Agents SDK, k8s-agent-sandbox=CRD, agent-sandbox-org=control plane+E2B API, opensandbox=protocol runtime) = program-it-yourself. Handoff/runtime (dagger-container-use=MCP env, microsandbox=microVM+SDK). All research memories retained in-repo.
+- Observability column split into 3 (metrics_dashboard | harness_telem | ext_monitoring). metrics_dashboard ✅ = clawker+smolvm; harness_telem + ext_monitoring = clawker-only. dashboard key removed.
+- Cols now 50. final matrix: scratchpad/final-matrix.json (still holds all 25 providers' cells; render only emits the 8). render: scratchpad/final-section.md.
+- clawker ❌ only on: cred_proxy (by design/facade), env_resume (no memory checkpoint).
+
+### (history) STATUS 2026-07-18 (rev 9)
+- 3-pass validation DONE (A=wcuh07ph1, B=wwjb7k2ar, C=wrweflx3z; each 25 agents, blind). 96.4% unanimous (1181/1225). 44 disagreements all 2-1 → majority applied. 320 flags collated → most were "weaker-form correctly=no", not real splits.
+- FINAL table PUSHED: commit 5dba3cbd, branch feat/comparison-chart. 48 cols × 25 providers (dropped extra_mounts). clawker 46/48. final matrix: scratchpad/final-matrix.json; render: scratchpad/final-section.md; triangulation: scratchpad/triangulate.json.
+- Changes applied on top of majority: (1) supervision strict=external sandbox-layer container that can quarantine/kill running agent — NOT stoppable-process, NOT harness permission loop; openai→no; clawker SOLE yes. (2) drop extra_mounts col (not a feature; user: overlaps bind/shared). (3) k8s-agent-sandbox + agent-sandbox-org local→yes (kind/k3s/minikube override). (4) rename display agent-sandbox-org → "agent-sandbox/agent-sandbox" (repo slug; DISTINCT from kubernetes-sigs/agent-sandbox). (5) dashboard flips e2b/morph/beam→no. (6) fleet flips smolvm/codesandbox/beam→no. (7) any_agent claude-code-sandboxing→no.
+- GOVERNING RULE reinforced hard by user: assess SANDBOX features ONLY, never harness features. Harness = agent's own permission/approval loop, worktree fan-out, device-code login, OTel telemetry. Conflation is THE failure mode; user distrusts model's independent feature calls — surface, don't assert.
+- OPEN / user now scrutinizing pushed table. Conflation-risk columns to re-audit if asked: dashboard (harness telemetry), browser_auth (CLI login vs sandbox proxy), harness_seed + any_agent (must be sandbox property not harness capability). Focused ✅-cell attribution re-audit was offered; user chose to eyeball first.
+- Backlog: splash variant (clawker.dev separate repo), TOC entry, per-provider notes trim.
+
+### (history) STATUS 2026-07-18 (rev 8)
+- Pass A (25-agent workflow, one per provider reading its writeup, binary+mechanism schema) DONE. 25×49 cells, 0 anomalies (no yes-without-mechanism). Data: scratchpad/bool-matrix.json + committed into README (values + <abbr> mechanism hovers). clawker=46/49 (no on cred_proxy by design, extra_mounts, env_resume).
+- README all-binary table COMMITTED+PUSHED (commit 589b3142, branch feat/comparison-chart), replacing the old partial table. Kept credential-injection moat blockquote + added methodology <details>.
+- Cross-validation IN FLIGHT: passes B (wf_3a626f89-def) + C (wf_cdb94cca-091) = two fresh independent 25-agent sweeps, blind to A and each other, same schema + new optional per-cell `f` flag (surfaces genuine partials as missing-column candidates instead of fabricated binaries — user's concern). NEXT: triangulate A/B/C per cell → consensus vs disagreement; surface disagreements + flags for user review; correct cells; re-render README.
+- Column-candidate concern (user): agents forced to binary may crush a true partial silently. Fix = the `f` flag added to B/C. Review flags before finalizing.
+
+### USER OVERRIDES + queued edits (apply at NEXT table write, after B/C triangulation — user said do it then, not now)
+- Row rename: `agent-sandbox-org` display label → `agent-sandbox/agent-sandbox` (its git repo slug). Reason: it collides with the SIG one; the two ARE DISTINCT projects (kubernetes-sigs/agent-sandbox = CRD+controller SIG Apps subproject; agent-sandbox/agent-sandbox = separate org, Blueprint→ReplicaSet control plane w/ E2B-compat API). Keep K8s row label as "K8s agent-sandbox".
+- local OVERRIDE = yes for BOTH k8s-agent-sandbox AND agent-sandbox-org (mechanism: "Deploys to any conformant cluster incl. local kind/k3s/minikube on the dev machine"). Agent passes score these Remote/no from the writeups; USER OVERRIDE WINS — k8s runs locally (kind/k3s/minikube/VMs). Overrides win over A/B/C consensus. Logged in scratchpad/user-overrides.json. Already patched into scratchpad/bool-matrix.json (pass A working copy).
+
+### (superseded) NEXT STEP: generate the boolean matrix.
 DO NOT trust a single subagent pass blind — this session the subagent made ≥3 feature-vs-capability errors caught by user eye (Docker Sandboxes worktrees=partial for a VM with git=WRONG→No; Sculptor browser_auth=yes for gh device-flow on host process=WRONG→No; Codex CLI "remote"=conflated separate Codex Cloud product=WRONG, Codex is local CLI only). Main-thread must NOT make independent feature/not-feature judgment calls — user catches what model misses. Approach: generate values but every ✅ must cite mechanism; present for user audit before/at commit; expect user to correct cells.
 
 ## DONE
@@ -28,8 +54,9 @@ DO NOT trust a single subagent pass blind — this session the subagent made ≥
 ## Branch state
 feat/comparison-chart — commits: README table + research memories + attribution corrections + domain-native + cred callout, all pushed. README section "How clawker compares" after system-diagram img.
 
-## Providers (25 slugs)
-clawker, docker-sandboxes, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime, microsandbox, smolvm, dagger-container-use, devcontainers, sculptor-imbue, e2b, modal-sandboxes, cloudflare-sandbox-sdk, vercel-sandbox, daytona, codesandbox-sdk, morph, runloop, northflank-sandboxes, blaxel, beam-beta9, openai-api-sandboxes, k8s-agent-sandbox, agent-sandbox-org, opensandbox
+## Providers (FROZEN roster = 8; 17 out-of-scope writeups DELETED)
+clawker, docker-sandboxes, sculptor-imbue, devcontainers, smolvm, claude-code-sandboxing, codex-cli-sandbox, anthropic-sandbox-runtime.
+Classification criteria for who qualifies (agent-harness security sandbox vs code-exec/SDK/primitive) now live in `agent-sandbox-research/assessment-guidelines` → "Classification" section. Do not re-add dropped entries.
 
 ## Backlog after boolean table
 - † domain-native cells verification (many "tbv" in prior matrix)
