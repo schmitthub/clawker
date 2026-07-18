@@ -51,6 +51,12 @@ Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers
 >
 > Hiding the secret in transit is not the same as containing the agent. Containment means scoping **where** authenticated requests can go — `github.com/your-org/` with method gating and a per-request audit log — and mediating the primitive itself (SSH/GPG agent sockets) so no replayable token exists in the first place. clawker does both.
 
+> **Why there's no "syscall filtering" column**
+>
+> Some sandboxes lead with seccomp/AppArmor/Landlock syscall confinement. It's genuinely useful defense-in-depth, and it's on clawker's roadmap — but it sits *upstream* of where the real damage happens. Blocking a syscall only matters if the thing it enables reaches a risk sink: **exfiltration, data loss, persistence, or corruption**. clawker already closes those sinks directly — deny-by-default egress at the DNS/L7/kernel layers stops exfil, disposable containers make local corruption a `git revert` or a rebuild, and the workspace is the only thing that survives.
+>
+> Lock the jewelry in a safe and it's a good idea — but it barely matters when the storefront is bulletproof glass on an airgap that slams shut the instant someone breaks it. Confine the syscalls and you've hardened a path to damage clawker has already sealed at the exit. Worth doing, ranked accordingly.
+
 > Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
 
 > ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
