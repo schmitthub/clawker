@@ -1,6 +1,6 @@
 [submodule "clawker-plugin"]
 	path = clawker-plugin
-	url = git@github.com:schmitthub/clawker-plugin.git
+	url = https://github.com/schmitthub/clawker-plugin.git
 [submodule "clawker-test-bundle"]
 	path = clawker-test-bundle
-	url = git@github.com:schmitthub/clawker-bundle-example.git
+	url = https://github.com/schmitthub/clawker-bundle-example.git
