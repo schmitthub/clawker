@@ -279,16 +279,6 @@ func TestGetHostStateMount_RejectsEmptyPath(t *testing.T) {
 	}
 }
 
-func TestShareConstants(t *testing.T) {
-	if SharePurpose != "share" {
-		t.Errorf("SharePurpose = %q, want %q", SharePurpose, "share")
-	}
-
-	if ShareStagingPath != "/home/clawker/.clawker-share" {
-		t.Errorf("ShareStagingPath = %q, want %q", ShareStagingPath, "/home/clawker/.clawker-share")
-	}
-}
-
 func TestConfigVolumeResult(t *testing.T) {
 	// Zero value: nothing created.
 	var result ConfigVolumeResult
