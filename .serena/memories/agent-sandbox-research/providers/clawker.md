@@ -41,6 +41,9 @@ egress_allowlist: Yes — full ladder: domain → .wildcard subdomains → IP/CI
 Sources: docs/firewall.mdx
 ### dns_level_blocking
 dns_level_blocking: Yes — CoreDNS returns NXDOMAIN for unlisted domains; subtree exfil closed via exact-host scoping (#320).
+### domain_native_enforcement
+domain_native_enforcement: Yes — rules enforced against hostnames at request time end-to-end: CoreDNS policy at resolution, Envoy SNI/Host matching + dynamic-forward-proxy clusters for FQDN flows (zero ORIGINAL_DST for domain rules; IP/CIDR is a separate explicit rule type, not an enforcement fallback). No resolve-once IP-set snapshotting — immune to both LB-rotation breakage and CDN shared-IP over-permission that resolve-to-iptables designs (devcontainers reference firewall, resolve-then-CIDR-check proxies) exhibit.
+Sources: docs/firewall.mdx; .claude/rules/firewall-uat.md (LOGICAL_DNS/DFP, no ORIGINAL_DST for FQDN flows)
 ### tls_mitm_inspection
 tls_mitm_inspection: Yes — Envoy always MITMs TLS (SSL_CERT_FILE/CURL_CA_BUNDLE preset); per-rule insecure_skip_tls_verify for upstream self-signed.
 ### http_path_rules
@@ -90,6 +93,10 @@ feasibility: Adoptable today — macOS/Linux + Docker; alpha maturity caveat; no
 Free, open source (AGPL-3.0-or-later). No hosted tier.
 ## K. Extensibility
 extensibility: Yes — bundles (harnesses/stacks/monitoring extensions), plugin system, custom Dockerfile injection points, post_init/pre_run hooks.
+
+## Condensation framing notes (maintainer, 2026-07-18)
+- Creds × egress compose: sentinel/header-injection (Docker Sandboxes model) hides the credential STRING, not the CAPABILITY — an agent holding proxied auth can still exfil to any allowlisted domain (their docs concede github.com-wide allows are exfil channels), and where a real token is readable (`gh auth token`) a loose allowlist lets it ship anywhere. Containment = scope the USE: path/method-scoped egress + per-request audit. Clawker: ssh/gpg agent mediation (key never present), seeded harness creds readable-but-contained by egress+audit. "Hidden token ≠ contained agent" is the callout.
+- Domain-native enforcement is a differentiator row candidate: several competitors enforce domain rules as resolved IP sets (devcontainers resolve-once iptables; Docker Sandboxes resolve-then-CIDR-check) with LB-breakage + CDN shared-IP over-permission failure modes.
 
 ## Unknowns & caveats
 - Remote-engine operation undocumented → excluded from claims.
