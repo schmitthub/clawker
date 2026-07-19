@@ -6,6 +6,7 @@ import (
 	"path"
 
 	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -66,7 +67,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 	// File-level patterns (*.env, *.pem) cannot be enforced with overlays.
 	if len(s.config.IgnorePatterns) > 0 {
 		staticDirs := docker.BindOverlayDirsFromPatterns(s.config.IgnorePatterns)
-		discoveredDirs, err := docker.FindIgnoredDirs(nil, s.config.HostPath, s.config.IgnorePatterns)
+		discoveredDirs, err := docker.FindIgnoredDirs(s.config.HostPath, s.config.IgnorePatterns)
 		if err != nil {
 			return nil, fmt.Errorf("scanning for ignored directories: %w", err)
 		}

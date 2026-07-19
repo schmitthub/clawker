@@ -13,11 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v6/plumbing/format/gitignore"
+
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
@@ -162,7 +164,13 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 
 	// Create a tar archive of the source directory
 	tarBuffer := new(bytes.Buffer)
-	if err := createTarArchive(c.log, srcDir, tarBuffer, ignorePatterns, c.cfg.ContainerUID(), c.cfg.ContainerGID()); err != nil {
+	if err := createTarArchive(
+		srcDir,
+		tarBuffer,
+		ignorePatterns,
+		c.cfg.ContainerUID(),
+		c.cfg.ContainerGID(),
+	); err != nil {
 		return fmt.Errorf("failed to create tar archive: %w", err)
 	}
 
@@ -283,11 +291,12 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 }
 
 // createTarArchive creates a tar archive of a directory.
-func createTarArchive(log *logger.Logger, srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
+func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
 	tw := tar.NewWriter(buf)
 	defer tw.Close()
 
 	srcDir = filepath.Clean(srcDir)
+	ignore := compileIgnorePatterns(ignorePatterns)
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -306,164 +315,94 @@ func createTarArchive(log *logger.Logger, srcDir string, buf io.Writer, ignorePa
 		}
 
 		// Check if should be ignored
-		if shouldIgnore(log, relPath, info.IsDir(), ignorePatterns) {
+		if ignore.Match(splitIgnorePath(relPath), info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Create tar header
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-
-		// Use relative path in archive
-		header.Name = relPath
-
-		// Ensure container user ownership so files are readable inside container.
-		header.Uid = uid
-		header.Gid = gid
-
-		// Handle symlinks
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			header.Linkname = link
-		}
-
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-
-		// Write file content if it's a regular file
-		if info.Mode().IsRegular() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			if _, err := io.Copy(tw, file); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return writeTarEntry(tw, path, relPath, info, uid, gid)
 	})
 }
 
-// shouldIgnore checks if a path should be ignored based on patterns.
-func shouldIgnore(log *logger.Logger, path string, isDir bool, patterns []string) bool {
-	for _, pattern := range patterns {
-		pattern = strings.TrimSpace(pattern)
-
-		// Skip empty lines and comments
-		if pattern == "" || strings.HasPrefix(pattern, "#") {
-			continue
-		}
-
-		// Handle directory-only patterns (ending with /)
-		if strings.HasSuffix(pattern, "/") {
-			if isDir {
-				pattern = strings.TrimSuffix(pattern, "/")
-				if matchPattern(log, path, pattern) {
-					return true
-				}
-			}
-			continue
-		}
-
-		// Handle negation patterns
-		if strings.HasPrefix(pattern, "!") {
-			// Negation patterns are not fully implemented
-			continue
-		}
-
-		if matchPattern(log, path, pattern) {
-			return true
-		}
+// writeTarEntry writes one filesystem entry (dir, file, or symlink) into the
+// archive under its workspace-relative name, owned by the container user.
+// writeTarEntry writes one filesystem entry (dir, file, or symlink) into the
+// archive under its workspace-relative name, owned by the container user.
+func writeTarEntry(tw *tar.Writer, path, relPath string, info os.FileInfo, uid, gid int) error {
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("creating tar header for %s: %w", relPath, err)
 	}
 
-	return false
+	// Use relative path in archive
+	header.Name = relPath
+
+	// Ensure container user ownership so files are readable inside container.
+	header.Uid = uid
+	header.Gid = gid
+
+	// Handle symlinks
+	if info.Mode()&os.ModeSymlink != 0 {
+		link, linkErr := os.Readlink(path)
+		if linkErr != nil {
+			return fmt.Errorf("reading symlink %s: %w", relPath, linkErr)
+		}
+		header.Linkname = link
+	}
+
+	if writeErr := tw.WriteHeader(header); writeErr != nil {
+		return fmt.Errorf("writing tar header for %s: %w", relPath, writeErr)
+	}
+
+	// Write file content if it's a regular file
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	file, openErr := os.Open(path)
+	if openErr != nil {
+		return fmt.Errorf("opening %s: %w", relPath, openErr)
+	}
+	defer file.Close()
+
+	if _, copyErr := io.Copy(tw, file); copyErr != nil {
+		return fmt.Errorf("copying %s into archive: %w", relPath, copyErr)
+	}
+
+	return nil
 }
 
-// matchPattern matches a path against a gitignore-style pattern.
-func matchPattern(log *logger.Logger, path, pattern string) bool {
-	// Convert path separators
-	path = filepath.ToSlash(path)
-	pattern = filepath.ToSlash(pattern)
-
-	// Handle ** pattern
-	if strings.Contains(pattern, "**") {
-		parts := strings.Split(pattern, "**")
-		if len(parts) == 2 {
-			prefix := parts[0]
-			suffix := parts[1]
-
-			if !strings.HasPrefix(path, prefix) {
-				return false
-			}
-
-			// Strip the leading "/" from suffix if present (e.g., "**/*.log" → suffix "/*.log" → "*.log")
-			suffixPattern := strings.TrimPrefix(suffix, "/")
-
-			// If the suffix contains wildcards, glob-match against the basename
-			if strings.Contains(suffixPattern, "*") || strings.Contains(suffixPattern, "?") {
-				matched, err := filepath.Match(suffixPattern, filepath.Base(path))
-				if err != nil {
-					log.Warn().Err(err).Str("pattern", suffixPattern).Msg("invalid ignore pattern")
-					return false
-				}
-				return matched
-			}
-
-			// Otherwise do a literal suffix check
-			return strings.HasSuffix(path, suffix)
+// compileIgnorePatterns parses raw ignore-file lines into a matcher with
+// .gitignore semantics: anchoring (a leading or middle "/" pins the pattern to
+// the workspace root; without one it matches at any depth), directory-only
+// patterns (trailing "/"), negation ("!pattern"), and "**" globs. Blank lines
+// and comments are skipped. Like git, a malformed glob never errors — it just
+// doesn't match.
+//
+//nolint:ireturn // gitignore.NewMatcher returns the interface; no concrete type is exported.
+func compileIgnorePatterns(patterns []string) gitignore.Matcher {
+	ps := make([]gitignore.Pattern, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.HasPrefix(p, "#") {
+			continue
 		}
+		ps = append(ps, gitignore.ParsePattern(p, nil))
 	}
-
-	// Handle * pattern
-	if strings.Contains(pattern, "*") {
-		matched, err := filepath.Match(pattern, filepath.Base(path))
-		if err != nil {
-			log.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
-			return false
-		}
-		if matched {
-			return true
-		}
-		// Also try matching the full path
-		matched, err = filepath.Match(pattern, path)
-		if err != nil {
-			log.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
-			return false
-		}
-		return matched
-	}
-
-	// Direct match
-	if path == pattern {
-		return true
-	}
-
-	// Check if path starts with pattern (for directories)
-	if strings.HasPrefix(path, pattern+"/") {
-		return true
-	}
-
-	// Check if the basename matches
-	if filepath.Base(path) == pattern {
-		return true
-	}
-
-	return false
+	return gitignore.NewMatcher(ps)
 }
 
-// LoadIgnorePatterns reads patterns from an ignore file.
+// splitIgnorePath converts a workspace-relative path into the component slice
+// the gitignore matcher consumes.
+func splitIgnorePath(rel string) []string {
+	return strings.Split(filepath.ToSlash(rel), "/")
+}
+
+// LoadIgnorePatterns reads patterns from an ignore file. Lines are returned
+// verbatim minus blanks and comments; matching happens in
+// compileIgnorePatterns with .gitignore semantics, where a malformed glob is
+// never an error — it just doesn't match.
 func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 	file, err := os.Open(ignoreFile)
 	if err != nil {
@@ -486,24 +425,14 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 		return nil, err
 	}
 
-	// Validate glob syntax so malformed patterns return an error instead of
-	// silently not matching at runtime.
-	for _, p := range patterns {
-		clean := strings.TrimSuffix(strings.TrimSpace(p), "/")
-		if clean == "" || strings.HasPrefix(clean, "#") || strings.HasPrefix(clean, "!") {
-			continue
-		}
-		if _, err := filepath.Match(clean, "test"); err != nil {
-			return nil, fmt.Errorf("invalid pattern %q in ignore file: %w", p, err)
-		}
-	}
-
 	return patterns, nil
 }
 
 // BindOverlayDirsFromPatterns derives directory overlay targets from ignore
 // patterns for bind mode. It intentionally only returns deterministic directory
-// paths and skips file-glob patterns.
+// paths and skips file-glob patterns. Candidates are re-checked against the
+// full pattern list with gitignore semantics, so a later negation
+// (!node_modules/) removes a candidate an earlier pattern produced.
 func BindOverlayDirsFromPatterns(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
@@ -523,6 +452,12 @@ func BindOverlayDirsFromPatterns(patterns []string) []string {
 		clean = strings.TrimPrefix(clean, "./")
 		clean = strings.TrimPrefix(clean, "/")
 		clean = filepath.ToSlash(clean)
+
+		// "**/" matches at any depth including zero, so the workspace-root
+		// instance is a deterministic overlay target: mask it even before it
+		// exists on the host, or a container-created dir (e.g. npm install's
+		// node_modules) writes straight through the bind mount.
+		clean = strings.TrimPrefix(clean, "**/")
 
 		if clean == "" || clean == "." {
 			continue
@@ -549,37 +484,46 @@ func BindOverlayDirsFromPatterns(patterns []string) []string {
 		dirs = append(dirs, clean)
 	}
 
-	return dirs
+	ignore := compileIgnorePatterns(patterns)
+	kept := dirs[:0]
+	for _, d := range dirs {
+		if ignore.Match(splitIgnorePath(d), true) {
+			kept = append(kept, d)
+		}
+	}
+	return kept
 }
 
 // FindIgnoredDirs walks hostPath and returns relative paths of directories
 // matching the given ignore patterns. Used by bind mode to generate tmpfs
 // overlay mounts that mask ignored directories inside the container.
 //
-// Key differences from snapshot's shouldIgnore:
+// Matching follows .gitignore semantics (anchoring, negation, ** globs).
+// Key differences from the snapshot copy path:
 //   - Only returns directories (file patterns like *.log are not actionable)
 //   - Force-keeps .git/ even if a pattern would match it (bind mode needs git
-//     for live development); snapshot's shouldIgnore honors patterns verbatim,
+//     for live development); the snapshot path honors patterns verbatim,
 //     including .git, and copies .git by default when no pattern excludes it
-//   - Skips recursion into matched directories (performance)
-func FindIgnoredDirs(log *logger.Logger, hostPath string, patterns []string) ([]string, error) {
-	if log == nil {
-		log = logger.Nop()
-	}
+//   - Skips recursion into matched directories — their contents are masked
+//     wholesale, so as in gitignore, a path under an ignored directory
+//     cannot be re-included by a negation
+func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, nil
 	}
-
-	// fail fast if any negation patterns are present (not yet supported)
-	for _, p := range patterns {
-		if strings.HasPrefix(strings.TrimSpace(p), "!") {
-			log.Error().Str("pattern", p).Msg("negation patterns in ignore file are not yet supported and will be ignored")
-			return nil, fmt.Errorf("negation patterns in ignore file are not yet supported: %q", p)
-		}
-	}
+	ignore := compileIgnorePatterns(patterns)
 
 	var dirs []string
-	err := filepath.Walk(hostPath, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(hostPath, findIgnoredDirsWalkFunc(hostPath, ignore, &dirs)); err != nil {
+		return nil, fmt.Errorf("scanning %s for ignored directories: %w", hostPath, err)
+	}
+	return dirs, nil
+}
+
+// findIgnoredDirsWalkFunc is FindIgnoredDirs' walk callback: it appends
+// matched directories to dirs and prunes recursion into them.
+func findIgnoredDirsWalkFunc(hostPath string, ignore gitignore.Matcher, dirs *[]string) filepath.WalkFunc {
+	return func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -600,45 +544,23 @@ func FindIgnoredDirs(log *logger.Logger, hostPath string, patterns []string) ([]
 		}
 
 		// Never mask .git — bind mode needs it for live development
-		if rel == ".git" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+		if isGitMetaPath(rel) {
 			return filepath.SkipDir
 		}
 
 		// Check user patterns (directory-aware matching)
-		if shouldIgnoreForBind(log, rel, patterns) {
-			dirs = append(dirs, filepath.ToSlash(rel))
+		if ignore.Match(splitIgnorePath(rel), true) {
+			*dirs = append(*dirs, filepath.ToSlash(rel))
 			return filepath.SkipDir // don't recurse into matched directories
 		}
 
 		return nil
-	})
-
-	return dirs, err
+	}
 }
 
-// shouldIgnoreForBind checks if a directory path matches any of the given patterns.
-// The caller is responsible for passing only directory paths.
-func shouldIgnoreForBind(log *logger.Logger, path string, patterns []string) bool {
-	for _, pattern := range patterns {
-		pattern = strings.TrimSpace(pattern)
-
-		// Skip empty lines and comments
-		if pattern == "" || strings.HasPrefix(pattern, "#") {
-			continue
-		}
-
-		// Handle negation patterns (not fully implemented)
-		if strings.HasPrefix(pattern, "!") {
-			continue
-		}
-
-		// Strip trailing slash for matching (directory patterns like "node_modules/")
-		cleanPattern := strings.TrimSuffix(pattern, "/")
-
-		if matchPattern(log, path, cleanPattern) {
-			return true
-		}
-	}
-
-	return false
+// isGitMetaPath reports whether rel is .git or lives under it.
+func isGitMetaPath(rel string) bool {
+	return rel == ".git" ||
+		strings.HasPrefix(rel, ".git/") ||
+		strings.HasPrefix(rel, ".git"+string(filepath.Separator))
 }
