@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/schmitthub/clawker/internal/consts"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -21,6 +20,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"google.golang.org/grpc/credentials"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Rotating file sink defaults.

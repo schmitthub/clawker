@@ -124,19 +124,28 @@ func (b *Bridge) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to get stdout pipe: %w", err)
 	}
 
-	// Capture stderr for debugging
-	b.cmd.Stderr = os.Stderr
-
+	// Route the container-side socket server's stderr through the
+	// structured logger so its lines land in the shared bridge log
+	// tagged with this container, instead of as raw untagged output.
+	stderr, err := b.cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
 	if err := b.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start socket-forwarder: %w", err)
 	}
+	b.readWg.Add(1)
+	go b.logStderr(stderr)
 
 	// Send PUBKEY if GPG forwarding is enabled
 	// The socket-forwarder reads socket config from CLAWKER_REMOTE_SOCKETS env var
 	if b.gpgEnabled {
 		if err := b.sendMessage(Message{Type: MsgPubkey, StreamID: 0, Payload: b.gpgPubkey}); err != nil {
-			// Clean up the subprocess we started
+			// Clean up the subprocess we started. Kill closes the stderr
+			// pipe, so logStderr reaches EOF; drain readWg before Wait so
+			// no pipe read is outstanding (readLoop is not yet running).
 			b.cmd.Process.Kill()
+			b.readWg.Wait()
 			b.cmd.Wait() //nolint:errcheck // best-effort cleanup
 			return fmt.Errorf("failed to send pubkey: %w", err)
 		}
@@ -192,6 +201,20 @@ func (b *Bridge) Wait() error {
 		return b.cmd.Wait()
 	}
 	return nil
+}
+
+// logStderr forwards the container-side socket server's stderr lines to
+// the structured logger. Runs until the pipe closes (process exit); Wait
+// blocks on readWg so cmd.Wait is never called with reads outstanding.
+func (b *Bridge) logStderr(r io.Reader) {
+	defer b.readWg.Done()
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		b.log.Debug().Str("stream", "socket-server").Msg(scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		b.log.Debug().Err(err).Msg("socket server stderr closed with error")
+	}
 }
 
 func (b *Bridge) readLoop() {
@@ -437,7 +460,10 @@ func getGPGExtraSocket() (string, error) {
 
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("gpg-agent extra socket not found at %s — is gpg-agent running? try: gpgconf --launch gpg-agent", path)
+			return "", fmt.Errorf(
+				"gpg-agent extra socket not found at %s — is gpg-agent running? try: gpgconf --launch gpg-agent",
+				path,
+			)
 		}
 		return "", fmt.Errorf("cannot access gpg-agent extra socket at %s: %w", path, err)
 	}

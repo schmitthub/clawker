@@ -37,7 +37,13 @@ func TestResolveHostID(t *testing.T) {
 		// on a downstream uint32 cast. ParseUint(_, 10, 32) makes it
 		// "malformed" with ErrRange so userStage gets the fallback UID
 		// instead of UID 0 (root).
-		{name: "out_of_uint32_range", envVal: "4294967296", wantValue: 1001, wantFallback: true, wantReason: "malformed"},
+		{
+			name:         "out_of_uint32_range",
+			envVal:       "4294967296",
+			wantValue:    1001,
+			wantFallback: true,
+			wantReason:   "malformed",
+		},
 	}
 	const probeEnv = "CLAWKER_TEST_PROBE_UID"
 	for _, tc := range cases {

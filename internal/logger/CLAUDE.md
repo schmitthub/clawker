@@ -95,6 +95,20 @@ func NewWriter(w io.Writer) *Logger       // Structured JSON to io.Writer, no ro
 func Nop() *Logger                        // Discards all output (tests, disabled logging)
 ```
 
+### Shared append files (`sharedfile.go`)
+
+```go
+func OpenAppend(path string) (*os.File, error)              // O_APPEND|O_CREATE|O_WRONLY, 0600
+func RotateAtCap(path, backupPath string, maxBytes int64)   // best-effort rename past cap; single-owner
+```
+
+For log files appended by multiple processes concurrently (e.g. socket bridge
+daemons). Pair `OpenAppend` with `NewWriter` — one complete line per write()
+on an O_APPEND descriptor is kernel-atomic, so appenders never shear each
+other's lines and lumberjack (single-process only) is not involved. Rotation
+must have exactly one owner, which calls `RotateAtCap` before opening; every
+failure mode is benign for an append log (see doc comments).
+
 `New` creates the log directory, configures lumberjack rotation, and optionally attaches the OTEL bridge. Returns error if `LogsDir` is empty or directory creation fails. OTEL failure is non-fatal (falls back to file-only).
 
 `NewWriter` writes structured JSON to an arbitrary `io.Writer` with no file rotation and no OTEL bridge. Used in tests (passing `*bytes.Buffer`) and as the degraded fallback in `clawkercp` when `New` fails (writes to `os.Stderr`). Debug level by default.

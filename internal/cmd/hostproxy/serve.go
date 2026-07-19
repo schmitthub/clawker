@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/spf13/cobra"
 )
+
+// defaultGracePeriod is the default initial grace period before the daemon
+// starts checking for live containers.
+const defaultGracePeriod = 60 * time.Second
 
 // NewCmdServe creates the hidden daemon subcommand that runs the host proxy server.
 // This is invoked by Manager.EnsureRunning() when spawning a daemon subprocess.
@@ -40,7 +46,17 @@ func NewCmdServe() *cobra.Command {
 			// not the shared clawker.log. Falls back to nop if unavailable.
 			log := logger.Nop()
 			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
-				if l, lErr := logger.New(logger.Options{LogsDir: logsDir, Filename: "hostproxy.log"}); lErr == nil {
+				if l, lErr := logger.New(logger.Options{
+					LogsDir:  logsDir,
+					Filename: consts.HostProxyLogFile,
+					// Zero values resolve to the logger package defaults.
+					MaxSizeMB:  0,
+					MaxAgeDays: 0,
+					MaxBackups: 0,
+					Compress:   false,
+					Otel:       nil,
+					EchoStdout: false,
+				}); lErr == nil {
 					log = l
 					defer l.Close(context.Background())
 				}
@@ -78,7 +94,8 @@ func NewCmdServe() *cobra.Command {
 
 	cmd.Flags().IntVar(&port, "port", 18374, "Port to listen on")
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 30*time.Second, "Container poll interval")
-	cmd.Flags().DurationVar(&gracePeriod, "grace-period", 60*time.Second, "Initial grace period before container checking")
+	cmd.Flags().
+		DurationVar(&gracePeriod, "grace-period", defaultGracePeriod, "Initial grace period before container checking")
 
 	return cmd
 }

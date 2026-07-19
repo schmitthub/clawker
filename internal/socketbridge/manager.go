@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -55,9 +56,9 @@ type bridgeProcess struct {
 // Compile-time assertion that Manager implements SocketBridgeManager.
 var _ SocketBridgeManager = (*Manager)(nil)
 
-// shortID returns a truncated container ID suitable for log messages.
+// ShortID returns a truncated container ID suitable for log messages.
 // Safe to call with IDs shorter than 12 characters.
-func shortID(id string) string {
+func ShortID(id string) string {
 	if len(id) > 12 {
 		return id[:12]
 	}
@@ -82,7 +83,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	// Check if we already track a running bridge
 	if bp, ok := m.bridges[containerID]; ok {
 		if isProcessAlive(bp.pid) {
-			m.log.Debug().Str("container", shortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
+			m.log.Debug().Str("container", ShortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
 			return nil
 		}
 		// Process died — clean up stale entry
@@ -96,7 +97,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	}
 
 	if pid := readPIDFile(pidFile); pid > 0 && isProcessAlive(pid) {
-		m.log.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
+		m.log.Debug().Str("container", ShortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
 		m.bridges[containerID] = &bridgeProcess{pid: pid, pidFile: pidFile}
 		return nil
 	}
@@ -209,7 +210,7 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 	}
 
 	// Redirect output to log file
-	logFile, err := m.openBridgeLogFile(containerID)
+	logFile, err := m.openBridgeLogFile()
 	if err != nil {
 		m.log.Debug().Err(err).Msg("failed to open bridge log file, output will be discarded")
 		cmd.Stdout = nil
@@ -240,7 +241,7 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 		m.log.Debug().Err(err).Msg("failed to release bridge process (non-fatal)")
 	}
 
-	m.log.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
+	m.log.Debug().Str("container", ShortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
 
 	// Wait for PID file to appear (confirms bridge is initialized)
 	if err := waitForPIDFile(pidFile, 5*time.Second); err != nil {
@@ -261,18 +262,28 @@ func (m *Manager) cleanupBridgeLocked(containerID string, bp *bridgeProcess) {
 	delete(m.bridges, containerID)
 }
 
-// openBridgeLogFile opens a log file for bridge daemon output.
+// bridgeLogMaxBytes caps the shared bridge log; openBridgeLogFile rotates
+// the file past this size before a new daemon is spawned. The Manager is
+// the file's single rotation owner — daemons only append.
+const bridgeLogMaxBytes = 10 << 20 // 10MB
+
+// openBridgeLogFile opens the shared bridge daemon log file for appending,
+// rotating it first when over cap. All bridge daemons and the Manager's
+// child-output redirect append to the same file; see
+// consts.SocketBridgeLogFile for why concurrent appenders are safe.
 // LogsSubdir() ensures the directory exists via MkdirAll.
-func (m *Manager) openBridgeLogFile(containerID string) (*os.File, error) {
+func (m *Manager) openBridgeLogFile() (*os.File, error) {
 	logsDir, err := m.cfg.LogsSubdir()
 	if err != nil {
 		return nil, err
 	}
-	return os.OpenFile(
-		filepath.Join(logsDir, fmt.Sprintf("bridge-%s.log", shortID(containerID))),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
-		0644,
-	)
+	logPath := filepath.Join(logsDir, consts.SocketBridgeLogFile)
+	logger.RotateAtCap(logPath, filepath.Join(logsDir, consts.SocketBridgeLogBackupFile), bridgeLogMaxBytes)
+	f, err := logger.OpenAppend(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening bridge log: %w", err)
+	}
+	return f, nil
 }
 
 // readPIDFile reads a PID from a file. Returns 0 if the file doesn't exist or is invalid.

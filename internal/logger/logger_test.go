@@ -455,7 +455,9 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 	// and no longer swallows context errors. Goes red if the suppression is
 	// reintroduced (which would hide a real daemon-path export failure).
 	if err == nil {
-		t.Error("Close returned nil on a live context with an unreachable collector; the export-timeout failure must surface")
+		t.Error(
+			"Close returned nil on a live context with an unreachable collector; the export-timeout failure must surface",
+		)
 	}
 }
 

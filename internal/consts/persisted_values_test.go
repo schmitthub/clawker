@@ -28,7 +28,12 @@ func TestPersistedValueTripwires(t *testing.T) {
 	}
 	for name, tw := range tripwires {
 		if tw.got != tw.want {
-			t.Errorf("%s changed: %q → %q — existing installs' resources will be orphaned; this needs a migration, not a rename", name, tw.want, tw.got)
+			t.Errorf(
+				"%s changed: %q → %q — existing installs' resources will be orphaned; this needs a migration, not a rename",
+				name,
+				tw.want,
+				tw.got,
+			)
 		}
 	}
 }

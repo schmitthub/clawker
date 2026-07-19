@@ -17,6 +17,14 @@ Host                                    Container
 ```
 
 **Manager** spawns detached `clawker bridge serve` subprocesses (one per container).
+All daemons log to the shared `LogsSubdir()/consts.SocketBridgeLogFile` — structured
+JSON lines tagged with `container`, written via `logger.NewWriter` on O_APPEND
+descriptors (single write per line, safe for concurrent appenders; no lumberjack).
+The Manager also redirects each daemon's stdout/stderr there as a crash net, and
+rotates the file to `consts.SocketBridgeLogBackupFile` when it exceeds the size cap
+before spawning a daemon (`logger.RotateAtCap`; the Manager is the single rotation
+owner). The container-side socket server's
+stderr is routed through the Bridge's logger (`logStderr`), not raw passthrough.
 **Bridge** handles the muxrpc session: multiplexes socket connections between host agents and container sockets.
 **clawker-socket-server** runs inside the container, creates Unix sockets, and forwards connections via the protocol.
 
@@ -117,7 +125,7 @@ Bridge: `SetBridgeIOForTest`, `InitErrChForTest`, `StartReadLoopForTest`, `WaitR
 
 Manager: `SetBridgeForTest`, `HasBridgeForTest`, `BridgePIDForTest`, `BridgeCountForTest`
 
-Package-level: `ReadPIDFileForTest`, `IsProcessAliveForTest`, `WaitForPIDFileForTest`, `ShortIDForTest`
+Package-level: `ReadPIDFileForTest`, `IsProcessAliveForTest`, `WaitForPIDFileForTest` (`ShortID` is exported directly — used by `cmd/bridge` to tag daemon log lines)
 
 ## Gotchas
 

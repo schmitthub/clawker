@@ -6,17 +6,18 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/socketbridge"
-	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/socketbridge"
+	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 )
 
 func TestReadPIDFile(t *testing.T) {
 	t.Run("valid PID file", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.pid")
-		require.NoError(t, os.WriteFile(path, []byte("12345\n"), 0644))
+		require.NoError(t, os.WriteFile(path, []byte("12345\n"), 0o644))
 
 		pid := socketbridge.ReadPIDFileForTest(path)
 		assert.Equal(t, 12345, pid)
@@ -30,7 +31,7 @@ func TestReadPIDFile(t *testing.T) {
 	t.Run("invalid content", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.pid")
-		require.NoError(t, os.WriteFile(path, []byte("not-a-number"), 0644))
+		require.NoError(t, os.WriteFile(path, []byte("not-a-number"), 0o644))
 
 		pid := socketbridge.ReadPIDFileForTest(path)
 		assert.Equal(t, 0, pid)
@@ -39,7 +40,7 @@ func TestReadPIDFile(t *testing.T) {
 	t.Run("empty file", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.pid")
-		require.NoError(t, os.WriteFile(path, []byte(""), 0644))
+		require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
 
 		pid := socketbridge.ReadPIDFileForTest(path)
 		assert.Equal(t, 0, pid)
@@ -69,7 +70,7 @@ func TestWaitForPIDFile(t *testing.T) {
 	t.Run("file already exists", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.pid")
-		require.NoError(t, os.WriteFile(path, []byte("1"), 0644))
+		require.NoError(t, os.WriteFile(path, []byte("1"), 0o644))
 
 		err := socketbridge.WaitForPIDFileForTest(path, 100*1e6) // 100ms
 		assert.NoError(t, err)
@@ -115,7 +116,7 @@ func TestManagerStopBridge(t *testing.T) {
 
 		containerID := "abc123def456789"
 		pidFile := filepath.Join(pidsDir, containerID+".pid")
-		require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644))
+		require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644))
 
 		m.SetBridgeForTest(containerID, 999999999, pidFile) // Dead process — won't actually kill anything
 
@@ -138,7 +139,7 @@ func TestManagerStopAll(t *testing.T) {
 		// Create some PID files with dead PIDs
 		for _, id := range []string{"container-a", "container-b"} {
 			pidFile := filepath.Join(pidsDir, id+".pid")
-			require.NoError(t, os.WriteFile(pidFile, []byte("999999999"), 0644))
+			require.NoError(t, os.WriteFile(pidFile, []byte("999999999"), 0o644))
 		}
 
 		err := m.StopAll()
@@ -164,7 +165,7 @@ func TestShortID(t *testing.T) {
 		{"1234567890abc", "1234567890ab"},
 	}
 	for _, tt := range tests {
-		assert.Equal(t, tt.expected, socketbridge.ShortIDForTest(tt.input), "shortID(%q)", tt.input)
+		assert.Equal(t, tt.expected, socketbridge.ShortID(tt.input), "ShortID(%q)", tt.input)
 	}
 }
 

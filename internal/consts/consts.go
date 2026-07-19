@@ -413,12 +413,24 @@ const (
 	// CP container lifecycle writes here instead so the two processes
 	// never concurrently append to the same file and shear each other's
 	// log lines.
-	CPBootLogFile   = "clawker-manager.log"
-	BridgePIDSuffix = ".pid"
-	ReadyFile       = "ready"
-	GRPCSocketFile  = "grpc.sock"
-	OIDCSocketFile  = "oidc.sock"
-	AuditLogFile    = "audit.log"
+	CPBootLogFile = "clawker-manager.log"
+	// SocketBridgeLogFile is shared by every bridge daemon and by the
+	// Manager's child stdout/stderr redirect. Concurrent appenders are
+	// safe here — unlike the CP/manager split above — because all
+	// writers are host-local processes appending complete lines via
+	// single write() calls on O_APPEND descriptors, with no lumberjack
+	// rotation racing between processes. Rotation is done solely by the
+	// host-side Manager (rename to SocketBridgeLogBackupFile) before
+	// spawning a daemon.
+	SocketBridgeLogFile = "socketbridge.log"
+	// SocketBridgeLogBackupFile is the single rotated generation of
+	// SocketBridgeLogFile; each rotation clobbers the previous backup.
+	SocketBridgeLogBackupFile = "socketbridge.log.1"
+	BridgePIDSuffix           = ".pid"
+	ReadyFile                 = "ready"
+	GRPCSocketFile            = "grpc.sock"
+	OIDCSocketFile            = "oidc.sock"
+	AuditLogFile              = "audit.log"
 )
 
 // Network.

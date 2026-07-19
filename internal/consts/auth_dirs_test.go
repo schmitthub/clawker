@@ -30,7 +30,11 @@ func TestEnsureAuthDirsCoversAllAccessors(t *testing.T) {
 		"AuthInfraCADir": AuthInfraCADir,
 	}
 	if len(accessors) != len(authSubdirs) {
-		t.Errorf("accessor table has %d entries, authSubdirs has %d — keep them in sync", len(accessors), len(authSubdirs))
+		t.Errorf(
+			"accessor table has %d entries, authSubdirs has %d — keep them in sync",
+			len(accessors),
+			len(authSubdirs),
+		)
 	}
 	for name, accessor := range accessors {
 		dir, err := accessor()

@@ -81,6 +81,3 @@ var IsProcessAliveForTest = isProcessAlive
 var WaitForPIDFileForTest = func(path string, timeout time.Duration) error {
 	return waitForPIDFile(path, timeout)
 }
-
-// ShortIDForTest exposes the private shortID function.
-var ShortIDForTest = shortID

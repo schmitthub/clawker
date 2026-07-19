@@ -8,15 +8,18 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/spf13/cobra"
 )
 
 // NewCmdBridge creates the hidden bridge command group.
@@ -57,15 +60,19 @@ func NewCmdBridgeServe() *cobra.Command {
 
 			// Initialize daemon logger — the bridge runs as a detached subprocess
 			// with no terminal, so file logging is the only diagnostic channel.
+			// Every bridge daemon appends to the shared consts.SocketBridgeLogFile.
+			// logger.NewWriter (no lumberjack) emits one complete line per write
+			// on an O_APPEND descriptor, so concurrent daemons never shear each
+			// other's lines; rotation is owned by the host-side Manager.
 			log := logger.Nop()
 			if cfg, cfgErr := config.NewConfig(); cfgErr == nil {
 				if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
-					if l, lErr := logger.New(logger.Options{
-						LogsDir:  logsDir,
-						Filename: fmt.Sprintf("bridge-%s.log", containerID[:12]),
-					}); lErr == nil {
-						log = l
-						defer log.Close(context.Background())
+					logPath := filepath.Join(logsDir, consts.SocketBridgeLogFile)
+					if f, fErr := logger.OpenAppend(logPath); fErr == nil {
+						// Close error unactionable at daemon teardown;
+						// writes are unbuffered direct syscalls.
+						defer f.Close()
+						log = logger.NewWriter(f).With("container", socketbridge.ShortID(containerID))
 					}
 				}
 			}
@@ -78,7 +85,7 @@ func NewCmdBridgeServe() *cobra.Command {
 
 			// Write PID file
 			if pidFile != "" {
-				if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 					log.Error().Err(err).Msg("failed to write PID file")
 					return err
 				}
@@ -160,7 +167,12 @@ type dockerEventsClient interface {
 //   - the context is cancelled (returns ctx.Err())
 //
 // The eventsClient is closed when watchContainerEvents returns.
-func watchContainerEvents(ctx context.Context, eventsClient dockerEventsClient, containerID string, onDeath func()) error {
+func watchContainerEvents(
+	ctx context.Context,
+	eventsClient dockerEventsClient,
+	containerID string,
+	onDeath func(),
+) error {
 	defer eventsClient.Close()
 
 	result := eventsClient.Events(ctx, client.EventsListOptions{
