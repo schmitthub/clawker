@@ -16,7 +16,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 - `.clawkerignore` patterns now follow real `.gitignore` matching semantics. Anchored patterns (`/build/`) mask only the workspace-root directory — previously they matched nothing — and unanchored patterns (`build/`) match at any depth, exactly like git. A malformed glob no longer aborts container start; like git, it just doesn't match.
 - In bind mode, a directory ignored via a `**/`-prefixed pattern (e.g. `**/node_modules/`) now gets its tmpfs overlay even when it doesn't exist on the host yet — previously a `node_modules` created inside the container (e.g. by `npm install`) wrote straight through the bind mount onto the host until the container was recreated.
-- Socket bridge daemons now share a single size-capped log (`socketbridge.log`, one rotated backup) instead of leaving a new `bridge-<id>.log` behind for every container run, and every line — including the in-container socket server's output — is tagged with its container ID. Leftover per-run files from earlier releases are harmless; reclaim the space with `rm ~/.local/state/clawker/logs/bridge-*.log`.
+- Socket bridge daemons now share a single size-capped log (`socketbridge.log`, one rotated backup) instead of leaving a new `bridge-<id>.log` behind for every container run, and every line — including the in-container socket server's output — is tagged with its container ID. Leftover `bridge-<id>.log` files from earlier releases are harmless and can be deleted from clawker's logs directory — `$CLAWKER_STATE_DIR/logs` if you set that override, otherwise `$XDG_STATE_HOME/clawker/logs`, which defaults to `~/.local/state/clawker/logs`.
 
 ### Added
 
