@@ -341,13 +341,10 @@ func createTar(srcPath string, opts *CpOptions) (io.Reader, error) {
 
 	go func() {
 		tw := tar.NewWriter(pw)
-		defer func() {
-			tw.Close()
-			pw.Close()
-		}()
 
+		var archiveErr error
 		if srcInfo.IsDir() {
-			err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
+			archiveErr = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
@@ -366,12 +363,22 @@ func createTar(srcPath string, opts *CpOptions) (io.Reader, error) {
 				return addToTar(tw, path, relPath, info, opts)
 			})
 		} else {
-			err = addToTar(tw, srcPath, filepath.Base(srcPath), srcInfo, opts)
+			archiveErr = addToTar(tw, srcPath, filepath.Base(srcPath), srcInfo, opts)
 		}
 
-		if err != nil {
-			pw.CloseWithError(err)
+		if archiveErr == nil {
+			// Close flushes the final entry and writes the tar trailer; a
+			// short write on the last entry only surfaces here.
+			archiveErr = tw.Close()
+		} else {
+			// The walk error is the actionable one; close best-effort
+			// without masking it.
+			_ = tw.Close()
 		}
+
+		// CloseWithError(nil) closes the pipe with a clean EOF; otherwise the
+		// reader gets the archive error instead of a silently truncated tar.
+		pw.CloseWithError(archiveErr)
 	}()
 
 	return pr, nil
