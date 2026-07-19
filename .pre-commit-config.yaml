@@ -74,7 +74,9 @@ repos:
         name: NOTICE freshness
         entry: make licenses-check
         language: system
-        files: ^go\.(mod|sum)$
+        # NOTICE derives from module deps AND in-repo LICENSE files
+        # (vendored code), so trigger on either changing.
+        files: ^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$
         pass_filenames: false
 
       - id: claude-freshness

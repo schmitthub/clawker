@@ -51,6 +51,8 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── controlplane/          # CP daemon orchestrator (cmd.go): constructs pub/sub topics + domain state repos, wires handlers, runs startup/drain
 │   ├── dnsbpf/                # CoreDNS plugin for BPF dns_cache
 │   ├── docker/                # Docker middleware (wraps pkg/whail + bundler)
+│   ├── dotenv/                # .env parser, compose semantics (vendored from compose-go, MIT/Apache — see LICENSE files; logrus replaced with MissingFn reporting)
+│   │   └── template/          # ${VAR:-default} interpolation engine (vendored compose-go/template)
 │   ├── docs/                  # CLI doc generation
 │   ├── git/                   # Git operations, worktree management (leaf)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
