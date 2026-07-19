@@ -1,14 +1,15 @@
 package shared
 
 import (
-	"bufio"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/dotenv"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -70,9 +71,17 @@ func applyEnvSpec(
 		if err != nil {
 			return nil, fmt.Errorf("%s.env_file %q: %w", scope, path, err)
 		}
-		fileEnv, err := parseEnvFile(resolved, log)
+		fileEnv, unsetVars, err := parseEnvFile(resolved, log)
 		if err != nil {
 			return nil, fmt.Errorf("%s.env_file %q: %w", scope, path, err)
+		}
+		for _, name := range unsetVars {
+			log.Debug().
+				Str("var", name).
+				Str("scope", scope).
+				Str("file", path).
+				Msg("env_file: referenced variable not set")
+			warnings = append(warnings, fmt.Sprintf("%s.env_file %q: variable %q is not set", scope, path, name))
 		}
 		maps.Copy(result, fileEnv)
 	}
@@ -97,35 +106,29 @@ func applyEnvSpec(
 // parseEnvFile reads an env file and returns key-value pairs.
 // Format: KEY=VALUE lines, # comments, blank lines skipped.
 // Bare KEY lines (no =) set the key to an empty string.
-func parseEnvFile(path string, log *logger.Logger) (map[string]string, error) {
+func parseEnvFile(path string, log *logger.Logger) (map[string]string, []string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("opening env file: %w", err)
 	}
 	defer f.Close()
 
-	result := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, hasEquals := strings.Cut(line, "=")
-		if key == "" {
-			continue
-		}
-		if hasEquals {
-			result[key] = value
-		} else {
-			result[key] = ""
-		}
+	// Host env is the lookup source: $VAR references unresolved within the
+	// file fall back to the host environment, and a bare `KEY` line inherits
+	// the host value (docker --env-file passthrough semantics; skipped when
+	// unset). References that resolve nowhere — after default/required
+	// operators apply — are collected so the caller can warn.
+	missed := make(map[string]struct{})
+	result, err := dotenv.ParseWithLookup(f, os.LookupEnv, func(name string) {
+		missed[name] = struct{}{}
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing env file: %w", err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
+
+	unsetVars := slices.Sorted(maps.Keys(missed))
 	log.Debug().Str("file", path).Int("count", len(result)).Msg("loaded env file")
-	return result, nil
+	return result, unsetVars, nil
 }
 
 // resolvePath expands a path using standard Unix conventions:
