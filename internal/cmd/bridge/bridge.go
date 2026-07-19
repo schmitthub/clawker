@@ -77,8 +77,9 @@ func NewCmdBridgeServe() *cobra.Command {
 				}
 			}
 
+			// containerID is not re-logged here: log already carries the short
+			// form under "container", and pidFile embeds the full ID.
 			log.Debug().
-				Str("container", containerID).
 				Bool("gpg", gpgEnabled).
 				Str("pid_file", pidFile).
 				Msg("starting socket bridge daemon")
@@ -124,7 +125,7 @@ func NewCmdBridgeServe() *cobra.Command {
 					return
 				}
 				if err := watchContainerEvents(ctx, cli, containerID, func() {
-					log.Debug().Str("container", containerID).Msg("container died, stopping bridge")
+					log.Debug().Msg("container died, stopping bridge")
 					bridge.Stop()
 					cancel()
 				}); err != nil && ctx.Err() == nil {
