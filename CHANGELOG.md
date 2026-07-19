@@ -10,6 +10,17 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.7.3]
+
+### Fixed
+
+- `.clawkerignore` patterns now follow real `.gitignore` matching semantics. Anchored patterns (`/build/`) mask only the workspace-root directory — previously they matched nothing — and unanchored patterns (`build/`) match at any depth, exactly like git. A malformed glob no longer aborts container start; like git, it just doesn't match.
+- In bind mode, a directory ignored via a `**/`-prefixed pattern (e.g. `**/node_modules/`) now gets its tmpfs overlay even when it doesn't exist on the host yet — previously a `node_modules` created inside the container (e.g. by `npm install`) wrote straight through the bind mount onto the host until the container was recreated.
+
+### Added
+
+- `.clawkerignore` supports negation patterns (`!pattern`) to re-include an earlier match. As in `.gitignore`, a path under an ignored directory cannot be re-included.
+
 ## [2026.7.2] - 2026-07-17
 
 ### **⚠ BREAKING — container user renamed**

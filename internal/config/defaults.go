@@ -23,7 +23,12 @@ const DefaultIgnoreFile = `# Clawker Ignore File
 # In snapshot mode, listed directories are simply excluded from the copy —
 # they don't exist in the container at all, allowing it to create its own.
 #
-# Syntax is similar to .gitignore. Negation patterns are not yet supported.
+# Syntax follows .gitignore:
+#   - A pattern without a leading "/" matches at any depth: "build/" masks
+#     ./build AND e.g. ./internal/build. Prefix with "/" to anchor it to the
+#     workspace root: "/build/" masks only ./build.
+#   - Negation ("!pattern") re-includes an earlier match, but a path under an
+#     ignored directory cannot be re-included.
 # File-level patterns (*.env, *.pem) cannot be enforced in bind mode —
 # only directory-level masking works.
 #
@@ -46,7 +51,7 @@ const DefaultIgnoreFile = `# Clawker Ignore File
 # vendor/bundle/
 
 # ── Rust ──
-# target/
+# /target/
 
 # ── Java / Kotlin ──
 # .gradle/
@@ -59,8 +64,9 @@ const DefaultIgnoreFile = `# Clawker Ignore File
 # ── PHP ──
 # vendor/
 
-# ── Build outputs ──
-# dist/
-# build/
-# out/
+# ── Build outputs (anchored — unanchored "build/" would also mask source
+# directories like internal/build) ──
+# /dist/
+# /build/
+# /out/
 `
