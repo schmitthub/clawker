@@ -58,6 +58,7 @@ github.com/prometheus/client_model/go                                          A
 github.com/prometheus/common                                                   Apache-2.0
 github.com/prometheus/exporter-toolkit/web                                     Apache-2.0
 github.com/prometheus/procfs                                                   Apache-2.0
+github.com/schmitthub/clawker/internal/dotenv/template                         Apache-2.0
 github.com/sethvargo/go-retry                                                  Apache-2.0
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
@@ -199,6 +200,7 @@ github.com/quic-go/qpack                                                       M
 github.com/quic-go/quic-go                                                     MIT
 github.com/rivo/uniseg                                                         MIT
 github.com/rs/zerolog                                                          MIT
+github.com/schmitthub/clawker/internal/dotenv                                  MIT
 github.com/secure-systems-lab/go-securesystemslib                              MIT
 github.com/sergi/go-diff/diffmatchpatch                                        MIT
 github.com/sirupsen/logrus                                                     MIT
