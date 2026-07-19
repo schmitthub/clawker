@@ -164,7 +164,10 @@ func (p *parser) scanKeyEnd(src string) (string, int, bool, error) {
 				p.line, string(r), strings.Split(src, "\n")[0])
 		}
 	}
-	return "", 0, false, nil
+	// EOF without a terminator: the whole remainder is a bare inherited key
+	// (file ends without a trailing newline). Clawker fix — upstream drops the
+	// key and emits an empty-key entry here.
+	return src, len(src), true, nil
 }
 
 // isValidKeyRune reports whether the rune may appear in a variable name

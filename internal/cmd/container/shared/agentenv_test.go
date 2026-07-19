@@ -353,6 +353,19 @@ func TestResolveAgentEnv_EnvFileBareKeyPassthrough(t *testing.T) {
 	}, got)
 }
 
+func TestResolveAgentEnv_EnvFileBareKeyAtEOFNoNewline(t *testing.T) {
+	t.Setenv("CLAWKER_TEST_ENVFILE_BARE_EOF", "inherited")
+
+	// No trailing newline: bare inherited key terminated by EOF must still
+	// inherit, not degrade into an empty-key entry.
+	got := resolveEnvFile(t, "OTHER=x\nCLAWKER_TEST_ENVFILE_BARE_EOF")
+
+	assert.Equal(t, map[string]string{
+		"CLAWKER_TEST_ENVFILE_BARE_EOF": "inherited",
+		"OTHER":                         "x",
+	}, got)
+}
+
 // TestResolveAgentEnv_NoImplicitEnvFileLoad pins that a .env file in the
 // project dir is loaded ONLY when env_file names it. compose-go's higher-level
 // APIs auto-load .env from the working directory — clawker must never do that
