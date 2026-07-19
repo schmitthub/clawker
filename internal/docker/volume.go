@@ -293,12 +293,29 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 // createTarArchive creates a tar archive of a directory.
 func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid, gid int) error {
 	tw := tar.NewWriter(buf)
-	defer tw.Close()
 
 	srcDir = filepath.Clean(srcDir)
 	ignore := compileIgnorePatterns(ignorePatterns)
 
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(srcDir, tarEntryWalker(tw, srcDir, ignore, uid, gid)); err != nil {
+		// The walk error is the actionable one; close best-effort without
+		// masking it — the caller discards the buffer on error.
+		_ = tw.Close()
+		return fmt.Errorf("walk %s: %w", srcDir, err)
+	}
+
+	// Close flushes the final entry and writes the tar trailer; a short write
+	// on the last entry only surfaces here.
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("close tar writer: %w", err)
+	}
+	return nil
+}
+
+// tarEntryWalker returns the [filepath.WalkFunc] that writes each visited entry
+// into the archive, skipping entries matched by the ignore patterns.
+func tarEntryWalker(tw *tar.Writer, srcDir string, ignore gitignore.Matcher, uid, gid int) filepath.WalkFunc {
+	return func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -323,11 +340,9 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string, uid
 		}
 
 		return writeTarEntry(tw, path, relPath, info, uid, gid)
-	})
+	}
 }
 
-// writeTarEntry writes one filesystem entry (dir, file, or symlink) into the
-// archive under its workspace-relative name, owned by the container user.
 // writeTarEntry writes one filesystem entry (dir, file, or symlink) into the
 // archive under its workspace-relative name, owned by the container user.
 func writeTarEntry(tw *tar.Writer, path, relPath string, info os.FileInfo, uid, gid int) error {
