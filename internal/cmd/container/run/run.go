@@ -288,14 +288,24 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}); err != nil {
 		// Reap-on-failed-start: this invocation just created the container —
 		// free its name so the same command can simply be re-run.
-		return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("pre-start bootstrapping failed: %w", err))
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+		return shared.ReapFailedStart(
+			client,
+			o.result.ContainerID,
+			fmt.Errorf("pre-start bootstrapping failed: %w", err),
+		)
 	}
 
 	if opts.Detach {
 		// Pre-start already ran; just docker start + post-start (eBPF attach +
 		// socket bridge). No spinner — detach output is the container ID.
-		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
-			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", err))
+		//nolint:exhaustruct // start options: unset fields are intentional defaults; the moby embed is unnameable outside whail
+		if _, startErr := client.ContainerStart(
+			ctx,
+			docker.ContainerStartOptions{ContainerID: o.result.ContainerID},
+		); startErr != nil {
+			//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", startErr))
 		}
 		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, cmdOpts); err != nil {
 			return fmt.Errorf("starting container: %w", err)
@@ -316,7 +326,16 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 // cmdOpts carries the already-resolved CommandOpts so docker start + post-start
 // can fire without re-deriving providers. Pre-start has already run in cooked
 // mode at the call site (runRun) — DO NOT re-invoke it here.
-func attachThenStart(ctx context.Context, client *docker.Client, containerID string, cmdOpts shared.CommandOpts, opts *RunOptions, log *logger.Logger) error {
+//
+//nolint:gocognit,cyclop,funlen // delicate attach→stream→start→wait sequence; the ordering invariants read better linear than split
+func attachThenStart(
+	ctx context.Context,
+	client *docker.Client,
+	containerID string,
+	cmdOpts shared.CommandOpts,
+	opts *RunOptions,
+	log *logger.Logger,
+) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerCreateOptions
 
@@ -473,7 +492,13 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 //     BEFORE the container starts without returning immediately for "created" containers.
 //   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
 //     when the container is removed after exit.
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool, log *logger.Logger) <-chan int {
+func waitForContainerExit(
+	ctx context.Context,
+	client *docker.Client,
+	containerID string,
+	autoRemove bool,
+	log *logger.Logger,
+) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {
 		condition = container.WaitConditionRemoved
