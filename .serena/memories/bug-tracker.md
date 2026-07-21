@@ -1,6 +1,6 @@
 # Bug / Feature Tracker
 
-- [ ] clawkerignore needs to use globs. build/ for example will overlay internal/build and break the repo
+- [ ] Preset templates FW rules are very permissive 
 - [ ] Clawker firewall up / clawker controlplane up fails if CP image isn't built yet. needs to handle building and starting the cp image along with better helper instructions. Seems to have resolved on a second attempt but should be looked into.  
 ```
 clawker firewall up
