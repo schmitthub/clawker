@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
+	"github.com/schmitthub/clawker/internal/cmd/worktree/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/spf13/cobra"
 )
 
 // RemoveOptions contains the options for the remove command.
@@ -56,10 +58,13 @@ The branch itself is preserved unless --delete-branch is specified.`,
 		},
 	}
 
+	cmd.ValidArgsFunction = shared.BranchCompletions(opts.ProjectManager)
+
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Reserved for future use")
 	// Hidden: reserved for future use, not yet honored — keep off help text so it isn't advertised as a working escape hatch.
 	_ = cmd.Flags().MarkHidden("force")
-	cmd.Flags().BoolVar(&opts.DeleteBranch, "delete-branch", false, "Also delete the branch after removing the worktree")
+	cmd.Flags().
+		BoolVar(&opts.DeleteBranch, "delete-branch", false, "Also delete the branch after removing the worktree")
 
 	return cmd
 }

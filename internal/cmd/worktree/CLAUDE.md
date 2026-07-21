@@ -16,9 +16,12 @@ internal/cmd/worktree/
 ├── prune/
 │   ├── prune.go          # Remove stale registry entries
 │   └── prune_test.go
-└── remove/
-    ├── remove.go         # Remove worktrees by branch name
-    └── remove_test.go
+├── remove/
+│   ├── remove.go         # Remove worktrees by branch name
+│   └── remove_test.go
+└── shared/
+    ├── completion.go     # BranchCompletions — shell completion for worktree branch args
+    └── completion_test.go
 ```
 
 ## Parent Command (`worktree.go`)
@@ -148,6 +151,16 @@ type RemoveOptions struct {
 **Internal helpers:**
 
 - `removeSingleWorktree(ctx, opts, proj, branch)` — per-branch orchestration; handles `ErrBranchNotMerged` with user-friendly warning
+
+**Completion:** `ValidArgsFunction` wired to `shared.BranchCompletions` — tab-completes existing worktree branch names.
+
+### Shared (`shared/completion.go`)
+
+```go
+func BranchCompletions(pmFn func() (project.ProjectManager, error)) cobra.CompletionFunc
+```
+
+Cobra completion function suggesting the current project's worktree branch names (`CurrentProject` → `ListWorktrees`). Skips detached worktrees, excludes branches already present in the command's positional args (multi-arg support), sorted, `ShellCompDirectiveNoFileComp`. All failures degrade to no suggestions. Consumers: `worktree remove` (`ValidArgsFunction`) and the `--worktree` flag on `container run`/`create` (`RegisterFlagCompletionFunc`).
 
 ## Command Patterns
 

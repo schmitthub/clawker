@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
+	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -138,6 +139,8 @@ image built with "clawker build -t <harness>".`,
 	// Add shared container flags
 	shared.AddFlags(cmd.Flags(), containerOpts)
 	shared.MarkMutuallyExclusive(cmd)
+	worktreeComp := wtshared.BranchCompletions(opts.ProjectManager)
+	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errors only on unknown flag
 
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
