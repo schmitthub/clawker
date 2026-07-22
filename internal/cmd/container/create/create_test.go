@@ -11,6 +11,9 @@ import (
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/spf13/cobra"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
@@ -24,10 +27,10 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/stretchr/testify/require"
 )
 
 // wantOpts holds expected values for test comparisons against captured CreateOptions.
@@ -163,7 +166,15 @@ func TestNewCmdCreate(t *testing.T) {
 			name:  "with mode and other flags",
 			input: "-it --agent sandbox --mode=snapshot --rm",
 			args:  []string{"alpine", "sh"},
-			want:  wantOpts{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+			want: wantOpts{ //nolint:exhaustruct // sparse fixture — only asserted fields set
+				TTY:        true,
+				Stdin:      true,
+				Agent:      "sandbox",
+				Mode:       "snapshot",
+				AutoRemove: true,
+				Image:      "alpine",
+				Command:    []string{"sh"},
+			},
 		},
 		{
 			name:  "flags after image passed as command",
@@ -175,19 +186,39 @@ func TestNewCmdCreate(t *testing.T) {
 			name:  "mixed clawker and container flags",
 			input: "-it --rm -e FOO=bar",
 			args:  []string{"alpine", "-p", "prompt"},
-			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Env: []string{"FOO=bar"}, Image: "alpine", Command: []string{"-p", "prompt"}},
+			want: wantOpts{ //nolint:exhaustruct // sparse fixture — only asserted fields set
+				TTY:        true,
+				Stdin:      true,
+				AutoRemove: true,
+				Env:        []string{"FOO=bar"},
+				Image:      "alpine",
+				Command:    []string{"-p", "prompt"},
+			},
 		},
 		{
 			name:  "claude flags passthrough",
 			input: "-it --rm",
 			args:  []string{"clawker-image:latest", "--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Image: "clawker-image:latest", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+			want: wantOpts{ //nolint:exhaustruct // sparse fixture — only asserted fields set
+				TTY:        true,
+				Stdin:      true,
+				AutoRemove: true,
+				Image:      "clawker-image:latest",
+				Command:    []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
+			},
 		},
 		{
 			name:  "flags only as command with -- separator",
 			input: "-it --rm --agent dev --",
 			args:  []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Agent: "dev", Image: "--allow-dangerously-skip-permissions", Command: []string{"-p", "Fix bugs"}},
+			want: wantOpts{ //nolint:exhaustruct // sparse fixture — only asserted fields set
+				TTY:        true,
+				Stdin:      true,
+				AutoRemove: true,
+				Agent:      "dev",
+				Image:      "--allow-dangerously-skip-permissions",
+				Command:    []string{"-p", "Fix bugs"},
+			},
 		},
 		{
 			name:  "arg starting with dash treated as image after -- separator",
@@ -199,7 +230,13 @@ func TestNewCmdCreate(t *testing.T) {
 			name:  "multiple flag-value pairs after image",
 			input: "-it --rm",
 			args:  []string{"alpine", "--flag1", "value1", "--flag2", "value2"},
-			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--flag1", "value1", "--flag2", "value2"}},
+			want: wantOpts{ //nolint:exhaustruct // sparse fixture — only asserted fields set
+				TTY:        true,
+				Stdin:      true,
+				AutoRemove: true,
+				Image:      "alpine",
+				Command:    []string{"--flag1", "value1", "--flag2", "value2"},
+			},
 		},
 	}
 
@@ -564,4 +601,28 @@ agent: { claude_code: { mount_projects: false, config: { strategy: "fresh" } } }
 		fake.AssertCalled(t, "ContainerCreate")
 		fake.AssertCalledN(t, "CopyToContainer", 1)
 	})
+}
+
+func TestNewCmdCreate_WiresWorktreeFlagCompletion(t *testing.T) {
+	proj := projectmocks.NewMockProject("demo", "/repo")
+	proj.ListWorktreesFunc = func(ctx context.Context) ([]project.WorktreeState, error) {
+		return []project.WorktreeState{{Branch: "feat-a"}}, nil //nolint:exhaustruct // sparse fixture
+	}
+	mgr := projectmocks.NewMockProjectManager()
+	mgr.CurrentProjectFunc = func(ctx context.Context) (project.Project, error) {
+		return proj, nil
+	}
+	//nolint:exhaustruct // test factory carries only the nouns completion uses
+	f := &cmdutil.Factory{
+		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
+	}
+
+	cmd := NewCmdCreate(f, func(_ context.Context, _ *CreateOptions) error { return nil })
+	compFn, ok := cmd.GetFlagCompletionFunc("worktree")
+	require.True(t, ok, "worktree flag completion must be registered")
+	cmd.SetContext(context.Background())
+
+	completions, directive := compFn(cmd, nil, "")
+	require.Equal(t, []cobra.Completion{"feat-a"}, completions)
+	require.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

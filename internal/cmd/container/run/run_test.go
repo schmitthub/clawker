@@ -12,6 +12,8 @@ import (
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/spf13/cobra"
+
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -29,12 +31,14 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 func TestNewCmdRun(t *testing.T) {
@@ -695,7 +699,12 @@ func TestImageArg(t *testing.T) {
 				_, err := cmd.ExecuteC()
 				require.NoError(t, err)
 				require.NotNil(t, gotOpts)
-				require.Equal(t, tt.wantImage, gotOpts.ContainerCreateOptions.Image, "explicit image should pass through unchanged")
+				require.Equal(
+					t,
+					tt.wantImage,
+					gotOpts.ContainerCreateOptions.Image,
+					"explicit image should pass through unchanged",
+				)
 			})
 		}
 	})
@@ -951,4 +960,28 @@ agent:
 
 		fake.AssertNotCalled(t, "ContainerCreate")
 	})
+}
+
+func TestNewCmdRun_WiresWorktreeFlagCompletion(t *testing.T) {
+	proj := projectmocks.NewMockProject("demo", "/repo")
+	proj.ListWorktreesFunc = func(ctx context.Context) ([]project.WorktreeState, error) {
+		return []project.WorktreeState{{Branch: "feat-a"}}, nil //nolint:exhaustruct // sparse fixture
+	}
+	mgr := projectmocks.NewMockProjectManager()
+	mgr.CurrentProjectFunc = func(ctx context.Context) (project.Project, error) {
+		return proj, nil
+	}
+	//nolint:exhaustruct // test factory carries only the nouns completion uses
+	f := &cmdutil.Factory{
+		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
+	}
+
+	cmd := NewCmdRun(f, func(_ context.Context, _ *RunOptions) error { return nil })
+	compFn, ok := cmd.GetFlagCompletionFunc("worktree")
+	require.True(t, ok, "worktree flag completion must be registered")
+	cmd.SetContext(context.Background())
+
+	completions, directive := compFn(cmd, nil, "")
+	require.Equal(t, []cobra.Completion{"feat-a"}, completions)
+	require.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

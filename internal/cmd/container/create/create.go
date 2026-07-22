@@ -7,6 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
+	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -103,6 +104,8 @@ image built with "clawker build -t <harness>".`,
 	// Add shared container flags
 	shared.AddFlags(cmd.Flags(), containerOpts)
 	shared.MarkMutuallyExclusive(cmd)
+	worktreeComp := wtshared.BranchCompletions(opts.ProjectManager)
+	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errs only on bad wiring
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
