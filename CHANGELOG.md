@@ -12,7 +12,6 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [PENDING]
 
-
 - **Added:** Shell tab-completion suggests existing worktree branch names — when completing `clawker worktree remove` arguments and the `--worktree` flag value on `run`/`container create`.
 
 ## [2026.7.3] - 2026-07-19
