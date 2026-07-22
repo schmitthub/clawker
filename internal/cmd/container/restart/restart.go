@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
@@ -16,7 +18,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/spf13/cobra"
 )
 
 // RestartOptions defines the options for the restart command.
@@ -86,7 +87,8 @@ Container names can be:
 		},
 	}
 
-	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().
+		BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().IntVarP(&opts.Timeout, "time", "t", 10, "Seconds to wait before killing the container")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "", "Signal to send (default: SIGTERM)")
 
@@ -140,7 +142,13 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	return nil
 }
 
-func restartContainer(ctx context.Context, client *docker.Client, name string, cfg config.Config, opts *RestartOptions) error {
+func restartContainer(
+	ctx context.Context,
+	client *docker.Client,
+	name string,
+	cfg config.Config,
+	opts *RestartOptions,
+) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -150,61 +158,51 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 		return fmt.Errorf("container %q not found", name)
 	}
 
+	// Restart carries no agent identity — AgentName/Project stay empty.
+	cmdOpts := shared.CommandOpts{
+		Client:       opts.Client,
+		Config:       opts.Config,
+		HostProxy:    opts.HostProxy,
+		ControlPlane: opts.ControlPlane,
+		AdminClient:  opts.AdminClient,
+		SocketBridge: opts.SocketBridge,
+		Logger:       opts.Logger,
+		AgentName:    "",
+		Project:      "",
+	}
+
 	// If signal specified, kill with that signal first, then start
 	if opts.Signal != "" {
 		if _, err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
-			return err
+			return fmt.Errorf("killing container %q: %w", name, err)
 		}
-		_, err = shared.ContainerStart(ctx,
-			shared.CommandOpts{
-				Client:       opts.Client,
-				Config:       opts.Config,
-				HostProxy:    opts.HostProxy,
-				ControlPlane: opts.ControlPlane,
-				AdminClient:  opts.AdminClient,
-				SocketBridge: opts.SocketBridge,
-				Logger:       opts.Logger,
+		//nolint:exhaustruct // start options: unset fields are intentional defaults; the moby embed is unnameable outside whail
+		_, err = shared.ContainerStart(ctx, cmdOpts, docker.ContainerStartOptions{
+			ContainerID: c.ID,
+			EnsureNetwork: &docker.EnsureNetworkOptions{
+				Name: cfg.ClawkerNetwork(),
 			},
-			docker.ContainerStartOptions{
-				ContainerID: c.ID,
-				EnsureNetwork: &docker.EnsureNetworkOptions{
-					Name: cfg.ClawkerNetwork(),
-				},
-			})
-		return err
+		})
+		if err != nil {
+			return fmt.Errorf("starting container %q: %w", name, err)
+		}
+		return nil
 	}
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	errBootstrapPre := shared.BootstrapServicesPreStart(
-		ctx, c.ID, shared.CommandOpts{
-			Client:       opts.Client,
-			Config:       opts.Config,
-			HostProxy:    opts.HostProxy,
-			ControlPlane: opts.ControlPlane,
-			AdminClient:  opts.AdminClient,
-			SocketBridge: opts.SocketBridge,
-			Logger:       opts.Logger,
-		})
-	if errBootstrapPre != nil {
+	if errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
 		// Reap a never-started --rm container so its name is freed.
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))
 	}
 	if _, err := client.ContainerRestart(ctx, c.ID, &timeout); err != nil {
 		// Surface the restart failure itself — don't run post-start against a
 		// container that never restarted — and reap if it is a stopped --rm.
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("restarting container: %w", err))
 	}
-	errBootstrapPost := shared.BootstrapServicesPostStart(
-		ctx, c.ID, shared.CommandOpts{
-			Client:       opts.Client,
-			Config:       opts.Config,
-			HostProxy:    opts.HostProxy,
-			ControlPlane: opts.ControlPlane,
-			AdminClient:  opts.AdminClient,
-			SocketBridge: opts.SocketBridge,
-			Logger:       opts.Logger,
-		})
+	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, cmdOpts)
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
 	}

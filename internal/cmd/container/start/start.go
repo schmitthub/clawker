@@ -2,12 +2,15 @@ package start
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/spf13/cobra"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
@@ -20,7 +23,6 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/spf13/cobra"
 )
 
 // StartOptions holds options for the start command.
@@ -134,7 +136,9 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 
 	if opts.Attach || opts.Interactive {
 		if len(containers) > 1 {
-			return fmt.Errorf("you cannot attach to multiple containers at once. If you want to start multiple containers, do so without --attach or --interactive")
+			return errors.New(
+				"you cannot attach to multiple containers at once. If you want to start multiple containers, do so without --attach or --interactive",
+			)
 		}
 
 		containerName := containers[0]
@@ -162,7 +166,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, ios, log, client, containers, cfg, opts)
+	return startContainersWithoutAttach(ctx, ios, containers, cfg, opts)
 }
 
 // attachAndStart attaches to a container, starts I/O, then starts the container.
@@ -172,7 +176,18 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 //
 // I/O streaming starts pre-start; resize starts post-start. This ensures we're
 // ready to receive output immediately and avoids kernel pipe buffer issues.
-func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containerName string, cfg config.Config, cmdOpts shared.CommandOpts, opts *StartOptions) error {
+//
+//nolint:gocognit,cyclop,funlen // delicate attach→stream→start→wait sequence; the ordering invariants read better linear than split
+func attachAndStart(
+	ctx context.Context,
+	ios *iostreams.IOStreams,
+	log *logger.Logger,
+	client *docker.Client,
+	containerName string,
+	cfg config.Config,
+	cmdOpts shared.CommandOpts,
+	opts *StartOptions,
+) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -355,7 +370,12 @@ type waitResult struct {
 // waitForContainerExit wraps ContainerWait into a single result channel.
 // Always uses WaitConditionNextExit (start hasn't happened yet, and start
 // command never has autoRemove).
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, log *logger.Logger) <-chan waitResult {
+func waitForContainerExit(
+	ctx context.Context,
+	client *docker.Client,
+	containerID string,
+	log *logger.Logger,
+) <-chan waitResult {
 	ch := make(chan waitResult, 1)
 	go func() {
 		defer close(ch)
@@ -379,7 +399,13 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, log *logger.Logger, client *docker.Client, containers []string, cfg config.Config, opts *StartOptions) error {
+func startContainersWithoutAttach(
+	ctx context.Context,
+	ios *iostreams.IOStreams,
+	containers []string,
+	cfg config.Config,
+	opts *StartOptions,
+) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := shared.ContainerStart(ctx,
