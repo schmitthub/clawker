@@ -69,50 +69,66 @@ func TestBranchCompletions_ExcludesAlreadyTypedArgs(t *testing.T) {
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }
 
-func TestBranchCompletions_SkipsDetachedWorktrees(t *testing.T) {
-	detached := healthyWorktree("")
+func TestBranchCompletions_IncludesUnhealthyWorktrees(t *testing.T) {
+	detached := healthyWorktree("feat-detached")
 	detached.IsDetached = true
+	broken := healthyWorktree("feat-broken")
+	broken.Status = project.WorktreeBroken
+	prunable := healthyWorktree("feat-prunable")
+	prunable.Status = project.WorktreeRegistryOnly
 
 	fn := shared.BranchCompletions(managerWithWorktrees([]project.WorktreeState{
 		healthyWorktree("feat-a"),
 		detached,
+		broken,
+		prunable,
 	}))
 
 	completions, _ := fn(newTestCmd(), nil, "")
-	assert.Equal(t, []cobra.Completion{"feat-a"}, completions)
+	assert.Equal(t, []cobra.Completion{"feat-a", "feat-broken", "feat-detached", "feat-prunable"}, completions)
 }
 
-func TestBranchCompletions_ManagerError(t *testing.T) {
-	fn := shared.BranchCompletions(func() (project.ProjectManager, error) {
-		return nil, errors.New("boom")
-	})
-
-	completions, directive := fn(newTestCmd(), nil, "")
-	assert.Nil(t, completions)
-	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
-}
-
-func TestBranchCompletions_CurrentProjectError(t *testing.T) {
-	mgr := projectmocks.NewMockProjectManager() // CurrentProject returns ErrProjectNotFound
-	fn := shared.BranchCompletions(func() (project.ProjectManager, error) { return mgr, nil })
-
-	completions, directive := fn(newTestCmd(), nil, "")
-	assert.Nil(t, completions)
-	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
-}
-
-func TestBranchCompletions_ListWorktreesError(t *testing.T) {
-	proj := projectmocks.NewMockProject("demo", "/repo")
-	proj.ListWorktreesFunc = func(ctx context.Context) ([]project.WorktreeState, error) {
-		return nil, errors.New("boom")
+func TestBranchCompletions_DegradesToNoSuggestions(t *testing.T) {
+	tests := []struct {
+		name string
+		pmFn func() (project.ProjectManager, error)
+	}{
+		{
+			name: "manager error",
+			pmFn: func() (project.ProjectManager, error) { return nil, errors.New("boom") },
+		},
+		{
+			name: "current project error",
+			pmFn: func() (project.ProjectManager, error) {
+				return projectmocks.NewMockProjectManager(), nil // CurrentProject returns ErrProjectNotFound
+			},
+		},
+		{
+			name: "list worktrees error",
+			pmFn: func() (project.ProjectManager, error) {
+				proj := projectmocks.NewMockProject("demo", "/repo")
+				proj.ListWorktreesFunc = func(ctx context.Context) ([]project.WorktreeState, error) {
+					return nil, errors.New("boom")
+				}
+				mgr := projectmocks.NewMockProjectManager()
+				mgr.CurrentProjectFunc = func(ctx context.Context) (project.Project, error) {
+					return proj, nil
+				}
+				return mgr, nil
+			},
+		},
+		{
+			name: "nil manager func",
+			pmFn: nil,
+		},
 	}
-	mgr := projectmocks.NewMockProjectManager()
-	mgr.CurrentProjectFunc = func(ctx context.Context) (project.Project, error) {
-		return proj, nil
-	}
-	fn := shared.BranchCompletions(func() (project.ProjectManager, error) { return mgr, nil })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fn := shared.BranchCompletions(tt.pmFn)
 
-	completions, directive := fn(newTestCmd(), nil, "")
-	assert.Nil(t, completions)
-	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
+			completions, directive := fn(newTestCmd(), nil, "")
+			assert.Nil(t, completions)
+			assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
+		})
+	}
 }

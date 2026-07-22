@@ -105,7 +105,7 @@ image built with "clawker build -t <harness>".`,
 	shared.AddFlags(cmd.Flags(), containerOpts)
 	shared.MarkMutuallyExclusive(cmd)
 	worktreeComp := wtshared.BranchCompletions(opts.ProjectManager)
-	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errors only on unknown flag
+	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errs only on bad wiring
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.

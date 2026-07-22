@@ -106,6 +106,8 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
+		// Project resolution errors are benign here: outside a registered
+		// project, agent names resolve in global scope (2-segment names).
 		var projectName string
 		if pm, err := opts.ProjectManager(); err == nil {
 			if p, err := pm.CurrentProject(ctx); err == nil {
@@ -193,13 +195,13 @@ func restartContainer(
 	timeout := opts.Timeout
 	if errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
 		// Reap a never-started --rm container so its name is freed.
-		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))
 	}
 	if _, err := client.ContainerRestart(ctx, c.ID, &timeout); err != nil {
 		// Surface the restart failure itself — don't run post-start against a
 		// container that never restarted — and reap if it is a stopped --rm.
-		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("restarting container: %w", err))
 	}
 	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, cmdOpts)

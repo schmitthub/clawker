@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/spf13/cobra"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/spf13/cobra"
 )
 
 // RemoveOptions holds the options for the firewall remove command.
@@ -54,8 +55,10 @@ immediately via hot-reload — no container restart required.`,
 	cmd.ValidArgsFunction = domainCompletions(opts.AdminClient)
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol (legacy 'tls' value translated to 'https')")
-	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100)")
-	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
+	cmd.Flags().
+		StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100)")
+	cmd.Flags().
+		StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
 
 	return cmd
 }
@@ -64,38 +67,48 @@ immediately via hot-reload — no container restart required.`,
 // domains for shell tab-completion. Reads current rules via FirewallListRules.
 // Domains are deduplicated and sorted alphabetically. Silently returns empty
 // on errors (Cobra convention).
-func domainCompletions(adminFn func(context.Context) (adminv1.AdminServiceClient, error)) func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+func domainCompletions(
+	adminFn func(context.Context) (adminv1.AdminServiceClient, error),
+) func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		if len(args) > 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-
-		client, err := adminFn(cmd.Context())
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		resp, err := client.FirewallListRules(cmd.Context(), &adminv1.FirewallListRulesRequest{})
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-
-		seen := make(map[string]bool, len(resp.GetRules()))
-		var domains []string
-		for _, r := range resp.GetRules() {
-			if !seen[r.GetDst()] {
-				seen[r.GetDst()] = true
-				domains = append(domains, r.GetDst())
-			}
-		}
-		sort.Strings(domains)
-
-		completions := make([]cobra.Completion, len(domains))
-		for i, d := range domains {
-			completions[i] = cobra.Completion(d)
-		}
-		return completions, cobra.ShellCompDirectiveNoFileComp
+		return domainSuggestions(cmd.Context(), adminFn), cobra.ShellCompDirectiveNoFileComp
 	}
+}
+
+// domainSuggestions collects deduplicated, sorted firewall rule domains. All
+// failures degrade to no suggestions — completion must never surface errors.
+func domainSuggestions(
+	ctx context.Context,
+	adminFn func(context.Context) (adminv1.AdminServiceClient, error),
+) []cobra.Completion {
+	client, err := adminFn(ctx)
+	if err != nil {
+		cobra.CompDebugln("clawker firewall completion: admin client: "+err.Error(), false)
+		return nil
+	}
+
+	resp, err := client.FirewallListRules(ctx, &adminv1.FirewallListRulesRequest{})
+	if err != nil {
+		cobra.CompDebugln("clawker firewall completion: list rules: "+err.Error(), false)
+		return nil
+	}
+
+	seen := make(map[string]bool, len(resp.GetRules()))
+	var domains []string
+	for _, r := range resp.GetRules() {
+		if !seen[r.GetDst()] {
+			seen[r.GetDst()] = true
+			domains = append(domains, r.GetDst())
+		}
+	}
+	sort.Strings(domains)
+
+	completions := make([]cobra.Completion, len(domains))
+	copy(completions, domains)
+	return completions
 }
 
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
@@ -137,9 +150,20 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
 	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND:
 		if opts.Path != "" {
-			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%s path %q — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port, opts.Path)
+			return fmt.Errorf(
+				"removing firewall rule: rule not found: %s:%s:%s path %q — run `clawker firewall list` to see current rules",
+				opts.Domain,
+				opts.Proto,
+				opts.Port,
+				opts.Path,
+			)
 		}
-		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%s — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port)
+		return fmt.Errorf(
+			"removing firewall rule: rule not found: %s:%s:%s — run `clawker firewall list` to see current rules",
+			opts.Domain,
+			opts.Proto,
+			opts.Port,
+		)
 	default:
 		return fmt.Errorf("removing firewall rule: server returned unknown status %v", resp.GetStatus())
 	}

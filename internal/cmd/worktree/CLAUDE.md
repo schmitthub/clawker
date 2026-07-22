@@ -160,7 +160,7 @@ type RemoveOptions struct {
 func BranchCompletions(pmFn func() (project.ProjectManager, error)) cobra.CompletionFunc
 ```
 
-Cobra completion function suggesting the current project's worktree branch names (`CurrentProject` → `ListWorktrees`). Skips detached worktrees, excludes branches already present in the command's positional args (multi-arg support), sorted, `ShellCompDirectiveNoFileComp`. All failures degrade to no suggestions. Consumers: `worktree remove` (`ValidArgsFunction`) and the `--worktree` flag on `container run`/`create` (`RegisterFlagCompletionFunc`).
+Cobra completion function suggesting the current project's worktree branch names (`CurrentProject` → `ListWorktrees`). Suggests every registry entry regardless of health (detached/broken/prunable are all valid removal targets), excludes branches already present in the command's positional args (multi-arg support), sorted, `ShellCompDirectiveNoFileComp`. All failures degrade to no suggestions (breadcrumbs via `cobra.CompDebugln`). Wire via `ValidArgsFunction` for positional branch args and `RegisterFlagCompletionFunc` for `--worktree` flags.
 
 ## Command Patterns
 

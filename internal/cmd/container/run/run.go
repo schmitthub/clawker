@@ -140,7 +140,7 @@ image built with "clawker build -t <harness>".`,
 	shared.AddFlags(cmd.Flags(), containerOpts)
 	shared.MarkMutuallyExclusive(cmd)
 	worktreeComp := wtshared.BranchCompletions(opts.ProjectManager)
-	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errors only on unknown flag
+	cmd.RegisterFlagCompletionFunc("worktree", worktreeComp) //nolint:errcheck,gosec // errs only on bad wiring
 
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
@@ -288,7 +288,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}); err != nil {
 		// Reap-on-failed-start: this invocation just created the container —
 		// free its name so the same command can simply be re-run.
-		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(
 			client,
 			o.result.ContainerID,
@@ -304,7 +304,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			ctx,
 			docker.ContainerStartOptions{ContainerID: o.result.ContainerID},
 		); startErr != nil {
-			//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-contextualized start error
+			//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", startErr))
 		}
 		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, cmdOpts); err != nil {

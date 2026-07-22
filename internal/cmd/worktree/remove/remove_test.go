@@ -5,12 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func newTestIOStreams() *iostreams.IOStreams {
@@ -62,4 +65,28 @@ func TestNewCmdRemove_RunFReceivesArgsAndFlags(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 	assert.True(t, called)
+}
+
+func TestNewCmdRemove_WiresBranchCompletion(t *testing.T) {
+	proj := projectmocks.NewMockProject("demo", "/repo")
+	proj.ListWorktreesFunc = func(ctx context.Context) ([]project.WorktreeState, error) {
+		return []project.WorktreeState{{Branch: "feat-a"}}, nil //nolint:exhaustruct // sparse fixture
+	}
+	mgr := projectmocks.NewMockProjectManager()
+	mgr.CurrentProjectFunc = func(ctx context.Context) (project.Project, error) {
+		return proj, nil
+	}
+	//nolint:exhaustruct // test factory carries only the nouns completion uses
+	f := &cmdutil.Factory{
+		IOStreams:      newTestIOStreams(),
+		ProjectManager: func() (project.ProjectManager, error) { return mgr, nil },
+	}
+
+	cmd := NewCmdRemove(f, nil)
+	require.NotNil(t, cmd.ValidArgsFunction)
+	cmd.SetContext(context.Background())
+
+	completions, directive := cmd.ValidArgsFunction(cmd, nil, "")
+	assert.Equal(t, []cobra.Completion{"feat-a"}, completions)
+	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

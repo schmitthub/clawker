@@ -14,9 +14,11 @@ import (
 // BranchCompletions returns a cobra completion function that suggests the
 // current project's worktree branch names for shell tab-completion. Branches
 // already present in the command's positional args are excluded so multi-arg
-// commands (e.g. worktree remove) don't re-suggest what was typed. Detached
-// worktrees carry no branch name and are skipped. All failures degrade to no
-// suggestions — completion must never surface errors.
+// commands (e.g. worktree remove) don't re-suggest what was typed. Every
+// registry entry is suggested regardless of health — detached, broken, and
+// prunable worktrees are all valid removal targets; the empty-branch guard is
+// purely defensive. All failures degrade to no suggestions — completion must
+// never surface errors.
 func BranchCompletions(pmFn func() (project.ProjectManager, error)) cobra.CompletionFunc {
 	return func(cmd *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		return branchSuggestions(cmd.Context(), pmFn, args), cobra.ShellCompDirectiveNoFileComp
@@ -28,18 +30,25 @@ func branchSuggestions(
 	pmFn func() (project.ProjectManager, error),
 	typedArgs []string,
 ) []cobra.Completion {
+	if pmFn == nil {
+		return nil
+	}
+
 	mgr, err := pmFn()
 	if err != nil {
+		cobra.CompDebugln("clawker worktree completion: project manager: "+err.Error(), false)
 		return nil
 	}
 
 	proj, err := mgr.CurrentProject(ctx)
 	if err != nil {
+		cobra.CompDebugln("clawker worktree completion: current project: "+err.Error(), false)
 		return nil
 	}
 
 	states, err := proj.ListWorktrees(ctx)
 	if err != nil {
+		cobra.CompDebugln("clawker worktree completion: list worktrees: "+err.Error(), false)
 		return nil
 	}
 
