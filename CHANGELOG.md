@@ -10,11 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
-## [2026.7.4] - 2026-07-21
+## [PENDING]
 
-### Added
 
-- Shell tab-completion suggests existing worktree branch names — when completing `clawker worktree remove` arguments and the `--worktree` flag value on `run`/`container create`.
+- **Added:** Shell tab-completion suggests existing worktree branch names — when completing `clawker worktree remove` arguments and the `--worktree` flag value on `run`/`container create`.
 
 ## [2026.7.3] - 2026-07-19
 
