@@ -8,10 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/controlplane/firewall"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/controlplane/firewall"
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 func TestEnsureCA_CreatesNew(t *testing.T) {

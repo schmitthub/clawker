@@ -2,6 +2,7 @@ package dnsbpf
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -14,15 +15,38 @@ const DefaultPinPath = clawkerebpf.PinPath + "/" + clawkerebpf.DNSCacheMapName
 
 // dnsEntry mirrors struct dns_entry in bpf/common.h.
 // expire_ts uses wall-clock seconds (time.Now().Unix() + TTL), matching
-// the garbage collector in internal/controlplane/firewall/ebpf/manager.go GarbageCollectDNS().
+// the garbage collector in controlplane/firewall/ebpf/manager.go GarbageCollectDNS().
 type dnsEntry struct {
-	DomainHash uint32
-	ExpireTs   uint32
+	Identity uint32
+	ExpireTS uint32
+	Source   uint8
+	Pad      [3]uint8
+}
+
+// expiryTS returns the wall-clock expiry for a TTL, saturating at MaxUint32
+// so the int64→uint32 narrowing can never wrap (expire_ts is a u32 on the
+// BPF side).
+func expiryTS(ttlSeconds uint32) uint32 {
+	exp := time.Now().Unix() + int64(ttlSeconds)
+	if exp <= 0 || exp > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(exp)
+}
+
+// dnsCacheMap is the subset of *ebpf.Map that BPFMap uses. It exists purely
+// as a test seam so the source-precedence logic in Update can be exercised
+// without a live kernel map (which would require CAP_BPF, unavailable in the
+// dev container). The production *ebpf.Map satisfies it structurally.
+type dnsCacheMap interface {
+	Lookup(key, valueOut any) error
+	Update(key, value any, flags ebpf.MapUpdateFlags) error
+	Close() error
 }
 
 // BPFMap wraps a pinned BPF hash map for dns_cache writes.
 type BPFMap struct {
-	m *ebpf.Map
+	m dnsCacheMap
 }
 
 // OpenBPFMap opens the pinned dns_cache map.
@@ -34,16 +58,28 @@ func OpenBPFMap(pinPath string) (*BPFMap, error) {
 	return &BPFMap{m: m}, nil
 }
 
-// Update writes an IP → domain_hash entry to the dns_cache map.
+// Update writes an IP → identity entry to the dns_cache map.
 // ip must be in network byte order (from IPToUint32).
-func (b *BPFMap) Update(ip, domainHash, ttlSeconds uint32) {
+//
+// Source precedence (cilium ipcache analog): an existing DNSSourceSeed entry
+// — written by CP SyncRoutes for an IP-literal rule — outranks a DNS-derived
+// write, so it is left untouched. The lookup-then-update pair is not atomic,
+// but the only competing seed writer is the CP's rare reconcile, which also
+// wins any interleave: a seed written after our lookup is simply restored by
+// the next reconcile's re-seed.
+func (b *BPFMap) Update(ip, identity, ttlSeconds uint32) {
+	var cur dnsEntry
+	if err := b.m.Lookup(ip, &cur); err == nil && cur.Source == clawkerebpf.DNSSourceSeed {
+		return
+	}
 	entry := dnsEntry{
-		DomainHash: domainHash,
-		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+		Identity: identity,
+		ExpireTS: expiryTS(ttlSeconds),
+		Source:   clawkerebpf.DNSSourceDNS,
 	}
 	if err := b.m.Update(ip, entry, ebpf.UpdateAny); err != nil {
-		log.Warningf("updating dns_cache for ip=%s hash=%d: %v",
-			clawkerebpf.Uint32ToIP(ip), domainHash, err)
+		log.Warningf("updating dns_cache for ip=%s identity=%d: %v",
+			clawkerebpf.Uint32ToIP(ip), identity, err)
 	}
 }
 

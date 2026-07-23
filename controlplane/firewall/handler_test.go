@@ -8,6 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
@@ -16,11 +22,6 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // testCgroupPath is the synthetic path the test resolver hands back for
@@ -306,7 +307,11 @@ func TestHandler_FirewallEnable_DriftDetected_UsesFreshID(t *testing.T) {
 		t.Fatalf("Install called %d times, want 1", len(calls))
 	}
 	if calls[0].CgroupID != testCgroupID {
-		t.Errorf("Install called with cgroupID=%d, want fresh %d (drift correction failed)", calls[0].CgroupID, testCgroupID)
+		t.Errorf(
+			"Install called with cgroupID=%d, want fresh %d (drift correction failed)",
+			calls[0].CgroupID,
+			testCgroupID,
+		)
 	}
 
 	h.cgroupIDMu.Lock()
@@ -820,9 +825,9 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 	require.NotNil(t, sshRoute, "SSH rule missing from route_map seed")
 	require.NotNil(t, tlsRoute, "TLS rule missing from route_map seed")
 	require.NotNil(t, quicRoute, "QUIC/h3 sibling missing from route_map seed")
-	assert.NotZero(t, sshRoute.DomainHash)
-	assert.NotZero(t, tlsRoute.DomainHash)
-	assert.Equal(t, tlsRoute.DomainHash, quicRoute.DomainHash, "QUIC sibling shares the https domain hash")
+	assert.NotZero(t, sshRoute.Identity)
+	assert.NotZero(t, tlsRoute.Identity)
+	assert.Equal(t, tlsRoute.Identity, quicRoute.Identity, "QUIC sibling shares the https identity")
 
 	// TLS + QUIC/h3 both target the main Envoy egress listener (TCP and UDP on
 	// the same port). SSH routes to a dedicated per-rule TCP listener at
@@ -1048,6 +1053,10 @@ func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, 
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
+	idStore, err := NewIdentityStore(cfg)
+	require.NoError(t, err)
+	alloc, err := NewIdentityAllocator(idStore)
+	require.NoError(t, err)
 
 	stack := &fakeStack{statusResult: Status{Running: true}}
 	q := NewActionQueue(nil)
@@ -1060,6 +1069,7 @@ func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, 
 		Resolver: nopResolver,
 		Log:      logger.Nop(),
 		Queue:    q,
+		Identity: alloc,
 	})
 	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
@@ -1092,7 +1102,7 @@ func TestHandler_Reload_CallsSyncRoutesAfterReload(t *testing.T) {
 	routes := mock.SyncRoutesCalls()[0].Routes
 	require.Len(t, routes, 2)
 	for _, rt := range routes {
-		assert.NotZero(t, rt.DomainHash)
+		assert.NotZero(t, rt.Identity)
 		assert.Equal(t, uint16(443), rt.DstPort)
 	}
 	assert.ElementsMatch(t,
@@ -1176,113 +1186,46 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
 }
 
-// TestHandler_AllResolvableDomains_MatchesCorefileZoneSet asserts the
-// netlogger-facing reverse-DNS source returns exactly the zone set
-// GenerateCorefile would build: internal hosts (docker.internal +
-// monitoring service hostnames) union with allow-rule destinations,
-// stripping IPs/CIDRs and deny rules, deduped against the reserved
-// internal set. The two sources must agree by construction so a
-// netlogger record's dst_host lookup matches the dnsbpf hash write.
-func TestHandler_AllResolvableDomains_MatchesCorefileZoneSet(t *testing.T) {
+// TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts asserts the
+// reconcile-path identity sync allocates one sticky identity per rule dst
+// (domains, wildcards normalized, IP literals — allow AND deny alike, so an
+// action flip never renumbers) plus every reserved internal host, and that
+// the snapshot the netlogger IdentitySource serves reverse-resolves each of
+// them. This is the attribution guarantee that replaced the hash-inversion
+// ReverseDNSDomains surface: dnsbpf writes and route_map keys both come from
+// this one table.
+func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{
 			{Dst: "github.com", Proto: "https", Port: "443", Action: "allow"},
-			{Dst: ".example.com", Proto: "https", Port: "443", Action: "allow"},    // wildcard, normalized
-			{Dst: "203.0.113.5", Proto: "tcp", Port: "22", Action: "allow"},        // IP, skipped
-			{Dst: "blocked.test", Proto: "https", Port: "443", Action: "deny"},     // deny, skipped
-			{Dst: "docker.internal", Proto: "https", Port: "443", Action: "allow"}, // reserved, dedup
+			{Dst: ".example.com", Proto: "https", Port: "443", Action: "allow"}, // wildcard → example.com
+			{Dst: "45.79.112.203", Proto: "tcp", Port: "4242", Action: "allow"}, // bare-IP seed
+			{Dst: "blocked.test", Proto: "https", Port: "443", Action: "deny"},  // deny still holds an identity
 		},
 	})
 	require.NoError(t, err)
 
-	got := h.AllResolvableDomains()
+	wantDsts := make([]string, 0, 5+len(consts.MonitoringServiceHostnames))
+	wantDsts = append(wantDsts, "github.com", "example.com", "45.79.112.203", "blocked.test", "docker.internal")
+	wantDsts = append(wantDsts, consts.MonitoringServiceHostnames...)
 
-	// Must include the two real allow-rule domains AND every internal host.
-	want := map[string]bool{
-		"github.com":      true,
-		"example.com":     true, // ".example.com" normalized
-		"docker.internal": true,
+	snap := h.identity.Snapshot()
+	byDst := make(map[string]uint32, len(snap))
+	for id, dst := range snap {
+		byDst[dst] = id
 	}
-	for _, h := range consts.MonitoringServiceHostnames {
-		want[h] = true
+	for _, dst := range wantDsts {
+		id, ok := h.identity.IdentityFor(dst)
+		require.Truef(t, ok, "dst %q has no identity after reconcile", dst)
+		assert.GreaterOrEqual(t, id, MinIdentity)
+		got, ok := h.identity.DomainFor(id)
+		require.True(t, ok)
+		assert.Equal(t, dst, got, "snapshot must reverse-resolve %q", dst)
+		assert.Equal(t, id, byDst[dst], "Snapshot and IdentityFor must agree for %q", dst)
 	}
-	gotSet := make(map[string]bool, len(got))
-	for _, d := range got {
-		gotSet[d] = true
-	}
-	for d := range want {
-		assert.Truef(t, gotSet[d], "expected %q in AllResolvableDomains; got %v", d, got)
-	}
-	// Must NOT include IP / CIDR / deny destinations.
-	assert.False(t, gotSet["203.0.113.5"], "IP destination must be filtered")
-	assert.False(t, gotSet["blocked.test"], "deny rule must be filtered")
-}
-
-func TestHandler_AllResolvableDomains_NoStoreReturnsInternalHostsOnly(t *testing.T) {
-	// Handler built without a rules store (newTestHandler) returns just
-	// the internal hosts — no rules to enumerate, but the netlogger
-	// reverse map still needs to attribute internal-zone resolutions.
-	mock := noopMock()
-	h := newTestHandler(t, mock, nil)
-
-	got := h.AllResolvableDomains()
-
-	gotSet := make(map[string]bool, len(got))
-	for _, d := range got {
-		gotSet[d] = true
-	}
-	assert.Truef(t, gotSet["docker.internal"], "internal hosts must be present even without a store; got %v", got)
-	for _, host := range consts.MonitoringServiceHostnames {
-		assert.Truef(t, gotSet[host], "monitoring hostname %q missing; got %v", host, got)
-	}
-}
-
-// TestHandler_ReverseDNSDomains_IncludesIPSeeds asserts the netlogger
-// DomainSource unions the IP-literal seeds SyncRoutes writes into dns_cache on
-// top of the CoreDNS zone set. AllResolvableDomains omits IP/CIDR rules (they
-// are not zones), but a bare-IP rule still seeds dns_cache[ip]=DomainHash(ip);
-// feeding only the zone set left that seed permanently unattributed. The IP
-// literal's hash must now be covered so the reverse map can stamp dst_host.
-func TestHandler_ReverseDNSDomains_IncludesIPSeeds(t *testing.T) {
-	mock := noopMock()
-	h, _ := ruleStoreHandler(t, mock)
-
-	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{
-			{Dst: "github.com", Proto: "https", Port: "443", Action: "allow"},
-			{Dst: "45.79.112.203", Proto: "tcp", Port: "4242-4243", Action: "allow"}, // bare-IP seed
-			{Dst: "10.0.0.0/24", Proto: "tcp", Port: "443", Action: "allow"},         // CIDR — no seed
-		},
-	})
-	require.NoError(t, err)
-
-	got := h.ReverseDNSDomains()
-	gotSet := make(map[string]bool, len(got))
-	for _, d := range got {
-		gotSet[d] = true
-	}
-
-	// Superset of the CoreDNS zone set...
-	for _, d := range h.AllResolvableDomains() {
-		assert.Truef(t, gotSet[d], "ReverseDNSDomains must include zone %q; got %v", d, got)
-	}
-	// ...plus the bare-IP seed (which AllResolvableDomains omits)...
-	assert.Truef(t, gotSet["45.79.112.203"], "IP-literal seed missing; got %v", got)
-	assert.True(t, gotSet["github.com"])
-	// ...but never the CIDR (it rides the shared egress listener, no seed).
-	assert.Falsef(t, gotSet["10.0.0.0/24"], "CIDR must not be seeded; got %v", got)
-
-	// The seeded dns_cache hash is now attributable — the exact condition that
-	// silences netlogger_reverse_dns_unattributed.
-	hashes := make(map[uint32]bool, len(got))
-	for _, d := range got {
-		hashes[ebpf.DomainHash(d)] = true
-	}
-	assert.True(t, hashes[ebpf.DomainHash("45.79.112.203")],
-		"DomainHash of the IP seed must be present in ReverseDNSDomains")
 }
 
 // TestHandler_RemoveRule_Success covers the happy path: rule matches
@@ -1521,12 +1464,56 @@ func TestHandler_AddRules_InvalidRule_FailsLaunch(t *testing.T) {
 		name string
 		rule *adminv1.EgressRule
 	}{
-		{"malformed port range", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "9100-9000", Action: "allow"}},
-		{"non-numeric port", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "44x", Action: "allow"}},
-		{"typo'd action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", Action: "dney"}},
-		{"typo'd path_default", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathDefault: "denied"}},
-		{"empty path rule path", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "  ", Action: "allow"}}}},
-		{"typo'd path rule action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "/x", Action: "dney"}}}},
+		{
+			"malformed port range",
+			&adminv1.EgressRule{
+				Dst: "host.example.com", Proto: "tcp", Port: "9100-9000", Action: "allow",
+				PathRules: nil, PathDefault: "",
+			},
+		},
+		{
+			"non-numeric port",
+			&adminv1.EgressRule{
+				Dst: "host.example.com", Proto: "tcp", Port: "44x", Action: "allow",
+				PathRules: nil, PathDefault: "",
+			},
+		},
+		{
+			"typo'd action",
+			&adminv1.EgressRule{
+				Dst: "host.example.com", Proto: "https", Port: "443", Action: "dney",
+				PathRules: nil, PathDefault: "",
+			},
+		},
+		{
+			"typo'd path_default",
+			&adminv1.EgressRule{
+				Dst: "host.example.com", Proto: "https", Port: "443", PathDefault: "denied",
+				Action: "", PathRules: nil,
+			},
+		},
+		{
+			"empty path rule path",
+			&adminv1.EgressRule{
+				Dst:         "host.example.com",
+				Proto:       "https",
+				Port:        "443",
+				Action:      "",
+				PathDefault: "",
+				PathRules:   []*adminv1.PathRule{{Path: "  ", Action: "allow"}},
+			},
+		},
+		{
+			"typo'd path rule action",
+			&adminv1.EgressRule{
+				Dst:         "host.example.com",
+				Proto:       "https",
+				Port:        "443",
+				Action:      "",
+				PathDefault: "",
+				PathRules:   []*adminv1.PathRule{{Path: "/x", Action: "dney"}},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

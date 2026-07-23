@@ -61,7 +61,7 @@ func newStackFixture(t *testing.T) *stackFixture {
 	fake.FakeAPI.ContainerListFn = func(context.Context, mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{}, nil
 	}
-	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil)
+	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil, nil)
 	return &stackFixture{cfg: cfg, fake: fake, stack: stack}
 }
 
@@ -77,7 +77,7 @@ func TestStack_Accessors_EmptyWhenNetworkMissing(t *testing.T) {
 		return mobyclient.NetworkInspectResult{}, errors.New("network not found")
 	}
 
-	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil)
+	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil, nil)
 	assert.Empty(t, stack.EnvoyIP())
 	assert.Empty(t, stack.CoreDNSIP())
 	assert.Empty(t, stack.NetworkID())
@@ -105,6 +105,7 @@ func TestStack_Status_BothContainersRunning(t *testing.T) {
 	f := newStackFixture(t)
 	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{Items: []container.Summary{
+			//nolint:exhaustruct // sparse moby fixture — only the fields Status reads
 			{ID: "envoy-1", State: container.StateRunning},
 		}}, nil
 	}
@@ -151,7 +152,12 @@ func TestStack_Stop_RemovesBothContainers(t *testing.T) {
 			id = "coredns-id"
 		}
 		return mobyclient.ContainerListResult{Items: []container.Summary{
-			{ID: id, State: container.StateRunning, Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()}},
+			//nolint:exhaustruct // sparse moby fixture — only the fields Status reads
+			{
+				ID:     id,
+				State:  container.StateRunning,
+				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+			},
 		}}, nil
 	}
 	var stopped, removed []string
@@ -187,7 +193,12 @@ func TestStack_Stop_SurfacesRemoveError(t *testing.T) {
 	f := newStackFixture(t)
 	f.fake.FakeAPI.ContainerListFn = func(context.Context, mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{Items: []container.Summary{
-			{ID: "envoy-id", State: container.StateRunning, Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()}},
+			//nolint:exhaustruct // sparse moby fixture — only the fields Status reads
+			{
+				ID:     "envoy-id",
+				State:  container.StateRunning,
+				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+			},
 		}}, nil
 	}
 	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {

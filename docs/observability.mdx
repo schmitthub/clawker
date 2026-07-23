@@ -36,7 +36,7 @@ Attributes carried on each record (most are unconditional — empty strings and 
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
 | `no_dst` | boolean | Socket-creation event with no destination (`sock_create` program). `dst_ip` and `dst_port` are omitted on these records |
 | `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Omitted for direct-IP connects (operators filter via `NOT _exists_:attributes.dst_host`; see [Domain Resolution](#domain-resolution)) |
-| `domain_hash` | keyword | BPF-side identity (FNV-1a of normalized domain). Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
+| `identity` | keyword | Route identity allocated by the control plane per firewall destination. Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
 
 The BPF event struct is fixed-size with explicit padding (48 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict, except for the `sock_create` carve-out above where BPF carries no destination.
 
@@ -81,14 +81,14 @@ Sock_ops-based per-connection byte tracking inside BPF is not on this stream's r
 
 ## Domain Resolution
 
-`dst_host` is populated for every record whose destination IP came from a dnsbpf-resolved A record under a firewall-allowed zone. The translation is control-plane-driven: the BPF `dns_cache` map stores `{domain_hash, expire_ts}` keyed by IPv4, and netlogger's reverse-DNS map maintains the inverse `hash → domain` table by hashing the live set of firewall rule destinations + internal hosts (`docker.internal` + monitoring service hostnames) on a 5-second refresh tick. The hash function (`internal/controlplane/firewall/ebpf.DomainHash` — FNV-1a) is the same one dnsbpf computes when it writes `dns_cache`, so the two sides agree on the identity by construction.
+`dst_host` is populated for every record whose destination IP came from a dnsbpf-resolved A record under a firewall-allowed zone. The translation is control-plane-driven: the control plane allocates a sticky route identity per firewall destination, the BPF `dns_cache` map stores `{identity, expire_ts}` keyed by IPv4, and netlogger reads the `identity → destination` table directly from the allocator on a 5-second refresh tick. dnsbpf writes the same CP-allocated identity (delivered per zone via its Corefile directive), so the two sides agree by construction — attribution is a direct read of the allocation, not a hash inversion.
 
 `dst_host` will be empty when:
 - The destination IP was reached without DNS resolution (direct-IP `connect`).
 - The IP was resolved through a path other than the managed CoreDNS (e.g., `/etc/hosts` entry inside the agent container).
 - A rule was removed and netlogger hasn't yet refreshed (worst case: 5 seconds of stale records on the previously-allowed domain).
 
-The hash space is 32-bit FNV-1a, which carries a theoretical collision floor. The route-identity-allocator follow-up replaces the hash with userspace-allocated sequential identities, matching Cilium's `pkg/fqdn/namemanager` pattern. At deployment-typical rule-set sizes (single-digit-to-hundreds of firewall-rule domains), the floor is operationally irrelevant.
+Identities are allocated — not derived — so two destinations can never share one (Cilium's identity-allocation pattern). An identity stays bound to its destination for as long as the destination remains configured, surviving rule churn and control-plane restarts.
 
 ## Reliability
 
@@ -120,7 +120,6 @@ To point netlogger at a custom collector (for a centralized SIEM, or to bypass t
 
 ## Current Limitations
 
-- **FNV-1a 32-bit identity** — the BPF data path uses an FNV-1a hash of the lowercased domain as a fixed-width identity in `dns_cache` and `route_map`. Collision-vulnerable in theory; harmless in practice at deployment-typical rule-set sizes. The route-identity-allocator follow-up replaces this with userspace-allocated sequential u32 identities (Cilium pattern).
 - **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not wired into a `/metrics` endpoint. The structured CP log surface is the operational signal for throughput, queue drops, parse errors, and OTLP export success/error. Kernel-side drop counters (`events_drops`, `ratelimit_drops`) live on the firewall/eBPF subsystem surface — they are subsystem health, not security telemetry, and intentionally don't ride on the netlogger OTel stream.
 
 ## See Also

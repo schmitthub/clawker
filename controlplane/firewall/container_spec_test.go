@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -64,7 +65,7 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 	// builder resolves to a matching data dir for isFirewallData.
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	// isFirewallData returns true for any mount source rooted under
@@ -97,7 +98,12 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 		// firewall-data mounts are present, the invariant is
 		// trivially satisfied — force the test to fail instead.
 		if firewallMounts < 2 {
-			t.Errorf("envoy spec has %d firewall-data mounts, want at least 2 (envoy.yaml + %s)\n Got: %+v", firewallMounts, certDir, spec.mounts)
+			t.Errorf(
+				"envoy spec has %d firewall-data mounts, want at least 2 (envoy.yaml + %s)\n Got: %+v",
+				firewallMounts,
+				certDir,
+				spec.mounts,
+			)
 		}
 	})
 
@@ -114,7 +120,11 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 			}
 		}
 		if firewallMounts < 1 {
-			t.Errorf("coredns spec has %d firewall-data mounts, want at least 1 (Corefile)\n Got: %+v", firewallMounts, spec.mounts)
+			t.Errorf(
+				"coredns spec has %d firewall-data mounts, want at least 1 (Corefile)\n Got: %+v",
+				firewallMounts,
+				spec.mounts,
+			)
 		}
 	})
 }
@@ -123,7 +133,7 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{})
+	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{}, nil)
 	// Container specs gate mTLS bind-mounts on infraCertsReady so a
 	// partial mint can't wire missing cert paths into CoreDNS startup
 	// (which would hard-fail). The cert mint flow is exercised by

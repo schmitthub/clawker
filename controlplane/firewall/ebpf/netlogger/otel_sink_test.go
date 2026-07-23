@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/logger"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // recordingExporter captures every sdklog.Record handed to Export.
@@ -99,7 +100,7 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		IsIPv6:      false,
 		IsMapped:    false,
 		EmitSite:    EmitSiteConnect,
-		DomainHash:  0xdead,
+		Identity:    0xdead,
 		Domain:      "example.com",
 		Verdict:     VerdictAllowed,
 	}
@@ -147,7 +148,7 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		{"ipv4_mapped", false},
 		{"no_dst", false},
 		{"dst_host", "example.com"},
-		{"domain_hash", "57005"}, // 0xdead in decimal
+		{"identity", "57005"}, // 0xdead in decimal
 	}
 	for _, c := range checks {
 		v, ok := attrs[c.key]
@@ -195,7 +196,7 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	for _, key := range []string{
 		"event.name", "action", "container_id", "agent", "project",
 		"cgroup_id", "bpf_ts_ns", "dst_port", "l4_proto",
-		"l4_proto_code", "ipv6", "ipv4_mapped", "no_dst", "domain_hash",
+		"l4_proto_code", "ipv6", "ipv4_mapped", "no_dst", "identity",
 	} {
 		if _, ok := attrs[key]; !ok {
 			t.Errorf("attribute %q missing on zero-Event emit", key)
@@ -346,10 +347,10 @@ func TestPipeline_OtelSinkIntegration(t *testing.T) {
 	// Hand the processor a single synthetic event then close the
 	// queue so run returns once it's drained.
 	queue <- mustEncodeEvent(t, ebpf.EgressEvent{
-		CgroupId:   424242,
-		Verdict:    ebpf.EgressVerdictAllowed,
-		L4Proto:    1,
-		DomainHash: 0xfeed,
+		CgroupId: 424242,
+		Verdict:  ebpf.EgressVerdictAllowed,
+		L4Proto:  1,
+		Identity: 0xfeed,
 	})
 	close(queue)
 	p.run(context.Background())

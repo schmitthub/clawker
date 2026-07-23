@@ -284,6 +284,9 @@ const (
 	RegistryFile    = "registry.yaml"
 	IgnoreFile      = ".clawkerignore"
 	EgressRulesFile = "egress-rules.yaml"
+	// RouteIdentitiesFile persists the firewall's sticky dst→identity
+	// allocation table. CP-owned state, never user-edited.
+	RouteIdentitiesFile = "route-identities.yaml"
 	EnvoyConfigFile = "envoy.yaml"
 	Corefile        = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under

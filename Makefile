@@ -2,7 +2,7 @@
         clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
         bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
-        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
         changelog-preview \
         licenses licenses-check \
         docs docs-check \
@@ -59,6 +59,7 @@ help:
 	@echo "  test-acceptance     Clawker acceptance tests via testscript (requires Docker)"
 	@echo "  test-e2e            End-to-end firewall stack tests (requires Docker)"
 	@echo "  test-whail          Whail BuildKit integration tests (requires Docker + BuildKit)"
+	@echo "  test-bpf            Privileged BPF prog-run tests (requires Linux root/CAP_BPF)"
 	@echo "  test-agents         Agent E2E tests (requires Docker)"
 	@echo "  test-all            Run all test suites"
 	@echo "  test-coverage       Unit tests with coverage"
@@ -166,7 +167,11 @@ BPF_BINDINGS := \
 	controlplane/firewall/ebpf/clawker_x86_bpfel.go \
 	controlplane/firewall/ebpf/clawker_x86_bpfel.o \
 	controlplane/firewall/ebpf/clawker_arm64_bpfel.go \
-	controlplane/firewall/ebpf/clawker_arm64_bpfel.o
+	controlplane/firewall/ebpf/clawker_arm64_bpfel.o \
+	controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.go \
+	controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.o \
+	controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.go \
+	controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.o
 
 # Source inputs to the BPF bindings. An edit to these retriggers the
 # bpf-bindings extraction (and transitively the binary builds that depend
@@ -177,7 +182,9 @@ BPF_BINDING_DEPS := \
 	go.sum \
 	controlplane/firewall/ebpf/bpf/clawker.c \
 	controlplane/firewall/ebpf/bpf/common.h \
-	controlplane/firewall/ebpf/gen.go
+	controlplane/firewall/ebpf/bpf/tests/decision_tests.c \
+	controlplane/firewall/ebpf/gen.go \
+	controlplane/firewall/ebpf/bpftest/gen.go
 
 # Source dependencies for the ebpf-manager binary.
 EBPF_BINARY_DEPS := \
@@ -352,6 +359,7 @@ ifeq ($(HOST_OS),Linux)
 $(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
 	@echo "Generating bpf2go bindings via native go generate (linux host)..."
 	$(GO) generate ./controlplane/firewall/ebpf/gen.go
+	$(GO) generate ./controlplane/firewall/ebpf/bpftest/gen.go
 else
 $(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
 	@echo "Extracting bpf2go bindings via Dockerfile.controlplane (non-linux host)..."
@@ -365,6 +373,10 @@ $(BPF_BINDINGS_CANONICAL): $(BPF_BINDING_DEPS)
 	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_x86_bpfel.o   controlplane/firewall/ebpf/
 	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.go controlplane/firewall/ebpf/
 	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/clawker_arm64_bpfel.o  controlplane/firewall/ebpf/
+	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/testprogs_x86_bpfel.go  controlplane/firewall/ebpf/bpftest/
+	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/testprogs_x86_bpfel.o   controlplane/firewall/ebpf/bpftest/
+	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/testprogs_arm64_bpfel.go controlplane/firewall/ebpf/bpftest/
+	@mv controlplane/firewall/ebpf/.bpf-bindings-extract/testprogs_arm64_bpfel.o  controlplane/firewall/ebpf/bpftest/
 	@rm -rf controlplane/firewall/ebpf/.bpf-bindings-extract
 endif
 $(filter-out $(BPF_BINDINGS_CANONICAL),$(BPF_BINDINGS)): $(BPF_BINDINGS_CANONICAL)
@@ -664,6 +676,17 @@ test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENE
 		./internal/cmd/container/shared/... \
 		./internal/cmd/controlplane/... \
 		./controlplane/agent/...
+
+# Privileged BPF prog-run tests (cilium bpf/tests pattern): SYSCALL wrapper
+# programs #including the production common.h run under BPF_PROG_TEST_RUN
+# against real kernel maps. Needs a Linux host with CAP_BPF (the test binary
+# runs under sudo) and kernel ≥ 5.14. The clawker dev container has zero
+# capabilities — run this on the host or the CI privileged job. Without
+# PRIVILEGED_TESTS=1 the suite skips, which is how it rides along inert in
+# the plain `make test` package list.
+test-bpf: ebpf
+	@echo "Running privileged BPF prog-run tests (requires root/CAP_BPF)..."
+	PRIVILEGED_TESTS=1 $(GO) test -exec sudo -count=1 -v ./controlplane/firewall/ebpf/bpftest/
 
 # All test suites
 test-all: test test-e2e test-whail

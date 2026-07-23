@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/controlplane/auth"
@@ -34,7 +36,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
 type StatusCode = int
@@ -386,7 +387,15 @@ func runDrainSequence(ctx context.Context, d drainDeps) error {
 // (caCertPool, caTLS) every downstream consumer reuses — never rebuilt — and
 // configures the orchestrator's aggregate /healthz service probes. A failure
 // fails CP startup (pre-SetReady, code 1) WITHOUT an eBPF flush.
-func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.SubprocessManager, orchestrator *ControlPlane, cp config.ControlPlaneSettings, caCertPath, jwkPath string, log *logger.Logger) (*x509.CertPool, *tls.Config, error) {
+func startOryStack(
+	ctx context.Context,
+	cfg config.Config,
+	subMgr *subprocess.SubprocessManager,
+	orchestrator *ControlPlane,
+	cp config.ControlPlaneSettings,
+	caCertPath, jwkPath string,
+	log *logger.Logger,
+) (*x509.CertPool, *tls.Config, error) {
 	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ory stack: %w", err)
@@ -408,26 +417,27 @@ func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.Su
 // and the agent worldview Repository. It wires the Repository's two
 // subscriptions (agent topic per-container view + dockerevents evict-on-rm) —
 // the load-bearing projection; the heartbeat only reads its Len().
-func buildAgentInfra(log *logger.Logger, dockerCli *docker.Client, cfg config.Config, agentTopic *pubsub.Topic[agent.AgentEvent], dockerTopic *pubsub.Topic[dockerevents.DockerEvent]) (
-	agentReg agent.Registry,
-	agentPeerLookup *agent.MobyPeerLookup,
-	lister *agent.ContainerLister,
-	agentRepo *agent.Repository,
-	err error,
-) {
+//nolint:ireturn // returns the agent.Registry interface by design — the sqlite-backed impl stays package-private
+func buildAgentInfra(
+	log *logger.Logger,
+	dockerCli *docker.Client,
+	cfg config.Config,
+	agentTopic *pubsub.Topic[agent.AgentEvent],
+	dockerTopic *pubsub.Topic[dockerevents.DockerEvent],
+) (agent.Registry, *agent.MobyPeerLookup, *agent.ContainerLister, *agent.Repository, error) {
 	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("agent ensure schema: %w", err)
 	}
-	agentReg, err = agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
+	agentReg, err := agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("agent sqlite: %w", err)
 	}
-	agentPeerLookup = agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
+	agentPeerLookup := agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
 	// ListOpts{} = running only (handler + watcher); ListOpts{All:true} =
 	// running + stopped (reaper + dial reconciler).
-	lister = agent.NewContainerLister(dockerCli.APIClient, cfg)
+	lister := agent.NewContainerLister(dockerCli.APIClient, cfg)
 
-	agentRepo = agent.NewRepository()
+	agentRepo := agent.NewRepository()
 	agentRepo.Subscribe(agentTopic)
 	agentRepo.SubscribeDockerEvents(dockerTopic)
 	return agentReg, agentPeerLookup, lister, agentRepo, nil
@@ -438,7 +448,12 @@ func buildAgentInfra(log *logger.Logger, dockerCli *docker.Client, cfg config.Co
 // returning the *http.Server so run()'s shutdown sequence can GracefulStop it.
 // A non-ErrServerClosed listen failure is deposited on serveFailed so the serve
 // select tears down.
-func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrator *ControlPlane, serveFailed chan error) *http.Server {
+func startHealthz(
+	cp config.ControlPlaneSettings,
+	log *logger.Logger,
+	orchestrator *ControlPlane,
+	serveFailed chan error,
+) *http.Server {
 	healthMux := http.NewServeMux()
 	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
 	healthServer := &http.Server{
@@ -486,7 +501,14 @@ func firewallBringupGate(cfg config.Config, log *logger.Logger, handler *fwhandl
 // can stop the feeder BEFORE closing topics (avoids dropped-publish noise);
 // feederDone closes once the Supervise goroutine returns. Supervise wraps Run
 // with cancel-vs-error discrimination and the serveFailed send.
-func startFeeder(watcherCtx context.Context, cfg config.Config, log *logger.Logger, dockerCli *docker.Client, dockerTopic *pubsub.Topic[dockerevents.DockerEvent], serveFailed chan error) (context.CancelFunc, <-chan struct{}, error) {
+func startFeeder(
+	watcherCtx context.Context,
+	cfg config.Config,
+	log *logger.Logger,
+	dockerCli *docker.Client,
+	dockerTopic *pubsub.Topic[dockerevents.DockerEvent],
+	serveFailed chan error,
+) (context.CancelFunc, <-chan struct{}, error) {
 	feeder, err := dockerevents.New(dockerCli.APIClient, dockerTopic, dockerevents.Options{
 		ManagedLabelKey:   cfg.LabelManaged(),
 		ManagedLabelValue: cfg.ManagedLabelValue(),
@@ -504,6 +526,21 @@ func startFeeder(watcherCtx context.Context, cfg config.Config, log *logger.Logg
 	return feederCancel, feederDone, nil
 }
 
+// buildIdentityAllocator constructs the persisted sticky route-identity
+// allocator (see controlplane/firewall/identity.go). A corrupt on-disk table
+// is a startup-gate error for the caller.
+func buildIdentityAllocator(cfg config.Config) (*fwhandler.IdentityAllocator, error) {
+	store, err := fwhandler.NewIdentityStore(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("identity store: %w", err)
+	}
+	alloc, err := fwhandler.NewIdentityAllocator(store)
+	if err != nil {
+		return nil, fmt.Errorf("identity allocator: %w", err)
+	}
+	return alloc, nil
+}
+
 // buildEnforcement builds the Docker client, cgroup-driver detection +
 // container resolver, the firewall rules store + Stack, and the eBPF load +
 // defensive stale-bypass cleanup. The eBPF Load and CleanupStaleBypass are
@@ -514,12 +551,19 @@ func startFeeder(watcherCtx context.Context, cfg config.Config, log *logger.Logg
 // The returned cleanup closes the Docker client and the eBPF manager; run()
 // joins its error into retErr so the on-failure restart policy investigates a
 // partial teardown rather than silently blessing it.
-func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger, otelCerts fwhandler.OtelCertProvisioner) (
+//nolint:nonamedreturns // 8-value return with per-arm partial results — the names document which handles are live on each failure arm
+func buildEnforcement(
+	ctx context.Context,
+	cfg config.Config,
+	log *logger.Logger,
+	otelCerts fwhandler.OtelCertProvisioner,
+) (
 	dockerCli *docker.Client,
 	containerResolver fwhandler.ContainerResolver,
 	rulesStore *storage.Store[fwhandler.EgressRulesFile],
 	stack *fwhandler.Stack,
 	ebpfMgr *ebpf.Manager,
+	identityAlloc *fwhandler.IdentityAllocator,
 	cleanup func() error,
 	err error,
 ) {
@@ -527,7 +571,7 @@ func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger
 	// CoreDNS siblings over DooD), and the AgentWatcher poll loop.
 	dockerCli, err = docker.NewClient(ctx, cfg, log)
 	if err != nil {
-		return nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+		return nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}
 	cleanup = func() error { dockerCli.Close(); return nil }
 
@@ -535,7 +579,7 @@ func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger
 	// come from firewall.EBPFCgroupPath, the single source of truth).
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return dockerCli, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+		return dockerCli, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
@@ -545,25 +589,23 @@ func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger
 	// event=otelcerts_unavailable in bootLogging.
 	rulesStore, err = fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return dockerCli, containerResolver, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+		return dockerCli, containerResolver, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
 	}
-	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
+	// Sticky route-identity allocator (pre-SetReady startup gate on corruption).
+	//nolint:contextcheck // the identity table lives in internal/storage, whose lock/write API carries no context
+	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
+		return dockerCli, containerResolver, rulesStore, nil, nil, nil, cleanup, err
+	}
+	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, identityAlloc.IdentityFor)
 
 	ebpfMgr = ebpf.NewManager(log)
 	if err := ebpfMgr.Load(); err != nil {
-		return dockerCli, containerResolver, rulesStore, stack, nil, cleanup, fmt.Errorf("ebpf load: %w", err)
+		return dockerCli, containerResolver, rulesStore, stack, nil, identityAlloc, cleanup,
+			fmt.Errorf("ebpf load: %w", err)
 	}
 	// Extend cleanup to also close the eBPF manager (join its error so a partial
 	// teardown is investigated, not silently blessed).
-	cleanup = func() error {
-		var errs []error
-		if cErr := ebpfMgr.Close(); cErr != nil {
-			log.Error().Err(cErr).Msg("ebpf close error")
-			errs = append(errs, fmt.Errorf("ebpf close: %w", cErr))
-		}
-		dockerCli.Close()
-		return errors.Join(errs...)
-	}
+	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
 	log.Info().Msg("eBPF programs loaded")
 
 	// Defensive startup cleanup (INV-B2-013): cgroup IDs are reusable across
@@ -571,12 +613,30 @@ func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger
 	// previous CP could grant a fresh unrelated container unrestricted egress.
 	cleared, err := ebpfMgr.CleanupStaleBypass()
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, cleanup, fmt.Errorf("defensive bypass cleanup: %w", err)
+		return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup,
+			fmt.Errorf("defensive bypass cleanup: %w", err)
 	}
 	if cleared > 0 {
 		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
 	}
-	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, cleanup, nil
+	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+}
+
+// enforcementCleanup closes the eBPF manager and the Docker client, joining
+// the eBPF close error so a partial teardown is investigated, not silently
+// blessed.
+func enforcementCleanup(dockerCli *docker.Client, ebpfMgr *ebpf.Manager, log *logger.Logger) func() error {
+	return func() error {
+		var errs []error
+		if cErr := ebpfMgr.Close(); cErr != nil {
+			log.Error().Err(cErr).Msg("ebpf close error")
+			errs = append(errs, fmt.Errorf("ebpf close: %w", cErr))
+		}
+		if cErr := dockerCli.Close(); cErr != nil {
+			errs = append(errs, fmt.Errorf("docker close: %w", cErr))
+		}
+		return errors.Join(errs...)
+	}
 }
 
 // grpcStackDeps carries the handles buildGRPCStack builds the firewall
@@ -588,6 +648,7 @@ type grpcStackDeps struct {
 	ebpfMgr           *ebpf.Manager
 	stack             *fwhandler.Stack
 	rulesStore        *storage.Store[fwhandler.EgressRulesFile]
+	identityAlloc     *fwhandler.IdentityAllocator
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	agentPeerLookup   *agent.MobyPeerLookup
@@ -632,6 +693,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Log:           d.log,
 		Queue:         actionQueue,
 		EnrolledTopic: d.enrolledTopic,
+		Identity:      d.identityAlloc,
 		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
 	})
 	if err != nil {
@@ -692,7 +754,10 @@ func newDrainCallback(deps drainDeps) func(context.Context) error {
 // plaintext-falls-back to the untrusted lane. The structured otelcerts/logger
 // degraded-event lines are emitted here (after the logger exists) so they land on
 // the structured surface, not stderr.
-func bootLogging(logDir string) (log *logger.Logger, otelCertsSvc *otelcerts.Service, otelCerts fwhandler.OtelCertProvisioner, cleanup func(), err error) {
+//nolint:ireturn // returns the OtelCertProvisioner interface by design — nil-tolerant degrade contract
+func bootLogging(
+	logDir string,
+) (*logger.Logger, *otelcerts.Service, fwhandler.OtelCertProvisioner, func()) {
 	// Build the OTel cert provisioner BEFORE logger.New — the logger's OTLP
 	// exporter locks in its TLSConfig at construction (no hot-reconfig hook).
 	otelCertsSvc, otelCerts, otelTLSConfig, otelCertsErr := otelcerts.NewCPProvisioner(nil)
@@ -715,14 +780,19 @@ func bootLogging(logDir string) (log *logger.Logger, otelCertsSvc *otelcerts.Ser
 	if loggerInitErr != nil {
 		// Fall back to stderr-only if log dir isn't writable.
 		log = logger.NewWriter(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s: warning: file logging unavailable (%v), using stderr only\n", consts.ContainerCP, loggerInitErr)
+		fmt.Fprintf(
+			os.Stderr,
+			"%s: warning: file logging unavailable (%v), using stderr only\n",
+			consts.ContainerCP,
+			loggerInitErr,
+		)
 	}
 	log = log.With("component", consts.ContainerCP)
 
 	// log.Close rides a fresh base context (not the signal context) so the
 	// final flush survives the shutdown signal; idempotent + deferred by run(),
 	// it covers every return arm.
-	cleanup = func() {
+	cleanup := func() {
 		// Surface a Close failure on stderr (→ docker logs), NOT into retErr:
 		// the OTEL mirror is self-healing and CP's exit code is a
 		// teardown-integrity signal — a benign telemetry outage must not trip
@@ -756,7 +826,7 @@ func bootLogging(logDir string) (log *logger.Logger, otelCertsSvc *otelcerts.Ser
 	}
 
 	logHostIdentity(log, consts.HostUIDResolution(), consts.HostGIDResolution())
-	return log, otelCertsSvc, otelCerts, cleanup, nil
+	return log, otelCertsSvc, otelCerts, cleanup
 }
 
 // buildTopics constructs the three typed pub/sub topics (one per payload
@@ -792,6 +862,7 @@ type workerDeps struct {
 	ebpfMgr       *ebpf.Manager
 	dockerCli     *docker.Client
 	otelCertsSvc  *otelcerts.Service
+	identityAlloc *fwhandler.IdentityAllocator
 	handler       *fwhandler.Handler
 	agentRepo     *agent.Repository
 	dockerTopic   *pubsub.Topic[dockerevents.DockerEvent]
@@ -829,7 +900,7 @@ func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service,
 		OtelCerts:     d.otelCertsSvc,
 		EnrolledTopic: d.enrolledTopic,
 		EvictTopic:    d.dockerTopic,
-		Domains:       d.handler.ReverseDNSDomains,
+		Identities:    d.identityAlloc.Snapshot,
 	})
 
 	// dns_cache GC — reclaims expired entries the CoreDNS dnsbpf
@@ -919,11 +990,10 @@ func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 }
 
 func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
-	// trusted-lane OTel certs + logger (see bootLogging).
-	log, otelCertsSvc, otelCerts, logCleanup, err := bootLogging(logDir)
-	if err != nil {
-		return err
-	}
+	// trusted-lane OTel certs + logger (see bootLogging). Never fails —
+	// logging degrades (stderr-only / no OTel bridge) rather than blocking
+	// CP startup.
+	log, otelCertsSvc, otelCerts, logCleanup := bootLogging(logDir)
 	// Base context for the run, parent of signalCtx; logCleanup rides its own
 	// base context so the final flush survives the shutdown signal. Deferred
 	// here so it covers every return arm.
@@ -970,7 +1040,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// buildEnforcement; ebpf Load + CleanupStaleBypass are pre-SetReady gates
 	// that exit 1 without flush). enforcementCleanup closes the eBPF manager
 	// (error joined into retErr) then the Docker client, on every return arm.
-	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, enforcementCleanup, err := buildEnforcement(signalCtx, cfg, log, otelCerts)
+	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
+		signalCtx,
+		cfg,
+		log,
+		otelCerts,
+	)
 	// Register cleanup before the error check: buildEnforcement returns a
 	// non-nil cleanup even on a mid-construction failure (e.g. cgroup-driver
 	// detect fails after the Docker client opened), so a partial build still
@@ -1015,6 +1090,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ebpfMgr:           ebpfMgr,
 		stack:             stack,
 		rulesStore:        rulesStore,
+		identityAlloc:     identityAlloc,
 		containerResolver: containerResolver,
 		agentReg:          agentReg,
 		agentPeerLookup:   agentPeerLookup,
@@ -1065,6 +1141,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ebpfMgr:       ebpfMgr,
 		dockerCli:     dockerCli,
 		otelCertsSvc:  otelCertsSvc,
+		identityAlloc: identityAlloc,
 		handler:       handler,
 		agentRepo:     agentRepo,
 		dockerTopic:   dockerTopic,
@@ -1253,6 +1330,8 @@ func logHostIdentity(log *logger.Logger, results ...consts.HostIDResolution) {
 		if res.Err != nil {
 			ev = ev.Err(res.Err)
 		}
-		ev.Msg("CP host identity env missing or invalid; userStage drops to fallback UID/GID — ~/.claude/projects bind writes may EACCES.")
+		ev.Msg(
+			"CP host identity env missing or invalid; userStage drops to fallback UID/GID — ~/.claude/projects bind writes may EACCES.",
+		)
 	}
 }

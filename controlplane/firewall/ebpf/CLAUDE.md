@@ -15,6 +15,11 @@ clawker_*_bpfel.o    BPF bytecode (gitignored)
 manager.go           Go-side Manager: Load/Enable/Disable/SyncRoutes/Bypass/DNS helpers
 types.go             Exported types: ContainerConfig, DNSEntry, RouteKey/Val, MetricKey
 manager_test.go      Unit tests (no kernel required — exercises non-BPF code paths)
+bpf/tests/           SYSCALL-type wrapper progs #including common.h for BPF_PROG_TEST_RUN
+bpftest/             Privileged prog-run harness (cilium bpf/tests pattern): loads the
+                     wrappers + real production maps unpinned, seeds them, runs via
+                     prog.Run(). Gated on PRIVILEGED_TESTS=1 (`make test-bpf` / CI bpf
+                     job) — always skips in the zero-cap dev container.
 cmd/                 break-glass ebpf-manager binary (see cmd/CLAUDE.md)
 ```
 
@@ -34,10 +39,10 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 |-----|-----|-------|-----------|---------|
 | `container_map` | cgroup ID (u64) | `container_config` | `Install`/`Remove` | BPF fast path |
 | `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Disable`/`Enable`, cleared by `Install`/`Remove` | BPF fast path |
-| `dns_cache` | IPv4 (u32) | `dns_entry` {domain_hash, expire_ts} | `UpdateDNSCache` **and** `internal/dnsbpf` CoreDNS plugin | BPF fast path |
-| `route_map` | `{domain_hash, dst_port, l4_proto}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
+| `dns_cache` | IPv4 (u32) | `dns_entry` {identity, expire_ts, source} | `SyncRoutes` seeds (DNSSourceSeed, IP-literal rules), `internal/dnsbpf` CoreDNS plugin (DNSSourceDNS; refuses to overwrite seeds), `UpdateDNSCache` (break-glass) | BPF fast path |
+| `route_map` | `{identity, dst_port, l4_proto}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
 | `udp_flow_map` | `{socket_cookie, backend_ip, backend_port}` (LRU) | `{orig_dst_ip, orig_dst_port}` | `connect4`/`sendmsg4` (`record_udp_flow`); drained by `FlushAll` | `recvmsg4` (reply source) + `getpeername4` (reported peer) |
-| `metrics_map` | `{cgroup_id, domain_hash, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
+| `metrics_map` | `{cgroup_id, identity, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
 | `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
 | `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
 | `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take`; drained by `FlushAll` | BPF fast path |
@@ -53,7 +58,7 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 
 | Field | Byte order | Why |
 |-------|-----------|-----|
-| `ts_ns`, `cgroup_id`, `domain_hash`, `dst_port`, `verdict`, `flags`, `l4_proto` | host | Userspace consumes via `binary.NativeEndian` on a `clawkerEgressEvent` struct (CO-RE `structs.HostLayout`). |
+| `ts_ns`, `cgroup_id`, `identity`, `dst_port`, `verdict`, `flags`, `l4_proto` | host | Userspace consumes via `binary.NativeEndian` on a `clawkerEgressEvent` struct (CO-RE `structs.HostLayout`). |
 | `dst_ip` | network (`[16]uint8` slot) | IPv4 destinations occupy the first 4 bytes (network order, matching `ctx->user_ip4`); IPv6 fills all 16 bytes. Userspace decodes via `netip.AddrFrom4` (v4) or `netip.AddrFrom16` (v6) using `EgressFlagIPv6`/`EgressFlagIPv4Mapped`/`EgressFlagNoDst` to discriminate. `IPToBytes16` converts a `net.IP` to this slot shape. |
 
 Callers MUST `bpf_ntohs(ctx->user_port)` before passing `dst_port` to `submit_event`. The helper itself never swaps; pick-one-side keeps every emit site explicit and prevents double-swap bugs.
@@ -84,8 +89,8 @@ func (m *Manager) Remove(cgroupID uint64) error
 func (m *Manager) SyncRoutes(routes []Route) error          // replace global route_map atomically
 func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
 func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
-func (m *Manager) UpdateDNSCache(ip, domainHash, ttlSeconds uint32) error
-func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns number cleared + a non-nil err when the sweep could not reclaim (wedged iterator or any expired-entry delete failed), so the CP main loop's degraded-GC detector trips on a wedge instead of treating a no-op pass as progress. CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Skips m.seededIPs.
+func (m *Manager) UpdateDNSCache(ip, identity, ttlSeconds uint32) error
+func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns number cleared + a non-nil err when the sweep could not reclaim (wedged iterator or any expired-entry delete failed), so the CP main loop's degraded-GC detector trips on a wedge instead of treating a no-op pass as progress. CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Spares DNSSourceSeed entries (SyncRoutes-owned) and expired entries whose IP has a live udp_flow_map flow (zombie-DNS analog; protects mid-stream QUIC).
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
 
 // Startup / shutdown maintenance — not on EBPFManager interface; called
@@ -106,14 +111,13 @@ Helpers in `types.go`:
 ```go
 const PinPath = "/sys/fs/bpf/clawker"
 
-type Route struct { DomainHash uint32; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]=DomainHash)
+type Route struct { Identity uint32; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
 type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
 func Uint32ToIP(uint32) net.IP
 func IPToBytes16(net.IP) [16]uint8                          // converts to EgressEvent.DstIp slot (IPv4 in first 4 bytes, IPv6 fills all 16)
 func CIDRToAddrMask(cidr string) (addr, mask uint32, err error)
-func DomainHash(domain string) uint32                       // FNV-1a of lowercased domain
 func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr, hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error)
 func CgroupPath(containerID string) string                  // /sys/fs/cgroup/system.slice/docker-<id>.scope
 func CgroupID(cgroupPath string) (uint64, error)            // validated against path-injection, returns inode
@@ -122,7 +126,7 @@ func Supported() error                                       // checks cgroup v2
 
 ## Invariants
 
-- `DomainHash` is the shared contract between this package, `internal/dnsbpf`, and the CP firewall domain (`internal/controlplane/firewall`, specifically `normalizeDomain` + `Handler.FirewallSyncRoutes`). All three **must** use the same normalization (lowercase fold, no trailing dot, no leading `*.`). Changing the hash function requires changing all three call sites and clearing the pinned `route_map`.
+- Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
 - `CgroupID(path)` validates `path` against `/sys/fs/cgroup/` + `..` + control-char sanitization (defense in depth for the privileged `ebpf-manager` break-glass paths).
@@ -139,5 +143,5 @@ To bump pins: resolve fresh apt versions against the pinned `ubuntu:24.04@sha256
 
 ## Imports
 
-- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` overseer event type), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` overseer event type), `internal/dnsbpf` (reuses `IPToUint32`/`Uint32ToIP` + `DNSSource*` constants to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
 - **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

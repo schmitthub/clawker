@@ -44,9 +44,9 @@ func (v Verdict) String() string {
 type EmitSite uint8
 
 const (
-	EmitSiteConnect    EmitSite = EmitSite(ebpf.EgressEmitConnect >> 3)
-	EmitSiteSendmsg    EmitSite = EmitSite(ebpf.EgressEmitSendmsg >> 3)
-	EmitSiteSockCreate EmitSite = EmitSite(ebpf.EgressEmitSockCreate >> 3)
+	EmitSiteConnect    EmitSite = EmitSite(ebpf.EgressEmitConnect >> ebpf.EgressEmitShift)
+	EmitSiteSendmsg    EmitSite = EmitSite(ebpf.EgressEmitSendmsg >> ebpf.EgressEmitShift)
+	EmitSiteSockCreate EmitSite = EmitSite(ebpf.EgressEmitSockCreate >> ebpf.EgressEmitShift)
 )
 
 // EventName returns the OTel event.name attribute value for this emit
@@ -123,12 +123,12 @@ type Event struct {
 	// per record kind without bit-twiddling Flags.
 	EmitSite EmitSite
 
-	// Domain attribution. DomainHash is the BPF-side FNV-1a hash of
+	// Domain attribution. Identity is the CP-allocated route identity of
 	// the resolved hostname; Domain is the reverse-DNS lookup result
 	// (empty when ReverseDNSMap has no entry for the hash, or when
 	// the connect was direct-IP).
-	DomainHash uint32
-	Domain     string
+	Identity uint32
+	Domain   string
 
 	Verdict Verdict
 }
@@ -151,7 +151,7 @@ type Event struct {
 //
 // Other fields are host byte order.
 //
-// Returns a fully-populated Event with DomainHash and CgroupID set;
+// Returns a fully-populated Event with Identity and CgroupID set;
 // userspace enrichment (ContainerID/Agent/Project/Domain) is layered
 // on by the processor.
 func parseEvent(raw []byte) (Event, error) {
@@ -164,17 +164,17 @@ func parseEvent(raw []byte) (Event, error) {
 	}
 
 	ev := Event{
-		Timestamp:  time.Now(),
-		BPFTsNs:    rec.TsNs,
-		CgroupID:   rec.CgroupId,
-		DstPort:    rec.DstPort,
-		L4Proto:    rec.L4Proto,
-		IsIPv6:     rec.Flags&ebpf.EgressFlagIPv6 != 0,
-		IsMapped:   rec.Flags&ebpf.EgressFlagIPv4Mapped != 0,
-		NoDst:      rec.Flags&ebpf.EgressFlagNoDst != 0,
-		EmitSite:   EmitSite((rec.Flags & ebpf.EgressEmitMask) >> 3),
-		DomainHash: rec.DomainHash,
-		Verdict:    Verdict(rec.Verdict),
+		Timestamp: time.Now(),
+		BPFTsNs:   rec.TsNs,
+		CgroupID:  rec.CgroupId,
+		DstPort:   rec.DstPort,
+		L4Proto:   rec.L4Proto,
+		IsIPv6:    rec.Flags&ebpf.EgressFlagIPv6 != 0,
+		IsMapped:  rec.Flags&ebpf.EgressFlagIPv4Mapped != 0,
+		NoDst:     rec.Flags&ebpf.EgressFlagNoDst != 0,
+		EmitSite:  EmitSite((rec.Flags & ebpf.EgressEmitMask) >> ebpf.EgressEmitShift),
+		Identity:  rec.Identity,
+		Verdict:   Verdict(rec.Verdict),
 	}
 	switch {
 	case ev.NoDst:

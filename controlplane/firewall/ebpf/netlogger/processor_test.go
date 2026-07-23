@@ -53,12 +53,12 @@ func TestProcessor_ParsesEnrichesEmits(t *testing.T) {
 	}
 
 	raw := mustEncodeEvent(t, ebpf.EgressEvent{
-		CgroupId:   424242,
-		DstIp:      ebpf.IPToBytes16(net.IPv4(203, 0, 113, 9)),
-		DstPort:    443,
-		Verdict:    ebpf.EgressVerdictAllowed,
-		L4Proto:    1,
-		DomainHash: 0xbeef,
+		CgroupId: 424242,
+		DstIp:    ebpf.IPToBytes16(net.IPv4(203, 0, 113, 9)),
+		DstPort:  443,
+		Verdict:  ebpf.EgressVerdictAllowed,
+		L4Proto:  1,
+		Identity: 0xbeef,
 	})
 	queue <- raw
 	close(queue)
@@ -148,12 +148,12 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	queue := make(chan []byte, 4)
 	src := &fakeRingbuf{records: [][]byte{
 		mustEncodeEvent(t, ebpf.EgressEvent{
-			CgroupId:   7,
-			DstIp:      ebpf.IPToBytes16(net.IPv4(192, 0, 2, 33)),
-			DstPort:    80,
-			Verdict:    ebpf.EgressVerdictAllowed,
-			L4Proto:    1,
-			DomainHash: 0xfeed,
+			CgroupId: 7,
+			DstIp:    ebpf.IPToBytes16(net.IPv4(192, 0, 2, 33)),
+			DstPort:  80,
+			Verdict:  ebpf.EgressVerdictAllowed,
+			L4Proto:  1,
+			Identity: 0xfeed,
 		}),
 	}}
 	metrics := NewMetrics()
@@ -186,7 +186,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	if rec.Verdict != VerdictAllowed || rec.ContainerID != "ABC" ||
 		rec.Agent != "agent-1" || rec.Project != "project-1" ||
 		rec.DstIP.String() != "192.0.2.33" || rec.DstPort != 80 ||
-		rec.DomainHash != 0xfeed {
+		rec.Identity != 0xfeed {
 		t.Errorf("end-to-end record fields wrong: %+v", rec)
 	}
 }

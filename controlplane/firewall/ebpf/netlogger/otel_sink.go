@@ -42,7 +42,7 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
 }
 
 // Emit stamps a security record carrying the kernel verdict + agent
-// attribution + 4-tuple + domain. domain_hash is emitted alongside
+// attribution + 4-tuple + domain. identity is emitted alongside
 // dst_host so operators can correlate userspace records with BPF-side
 // dns_cache / route_map entries when dst_host is empty (direct-IP
 // connect, rule removed mid-flight, stale dnsbpf entry).
@@ -69,7 +69,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	//     by the collector resource/netlogger processor post-routing).
 	//     Per-record duplicates of those facts are NOT emitted.
 	//   - Per-record layer = event taxonomy (event.name) + payload.
-	//   - cgroup_id / dst_port / domain_hash are opaque ID-shaped
+	//   - cgroup_id / dst_port / identity are opaque ID-shaped
 	//     strings so the OS index template maps them as keyword.
 	//     Numeric values would get OSD's thousands-separator
 	//     formatting ("4,318") which is wrong for IDs.
@@ -86,7 +86,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 		otellog.Bool("ipv6", ev.IsIPv6),
 		otellog.Bool("ipv4_mapped", ev.IsMapped),
 		otellog.Bool("no_dst", ev.NoDst),
-		otellog.String("domain_hash", strconv.FormatUint(uint64(ev.DomainHash), 10)),
+		otellog.String("identity", strconv.FormatUint(uint64(ev.Identity), 10)),
 	}
 	// dst_ip, dst_port, dst_host are omitted when BPF / enrichment did
 	// not carry them on this code path (sock_create — NoDst=true;

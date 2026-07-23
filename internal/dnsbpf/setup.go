@@ -2,6 +2,7 @@ package dnsbpf
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/coredns/caddy"
@@ -22,10 +23,22 @@ var (
 )
 
 func setup(c *caddy.Controller) error {
-	// Parse the dnsbpf block — currently takes no arguments.
+	// Parse the dnsbpf block: exactly one argument, the zone's
+	// CP-allocated route identity (non-zero u32). The Corefile generator
+	// (controlplane/firewall) writes it; a zone whose dst holds no
+	// identity gets no dnsbpf directive at all.
+	var identity uint32
 	for c.Next() {
+		if !c.NextArg() {
+			return fmt.Errorf("plugin/%s: %w", pluginName, c.ArgErr())
+		}
+		id, err := strconv.ParseUint(c.Val(), 10, 32)
+		if err != nil || id == 0 {
+			return fmt.Errorf("plugin/%s: invalid route identity %q: must be a non-zero u32", pluginName, c.Val())
+		}
+		identity = uint32(id)
 		if c.NextArg() {
-			return plugin.Error(pluginName, c.ArgErr())
+			return fmt.Errorf("plugin/%s: %w", pluginName, c.ArgErr())
 		}
 	}
 
@@ -40,9 +53,8 @@ func setup(c *caddy.Controller) error {
 
 	// BPF map is required — this plugin's entire purpose is writing to it.
 	if sharedMapErr != nil {
-		return plugin.Error(pluginName, fmt.Errorf(
-			"cannot open BPF dns_cache map at %s: %w (is the eBPF manager running?)",
-			DefaultPinPath, sharedMapErr))
+		return fmt.Errorf("plugin/%s: cannot open BPF dns_cache map at %s: %w (is the eBPF manager running?)",
+			pluginName, DefaultPinPath, sharedMapErr)
 	}
 
 	// NOTE: no OnShutdown handler to close the BPF map. The pinned map FD is
@@ -55,9 +67,10 @@ func setup(c *caddy.Controller) error {
 
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return Handler{
-			Next: next,
-			Zone: zone,
-			Map:  sharedMap,
+			Next:     next,
+			Zone:     zone,
+			Identity: identity,
+			Map:      sharedMap,
 		}
 	})
 

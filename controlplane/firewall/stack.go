@@ -86,6 +86,9 @@ type Stack struct {
 	log       *logger.Logger
 	store     *storage.Store[EgressRulesFile]
 	otelCerts OtelCertProvisioner
+	// idFor answers dst→identity for Corefile generation (dnsbpf
+	// directives). Never nil — NewStack substitutes a fail-closed stub.
+	idFor IdentityResolver
 	// infraCertsReady is set to true by ensureConfigs after a successful
 	// ensureInfraClientCerts call (and reset to false on failure). Gates
 	// downstream mTLS wiring (alsConfig, envoy/coredns container specs)
@@ -137,11 +140,19 @@ func NewStack(
 	log *logger.Logger,
 	store *storage.Store[EgressRulesFile],
 	otelCerts OtelCertProvisioner,
+	idFor IdentityResolver,
 ) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Stack{docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts}
+	if idFor == nil {
+		// Fail closed: no resolver → no dnsbpf directives in the Corefile.
+		idFor = func(string) (uint32, bool) { return 0, false }
+	}
+	return &Stack{
+		docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts, idFor: idFor,
+		infraCertsReady: false,
+	}
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -544,7 +555,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("writing envoy.yaml: %w", err)
 	}
 
-	corefile, err := GenerateCorefile(rules, s.cfg.CoreDNSHealthHostPort())
+	corefile, err := GenerateCorefile(rules, s.cfg.CoreDNSHealthHostPort(), s.idFor)
 	if err != nil {
 		return "", fmt.Errorf("generating Corefile: %w", err)
 	}

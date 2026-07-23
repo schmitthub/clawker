@@ -4,14 +4,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+// corefileTestIDs builds a deterministic IdentityResolver for Corefile
+// golden tests: reserved internal hosts then rule dsts (normalized), sorted,
+// assigned sequential identities from MinIdentity. Stable across runs so the
+// hand-edited goldens can pin exact dnsbpf directive arguments.
+func corefileTestIDs(rules []config.EgressRule) firewall.IdentityResolver {
+	dsts := append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+	for _, r := range rules {
+		dsts = append(dsts, strings.TrimSuffix(strings.TrimPrefix(r.Dst, "."), "."))
+	}
+	sort.Strings(dsts)
+	ids := make(map[string]uint32, len(dsts))
+	next := firewall.MinIdentity
+	for _, d := range dsts {
+		if d == "" {
+			continue
+		}
+		if _, ok := ids[d]; ok {
+			continue
+		}
+		ids[d] = next
+		next++
+	}
+	return func(dst string) (uint32, bool) {
+		id, ok := ids[dst]
+		return id, ok
+	}
+}
 
 func TestGenerateCorefile(t *testing.T) {
 	tests := []struct {
@@ -54,7 +85,7 @@ func TestGenerateCorefile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := firewall.GenerateCorefile(tt.rules, 18902)
+			got, err := firewall.GenerateCorefile(tt.rules, 18902, corefileTestIDs(tt.rules))
 			require.NoError(t, err)
 
 			goldenPath := filepath.Join("testdata", tt.goldenFile)
@@ -72,7 +103,7 @@ func TestGenerateCorefile(t *testing.T) {
 // test fails — keeping the firewall plane and the compose plane in
 // lockstep.
 func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
-	got, err := firewall.GenerateCorefile(nil, 18902)
+	got, err := firewall.GenerateCorefile(nil, 18902, corefileTestIDs(nil))
 	require.NoError(t, err)
 
 	for _, host := range consts.MonitoringServiceHostnames {
@@ -87,15 +118,18 @@ func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
 // typo silently reopens the DNS subtree-exfil channel. Fail-closed means the typo'd
 // rule is inert, so output must equal the exact-allow-alone baseline byte-for-byte.
 func TestGenerateCorefile_UnknownActionDoesNotWidenScope(t *testing.T) {
-	baseline, err := firewall.GenerateCorefile([]config.EgressRule{
-		{Dst: "example.com", Action: "allow"},
-	}, 18902)
+	baselineRules := []config.EgressRule{{
+		Dst: "example.com", Action: "allow",
+		Proto: "", Port: "", PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+	}}
+	baseline, err := firewall.GenerateCorefile(baselineRules, 18902, corefileTestIDs(baselineRules))
 	require.NoError(t, err)
 
-	withTypo, err := firewall.GenerateCorefile([]config.EgressRule{
+	typoRules := []config.EgressRule{
 		{Dst: "example.com", Action: "allow"},
 		{Dst: ".example.com", Action: "allwo"}, // typo: unknown action, not an effective allow
-	}, 18902)
+	}
+	withTypo, err := firewall.GenerateCorefile(typoRules, 18902, corefileTestIDs(baselineRules))
 	require.NoError(t, err)
 
 	assert.Equal(t, string(baseline), string(withTypo),

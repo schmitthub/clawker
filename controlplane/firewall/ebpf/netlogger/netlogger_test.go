@@ -62,7 +62,11 @@ type fakeInspecter struct {
 	err   error
 }
 
-func (f *fakeInspecter) ContainerInspect(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+func (f *fakeInspecter) ContainerInspect(
+	_ context.Context,
+	id string,
+	_ mobyclient.ContainerInspectOptions,
+) (mobyclient.ContainerInspectResult, error) {
 	f.calls.Add(1)
 	if f.err != nil {
 		return mobyclient.ContainerInspectResult{}, f.err

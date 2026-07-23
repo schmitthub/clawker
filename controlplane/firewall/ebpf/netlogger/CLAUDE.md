@@ -35,7 +35,7 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 | `netlogger.go` | `Service` struct, `New(Deps)`, `Start(ctx)`, `Stop(ctx)`, overseer subscriptions for enroll + evict, `handleEnroll` (one docker ContainerInspect per enroll). `Deps.OtelLoggerProvider` is the production sink anchor; nil routes to internal `nopSink`. |
 | `event.go` | `Event` struct, `Verdict` enum, `parseEvent([]byte) (Event, error)` — decodes ringbuf records via `binary.NativeEndian` against the bpf2go-generated `ebpf.EgressEvent` |
 | `cache.go` | `LabelCache` — slice + dual-index (`byCgroup`/`byCont`) + invalid-flag + free-list. Mutex-guarded. Single eviction call drops both indices atomically so cgroup-id reuse can't return stale labels |
-| `reverse_dns.go` | `ReverseDNSMap` — periodic refresh of the `hash → domain` table from `DomainSource`; walks the pinned `dns_cache` as a triage-only signal for unattributed hashes. Walk seam is injectable for tests (no real BPF map needed) |
+| `reverse_dns.go` | `ReverseDNSMap` — periodic refresh of the `identity → dst` table from `IdentitySource` (a snapshot closure over the firewall IdentityAllocator); walks the pinned `dns_cache` as a triage-only signal for unattributed identities. Walk seam is injectable for tests (no real BPF map needed) |
 | `reader.go` | `reader` — ringbuf drain goroutine. Recovers; bumps RingbufReceived/RingbufErrors/QueueDropped |
 | `processor.go` | `processor` — queue-consumer goroutine. Recovers; bumps QueueReceived/ParseErrors/EmitSucceeded |
 | `sink.go` | `Sink` interface + internal `nopSink`. No public sink constructors — the OTel-backed sink is constructed in `New` when `Deps.OtelLoggerProvider` is non-nil, and the nopSink is the test/degraded default. |
@@ -81,8 +81,8 @@ Attribute keys today:
 | `ipv6` | bool | native IPv6 destination — full 16-byte address carried in `dst_ip` | never |
 | `ipv4_mapped` | bool | `::ffff:x.x.x.x` dual-stack destination | never |
 | `no_dst` | bool | `Event.NoDst` — sock_create event with no destination | never |
-| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)` | `Event.Domain == ""` (direct-IP connect, domain outside firewall rules, stale dnsbpf entry) |
-| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Operators correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty. | never |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.Identity)` | `Event.Domain == ""` (direct-IP connect, domain outside firewall rules, stale dnsbpf entry) |
+| `identity` | string | `strconv.FormatUint(uint64(Event.Identity), 10)` — CP-allocated route identity for the resolved domain. Operators correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty. | never |
 
 **Address representation.** Follows the Cilium / Tetragon convention: BPF's `struct egress_event.dst_ip` is a flat 16-byte slot in network byte order. IPv4 destinations occupy the first 4 bytes (the same shape as `ctx->user_ip4`) with the remaining 12 bytes zero; IPv6 destinations fill all 16 bytes. `EgressFlagIPv6` / `EgressFlagIPv4Mapped` / `EgressFlagNoDst` discriminate. Userspace `parseEvent` switches on flags: NoDst leaves the address invalid, IPv6 decodes via `netip.AddrFrom16`, default decodes the low 4 bytes via `netip.AddrFrom4`. `netip.Addr.String()` produces the right shape for either family, and OS `type: ip` mapping accepts both string forms — single attribute name `dst_ip` handles all cases (no `dst_ipv4`/`dst_ipv6` split).
 
@@ -104,7 +104,7 @@ type Deps struct {
     Bus                *overseer.Overseer
     Docker             ContainerInspecter
     Cfg                config.Config
-    Domains            DomainSource          // nil → degraded mode (dst_host always "")
+    Identities         IdentitySource        // nil → degraded mode (dst_host always "")
     OtelLoggerProvider *sdklog.LoggerProvider // nil → nopSink (degraded / test)
     Log                *logger.Logger
     QueueBuffer        int
@@ -132,7 +132,7 @@ type Event struct {
     IsMapped    bool
     NoDst       bool       // sock_create — no destination exists
     EmitSite    EmitSite   // which BPF program submitted the event; drives event.name
-    DomainHash  uint32
+    Identity    uint32
     Domain      string
     Verdict     Verdict
 }
@@ -161,14 +161,12 @@ Why not an LRU: cgroup_id reuse is event-driven, not time-driven. An LRU would e
 
 ## ReverseDNSMap
 
-`dns_cache` stores `{IPv4 → {domain_hash, expire_ts}}`. The domain string lives only on the control plane side (the firewall rule set + the internal hostnames CoreDNS serves out of band). ReverseDNSMap holds the inverse `hash → domain` table, rebuilt every refresh tick by hashing the live set returned by `Deps.Domains` — a closure over `firewall.Handler.ReverseDNSDomains` in production wiring. That set is the union of `AllResolvableDomains` (the CoreDNS zone set) and `SeedDomainsFromRules` (the bare-IP literals `SyncRoutes` seeds into dns_cache for IP-literal rules). The seeds MUST be unioned in: `AllResolvableDomains` deliberately omits IP/CIDR rules (they are not CoreDNS zones), but `SyncRoutes` still writes `dns_cache[ip]=DomainHash(ip)`, so sourcing the reverse map from the zone set alone left every IP-literal rule's seed permanently unattributed. The walk over the pinned dns_cache stays as a triage signal: hashes present in dns_cache but absent from the DomainSource emit `event=netlogger_reverse_dns_unattributed` (race after rule remove / dnsbpf stale entry / unknown source).
+`dns_cache` stores `{IPv4 → {identity, expire_ts, source}}`. The destination string lives only on the control plane side — the firewall IdentityAllocator's table, which also keys `route_map` and feeds the Corefile's `dnsbpf <identity>` directives. ReverseDNSMap holds the `identity → dst` table, rebuilt every refresh tick by snapshotting `Deps.Identities` — a closure over `IdentityAllocator.Snapshot` in production wiring. Attribution is a direct read of the allocation, not a hash inversion — both sides read one allocation by construction, and IP-literal seeds are covered because the allocator assigns identities to IP/CIDR dsts too. The walk over the pinned dns_cache stays as a triage signal: identities present in dns_cache but absent from the IdentitySource emit `event=netlogger_reverse_dns_unattributed` (race after rule remove / dnsbpf stale entry / unknown source).
 
-`Lookup(hash)` returns the domain string when known, `""` otherwise. Empty cases:
-- `hash == 0` — direct-IP connect, BPF saw no DNS context.
-- Nil `Deps.Domains` (degraded mode before CP main wiring lands).
-- Hash absent from DomainSource (race or stale; logged on refresh).
-
-The hash function is `internal/controlplane/firewall/ebpf.DomainHash` (FNV-1a of the lowercased domain) — the same call dnsbpf uses when it writes `dns_cache`. The collision floor is tracked as part of the route-identity allocator work.
+`Lookup(identity)` returns the dst string when known, `""` otherwise. Empty cases:
+- `identity == 0` — direct-IP connect, BPF saw no DNS context.
+- Nil `Deps.Identities` (degraded mode before CP main wiring lands).
+- Identity absent from IdentitySource (race or stale; logged on refresh).
 
 ## Prom counters (in-process; scrape not wired)
 
