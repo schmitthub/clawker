@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,7 +14,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -1476,6 +1480,51 @@ func curlPinnedIP(h *harness.Harness, agent, ip string) *harness.RunResult {
 		"https://"+identityProbeDomain)
 }
 
+// identitySnapshot reads the CP's persisted route-identity table
+// (route-identities.yaml in the host-side firewall data dir) and returns its
+// dst→ID map. This is the authoritative stickiness surface: on the https
+// datapath a renumbered identity is invisible to a curl (route hit/miss/
+// cross-bind all land on the shared Envoy egress port; SNI picks the filter
+// chain), so the table itself is what the stability tests must assert on.
+// The probe domain is a required rule, so it must always hold an identity.
+func identitySnapshot(t *testing.T, h *harness.Harness) map[string]int64 {
+	t.Helper()
+	cfg, err := h.Opts.Config()
+	require.NoError(t, err, "resolving config for identity snapshot")
+	dataDir, err := cfg.FirewallDataSubdir()
+	require.NoError(t, err, "resolving firewall data dir")
+	path := filepath.Join(dataDir, consts.RouteIdentitiesFile)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err, "reading persisted identity table %s", path)
+	var table firewall.IdentityTableFile
+	require.NoError(t, yaml.Unmarshal(raw, &table), "unmarshaling identity table %s", path)
+	ids := make(map[string]int64, len(table.Entries))
+	for _, e := range table.Entries {
+		ids[e.Dst] = e.ID
+	}
+	require.Contains(t, ids, identityProbeDomain,
+		"identity table %s missing probe domain %s", path, identityProbeDomain)
+	return ids
+}
+
+// requireIdentitiesStable asserts that every dst live in both snapshots kept
+// its identity — the sticky allocator's core invariant (live dsts are never
+// renumbered). dsts only in one snapshot (added/removed by churn) are fine.
+func requireIdentitiesStable(t *testing.T, before, after map[string]int64, window string) {
+	t.Helper()
+	require.Equal(t, before[identityProbeDomain], after[identityProbeDomain],
+		"live dst %s renumbered across %s (was %d, now %d)",
+		identityProbeDomain, window, before[identityProbeDomain], after[identityProbeDomain])
+	for dst, preID := range before {
+		postID, ok := after[dst]
+		if !ok {
+			continue // released by churn — absence is fine, renumbering is not
+		}
+		assert.Equal(t, preID, postID,
+			"live dst %s renumbered across %s (was %d, now %d)", dst, window, preID, postID)
+	}
+}
+
 // TestFirewall_IdentityStableAcrossRuleChurn is the end-to-end renumbering
 // regression test for the sticky route-identity allocator. dns_cache is
 // populated asynchronously by CoreDNS and is NOT rewritten on reconcile, so
@@ -1494,6 +1543,8 @@ func TestFirewall_IdentityStableAcrossRuleChurn(t *testing.T) {
 	require.NoError(t, pre.Err, "pinned-IP curl before churn failed\nstdout: %s\nstderr: %s",
 		pre.Stdout, pre.Stderr)
 
+	preIDs := identitySnapshot(t, h)
+
 	// Churn: rules that sort before AND after the target domain, added and
 	// removed so every reconcile regenerates the Corefile + route_map. A
 	// renumbering allocator shifts the target's position on each of these.
@@ -1506,13 +1557,20 @@ func TestFirewall_IdentityStableAcrossRuleChurn(t *testing.T) {
 	require.NoError(t, rmRes.Err, "firewall remove failed\nstdout: %s\nstderr: %s",
 		rmRes.Stdout, rmRes.Stderr)
 
+	// The direct invariant: the persisted identity table must not have
+	// renumbered any dst that stayed live across the churn. The https
+	// datapath can't see a renumber (SNI routing masks it), so the table
+	// is the assertion surface; the pinned curl below stays as a smoke
+	// check of the cached-entry datapath.
+	postIDs := identitySnapshot(t, h)
+	requireIdentitiesStable(t, preIDs, postIDs, "rule churn")
+
 	// The pre-churn dns_cache entry must still route to the right listener.
 	post := curlPinnedIP(h, "identity-churn", ip)
 	require.NoError(t, post.Err,
 		"pinned-IP curl AFTER rule churn failed — cached dns_cache identity no longer routes "+
 			"(renumbering regression)\nstdout: %s\nstderr: %s",
 		post.Stdout, post.Stderr)
-	assert.NotEmpty(t, strings.TrimSpace(post.Stdout), "should get an HTTP response code")
 
 	// Cleanup the churn rules so the store isn't polluted for later asserts.
 	for _, dst := range []string{"zzz-churn.example.com", "example.com"} {
@@ -1537,6 +1595,8 @@ func TestFirewall_IdentityStableAcrossCPRestart(t *testing.T) {
 	require.NoError(t, pre.Err, "pinned-IP curl before restart failed\nstdout: %s\nstderr: %s",
 		pre.Stdout, pre.Stderr)
 
+	preIDs := identitySnapshot(t, h)
+
 	downRes := h.Run("controlplane", "down")
 	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s",
 		downRes.Stdout, downRes.Stderr)
@@ -1552,5 +1612,9 @@ func TestFirewall_IdentityStableAcrossCPRestart(t *testing.T) {
 		"pinned-IP curl AFTER CP restart failed — persisted identity table did not re-bind "+
 			"the cached dns_cache identity\nstdout: %s\nstderr: %s",
 		post.Stdout, post.Stderr)
-	assert.NotEmpty(t, strings.TrimSpace(post.Stdout), "should get an HTTP response code")
+
+	// The direct invariant: route-identities.yaml survived the restart and
+	// the new CP re-bound every still-configured dst to its previous ID.
+	postIDs := identitySnapshot(t, h)
+	requireIdentitiesStable(t, preIDs, postIDs, "CP restart")
 }

@@ -15,7 +15,8 @@ Purpose: let the BPF `connect4` program route per-domain TCP traffic (e.g. `ssh 
 | `bpfmap.go` | `BPFMap` — thin `cilium/ebpf` wrapper around the pinned `dns_cache` map, matching `struct dns_entry` in `bpf/common.h`. `Update(ip, identity, ttl)` refuses to overwrite a `DNSSourceSeed` entry (CP SyncRoutes-owned IP-literal seed — source precedence), skips the write when the precedence lookup fails with anything other than `ErrKeyNotExist` (the source is unknown — writing could clobber a seed), writes `DNSSourceDNS` otherwise, and log-and-drops individual lookup/write failures (non-fatal — the next DNS answer retries). `dnsCacheMap` is the injectable map seam for unit tests. |
 | `log.go` | CoreDNS-style logger (thin wrapper around `coredns/coredns/plugin/pkg/log`). |
 | `dnsbpf_test.go` | Unit tests using a `cannedHandler` downstream stub to exercise ServeDNS without a real resolver. |
-| `setup_test.go` | Directive parse-error table tests (missing/extra/invalid/zero/duplicate) — all branches return before the shared BPF map opens, so they run without a kernel. |
+| `setup_internal_test.go` | Directive parse-error table tests (missing/extra/invalid/zero/duplicate) — all branches return before the shared BPF map opens, so they run without a kernel. |
+| `bpfmap_internal_test.go` | `BPFMap.Update` source-precedence tests against `fakeDNSCacheMap`, an in-memory `dnsCacheMap` stand-in: writes `DNSSourceDNS` on an empty key, overwrites an existing DNS-source entry, refuses to overwrite a `DNSSourceSeed` entry, and skips the write when `Lookup` fails with anything other than `ErrKeyNotExist`. |
 
 ## Key Types
 
