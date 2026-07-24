@@ -91,21 +91,34 @@ struct container_config {
 	__u16 egress_port;     // Envoy egress listener port (host byte order)
 };
 
+// dns_entry.source values. Precedence: SEED > DNS. A SEED entry is written by
+// SyncRoutes for an IP-literal rule and owned by its reconcile lifecycle; the
+// CoreDNS dnsbpf plugin must not overwrite it and userspace GC must not evict
+// it (its removal path is SyncRoutes orphan deletion, not TTL expiry).
+#define DNS_SOURCE_DNS  0 // CoreDNS dnsbpf plugin, per A-record resolution
+#define DNS_SOURCE_SEED 1 // SyncRoutes seed for an IP-literal rule
+
 // DNS cache entry: resolved IP → domain identity.
-// Written by the CoreDNS dnsbpf plugin on every resolution; read by userspace
-// garbage collection (Manager.GarbageCollectDNS). The BPF fast
-// path (clawker.c) only uses domain_hash for routing and does NOT check
-// expire_ts — expiration is enforced exclusively by userspace GC.
+// Written by the CoreDNS dnsbpf plugin on every resolution and by SyncRoutes
+// for IP-literal rules; read by userspace garbage collection
+// (Manager.GarbageCollectDNS). The BPF fast path (clawker.c) only uses
+// identity for routing and does NOT check expire_ts or source — expiration
+// and write precedence are enforced exclusively in userspace.
 struct dns_entry {
-	__u32 domain_hash; // FNV-1a hash of normalized domain
-	__u32 expire_ts;   // Wall-clock expiration: time.Now().Unix() + TTL seconds
+	__u32 identity;  // userspace-allocated route identity for the resolved domain
+	__u32 expire_ts; // Wall-clock expiration: time.Now().Unix() + TTL seconds
+	__u8  source;    // DNS_SOURCE_* write-precedence tag (userspace-only)
+	__u8  _pad[3];
 };
+// A dns_entry size change is the pinned-map migration lever — Load() removes
+// schema-mismatched maps. Mirrored Go-side by TestDNSEntry_SizeMatchesABI.
+_Static_assert(sizeof(struct dns_entry) == 12, "dns_entry must stay 12 bytes");
 
 // Global per-domain route key (shared across all enforced containers).
 // Presence in container_map determines enforcement; route_map is global.
 // l4_proto discriminates TCP vs UDP so both can route the same {domain,port}.
 struct route_key {
-	__u32 domain_hash; // Matches dns_entry.domain_hash
+	__u32 identity; // Matches dns_entry.identity
 	__u16 dst_port;    // Original destination port (host byte order)
 	__u8  l4_proto;    // SOCK_STREAM (TCP) / SOCK_DGRAM (UDP) — keeps TCP and
 	                   // UDP routes for one {domain,port} from colliding.
@@ -187,7 +200,7 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dns_cache SEC(".maps");
 
-// route_map: {domain_hash, dst_port, l4_proto} → envoy_port
+// route_map: {identity, dst_port, l4_proto} → envoy_port
 // Global routing table shared by all enforced containers (TCP + UDP).
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -215,7 +228,7 @@ struct {
 
 struct metric_key {
 	__u64 cgroup_id;
-	__u32 domain_hash;
+	__u32 identity;
 	__u16 dst_port;
 	__u8  action; // 0=allow, 1=deny, 2=bypass
 	__u8  _pad;
@@ -275,7 +288,7 @@ enum egress_flags {
 // in `flags` discriminate the three cases.
 //
 // Endianness convention (referenced from netlogger Go parser):
-//   ts_ns, cgroup_id, domain_hash, dst_port, verdict, flags, l4_proto —
+//   ts_ns, cgroup_id, identity, dst_port, verdict, flags, l4_proto —
 //     host byte order.
 //   dst_ip — network byte order (matches ctx->user_ip4 / ctx->user_ip6
 //     and the ContainerConfig IP fields in this codebase).
@@ -286,7 +299,7 @@ struct egress_event {
 	__u64 ts_ns;       // bpf_ktime_get_ns()
 	__u64 cgroup_id;   // trust anchor — userspace cache key
 	__u8  dst_ip[16];  // network byte order; v4 in [0..3] + zeros, v6 in [0..15], zero when NO_DST
-	__u32 domain_hash; // 0 if no DNS resolution (direct-IP / no cache hit / v6 / no_dst)
+	__u32 identity; // 0 if no DNS resolution (direct-IP / no cache hit / v6 / no_dst)
 	__u16 dst_port;    // host byte order (caller swapped); 0 when NO_DST
 	__u8  verdict;     // enum egress_verdict
 	__u8  flags;       // enum egress_flags bitmask
@@ -384,12 +397,12 @@ struct {
 // ---------------------------------------------------------------------------
 
 // Increment a per-CPU counter in the metrics map.
-static __always_inline void metric_inc(__u64 cgroup_id, __u32 domain_hash,
+static __always_inline void metric_inc(__u64 cgroup_id, __u32 identity,
 				       __u16 dst_port, __u8 action)
 {
 	struct metric_key key = {
 		.cgroup_id = cgroup_id,
-		.domain_hash = domain_hash,
+		.identity = identity,
 		.dst_port = dst_port,
 		.action = action,
 	};
@@ -522,25 +535,25 @@ ratelimit_check_and_take(__u64 cgroup_id)
 	return false;
 }
 
-// lookup_domain_hash_for_ip resolves the FNV-1a domain hash for an IPv4
+// lookup_identity_for_ip resolves the route identity for an IPv4
 // destination by reading the pinned dns_cache (populated by CoreDNS). A
 // miss (direct-IP connect, or DNS resolution outside our managed CoreDNS)
 // returns 0; userspace treats 0 as "no domain attribution".
 static __always_inline __u32
-lookup_domain_hash_for_ip(__u32 dst_ip)
+lookup_identity_for_ip(__u32 dst_ip)
 {
 	if (dst_ip == 0)
 		return 0;
 	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 	if (!dns)
 		return 0;
-	return dns->domain_hash;
+	return dns->identity;
 }
 
 // submit_event_v4 / submit_event_v6 / submit_event_nodst — typed
 // wrappers around the ringbuf-reserve + ratelimit + compound-literal
 // init sequence. Three helpers instead of one because each path has a
-// different address representation and a different domain-hash source,
+// different address representation and a different identity source,
 // and the BPF verifier is happiest when every field is initialized
 // from a constant or a known-bounded copy.
 //
@@ -563,7 +576,7 @@ lookup_domain_hash_for_ip(__u32 dst_ip)
 // paths. dst_ip4 is in network byte order (matches ctx->user_ip4 and
 // ctx->user_ip6[3]). The 16-byte ev->dst_ip is fully zero-initialized
 // by the compound literal, then the 4 v4 bytes are written into
-// ev->dst_ip[0..3]. Domain-hash lookup is v4-keyed.
+// ev->dst_ip[0..3]. Identity lookup is v4-keyed.
 static __always_inline void
 submit_event_v4(__u64 cgroup_id, __u32 dst_ip4, __u16 dst_port_host,
 		__u8 l4_proto, __u8 verdict, __u8 flags)
@@ -585,7 +598,7 @@ submit_event_v4(__u64 cgroup_id, __u32 dst_ip4, __u16 dst_port_host,
 		.ts_ns       = bpf_ktime_get_ns(),
 		.cgroup_id   = cgroup_id,
 		.dst_ip      = {0},
-		.domain_hash = lookup_domain_hash_for_ip(dst_ip4),
+		.identity = lookup_identity_for_ip(dst_ip4),
 		.dst_port    = dst_port_host,
 		.verdict     = verdict,
 		.flags       = flags,
@@ -598,8 +611,8 @@ submit_event_v4(__u64 cgroup_id, __u32 dst_ip4, __u16 dst_port_host,
 
 // submit_event_v6 — connect6 / sendmsg6 native IPv6 paths.
 // dst_ip6 points at ctx->user_ip6 (4 × __be32, network byte order). The
-// full 16 bytes copy into ev->dst_ip. Domain-hash lookup is v4-only, so
-// v6 always emits hash=0; EGRESS_FLAG_IPV6 is OR'd into flags by the
+// full 16 bytes copy into ev->dst_ip. Identity lookup is v4-only, so
+// v6 always emits identity=0; EGRESS_FLAG_IPV6 is OR'd into flags by the
 // helper so call sites only carry verdict-specific flag bits.
 static __always_inline void
 submit_event_v6(__u64 cgroup_id, const __u32 dst_ip6[4], __u16 dst_port_host,
@@ -622,7 +635,7 @@ submit_event_v6(__u64 cgroup_id, const __u32 dst_ip6[4], __u16 dst_port_host,
 		.ts_ns       = bpf_ktime_get_ns(),
 		.cgroup_id   = cgroup_id,
 		.dst_ip      = {0},
-		.domain_hash = 0,
+		.identity = 0,
 		.dst_port    = dst_port_host,
 		.verdict     = verdict,
 		.flags       = (__u8)(flags | EGRESS_FLAG_IPV6),
@@ -635,7 +648,7 @@ submit_event_v6(__u64 cgroup_id, const __u32 dst_ip6[4], __u16 dst_port_host,
 
 // submit_event_nodst — sock_create paths. The syscall is socket
 // creation, not connection/send — there is no destination, so dst_ip /
-// dst_port / domain_hash are all zero and EGRESS_FLAG_NO_DST is the
+// dst_port / identity are all zero and EGRESS_FLAG_NO_DST is the
 // observable signal. Userspace renders Event.DstIP as invalid; the
 // OTLP sink omits the dst_ip attribute so operators can partition via
 // _exists_:attributes.dst_ip.
@@ -659,7 +672,7 @@ submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
 		.ts_ns       = bpf_ktime_get_ns(),
 		.cgroup_id   = cgroup_id,
 		.dst_ip      = {0},
-		.domain_hash = 0,
+		.identity = 0,
 		.dst_port    = 0,
 		.verdict     = verdict,
 		.flags       = EGRESS_FLAG_NO_DST | EGRESS_EMIT_SOCK_CREATE,
@@ -760,14 +773,14 @@ struct route_result {
 };
 
 // lookup_route resolves the per-domain Envoy listener port for a routed flow.
-// Keyed by {domain_hash, dst_port, l4_proto} so TCP and UDP routes for the same
+// Keyed by {identity, dst_port, l4_proto} so TCP and UDP routes for the same
 // destination stay independent. dst_port is host byte order; l4_proto is
 // SOCK_STREAM / SOCK_DGRAM. Returns 0 on miss (no rule for this transport).
 static __always_inline __u16
-lookup_route(__u32 domain_hash, __u16 dst_port, __u8 l4_proto)
+lookup_route(__u32 identity, __u16 dst_port, __u8 l4_proto)
 {
 	struct route_key rk = {
-		.domain_hash = domain_hash,
+		.identity = identity,
 		.dst_port    = dst_port,
 		.l4_proto    = l4_proto,
 	};
@@ -877,22 +890,22 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	// the original dst. Unconnected UDP (sendmsg4) is NOT routed here — see
 	// decide_sendmsg.
 	if (ctx->type == SOCK_DGRAM) {
-		__u32 udp_hash = 0;
+		__u32 udp_identity = 0;
 		struct dns_entry *udns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 		if (udns) {
-			udp_hash = udns->domain_hash;
-			__u16 ep = lookup_route(udp_hash, dst_port, SOCK_DGRAM);
+			udp_identity = udns->identity;
+			__u16 ep = lookup_route(udp_identity, dst_port, SOCK_DGRAM);
 			if (ep) {
 				record_udp_flow(bpf_get_socket_cookie(ctx),
 						cfg->envoy_ip, ep, dst_ip, dst_port);
 				r.verdict      = V_REWRITE;
 				r.new_ip       = cfg->envoy_ip;
 				r.new_port_nbo = bpf_htons(ep);
-				metric_inc(cgroup_id, udp_hash, dst_port, ACTION_ALLOW);
+				metric_inc(cgroup_id, udp_identity, dst_port, ACTION_ALLOW);
 				return r;
 			}
 		}
-		metric_inc(cgroup_id, udp_hash, dst_port, ACTION_DENY);
+		metric_inc(cgroup_id, udp_identity, dst_port, ACTION_DENY);
 		r.verdict = V_DENY;
 		return r;
 	}
@@ -900,19 +913,19 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	// TCP per-domain routing via DNS cache. If the resolved IP has a
 	// cached domain AND the domain has a route rule for this dst_port,
 	// send it to the domain-specific Envoy listener instead of the
-	// catch-all. Preserve domain_hash so the catch-all metric below can
+	// catch-all. Preserve identity so the catch-all metric below can
 	// still attribute traffic to the resolved domain when the route
 	// lookup misses.
-	__u32 domain_hash = 0;
+	__u32 identity = 0;
 	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 	if (dns) {
-		domain_hash = dns->domain_hash;
-		__u16 ep = lookup_route(domain_hash, dst_port, SOCK_STREAM);
+		identity = dns->identity;
+		__u16 ep = lookup_route(identity, dst_port, SOCK_STREAM);
 		if (ep) {
 			r.verdict      = V_REWRITE;
 			r.new_ip       = cfg->envoy_ip;
 			r.new_port_nbo = bpf_htons(ep);
-			metric_inc(cgroup_id, domain_hash, dst_port, ACTION_ALLOW);
+			metric_inc(cgroup_id, identity, dst_port, ACTION_ALLOW);
 			return r;
 		}
 	}
@@ -921,7 +934,7 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	r.verdict      = V_REWRITE;
 	r.new_ip       = cfg->envoy_ip;
 	r.new_port_nbo = bpf_htons(cfg->egress_port);
-	metric_inc(cgroup_id, domain_hash, dst_port, ACTION_ALLOW);
+	metric_inc(cgroup_id, identity, dst_port, ACTION_ALLOW);
 	return r;
 }
 
@@ -961,21 +974,21 @@ decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
 
 	// Non-DNS UDP: per-domain routing. On a hit, record the original dst for
 	// the recvmsg4 reverse-rewrite, then redirect; on a miss, fail closed.
-	__u32 udp_hash = 0;
+	__u32 udp_identity = 0;
 	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 	if (dns) {
-		udp_hash = dns->domain_hash;
-		__u16 ep = lookup_route(udp_hash, dst_port, SOCK_DGRAM);
+		udp_identity = dns->identity;
+		__u16 ep = lookup_route(udp_identity, dst_port, SOCK_DGRAM);
 		if (ep) {
 			record_udp_flow(cookie, cfg->envoy_ip, ep, dst_ip, dst_port);
 			r.verdict      = V_REWRITE;
 			r.new_ip       = cfg->envoy_ip;
 			r.new_port_nbo = bpf_htons(ep);
-			metric_inc(cgroup_id, udp_hash, dst_port, ACTION_ALLOW);
+			metric_inc(cgroup_id, udp_identity, dst_port, ACTION_ALLOW);
 			return r;
 		}
 	}
-	metric_inc(cgroup_id, udp_hash, dst_port, ACTION_DENY);
+	metric_inc(cgroup_id, udp_identity, dst_port, ACTION_DENY);
 	r.verdict = V_DENY;
 	return r;
 }

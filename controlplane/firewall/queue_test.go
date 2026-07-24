@@ -122,11 +122,27 @@ func TestActionQueue_CoalescingMatrix(t *testing.T) {
 		want    []ActionKind
 	}{
 		{"single_reconcile", []ActionKind{ActionReconcile}, []ActionKind{ActionReconcile}},
-		{"three_reconciles", []ActionKind{ActionReconcile, ActionReconcile, ActionReconcile}, []ActionKind{ActionReconcile}},
-		{"R_R_T", []ActionKind{ActionReconcile, ActionReconcile, ActionTeardown}, []ActionKind{ActionReconcile, ActionTeardown}},
-		{"R_R_R_T_R", []ActionKind{ActionReconcile, ActionReconcile, ActionReconcile, ActionTeardown, ActionReconcile}, []ActionKind{ActionReconcile, ActionTeardown, ActionReconcile}},
+		{
+			"three_reconciles",
+			[]ActionKind{ActionReconcile, ActionReconcile, ActionReconcile},
+			[]ActionKind{ActionReconcile},
+		},
+		{
+			"R_R_T",
+			[]ActionKind{ActionReconcile, ActionReconcile, ActionTeardown},
+			[]ActionKind{ActionReconcile, ActionTeardown},
+		},
+		{
+			"R_R_R_T_R",
+			[]ActionKind{ActionReconcile, ActionReconcile, ActionReconcile, ActionTeardown, ActionReconcile},
+			[]ActionKind{ActionReconcile, ActionTeardown, ActionReconcile},
+		},
 		{"single_teardown", []ActionKind{ActionTeardown}, []ActionKind{ActionTeardown}},
-		{"R_T_R", []ActionKind{ActionReconcile, ActionTeardown, ActionReconcile}, []ActionKind{ActionReconcile, ActionTeardown, ActionReconcile}},
+		{
+			"R_T_R",
+			[]ActionKind{ActionReconcile, ActionTeardown, ActionReconcile},
+			[]ActionKind{ActionReconcile, ActionTeardown, ActionReconcile},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

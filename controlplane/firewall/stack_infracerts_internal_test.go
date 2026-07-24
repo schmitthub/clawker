@@ -46,7 +46,7 @@ func TestStack_ensureInfraClientCerts_DispatchesPerService(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	prov := &fakeOtelProvisioner{}
-	s := NewStack(nil, cfg, logger.Nop(), nil, prov)
+	s := NewStack(nil, cfg, logger.Nop(), nil, prov, nil)
 
 	require.NoError(t, s.ensureInfraClientCerts())
 	assert.Equal(t, []string{"envoy", "coredns"}, prov.calls)
@@ -70,7 +70,7 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	prov := &fakeOtelProvisioner{}
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
-	s := NewStack(nil, cfg, logger.Nop(), store, prov)
+	s := NewStack(nil, cfg, logger.Nop(), store, prov, nil)
 
 	_, err = s.ensureConfigs()
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	require.NoError(t, cfg.SettingsStore().Set("monitoring.otel_infra_port", 4319))
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
 	assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before returning MTLS=true")
 
 	s.infraCertsReady = true
@@ -129,7 +129,7 @@ func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 func TestStack_ensureInfraClientCerts_NilProvisioner_NoOp(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
 
 	require.NoError(t, s.ensureInfraClientCerts())
 }

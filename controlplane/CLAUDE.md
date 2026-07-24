@@ -179,7 +179,7 @@ The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` f
 
 - `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushAll` runs during drain-to-zero (INV-B2-007).
 - `ebpf.EBPFManager` interface — consumed by `firewall.Handler`. Methods: `Install`, `Remove`, `Enable`, `Disable`, `SyncRoutes`, `FlushAll`.
-- `ebpf.Route` + `ebpf.BPFContainerConfig` + `ebpf.DomainHash` — shared types / hash function used by `internal/dnsbpf` and `controlplane/firewall` (`normalizeDomain`).
+- `ebpf.Route` + `ebpf.BPFContainerConfig` — shared types used by `internal/dnsbpf` and `controlplane/firewall`. Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived by hashing.
 - `ebpf.Manager.EventsRingbuf()` / `EventsDrops()` / `RatelimitDrops()` / `DNSCache()` — read-only map accessors consumed by `netlogger.Service` for the per-decision egress event pipeline. All return nil before `Load()` — callers MUST nil-check.
 
 ## Ory Config Generation (`controlplane/auth/ory_configs.go`)

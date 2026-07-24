@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"gopkg.in/yaml.v3"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 // envoy_types.go holds the data model of the layered Envoy generator:
@@ -122,7 +123,13 @@ func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 // host to pin — is handled elsewhere (TCP/SSH → shared egress listener via
 // prefixRangeTransportLayer + ORIGINAL_DST; UDP → fails closed, no filter chains to
 // range-gate on).
-func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(string) bool, portFn func(config.EgressRule) int, skipDst func(string) bool) []TCPMapping {
+func dedicatedMappings(
+	rules []config.EgressRule,
+	base int,
+	protoMatch func(string) bool,
+	portFn func(config.EgressRule) int,
+	skipDst func(string) bool,
+) []TCPMapping {
 	var mappings []TCPMapping
 	idx := 0
 	for _, r := range rules {
@@ -415,7 +422,12 @@ func (c *EnvoyConfig) addChain(listener string, chain map[string]any) error {
 	}
 	if idx, dup := l.chainBySig[sig]; dup {
 		if err := mergeHCMVHosts(l.chains[idx], chain); err != nil {
-			return fmt.Errorf("envoy config: listener %q: duplicate filter_chain_match %q on non-mergeable chains: %w", listener, sig, err)
+			return fmt.Errorf(
+				"envoy config: listener %q: duplicate filter_chain_match %q on non-mergeable chains: %w",
+				listener,
+				sig,
+				err,
+			)
 		}
 		return nil
 	}

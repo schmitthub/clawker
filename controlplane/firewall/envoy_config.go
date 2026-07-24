@@ -638,7 +638,7 @@ func buildHealthListener(port int) map[string]any {
 // checkProtoCollisions fails closed when two allowed rules target the same
 // (host, effective-port) with different proto tokens. Such a pair is unresolvable:
 // the proto token selects the entire network stack for a host:port, and the eBPF
-// route_map is keyed (DomainHash, DstPort) with NO proto, so two stacks for one
+// route_map is keyed (Identity, DstPort) per transport, with NO proto token, so two stacks for one
 // host:port cannot both be installed — whichever rule is processed last would win
 // the route and silently strand the other. The user must split onto distinct
 // ports or pick one proto. (Same host:port + same proto across exact and wildcard

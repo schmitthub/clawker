@@ -1,6 +1,6 @@
 # Route Identity Allocator (architectural follow-up to ebpf-netlogger)
 
-**Status:** Proposed. Not started. Filed 2026-05-21 from netlogger UAT triage.
+**Status:** IMPLEMENTED 2026-07-23 on branch feat/ebpf-dns-hash (uncommitted). Sticky persisted IdentityAllocator + full rename + seeded-precedence source flag + GC zombie sparing + bpftest prog-run harness (`make test-bpf` + CI bpf job) + identity e2e (churn/CP-restart pinned-IP curls) + docs sweep all done; acceptance grep (FNV|DomainHash|domain_hash) = zero in product code + docs. Unit suite green (6163). PENDING host actions: `make ebpf` (pinned-toolchain binding regen — local regen used container clang 14), `make clawker` (stale embeds), restart host CP, run e2e + `make test-bpf`. QUIC-past-TTL + upgrade-boot recovery intentionally NOT e2e'd (covered by unit dnsEntryEvictable + prog-run expired-entry test + Load() schema-mismatch flush via the dns_entry 8→12B value change); flagged for user triage. Filed 2026-05-21 from netlogger UAT triage.
 
 ## Problem
 
@@ -39,12 +39,24 @@ clawker's design = Cilium's pattern with a worse identity allocator. The fix is 
 - The `DomainSource` Deps field on netlogger goes away (replaced by `firewall.Handler.IdentityFor`).
 - `route_map` lookups in BPF stay O(1); no perf delta.
 
-## Migration considerations
+## Migration considerations — DECIDED 2026-07-23 (branch feat/ebpf-dns-hash)
 
-- The identity allocator must persist across CP restarts so `route_map` keys stay stable. Either: (a) deterministic allocation (sort rules by `RuleKey`, assign 0..N) — boot recomputes the same identities for the same rule set; or (b) write the allocation to `egress-rules.yaml` alongside the rule (sticky identity that survives rule reorder).
-- (a) is simpler but a removed-then-re-added rule could shift identities under it — fine for `FirewallReload` since SyncRoutes rewrites the whole map anyway.
-- (b) is sticky but adds on-disk state.
-- Recommend (a) initially. (b) becomes necessary if/when identity stability across rule churn matters for audit (it might — netlogger record `identity=42` last week vs this week should mean the same domain).
+**Option (a) deterministic allocation is REJECTED — it is a latent bug, worse than the FNV collision it replaces.** `dns_cache` is pinned and populated asynchronously by CoreDNS; it is NOT rewritten on reconcile. Deterministic sort-and-number renumbers identities on any rule add/remove → pinned dns_cache entries map old IPs to reassigned identities → cross-domain misroute on EVERY sort-shifting rule edit (vs 1e-6 collision odds). Cilium's stickiness machinery (refcounted allocator, round-robin next-free, withheld set on restart — pkg/identity/cache/local.go) exists precisely for this.
+
+**Adopted design (verified against cilium source 2026-07-23, sparse files in scratchpad + api.github.com contents API):**
+- Sticky persisted allocator: identity table on disk in FirewallDataSubdir (CP-owned, via internal/storage), NOT in user-editable egress-rules.yaml. Allocate on rule add, release on last-rule-removed (refcount = rules sharing dst), round-robin next-free over [256, 2^32), 0 = "no identity", 1-255 reserved for future well-known. Round-robin wrap = no premature reuse.
+- dnsbpf identity delivery: Corefile `dnsbpf <identity>` directive arg per zone (coredns_config.go writes it; zone+identity atomic through Stack.Reload).
+- minTTL clamp in dnsbpf Update (cilium NewDNSCache(minTTL) analog; today only TTL=0→60s).
+- Seeded-precedence: SyncRoutes-seeded (IP-literal rule) dns_cache entries must not be overwritten by DNS-derived dnsbpf writes (cilium ipcache source-precedence analog, 2 levels). Likely a source flag in dns_entry (value-size change → free clean migration via Load() schema-mismatch removal).
+- UDP zombie analog: GarbageCollectDNS spares expired entries whose IP has live flows in udp_flow_map (clawker's conntrack analog; BPF never checks expire_ts — userspace GC is sole expiry enforcement, so GC is the single insertion point). Protects long QUIC streams.
+- Scope bits (top-8) N/A: single node, single allocator (documented reason, not work avoidance). perHostLimit deferred.
+
+**Test strategy (cilium-pattern, approved 2026-07-23):**
+1. Go unit: allocator invariants — churn/stickiness (THE renumbering regression test), 5000-domain uniqueness, persistence round-trip, refcount, no-premature-reuse, reserved band.
+2. BPF prog-run suite (NEW INFRA, cilium bpf/tests pattern): test progs #include production common.h, seeded real maps, ebpf prog.Run() (BPF_PROG_TEST_RUN) asserting verdict/ringbuf/map side effects. make test-bpf + CI privileged job. UNKNOWN to probe: sock_addr prog_run kernel support; fallback = runnable-type test progs calling production decision helpers directly (identical coverage).
+3. Privileged Go tests (build tag): GC liveness sparing, SyncRoutes, UpdateDNSCache against real unpinned kernel maps.
+4. E2E: FNV-collision pair (must fail on main first), rule-churn live, CP restart identity stability, QUIC mid-flow survival, upgrade-boot stale-FNV recovery.
+UAT demoted to smoke only.
 
 ## Acceptance bar
 

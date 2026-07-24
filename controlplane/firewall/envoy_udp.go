@@ -37,7 +37,10 @@ func quicSNIChainLayer(exactDomains map[string]bool) layer {
 		// (before touching the listener) rather than emit an unreachable chain.
 		match, _, needOriginalDst := downstreamCryptoMatch(ctx.rule, exactDomains, false)
 		if needOriginalDst {
-			return fmt.Errorf("quic sibling requires SNI: IP/CIDR dst %q has no QUIC original-dst recovery (must be TCP-only)", ctx.rule.Dst)
+			return fmt.Errorf(
+				"quic sibling requires SNI: IP/CIDR dst %q has no QUIC original-dst recovery (must be TCP-only)",
+				ctx.rule.Dst,
+			)
 		}
 		ctx.cfg.EnsureQUICListener(egressQUICListenerName, defaultBindAddress, ctx.ports.EgressPort)
 		ctx.listener = egressQUICListenerName

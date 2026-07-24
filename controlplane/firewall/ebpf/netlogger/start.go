@@ -28,7 +28,8 @@ import (
 // The fields are deliberately primitives, not the orchestrator's own
 // composite handles (no *docker.Client, no *firewall.Handler): the
 // caller resolves the moby client off its docker.Client and the
-// ReverseDNSDomains closure off its handler before handing them down.
+// Identities snapshot closure off its IdentityAllocator before handing
+// them down.
 // This keeps netlogger a leaf that never imports internal/docker or
 // the firewall handler package.
 type StartDeps struct {
@@ -62,9 +63,9 @@ type StartDeps struct {
 	// EvictTopic feeds LabelCache eviction. Required by New.
 	EvictTopic *pubsub.Topic[dockerevents.DockerEvent]
 
-	// Domains supplies the live reverse-DNS domain set. nil is
+	// Identities supplies the live route-identity table. nil is
 	// supported (degraded attribution; dst_host="").
-	Domains DomainSource
+	Identities IdentitySource
 }
 
 // Start builds the trusted-lane OTLP provider, constructs the netlogger
@@ -159,7 +160,7 @@ func Start(ctx context.Context, d StartDeps) (*Service, *sdklog.LoggerProvider) 
 			EvictTopic:         d.EvictTopic,
 			Docker:             d.Docker,
 			Cfg:                d.Cfg,
-			Domains:            d.Domains,
+			Identities:         d.Identities,
 			OtelLoggerProvider: provider,
 			Log:                log.With("component", "netlogger"),
 		})

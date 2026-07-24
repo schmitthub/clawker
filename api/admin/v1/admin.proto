@@ -118,7 +118,7 @@ service AdminService {
 
 // Route is one entry in the global route_map.
 message Route {
-  uint32 domain_hash = 1;
+  uint32 identity = 1;
   uint32 dst_port = 2;
   uint32 envoy_port = 3;
 }

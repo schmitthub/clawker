@@ -68,8 +68,8 @@ func (p *processor) run(ctx context.Context) {
 
 // enrich layers userspace attribution onto an Event parsed from the
 // ringbuf. LabelCache resolves cgroup_id to {container_id, agent,
-// project}; ReverseDNSMap resolves domain_hash to a human-readable
-// domain (returns "" for unattributed hashes — see ReverseDNSMap doc).
+// project}; ReverseDNSMap resolves the route identity to a human-readable
+// dst (returns "" for unattributed identities — see ReverseDNSMap doc).
 func (p *processor) enrich(ev *Event) {
 	if p.cache != nil {
 		if cid, agent, project, ok := p.cache.Lookup(ev.CgroupID); ok {
@@ -79,6 +79,6 @@ func (p *processor) enrich(ev *Event) {
 		}
 	}
 	if p.revDNS != nil {
-		ev.Domain = p.revDNS.Lookup(ev.DomainHash)
+		ev.Domain = p.revDNS.Lookup(ev.Identity)
 	}
 }

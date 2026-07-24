@@ -23,6 +23,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	mobyclient "github.com/moby/moby/client"
 
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -86,6 +87,13 @@ type Stack struct {
 	log       *logger.Logger
 	store     *storage.Store[EgressRulesFile]
 	otelCerts OtelCertProvisioner
+	// idFor answers dst→identity for Corefile generation (dnsbpf
+	// directives). Never nil — NewStack substitutes a fail-closed stub.
+	idFor IdentityResolver
+	// idForUnset marks the fail-closed stub: every dst misses by design,
+	// so ensureConfigs skips per-generation miss warnings (the one
+	// event=identity_resolver_unset at construction covers the degrade).
+	idForUnset bool
 	// infraCertsReady is set to true by ensureConfigs after a successful
 	// ensureInfraClientCerts call (and reset to false on failure). Gates
 	// downstream mTLS wiring (alsConfig, envoy/coredns container specs)
@@ -137,11 +145,25 @@ func NewStack(
 	log *logger.Logger,
 	store *storage.Store[EgressRulesFile],
 	otelCerts OtelCertProvisioner,
+	idFor IdentityResolver,
 ) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Stack{docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts}
+	idForUnset := false
+	if idFor == nil {
+		// Fail closed: no resolver → no dnsbpf directives in the Corefile.
+		idFor = func(string) (ebpf.RouteIdentity, bool) { return 0, false }
+		idForUnset = true
+		log.Warn().Str("event", "identity_resolver_unset").
+			Str("component", "firewall.stack").
+			Msg("no identity resolver wired; Corefile dnsbpf directives will be omitted (fail closed)")
+	}
+	return &Stack{
+		docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts, idFor: idFor,
+		idForUnset:      idForUnset,
+		infraCertsReady: false,
+	}
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -544,9 +566,19 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("writing envoy.yaml: %w", err)
 	}
 
-	corefile, err := GenerateCorefile(rules, s.cfg.CoreDNSHealthHostPort())
+	corefile, missed, err := GenerateCorefile(rules, s.cfg.CoreDNSHealthHostPort(), s.idFor)
 	if err != nil {
 		return "", fmt.Errorf("generating Corefile: %w", err)
+	}
+	// Partial misses only — the fail-closed stub misses every dst by
+	// design and event=identity_resolver_unset already covered that at
+	// construction.
+	if len(missed) > 0 && !s.idForUnset {
+		s.log.Warn().Str("event", "identity_resolver_miss").
+			Str("component", "firewall.stack").
+			Strs("dsts", missed).
+			Int("count", len(missed)).
+			Msg("Corefile generation omitted dnsbpf directives for dsts holding no route identity (fail closed) — they resolve via DNS but deny at connect()")
 	}
 	corefilePath, err := consts.CorefilePath()
 	if err != nil {

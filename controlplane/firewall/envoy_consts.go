@@ -1,5 +1,14 @@
 package firewall
 
+// Lowered proto tokens as they appear on normalized egress rules.
+const (
+	protoHTTPS = "https"
+	protoWSS   = "wss"
+	protoSSH   = "ssh"
+	protoTCP   = "tcp"
+	protoUDP   = "udp"
+)
+
 // Envoy config-generation constants. Magic values used by the layered
 // generator and the cross-layer glue live here so callers never hardcode them.
 const (

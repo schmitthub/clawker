@@ -24,7 +24,6 @@ jobs:
       pull-requests: read
       security-events: write
       actions: read
-    secrets: inherit
     with:
       run_dependency_review: true
 

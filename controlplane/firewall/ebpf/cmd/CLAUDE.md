@@ -23,13 +23,13 @@ Do **not** wire new consumers to it. Adding new call sites is a signal that the 
 | `bypass` | `<cgroupPath>` | Set `bypass_map[cgroupID] = 1`. |
 | `unbypass` | `<cgroupPath>` | Clear the bypass flag. |
 | `sync-routes` | `<routesJSON>` | Replace the global `route_map` atomically. |
-| `dns-update` | `<ip> <domainHash> <ttl>` | Write a single `dns_cache` entry. Break-glass only; the CoreDNS `dnsbpf` plugin is the real writer. |
+| `dns-update` | `<ip> <identity> <ttl>` | Write a single `dns_cache` entry. Break-glass only; the CoreDNS `dnsbpf` plugin is the real writer. |
 | `gc-dns` | — | Iterate `dns_cache`, delete expired entries, print count. |
 | `dump` | `<cgroupPath>` | Print the `container_map` entry for one cgroup (envoy/coredns/gateway IPs, net_addr/net_mask, host_proxy, egress_port). |
-| `dump-routes` | `[--json]` | Dump the global `route_map` (every `{domain_hash, dst_port, l4_proto}` → `envoy_port`). |
+| `dump-routes` | `[--json]` | Dump the global `route_map` (every `{identity, dst_port, l4_proto}` → `envoy_port`). |
 | `dump-containers` | `[--json]` | Dump the full `container_map` (every cgroup → BPF container_config). |
 | `dump-bypass` | `[--json]` | Dump the `bypass_map` (every cgroup → bypass flag). |
-| `dump-dns` | `[--json]` | Dump the `dns_cache` (every IP → `{domain_hash, expire_ts}`). |
+| `dump-dns` | `[--json]` | Dump the `dns_cache` (every IP → `{identity, expire_ts}`). |
 | `resolve` | `<hostname>` | Libc hostname lookup. |
 
 ## Why the break-glass tool exists

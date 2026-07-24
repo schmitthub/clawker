@@ -125,6 +125,12 @@ controlplane/firewall/ebpf/clawker_x86_bpfel.go
 controlplane/firewall/ebpf/clawker_x86_bpfel.o
 controlplane/firewall/ebpf/clawker_arm64_bpfel.go
 controlplane/firewall/ebpf/clawker_arm64_bpfel.o
+# BPF prog-run test-harness bindings (bpftest package) — same regeneration
+# story as the production bindings above.
+controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.go
+controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.o
+controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.go
+controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.o
 # Transient bpf2go bindings-extraction scratch dir (any location). Generated
 # during the build and never committed.
 .bpf-bindings-extract/

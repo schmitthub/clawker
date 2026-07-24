@@ -13,10 +13,11 @@ const (
 	// pinned dns_cache. CoreDNS (dnsbpf) writes one entry per resolved A
 	// record and nothing else reclaims them, so without this sweep the map
 	// grows unbounded over the CP lifetime and entries for since-removed
-	// zones linger as orphaned hashes (surfacing via netlogger as
-	// event=netlogger_reverse_dns_unattributed). IP-literal seeds are
-	// protected by GarbageCollectDNS (m.seededIPs), so a live IP rule's
-	// route is never reclaimed out from under it.
+	// zones linger as orphaned identities until TTL expiry (surfacing via
+	// netlogger as event=netlogger_reverse_dns_unattributed). IP-literal
+	// seeds are protected by their DNSSourceSeed value tag (see
+	// dnsEntryEvictable), so a live IP rule's route is never reclaimed out
+	// from under it.
 	dnsGCInterval = 60 * time.Second
 	// dnsGCDegradedThreshold is how many consecutive failed sweeps escalate the
 	// per-sweep dns_gc_panic/dns_gc_error into a distinct dns_gc_degraded line. A
@@ -43,7 +44,7 @@ type DNSGCOpts struct {
 
 // DNSGarbageCollector periodically reclaims expired entries the CoreDNS dnsbpf
 // plugin wrote into the pinned dns_cache so the map does not grow unbounded and
-// stale orphaned hashes do not accumulate. It recovers per the CP no-panic
+// stale orphaned identities do not accumulate. It recovers per the CP no-panic
 // discipline: the recover is per-sweep, so a single panicking sweep is logged
 // and the loop keeps governing the map rather than surrendering it (which would
 // strand the map unsupervised until CP restart).

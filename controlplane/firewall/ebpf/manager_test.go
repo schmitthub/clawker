@@ -54,11 +54,73 @@ func TestUDPFlowKey_SizeMatchesABI(t *testing.T) {
 	}
 }
 
-// TestDiffSeededIPs covers the IP-literal seed lifecycle that keeps a valid UDP
-// route from failing closed: GarbageCollectDNS protects every IP in the seed set,
-// and SyncRoutes drops the protection (and removes the orphan dns_cache entry)
-// only when the rule goes away. diffSeededIPs computes both the new protected set
-// and the orphans to delete.
+// TestDNSEntry_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct dns_entry) == 12) so the Go mirrors (this
+// package's DNSEntry, dnsbpf's dnsEntry) and the C struct can't silently
+// drift. The 12-byte value (8 + source + pad) is also the schema-mismatch
+// trigger that flushes pre-identity pinned maps on upgrade boot.
+func TestDNSEntry_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	var bindingEntry clawkerDnsEntry
+	if got := binary.Size(bindingEntry); got != 12 {
+		t.Fatalf("dns_entry on-wire size = %d; want 12 — C struct dns_entry has drifted from the Go side", got)
+	}
+	var e DNSEntry
+	if got := binary.Size(e); got != 12 {
+		t.Fatalf("DNSEntry on-wire size = %d; want 12 — exported mirror has drifted from bpf/common.h", got)
+	}
+}
+
+// TestDNSEntryEvictable pins the GC eviction vetoes: TTL, seed source, and
+// live-UDP-flow zombie sparing (an expired entry whose IP still has
+// reverse-NAT state in udp_flow_map must survive the sweep, or sendmsg4's
+// per-datagram dns_cache lookup would deny a mid-stream QUIC flow).
+func TestDNSEntryEvictable(t *testing.T) {
+	t.Parallel()
+
+	const now = uint32(1000)
+	const ip = uint32(0x01020304)
+	live := map[uint32]struct{}{ip: {}}
+	none := map[uint32]struct{}{}
+
+	entry := func(expire uint32, source uint8) clawkerDnsEntry {
+		var e clawkerDnsEntry
+		e.ExpireTs = expire
+		e.Source = source
+		return e
+	}
+	cases := []struct {
+		name    string
+		entry   clawkerDnsEntry
+		liveUDP map[uint32]struct{}
+		want    bool
+	}{
+		{"expired DNS entry, no live flow", entry(now-1, DNSSourceDNS), none, true},
+		{"unexpired DNS entry", entry(now, DNSSourceDNS), none, false},
+		{"expired seed entry", entry(now-1, DNSSourceSeed), none, false},
+		{"expired DNS entry, live UDP flow (zombie)", entry(now-1, DNSSourceDNS), live, false},
+		{
+			"expired DNS entry, other IP's flow live",
+			entry(now-1, DNSSourceDNS),
+			map[uint32]struct{}{0x05060708: {}},
+			true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := dnsEntryEvictable(ip, tc.entry, now, tc.liveUDP); got != tc.want {
+				t.Fatalf("dnsEntryEvictable(%+v) = %v; want %v", tc.entry, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDiffSeededIPs covers the IP-literal seed lifecycle: SyncRoutes tracks
+// which dns_cache entries it owns so it can remove the orphan entry when the
+// IP rule goes away (runtime seed protection itself rides on the
+// DNSSourceSeed tag in the map value, not this set). diffSeededIPs computes
+// both the new tracked set and the orphans to delete.
 func TestDiffSeededIPs(t *testing.T) {
 	t.Parallel()
 
@@ -104,6 +166,70 @@ func TestDiffSeededIPs(t *testing.T) {
 		setEq(t, next, 1, 2)
 		sliceEq(t, orphaned) // stable IP rules must never be evicted by a no-op reconcile
 	})
+}
+
+// TestReconcileSeeds_FailedDeleteRetainedAndRetried is the regression guard
+// for the orphan-seed leak: seed entries are exempt from GC eviction, so a
+// failed orphan delete that also dropped the IP from the tracked set would pin
+// the stale dns_cache entry forever. A failed delete must surface an error AND
+// keep the IP tracked so the next reconcile retries; once the retry succeeds
+// the IP leaves the set.
+func TestReconcileSeeds_FailedDeleteRetainedAndRetried(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeDNSMap{forcedErr: syscall.EPERM, missing: nil, deleteCalls: nil}
+	// IP 2's rule went away → orphan
+	routes := []Route{{SeedIP: 1, Identity: 0, DstPort: 0, EnvoyPort: 0, L4Proto: 0}}
+	prev := map[uint32]struct{}{1: {}, 2: {}}
+
+	next, errs := reconcileSeeds(fake, routes, prev, logger.Nop())
+	if len(errs) != 1 || !errors.Is(errs[0], syscall.EPERM) {
+		t.Fatalf("first reconcile errs = %v; want one error wrapping EPERM", errs)
+	}
+	if _, ok := next[2]; !ok {
+		t.Fatalf("failed-delete IP 2 dropped from seed set %v; must be retained for retry", next)
+	}
+	if _, ok := next[1]; !ok {
+		t.Fatalf("live seed IP 1 missing from seed set %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected one Delete(2) attempt, got %v", fake.deleteCalls)
+	}
+
+	// Next reconcile: the map recovered. The retained IP must be re-listed as
+	// an orphan, deleted, and dropped from the set.
+	fake.forcedErr = nil
+	fake.deleteCalls = nil
+	next, errs = reconcileSeeds(fake, routes, next, logger.Nop())
+	if len(errs) != 0 {
+		t.Fatalf("second reconcile errs = %v; want none", errs)
+	}
+	if _, ok := next[2]; ok {
+		t.Fatalf("IP 2 still tracked after successful retry: %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected retry Delete(2), got %v", fake.deleteCalls)
+	}
+}
+
+// TestReconcileSeeds_MissingOrphanIsSuccess pins the ErrKeyNotExist contract:
+// an orphan whose entry is already gone (another actor raced us) is success —
+// no error, no retention, no retry loop.
+func TestReconcileSeeds_MissingOrphanIsSuccess(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeDNSMap{missing: map[uint32]bool{2: true}, forcedErr: nil, deleteCalls: nil}
+	routes := []Route{{SeedIP: 1, Identity: 0, DstPort: 0, EnvoyPort: 0, L4Proto: 0}}
+	next, errs := reconcileSeeds(fake, routes, map[uint32]struct{}{1: {}, 2: {}}, logger.Nop())
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v; want none for ErrKeyNotExist", errs)
+	}
+	if _, ok := next[2]; ok {
+		t.Fatalf("already-gone orphan IP 2 must not be retained: %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected one Delete(2) call, got %v", fake.deleteCalls)
+	}
 }
 
 // requireBPF skips a test if the kernel/container lacks the perms needed
@@ -170,44 +296,6 @@ func (f *fakeBypassMap) Delete(key any) error {
 	}
 	delete(f.entries, k)
 	return nil
-}
-
-// TestDomainHash_CaseInsensitive asserts that DomainHash normalizes via
-// strings.ToLower, so the firewall route_map writer and the dnsbpf CoreDNS
-// plugin agree on the same hash for the same domain regardless of the user's
-// capitalization in the rule Dst. Regression guard for the mismatch where
-// firewall.DomainHash lowercased but ebpf.DomainHash did not, causing BPF
-// route lookups to miss for mixed-case rules like "GitHub.com".
-func TestDomainHash_CaseInsensitive(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name      string
-		variants  []string
-		mustMatch string
-	}{
-		{
-			name:      "mixed case matches lower",
-			variants:  []string{"github.com", "GitHub.com", "GITHUB.COM", "github.COM"},
-			mustMatch: "github.com",
-		},
-		{
-			name:      "wildcard zone",
-			variants:  []string{".Example.COM", ".example.com"},
-			mustMatch: ".example.com",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			want := DomainHash(tc.mustMatch)
-			for _, v := range tc.variants {
-				if got := DomainHash(v); got != want {
-					t.Errorf("DomainHash(%q) = %d; want %d (DomainHash(%q))",
-						v, got, want, tc.mustMatch)
-				}
-			}
-		})
-	}
 }
 
 func TestValidateCgroupPath(t *testing.T) {
@@ -507,7 +595,14 @@ func TestJoinDNSGCErrors(t *testing.T) {
 			t.Parallel()
 			err := joinDNSGCErrors(tc.iterErr, tc.failed, tc.deleteErr)
 			if tc.wantErr != (err != nil) {
-				t.Fatalf("joinDNSGCErrors(%v, %d, %v) err = %v; wantErr = %v", tc.iterErr, tc.failed, tc.deleteErr, err, tc.wantErr)
+				t.Fatalf(
+					"joinDNSGCErrors(%v, %d, %v) err = %v; wantErr = %v",
+					tc.iterErr,
+					tc.failed,
+					tc.deleteErr,
+					err,
+					tc.wantErr,
+				)
 			}
 			// The wedged-iterator cause must be preserved through the join so an
 			// operator grepping the logged error can tell a wedged iterator from

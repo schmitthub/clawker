@@ -99,5 +99,5 @@ Binary architecture must match the Docker host (arm64 or amd64). Makefile select
 ## See also
 
 - `plugins/otel/CLAUDE.md` — OTEL plugin internals (emitter lifecycle, mTLS, env config, test seam)
-- `internal/dnsbpf/CLAUDE.md` — dnsbpf plugin (BPF `dns_cache` writer + shared FNV-1a domain hash)
+- `internal/dnsbpf/CLAUDE.md` — dnsbpf plugin (BPF `dns_cache` writer; per-zone CP-allocated route identity)
 - `internal/controlplane/firewall/CLAUDE.md` — Stack lifecycle, image build, Corefile generation, env wiring (`CLAWKER_COREDNS_OTEL_ENDPOINT`, mTLS cert mounts)
