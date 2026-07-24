@@ -89,7 +89,7 @@ func (m *Manager) Remove(cgroupID uint64) error
 func (m *Manager) SyncRoutes(routes []Route) error          // replace global route_map atomically
 func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
 func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
-func (m *Manager) UpdateDNSCache(ip, identity, ttlSeconds uint32) error
+func (m *Manager) UpdateDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error
 func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns number cleared + a non-nil err when the sweep could not reclaim (wedged iterator or any expired-entry delete failed), so the CP main loop's degraded-GC detector trips on a wedge instead of treating a no-op pass as progress. CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Spares DNSSourceSeed entries (SyncRoutes-owned) and expired entries whose IP has a live udp_flow_map flow (zombie-DNS analog; protects mid-stream QUIC).
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
 
@@ -111,7 +111,8 @@ Helpers in `types.go`:
 ```go
 const PinPath = "/sys/fs/bpf/clawker"
 
-type Route struct { Identity uint32; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
+type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
+type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
 type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)

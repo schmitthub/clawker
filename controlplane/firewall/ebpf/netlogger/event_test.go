@@ -42,7 +42,7 @@ func TestParseEvent_RoundTrip(t *testing.T) {
 	if got.BPFTsNs != in.TsNs {
 		t.Errorf("BPFTsNs = %d; want %d", got.BPFTsNs, in.TsNs)
 	}
-	if got.Identity != in.Identity {
+	if uint32(got.Identity) != in.Identity {
 		t.Errorf("Identity = %x; want %x", got.Identity, in.Identity)
 	}
 	want := netip.AddrFrom4([4]byte{203, 0, 113, 7})

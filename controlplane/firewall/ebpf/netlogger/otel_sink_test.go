@@ -338,7 +338,7 @@ func TestPipeline_OtelSinkIntegration(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   cache,
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(ebpf.RouteIdentity)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: NewMetrics(),
 		log:     logger.Nop(),

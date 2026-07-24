@@ -40,10 +40,12 @@ type recordingMap struct {
 }
 
 type mapEntry struct {
-	IP, Identity, TTL uint32
+	IP       uint32
+	Identity clawkerebpf.RouteIdentity
+	TTL      uint32
 }
 
-func (r *recordingMap) Update(ip, identity, ttl uint32) {
+func (r *recordingMap) Update(ip uint32, identity clawkerebpf.RouteIdentity, ttl uint32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries = append(r.entries, mapEntry{ip, identity, ttl})
@@ -96,7 +98,7 @@ func TestServeDNS_ForwardsResponseAndWritesBPFMap(t *testing.T) {
 	entries := rec.getEntries()
 	require.Len(t, entries, 1)
 	assert.Equal(t, clawkerebpf.IPToUint32(net.ParseIP("140.82.121.4")), entries[0].IP)
-	assert.Equal(t, uint32(261), entries[0].Identity)
+	assert.Equal(t, clawkerebpf.RouteIdentity(261), entries[0].Identity)
 	assert.Equal(t, uint32(300), entries[0].TTL)
 }
 
@@ -138,8 +140,8 @@ func TestServeDNS_MultipleARecords(t *testing.T) {
 	entries := rec.getEntries()
 	require.Len(t, entries, 2)
 
-	assert.Equal(t, uint32(261), entries[0].Identity)
-	assert.Equal(t, uint32(261), entries[1].Identity)
+	assert.Equal(t, clawkerebpf.RouteIdentity(261), entries[0].Identity)
+	assert.Equal(t, clawkerebpf.RouteIdentity(261), entries[1].Identity)
 	assert.NotEqual(t, entries[0].IP, entries[1].IP) // different IPs
 }
 
@@ -172,7 +174,7 @@ func TestServeDNS_WildcardZoneUsesZoneIdentity(t *testing.T) {
 	require.Len(t, entries, 1)
 	// The identity is the ZONE's identity — subdomain answers inherit it,
 	// which is what makes wildcard zones route correctly.
-	assert.Equal(t, uint32(300), entries[0].Identity)
+	assert.Equal(t, clawkerebpf.RouteIdentity(300), entries[0].Identity)
 }
 
 func TestServeDNS_MinTTL(t *testing.T) {

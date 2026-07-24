@@ -50,6 +50,20 @@ type ContainerConfig struct {
 	EgressPort    uint16 // Envoy egress listener port (host byte order)
 }
 
+// RouteIdentity is a userspace-allocated route identity — the key that ties
+// one destination's route_map entries, dns_cache writes, and egress-event
+// attribution together (Cilium's local-identity pattern: allocated, never
+// derived). Allocation lives CP-side in firewall.IdentityAllocator; this
+// package, the dnsbpf CoreDNS plugin, and netlogger only carry values.
+// The underlying uint32 is the on-wire BPF representation — kernel-map
+// encode/decode converts explicitly at that boundary.
+type RouteIdentity uint32
+
+// IsNone reports whether the identity is the zero sentinel — no
+// CP-allocated route identity (reserved, never allocated). dns_cache
+// misses and direct-IP connects observe it.
+func (id RouteIdentity) IsNone() bool { return id == 0 }
+
 // DNSEntry source values, mirroring DNS_SOURCE_* in bpf/common.h.
 // Precedence: seed > DNS. A seed entry is written by SyncRoutes for an
 // IP-literal rule and owned by its reconcile lifecycle — the CoreDNS dnsbpf
@@ -61,7 +75,7 @@ const (
 
 // DNSEntry mirrors struct dns_entry in bpf/common.h.
 type DNSEntry struct {
-	Identity uint32 // userspace-allocated route identity for the resolved domain
+	Identity RouteIdentity // userspace-allocated route identity for the resolved domain
 	// Wall-clock expiration: time.Now().Unix() + TTL seconds. Only
 	// userspace GC (Manager.GarbageCollectDNS) reads this field — the
 	// BPF fast path in clawker.c never inspects expire_ts.
@@ -75,7 +89,7 @@ type DNSEntry struct {
 // L4Proto (SOCK_STREAM/SOCK_DGRAM) keeps TCP and UDP routes for the same
 // {domain, port} from colliding on a single key.
 type RouteKey struct {
-	Identity uint32
+	Identity RouteIdentity
 	DstPort  uint16
 	L4Proto  uint8
 	_        uint8 // padding
@@ -98,7 +112,7 @@ type RouteVal struct {
 // MetricKey mirrors struct metric_key in bpf/common.h.
 type MetricKey struct {
 	CgroupID uint64
-	Identity uint32
+	Identity RouteIdentity
 	DstPort  uint16
 	Action   uint8 // 0=allow, 1=deny, 2=bypass
 	_        uint8 // padding

@@ -6,10 +6,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	clawkerebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 func TestReverseDNSMap_LookupBeforeRefreshReturnsEmpty(t *testing.T) {
-	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil)
+	m := NewReverseDNSMapWithWalk(func(func(clawkerebpf.RouteIdentity)) error { return nil }, nil, nil)
 	if got := m.Lookup(0xdeadbeef); got != "" {
 		t.Fatalf("Lookup with no refresh = %q; want empty", got)
 	}
@@ -17,8 +19,10 @@ func TestReverseDNSMap_LookupBeforeRefreshReturnsEmpty(t *testing.T) {
 
 func TestReverseDNSMap_LookupZeroIdentityIsAlwaysEmpty(t *testing.T) {
 	m := NewReverseDNSMapWithWalk(
-		func(func(uint32)) error { return nil },
-		func() map[uint32]string { return map[uint32]string{300: "example.com"} },
+		func(func(clawkerebpf.RouteIdentity)) error { return nil },
+		func() map[clawkerebpf.RouteIdentity]string {
+			return map[clawkerebpf.RouteIdentity]string{300: "example.com"}
+		},
 		nil,
 	)
 	m.refresh()
@@ -28,10 +32,10 @@ func TestReverseDNSMap_LookupZeroIdentityIsAlwaysEmpty(t *testing.T) {
 }
 
 func TestReverseDNSMap_RefreshPopulatesFromIdentitySource(t *testing.T) {
-	identities := func() map[uint32]string {
-		return map[uint32]string{261: "github.com", 262: "example.com"}
+	identities := func() map[clawkerebpf.RouteIdentity]string {
+		return map[clawkerebpf.RouteIdentity]string{261: "github.com", 262: "example.com"}
 	}
-	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, identities, nil)
+	m := NewReverseDNSMapWithWalk(func(func(clawkerebpf.RouteIdentity)) error { return nil }, identities, nil)
 	m.refresh()
 	if got := m.Lookup(261); got != "github.com" {
 		t.Fatalf("Lookup(261) = %q; want github.com", got)
@@ -45,13 +49,13 @@ func TestReverseDNSMap_RefreshIsAtomicSwap(t *testing.T) {
 	// Two refresh passes — the second sees a different table. The map
 	// must reflect ONLY the latest table; refresh replaces, not merges.
 	round := atomic.Int32{}
-	identities := func() map[uint32]string {
+	identities := func() map[clawkerebpf.RouteIdentity]string {
 		if round.Add(1) == 1 {
-			return map[uint32]string{256: "alpha.example", 257: "beta.example"}
+			return map[clawkerebpf.RouteIdentity]string{256: "alpha.example", 257: "beta.example"}
 		}
-		return map[uint32]string{258: "gamma.example"}
+		return map[clawkerebpf.RouteIdentity]string{258: "gamma.example"}
 	}
-	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, identities, nil)
+	m := NewReverseDNSMapWithWalk(func(func(clawkerebpf.RouteIdentity)) error { return nil }, identities, nil)
 	m.refresh()
 	m.refresh()
 	if got := m.Lookup(256); got != "" {
@@ -66,9 +70,11 @@ func TestReverseDNSMap_WalkErrorDoesNotBlankAttribution(t *testing.T) {
 	// IdentitySource is the source of truth for byID; a dns_cache
 	// iterate failure must not wipe attribution. The walk loop runs
 	// only for the unattributed-identity diagnostic.
-	identities := func() map[uint32]string { return map[uint32]string{261: "github.com"} }
+	identities := func() map[clawkerebpf.RouteIdentity]string {
+		return map[clawkerebpf.RouteIdentity]string{261: "github.com"}
+	}
 	m := NewReverseDNSMapWithWalk(
-		func(func(uint32)) error { return errors.New("simulated dns_cache iterate failure") },
+		func(func(clawkerebpf.RouteIdentity)) error { return errors.New("simulated dns_cache iterate failure") },
 		identities,
 		nil,
 	)
@@ -82,7 +88,7 @@ func TestReverseDNSMap_NilIdentitySourceLeavesByIDEmpty(t *testing.T) {
 	// Degraded mode: no IdentitySource wired. refresh runs cleanly,
 	// every Lookup returns "" — same shape as boot-time before the
 	// CP main wiring lands.
-	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
+	m := NewReverseDNSMapWithWalk(func(visit func(clawkerebpf.RouteIdentity)) error {
 		visit(0xdeadbeef)
 		return nil
 	}, nil, nil)
@@ -94,11 +100,11 @@ func TestReverseDNSMap_NilIdentitySourceLeavesByIDEmpty(t *testing.T) {
 
 func TestReverseDNSMap_Run_PopulatesImmediatelyAndOnTick(t *testing.T) {
 	calls := atomic.Int32{}
-	identities := func() map[uint32]string {
+	identities := func() map[clawkerebpf.RouteIdentity]string {
 		calls.Add(1)
-		return map[uint32]string{261: "github.com"}
+		return map[clawkerebpf.RouteIdentity]string{261: "github.com"}
 	}
-	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, identities, nil)
+	m := NewReverseDNSMapWithWalk(func(func(clawkerebpf.RouteIdentity)) error { return nil }, identities, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})

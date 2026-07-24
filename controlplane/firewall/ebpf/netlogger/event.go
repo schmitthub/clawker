@@ -125,9 +125,9 @@ type Event struct {
 
 	// Domain attribution. Identity is the CP-allocated route identity of
 	// the resolved hostname; Domain is the reverse-DNS lookup result
-	// (empty when ReverseDNSMap has no entry for the hash, or when
+	// (empty when ReverseDNSMap has no entry for the identity, or when
 	// the connect was direct-IP).
-	Identity uint32
+	Identity ebpf.RouteIdentity
 	Domain   string
 
 	Verdict Verdict
@@ -173,8 +173,10 @@ func parseEvent(raw []byte) (Event, error) {
 		IsMapped:  rec.Flags&ebpf.EgressFlagIPv4Mapped != 0,
 		NoDst:     rec.Flags&ebpf.EgressFlagNoDst != 0,
 		EmitSite:  EmitSite((rec.Flags & ebpf.EgressEmitMask) >> ebpf.EgressEmitShift),
-		Identity:  rec.Identity,
-		Verdict:   Verdict(rec.Verdict),
+		// Ringbuf decode boundary: the bpf2go-generated record carries the
+		// raw on-wire uint32.
+		Identity: ebpf.RouteIdentity(rec.Identity),
+		Verdict:  Verdict(rec.Verdict),
 	}
 	switch {
 	case ev.NoDst:

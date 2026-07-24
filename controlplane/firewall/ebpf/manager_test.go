@@ -168,6 +168,70 @@ func TestDiffSeededIPs(t *testing.T) {
 	})
 }
 
+// TestReconcileSeeds_FailedDeleteRetainedAndRetried is the regression guard
+// for the orphan-seed leak: seed entries are exempt from GC eviction, so a
+// failed orphan delete that also dropped the IP from the tracked set would pin
+// the stale dns_cache entry forever. A failed delete must surface an error AND
+// keep the IP tracked so the next reconcile retries; once the retry succeeds
+// the IP leaves the set.
+func TestReconcileSeeds_FailedDeleteRetainedAndRetried(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeDNSMap{forcedErr: syscall.EPERM, missing: nil, deleteCalls: nil}
+	// IP 2's rule went away → orphan
+	routes := []Route{{SeedIP: 1, Identity: 0, DstPort: 0, EnvoyPort: 0, L4Proto: 0}}
+	prev := map[uint32]struct{}{1: {}, 2: {}}
+
+	next, errs := reconcileSeeds(fake, routes, prev, logger.Nop())
+	if len(errs) != 1 || !errors.Is(errs[0], syscall.EPERM) {
+		t.Fatalf("first reconcile errs = %v; want one error wrapping EPERM", errs)
+	}
+	if _, ok := next[2]; !ok {
+		t.Fatalf("failed-delete IP 2 dropped from seed set %v; must be retained for retry", next)
+	}
+	if _, ok := next[1]; !ok {
+		t.Fatalf("live seed IP 1 missing from seed set %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected one Delete(2) attempt, got %v", fake.deleteCalls)
+	}
+
+	// Next reconcile: the map recovered. The retained IP must be re-listed as
+	// an orphan, deleted, and dropped from the set.
+	fake.forcedErr = nil
+	fake.deleteCalls = nil
+	next, errs = reconcileSeeds(fake, routes, next, logger.Nop())
+	if len(errs) != 0 {
+		t.Fatalf("second reconcile errs = %v; want none", errs)
+	}
+	if _, ok := next[2]; ok {
+		t.Fatalf("IP 2 still tracked after successful retry: %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected retry Delete(2), got %v", fake.deleteCalls)
+	}
+}
+
+// TestReconcileSeeds_MissingOrphanIsSuccess pins the ErrKeyNotExist contract:
+// an orphan whose entry is already gone (another actor raced us) is success —
+// no error, no retention, no retry loop.
+func TestReconcileSeeds_MissingOrphanIsSuccess(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeDNSMap{missing: map[uint32]bool{2: true}, forcedErr: nil, deleteCalls: nil}
+	routes := []Route{{SeedIP: 1, Identity: 0, DstPort: 0, EnvoyPort: 0, L4Proto: 0}}
+	next, errs := reconcileSeeds(fake, routes, map[uint32]struct{}{1: {}, 2: {}}, logger.Nop())
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v; want none for ErrKeyNotExist", errs)
+	}
+	if _, ok := next[2]; ok {
+		t.Fatalf("already-gone orphan IP 2 must not be retained: %v", next)
+	}
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0] != 2 {
+		t.Fatalf("expected one Delete(2) call, got %v", fake.deleteCalls)
+	}
+}
+
 // requireBPF skips a test if the kernel/container lacks the perms needed
 // to create in-memory BPF maps. Used for tests that need real ebpf.Map
 // handles in m.objs. CI on a privileged Linux runner never skips; dev

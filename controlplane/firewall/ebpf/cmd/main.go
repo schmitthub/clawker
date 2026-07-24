@@ -143,6 +143,16 @@ func runSyncRoutes(log *logger.Logger, routesJSON string) {
 	if err := json.Unmarshal([]byte(routesJSON), &routes); err != nil {
 		fatal("sync-routes", fmt.Errorf("parsing routes JSON: %w", err))
 	}
+	for i, r := range routes {
+		if r.Identity == 0 || r.DstPort == 0 {
+			fatal("sync-routes", fmt.Errorf(
+				"route[%d]: identity and dstPort are required and must be non-zero (got identity=%d dstPort=%d); check the JSON field names against this binary's schema",
+				i,
+				r.Identity,
+				r.DstPort,
+			))
+		}
+	}
 
 	mgr := clawkerebpf.NewManager(log)
 	if err := mgr.OpenPinned(); err != nil {
@@ -231,7 +241,11 @@ func runDNSUpdate(log *logger.Logger, ipStr, identityStr, ttlStr string) {
 	}
 	defer mgr.Close()
 
-	if updateErr := mgr.UpdateDNSCache(clawkerebpf.IPToUint32(ip), uint32(identity), uint32(ttl)); updateErr != nil {
+	if updateErr := mgr.UpdateDNSCache(
+		clawkerebpf.IPToUint32(ip),
+		clawkerebpf.RouteIdentity(identity),
+		uint32(ttl),
+	); updateErr != nil {
 		fatal("dns-update", updateErr)
 	}
 }

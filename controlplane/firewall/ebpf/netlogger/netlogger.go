@@ -54,7 +54,7 @@ const defaultQueueBuffer = 8192
 const defaultStopTimeout = 5 * time.Second
 
 // defaultReverseDNSInterval is the periodic refresh cadence for the
-// reverse-DNS observed-hash set. 5s is well under the dns_cache TTL
+// reverse-DNS observed-identity set. 5s is well under the dns_cache TTL
 // horizon and is cheap (one map iterate per tick over a bounded
 // pinned map).
 const defaultReverseDNSInterval = 5 * time.Second

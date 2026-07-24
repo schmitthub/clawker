@@ -81,7 +81,19 @@ func collectAllowDomains(rules []config.EgressRule, reserved, denySeen map[strin
 // Only "allow" rules with domain destinations (not IPs/CIDRs) get forward zones.
 // Each allowed domain gets its own zone forwarding to Cloudflare malware-blocking DNS.
 // The catch-all "." zone returns NXDOMAIN for everything else.
-func GenerateCorefile(rules []config.EgressRule, healthPort int, idFor IdentityResolver) ([]byte, error) {
+//
+// A zone whose dst the resolver cannot answer for keeps its forward zone but
+// gets no dnsbpf directive (see writeAllowZone) — fail closed: no dns_cache
+// writes for the zone, so its traffic falls back to Envoy enforcement (UDP
+// denies at the BPF hook; see HandlerDeps.Identity). Those dsts are reported
+// in the second return (deduped, first-seen order) so callers with a logger
+// can surface the gap.
+func GenerateCorefile(
+	rules []config.EgressRule,
+	healthPort int,
+	idFor IdentityResolver,
+) ([]byte, []string, error) {
+	tracking, missedDsts := missTrackingResolver(idFor)
 	var b strings.Builder
 
 	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
@@ -112,7 +124,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int, idFor IdentityR
 	// Per-domain forward zones. Exact-only domains additionally NXDOMAIN every
 	// subdomain (see writeAllowZone); wildcard domains forward the whole subtree.
 	for _, domain := range allowDomains {
-		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain], idFor)
+		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain], tracking)
 	}
 
 	// Deny zones: NXDOMAIN the domain and its entire subtree, beating any
@@ -124,7 +136,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int, idFor IdentityR
 	// Internal host forward zones (Docker DNS). Never exact-scoped — e.g.
 	// host.docker.internal is a subdomain of docker.internal and must resolve.
 	for _, host := range internalHosts {
-		writeAllowZone(&b, host, []string{"127.0.0.11"}, false, idFor)
+		writeAllowZone(&b, host, []string{"127.0.0.11"}, false, tracking)
 	}
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
@@ -138,7 +150,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int, idFor IdentityR
 	b.WriteString("    reload 2s\n")
 	b.WriteString("}\n")
 
-	return []byte(b.String()), nil
+	return []byte(b.String()), missedDsts(), nil
 }
 
 // isAllowDomain returns true if the rule is an allow rule targeting a domain
@@ -239,7 +251,8 @@ func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exact
 	// The dnsbpf directive carries the zone's route identity so the plugin
 	// writes dns_cache entries without deriving anything itself. A zone whose
 	// dst holds no identity gets NO dnsbpf directive — resolution still works,
-	// but nothing is written to dns_cache (fail closed at the connect hook).
+	// but nothing is written to dns_cache (fail closed — see
+	// HandlerDeps.Identity for the per-proto posture).
 	if id, ok := idFor(domain); ok {
 		fmt.Fprintf(b, "    dnsbpf %d\n", id)
 	}

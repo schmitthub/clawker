@@ -174,9 +174,12 @@ type HandlerDeps struct {
 
 	// Identity is the sticky route-identity allocator. Nil degrades to
 	// "no identities": RoutesFromRules emits no routes and GenerateCorefile
-	// emits no dnsbpf directives — the BPF connect hooks then deny (route
-	// lookup miss), fail closed. Production wiring in cmd/clawkercp always
-	// provides one; only handler unit tests that never reconcile omit it.
+	// emits no dnsbpf directives — dedicated-listener protos (ssh/tcp) land
+	// on the catch-all TLS listener and are rejected by Envoy, UDP denies at
+	// the BPF hook, and HTTPS still rides the shared listener under Envoy
+	// SNI enforcement: net posture fail closed. Production wiring in
+	// cmd/clawkercp always provides one; only handler unit tests that never
+	// reconcile omit it.
 	Identity *IdentityAllocator
 
 	// ListAgents returns canonical container IDs of every running
@@ -1061,13 +1064,23 @@ func (h *Handler) routesFromStore() []ebpf.Route {
 	for _, w := range warnings {
 		h.log.Warn().Str("normalize_warning", w).Msg("firewall: rule normalization warning")
 	}
-	return RoutesFromRules(rules, h.envoyPorts(), h.identityFor)
+	routes, missed := RoutesFromRules(rules, h.envoyPorts(), h.identityFor)
+	// Partial misses only — with no allocator wired every dst misses by
+	// design and event=identity_allocator_unset already covers the full
+	// degrade (see syncIdentities).
+	if len(missed) > 0 && h.identity != nil {
+		h.log.Warn().Str("event", "identity_resolver_miss").
+			Strs("dsts", missed).
+			Int("count", len(missed)).
+			Msg("firewall: route generation dropped dsts holding no route identity (fail closed) — they resolve via DNS but deny at connect()")
+	}
+	return routes
 }
 
 // identityFor is the Handler's IdentityResolver. With no allocator wired it
 // answers ok=false for everything — no routes, no dnsbpf directives, fail
 // closed (see HandlerDeps.Identity).
-func (h *Handler) identityFor(dst string) (uint32, bool) {
+func (h *Handler) identityFor(dst string) (ebpf.RouteIdentity, bool) {
 	if h.identity == nil {
 		return 0, false
 	}

@@ -8,6 +8,8 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+
+	clawkerebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 const pluginName = "dnsbpf"
@@ -27,16 +29,22 @@ func setup(c *caddy.Controller) error {
 	// CP-allocated route identity (non-zero u32). The Corefile generator
 	// (controlplane/firewall) writes it; a zone whose dst holds no
 	// identity gets no dnsbpf directive at all.
-	var identity uint32
-	for c.Next() {
+	var identity clawkerebpf.RouteIdentity
+	for i := 0; c.Next(); i++ {
+		if i > 0 {
+			// One zone = one identity: a second directive occurrence would
+			// silently last-win and stamp the zone's dns_cache writes with
+			// the wrong route identity, aliasing another domain's route.
+			return fmt.Errorf("plugin/%s: %w", pluginName, plugin.ErrOnce)
+		}
 		if !c.NextArg() {
 			return fmt.Errorf("plugin/%s: %w", pluginName, c.ArgErr())
 		}
 		id, err := strconv.ParseUint(c.Val(), 10, 32)
-		if err != nil || id == 0 {
+		identity = clawkerebpf.RouteIdentity(id)
+		if err != nil || identity.IsNone() {
 			return fmt.Errorf("plugin/%s: invalid route identity %q: must be a non-zero u32", pluginName, c.Val())
 		}
-		identity = uint32(id)
 		if c.NextArg() {
 			return fmt.Errorf("plugin/%s: %w", pluginName, c.ArgErr())
 		}

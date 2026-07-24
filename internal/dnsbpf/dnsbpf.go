@@ -41,17 +41,17 @@ const minTTLSeconds = 60
 // MapWriter is the interface for writing to the BPF dns_cache map.
 // Implemented by BPFMap for production; fakes can be injected for tests.
 type MapWriter interface {
-	Update(ip, identity, ttlSeconds uint32)
+	Update(ip uint32, identity clawkerebpf.RouteIdentity, ttlSeconds uint32)
 }
 
 // Handler implements plugin.Handler by intercepting DNS responses and
 // writing A record results to the BPF dns_cache map.
 type Handler struct {
 	Next plugin.Handler
-	Zone string // Corefile zone this instance serves (e.g., "github.com.") — logging only
+	Zone string // Corefile zone this instance serves (e.g., "github.com.") — diagnostic context only, not read at runtime
 	// Identity is the CP-allocated route identity for this zone, parsed
 	// from the dnsbpf directive argument.
-	Identity uint32
+	Identity clawkerebpf.RouteIdentity
 	Map      MapWriter // Shared BPF map writer (nil = skip writes)
 }
 

@@ -739,14 +739,16 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	// Populate with new routes.
 	for _, r := range routes {
 		key := clawkerRouteKey{
-			Identity: r.Identity,
+			// Kernel-map encode boundary: the generated bpf2go key carries
+			// the raw on-wire uint32.
+			Identity: uint32(r.Identity),
 			DstPort:  r.DstPort,
 			L4Proto:  r.L4Proto,
 		}
 		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
 		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
 			m.log.Warn().Err(err).
-				Uint32("identity", r.Identity).
+				Uint32("identity", uint32(r.Identity)).
 				Uint16("dst_port", r.DstPort).
 				Uint8("l4_proto", r.L4Proto).
 				Msg("ebpf sync-routes: updating route_map")
@@ -766,7 +768,7 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	// Seed dns_cache for IP-literal routes. The agent connects to a bare IP,
 	// which CoreDNS never resolved, so connect4/sendmsg4's dns_cache lookup would
 	// miss and the datagram would be denied. Writing dns_cache[ip]=Identity
-	// (the same hash the route is keyed on) makes the existing lookup hit. FQDN
+	// (the same identity the route is keyed on) makes the existing lookup hit. FQDN
 	// routes carry SeedIP==0 — CoreDNS populates their dns_cache entry.
 	//
 	// dns_cache is keyed by destination IP and has two writers: this seed and
@@ -788,7 +790,7 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 		if err := m.seedDNSCache(r.SeedIP, r.Identity, dnsSeedTTLSeconds); err != nil {
 			m.log.Warn().Err(err).
 				Uint32("seed_ip", r.SeedIP).
-				Uint32("identity", r.Identity).
+				Uint32("identity", uint32(r.Identity)).
 				Msg("ebpf sync-routes: seeding dns_cache for IP rule")
 			errs = append(errs, fmt.Errorf("seed dns_cache[ip=%d, identity=%d]: %w", r.SeedIP, r.Identity, err))
 			continue
@@ -797,19 +799,17 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	}
 
 	// Update the protected-seed set and remove dns_cache entries for IP rules
-	// that went away. Without the delete, an orphan seed would linger for the
-	// full seed TTL misattributing access-log records; dropping it also lets a
-	// later GC pass reclaim the slot. A co-resident FQDN rule for the same IP
-	// just re-resolves through CoreDNS on its next query.
+	// that went away. Seed entries carry DNSSourceSeed, which GarbageCollectDNS
+	// never evicts and the dnsbpf plugin refuses to overwrite — this orphan
+	// delete is their sole removal path, so a dropped delete would pin the
+	// stale entry forever (denying that IP's allowed traffic, or aliasing a
+	// reissued identity). A co-resident FQDN rule for the same IP just
+	// re-resolves through CoreDNS on its next query.
 	m.seedMu.Lock()
-	next, orphaned := diffSeededIPs(routes, m.seededIPs)
+	next, seedErrs := reconcileSeeds(m.objs.DnsCache, routes, m.seededIPs, m.log)
 	m.seededIPs = next
 	m.seedMu.Unlock()
-	for _, ip := range orphaned {
-		if err := m.objs.DnsCache.Delete(ip); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.log.Debug().Err(err).Uint32("ip", ip).Msg("ebpf sync-routes: removing orphan dns_cache seed (non-fatal)")
-		}
-	}
+	errs = append(errs, seedErrs...)
 
 	m.log.Info().
 		Int("routes", len(routes)).
@@ -836,6 +836,38 @@ func diffSeededIPs(routes []Route, prev map[uint32]struct{}) (next map[uint32]st
 		}
 	}
 	return next, orphaned
+}
+
+// reconcileSeeds computes the next tracked-seed set for a SyncRoutes call and
+// deletes dns_cache entries for orphaned IP-literal seeds. ErrKeyNotExist
+// counts as success (the entry is already gone). An IP whose delete fails any
+// other way stays in the returned set: seed entries are exempt from GC
+// eviction, so this delete is their only removal path — retaining the IP makes
+// the next reconcile's diff list it as an orphan again and retry. Each failure
+// is also returned so SyncRoutes surfaces a non-nil error to the caller.
+func reconcileSeeds(
+	dnsCache bypassMap,
+	routes []Route,
+	prev map[uint32]struct{},
+	log *logger.Logger,
+) (map[uint32]struct{}, []error) {
+	var errs []error
+	next, orphaned := diffSeededIPs(routes, prev)
+	for _, ip := range orphaned {
+		err := dnsCache.Delete(ip)
+		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
+			continue
+		}
+		if log != nil {
+			log.Warn().Err(err).
+				Str("event", "dns_seed_orphan_delete_failed").
+				Uint32("ip", ip).
+				Msg("ebpf sync-routes: removing orphan dns_cache seed")
+		}
+		next[ip] = struct{}{}
+		errs = append(errs, fmt.Errorf("delete orphan dns_cache seed[ip=%d]: %w", ip, err))
+	}
+	return next, errs
 }
 
 // Disable sets the bypass flag for a container, allowing unrestricted egress.
@@ -873,9 +905,10 @@ func dnsExpiryTS(ttlSeconds uint32) uint32 {
 // break-glass ebpf-manager CLI, where a manual override is the intent. The
 // entry is tagged DNSSourceDNS, so the dnsbpf plugin may later overwrite it
 // on a fresh resolution and GC expires it at its TTL like any DNS entry.
-func (m *Manager) UpdateDNSCache(ip uint32, identity uint32, ttlSeconds uint32) error {
+func (m *Manager) UpdateDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error {
 	entry := clawkerDnsEntry{
-		Identity: identity,
+		// Kernel-map encode boundary: raw on-wire uint32.
+		Identity: uint32(identity),
 		ExpireTs: dnsExpiryTS(ttlSeconds),
 		Source:   DNSSourceDNS,
 	}
@@ -890,9 +923,10 @@ func (m *Manager) UpdateDNSCache(ip uint32, identity uint32, ttlSeconds uint32) 
 // precedence (see the two-writer contention note in SyncRoutes). The dnsbpf
 // plugin refuses to overwrite a DNSSourceSeed entry, so the seed holds until
 // SyncRoutes' orphan diff removes it.
-func (m *Manager) seedDNSCache(ip uint32, identity uint32, ttlSeconds uint32) error {
+func (m *Manager) seedDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error {
 	entry := clawkerDnsEntry{
-		Identity: identity,
+		// Kernel-map encode boundary: raw on-wire uint32.
+		Identity: uint32(identity),
 		ExpireTs: dnsExpiryTS(ttlSeconds),
 		Source:   DNSSourceSeed,
 	}
@@ -1119,10 +1153,10 @@ type BypassEntry struct {
 // and the ContainerConfig IP fields), its route identity, and
 // wall-clock expiration.
 type DNSCacheEntry struct {
-	IP       net.IP `json:"ip"`
-	Identity uint32 `json:"identity"`
-	ExpireTS uint32 `json:"expireTs"`
-	Source   uint8  `json:"source"` // DNSSource* write-precedence tag
+	IP       net.IP        `json:"ip"`
+	Identity RouteIdentity `json:"identity"`
+	ExpireTS uint32        `json:"expireTs"`
+	Source   uint8         `json:"source"` // DNSSource* write-precedence tag
 }
 
 // DumpRoutes returns every entry in the global route_map.
@@ -1142,7 +1176,8 @@ func (m *Manager) DumpRoutes() ([]Route, error) {
 	iter := m.objs.RouteMap.Iterate()
 	for iter.Next(&k, &v) {
 		out = append(out, Route{
-			Identity:  k.Identity,
+			// Kernel-map decode boundary: bpf2go key carries the raw uint32.
+			Identity:  RouteIdentity(k.Identity),
 			DstPort:   k.DstPort,
 			EnvoyPort: v.EnvoyPort,
 			L4Proto:   k.L4Proto,
@@ -1210,8 +1245,9 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 	iter := m.objs.DnsCache.Iterate()
 	for iter.Next(&ip, &entry) {
 		out = append(out, DNSCacheEntry{
-			IP:       Uint32ToIP(ip),
-			Identity: entry.Identity,
+			IP: Uint32ToIP(ip),
+			// Kernel-map decode boundary: bpf2go entry carries the raw uint32.
+			Identity: RouteIdentity(entry.Identity),
 			ExpireTS: entry.ExpireTs,
 			Source:   entry.Source,
 		})
@@ -1226,10 +1262,10 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 // route identity. L4Proto (L4ProtoTCP/L4ProtoUDP) selects the transport so TCP
 // and UDP routes for the same {domain, port} stay independent in the route_map.
 type Route struct {
-	Identity  uint32 `json:"identity"`
-	DstPort   uint16 `json:"dstPort"`
-	EnvoyPort uint16 `json:"envoyPort"`
-	L4Proto   uint8  `json:"l4Proto"`
+	Identity  RouteIdentity `json:"identity"`
+	DstPort   uint16        `json:"dstPort"`
+	EnvoyPort uint16        `json:"envoyPort"`
+	L4Proto   uint8         `json:"l4Proto"`
 	// SeedIP, when non-zero, is a literal IPv4 dst (network byte order) whose
 	// dns_cache entry SyncRoutes must seed (dns_cache[SeedIP]=Identity) so the
 	// connect4/sendmsg4 lookup hits. The agent connects to the bare IP, which

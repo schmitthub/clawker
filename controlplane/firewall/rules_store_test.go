@@ -113,7 +113,7 @@ func TestValidateDst(t *testing.T) {
 // routing fields (Identity, DstPort, EnvoyPort, L4Proto), ignoring SeedIP. The
 // mapping↔route parity loops use it to assert no Envoy listener is orphaned without
 // re-deriving SeedIP (the table cases pin that exactly via require.Equal).
-func routePresent(out []ebpf.Route, id uint32, dstPort, envoyPort uint16, l4 uint8) bool {
+func routePresent(out []ebpf.Route, id ebpf.RouteIdentity, dstPort, envoyPort uint16, l4 uint8) bool {
 	for _, r := range out {
 		if r.Identity == id && r.DstPort == dstPort && r.EnvoyPort == envoyPort && r.L4Proto == l4 {
 			return true
@@ -126,14 +126,14 @@ func routePresent(out []ebpf.Route, id uint32, dstPort, envoyPort uint16, l4 uin
 // identity, standing in for the production IdentityAllocator (which
 // allocates, never derives). Any pure function of dst works here; the
 // tests only need per-dst stability within a run.
-func tid(dst string) uint32 {
+func tid(dst string) ebpf.RouteIdentity {
 	h := fnv.New32a()
 	h.Write([]byte(dst))
-	return h.Sum32()
+	return ebpf.RouteIdentity(h.Sum32())
 }
 
 // tidResolver adapts tid to the IdentityResolver shape RoutesFromRules takes.
-func tidResolver(dst string) (uint32, bool) { return tid(dst), true }
+func tidResolver(dst string) (ebpf.RouteIdentity, bool) { return tid(dst), true }
 
 func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	t.Parallel()
@@ -364,8 +364,9 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := firewall.RoutesFromRules(tt.rules, ports, tidResolver)
+			got, missed := firewall.RoutesFromRules(tt.rules, ports, tidResolver)
 			require.Equal(t, tt.want, got)
+			assert.Empty(t, missed, "tidResolver answers every dst — no misses expected")
 
 			// Parity check: every TCP/SSH mapping TCPMappings produces must appear
 			// in the route set, matched on the structural fields that drive listener
@@ -397,6 +398,54 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRoutesFromRules_ResolverMissFailsClosed pins the fail-closed contract
+// for a PARTIAL resolver miss: the missed dst gets NO route at all (never an
+// Identity:0 route — 0 is the "none" sentinel and would alias in route_map),
+// every other rule's routes are unaffected, and the miss is reported exactly
+// once even when dedicated-listener fan-out asks about the dst repeatedly
+// (one https lookup + one tcp-mapping lookup here).
+func TestRoutesFromRules_ResolverMissFailsClosed(t *testing.T) {
+	t.Parallel()
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000, HealthPort: 0}
+	const missDst = "missing.example.com"
+
+	missOne := func(dst string) (ebpf.RouteIdentity, bool) {
+		if dst == missDst {
+			return 0, false
+		}
+		return tid(dst), true
+	}
+
+	rules := []config.EgressRule{
+		{
+			Dst: "github.com", Proto: "https", Action: "allow", Port: "443",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+		{
+			Dst: missDst, Proto: "https", Action: "allow", Port: "443",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+		{
+			Dst: missDst, Proto: "tcp", Action: "allow", Port: "8080",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+	}
+
+	got, missed := firewall.RoutesFromRules(rules, ports, missOne)
+
+	assert.Equal(t, []string{missDst}, missed,
+		"miss must be reported exactly once despite multiple lookups for the same dst")
+	for _, r := range got {
+		assert.NotZerof(t, r.Identity, "no route may carry Identity:0 — a miss must drop the route, got %+v", r)
+		assert.NotEqualf(t, tid(missDst), r.Identity, "missed dst must produce no route, got %+v", r)
+	}
+	want := []ebpf.Route{
+		{Identity: tid("github.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
+		{Identity: tid("github.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP, SeedIP: 0},
+	}
+	assert.Equal(t, want, got, "routes for resolvable dsts must be unaffected by the miss")
 }
 
 // TestEgressRulesFileFields_AllFieldsHaveDescriptions guards the storage

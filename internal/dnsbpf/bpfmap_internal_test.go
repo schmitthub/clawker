@@ -15,10 +15,14 @@ import (
 // surfaced as an error so the write path visibly fails.
 type fakeDNSCacheMap struct {
 	entries map[uint32]dnsEntry
+	// lookupErr, if non-nil, is returned from Lookup regardless of whether
+	// the key exists — simulates kernel-level failures (EFAULT, bad FD)
+	// that are NOT ErrKeyNotExist.
+	lookupErr error
 }
 
 func newFakeDNSCacheMap() *fakeDNSCacheMap {
-	return &fakeDNSCacheMap{entries: make(map[uint32]dnsEntry)}
+	return &fakeDNSCacheMap{entries: make(map[uint32]dnsEntry), lookupErr: nil}
 }
 
 var errFakeMapBadType = errors.New("fakeDNSCacheMap: unexpected key/value type")
@@ -31,6 +35,9 @@ func (f *fakeDNSCacheMap) Lookup(key, valueOut any) error {
 	out, ok := valueOut.(*dnsEntry)
 	if !ok {
 		return errFakeMapBadType
+	}
+	if f.lookupErr != nil {
+		return f.lookupErr
 	}
 	entry, exists := f.entries[k]
 	if !exists {
@@ -98,5 +105,24 @@ func TestBPFMapUpdate_RefusesToOverwriteSeedEntry(t *testing.T) {
 
 	if got := fake.entries[0x01020304]; got != seed {
 		t.Fatalf("seed entry mutated by DNS-derived write: got %+v; want %+v", got, seed)
+	}
+}
+
+func TestBPFMapUpdate_SkipsWriteOnLookupError(t *testing.T) {
+	// A Lookup failure other than ErrKeyNotExist means the entry's source is
+	// unknown — the key could hold a seed. Writing anyway would replace it
+	// with a short-TTL DNS entry the GC then evicts, failing the IP rule
+	// closed until the next CP reconcile. Update must skip the write and let
+	// the next DNS answer retry.
+	fake := newFakeDNSCacheMap()
+	seed := dnsEntry{Identity: 400, ExpireTS: 4102444800, Source: clawkerebpf.DNSSourceSeed, Pad: [3]uint8{}}
+	fake.entries[0x01020304] = seed
+	fake.lookupErr = errors.New("bpf lookup: bad file descriptor")
+	b := &BPFMap{m: fake}
+
+	b.Update(0x01020304, 300, 60)
+
+	if got := fake.entries[0x01020304]; got != seed {
+		t.Fatalf("entry mutated despite lookup failure: got %+v; want %+v", got, seed)
 	}
 }

@@ -132,7 +132,7 @@ type Event struct {
     IsMapped    bool
     NoDst       bool       // sock_create — no destination exists
     EmitSite    EmitSite   // which BPF program submitted the event; drives event.name
-    Identity    uint32
+    Identity    ebpf.RouteIdentity
     Domain      string
     Verdict     Verdict
 }
@@ -210,7 +210,7 @@ Every goroutine recovers (`defer func() { if r := recover(); r != nil { log.Erro
 
 - `Sink` interface — pipeline tests use a hand-rolled `recordingSink` (see `processor_test.go`) to capture Emit calls. otelSink tests build a real `*sdklog.LoggerProvider` with a `SimpleProcessor` wrapping a `recordingExporter` (see `otel_sink_test.go`) so the SDK code paths get exercised without an OTLP gRPC dial.
 - `readerSource` interface — reader tests use `fakeRingbuf` that scripts a sequence of records + errors. Skips the CAP_BPF dependency entirely.
-- `ReverseDNSMap.walk` function field — tests inject a stub that returns scripted hashes without touching cilium/ebpf.
+- `ReverseDNSMap.walk` function field — tests inject a stub that returns scripted identities without touching cilium/ebpf.
 - `ContainerInspecter` interface — Service tests use `fakeInspecter` with a map of canned `ContainerInspectResult` rows. Pattern matches `internal/controlplane/agent/peer_lookup_moby.go`.
 - `newTestService` helper in `netlogger_test.go` — wires `subscribeBus` without invoking `Start` (which would require CAP_BPF). Exercises the bus subscription path end-to-end on the in-process overseer bus.
 - `circuitExporter` tests use a `flakyExporter` that returns a scripted sequence of errors. No SDK or network involvement.

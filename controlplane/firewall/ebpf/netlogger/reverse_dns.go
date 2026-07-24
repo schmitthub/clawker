@@ -21,7 +21,7 @@ import (
 //
 // nil IdentitySource is supported (degraded mode — every Lookup returns ""),
 // matching the boot-time shape before the wiring lands.
-type IdentitySource func() map[uint32]string
+type IdentitySource func() map[clawkerebpf.RouteIdentity]string
 
 // ReverseDNSMap holds the userspace identity→dst table the otelSink reads
 // when stamping `dst_host` on each emitted security record.
@@ -39,7 +39,7 @@ type IdentitySource func() map[uint32]string
 // attribution for that record, the same outcome as a direct-IP connect.
 type ReverseDNSMap struct {
 	mu   sync.RWMutex
-	byID map[uint32]string
+	byID map[clawkerebpf.RouteIdentity]string
 
 	// identities is the live allocation snapshot source. Each refresh
 	// tick reads it once.
@@ -53,7 +53,7 @@ type ReverseDNSMap struct {
 	// IdentitySource is — but the dns_cache identity set is logged on
 	// every refresh tick for triage when an emitted security
 	// record carries an unattributed identity.
-	walk func(visit func(identity uint32)) error
+	walk func(visit func(identity clawkerebpf.RouteIdentity)) error
 
 	log *logger.Logger
 }
@@ -67,7 +67,7 @@ func NewReverseDNSMap(dnsCache *ebpf.Map, identities IdentitySource, log *logger
 		log = logger.Nop()
 	}
 	return &ReverseDNSMap{
-		byID:       make(map[uint32]string),
+		byID:       make(map[clawkerebpf.RouteIdentity]string),
 		identities: identities,
 		walk:       walkDNSCache(dnsCache),
 		log:        log,
@@ -78,7 +78,7 @@ func NewReverseDNSMap(dnsCache *ebpf.Map, identities IdentitySource, log *logger
 // injectable walk function — used by unit tests that don't have a
 // real BPF map handle.
 func NewReverseDNSMapWithWalk(
-	walk func(visit func(identity uint32)) error,
+	walk func(visit func(identity clawkerebpf.RouteIdentity)) error,
 	identities IdentitySource,
 	log *logger.Logger,
 ) *ReverseDNSMap {
@@ -86,7 +86,7 @@ func NewReverseDNSMapWithWalk(
 		log = logger.Nop()
 	}
 	return &ReverseDNSMap{
-		byID:       make(map[uint32]string),
+		byID:       make(map[clawkerebpf.RouteIdentity]string),
 		identities: identities,
 		walk:       walk,
 		log:        log,
@@ -94,12 +94,12 @@ func NewReverseDNSMapWithWalk(
 }
 
 // Lookup returns the dst string bound to identity, or "" when:
-//   - identity == 0 (direct-IP connect, no DNS resolution at all)
+//   - identity.IsNone() (direct-IP connect, no DNS resolution at all)
 //   - IdentitySource is nil (degraded mode)
 //   - the identity is absent from the source (race after rule remove,
 //     dnsbpf stale entry)
-func (m *ReverseDNSMap) Lookup(identity uint32) string {
-	if identity == 0 {
+func (m *ReverseDNSMap) Lookup(identity clawkerebpf.RouteIdentity) string {
+	if identity.IsNone() {
 		return ""
 	}
 	m.mu.RLock()
@@ -153,10 +153,10 @@ func (m *ReverseDNSMap) refreshRecovered() {
 // refresh snapshots the IdentitySource and walks dns_cache to surface any
 // observed identities the source doesn't account for.
 func (m *ReverseDNSMap) refresh() {
-	next := make(map[uint32]string)
+	next := make(map[clawkerebpf.RouteIdentity]string)
 	if m.identities != nil {
 		for id, dst := range m.identities() {
-			if id == 0 || dst == "" {
+			if id.IsNone() || dst == "" {
 				continue
 			}
 			next[id] = dst
@@ -165,8 +165,8 @@ func (m *ReverseDNSMap) refresh() {
 
 	if m.walk != nil {
 		var unattributed int
-		err := m.walk(func(identity uint32) {
-			if identity == 0 {
+		err := m.walk(func(identity clawkerebpf.RouteIdentity) {
+			if identity.IsNone() {
 				return
 			}
 			if _, ok := next[identity]; !ok {
@@ -199,11 +199,11 @@ func (m *ReverseDNSMap) refresh() {
 // walkDNSCache adapts *ebpf.Map iteration to the walk function shape.
 // Returns a no-op walk when the map handle is nil (e.g. tests that
 // construct a ReverseDNSMap without a real BPF map).
-func walkDNSCache(dnsCache *ebpf.Map) func(func(identity uint32)) error {
+func walkDNSCache(dnsCache *ebpf.Map) func(func(identity clawkerebpf.RouteIdentity)) error {
 	if dnsCache == nil {
-		return func(func(identity uint32)) error { return nil }
+		return func(func(identity clawkerebpf.RouteIdentity)) error { return nil }
 	}
-	return func(visit func(identity uint32)) error {
+	return func(visit func(identity clawkerebpf.RouteIdentity)) error {
 		var key uint32
 		var val clawkerebpf.DNSEntry
 		iter := dnsCache.Iterate()

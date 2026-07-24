@@ -90,7 +90,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	}
 	// dst_ip, dst_port, dst_host are omitted when BPF / enrichment did
 	// not carry them on this code path (sock_create — NoDst=true;
-	// direct-IP connect or unattributed domain hash). OS Discover
+	// direct-IP connect or unattributed identity). OS Discover
 	// renders the missing attributes as empty cells; operators
 	// partition via _exists_:attributes.dst_ip / NOT _exists_:....
 	// The index template maps dst_ip as type=ip which accepts both v4

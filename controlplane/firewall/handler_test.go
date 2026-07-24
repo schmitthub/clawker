@@ -1191,9 +1191,8 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 // (domains, wildcards normalized, IP literals — allow AND deny alike, so an
 // action flip never renumbers) plus every reserved internal host, and that
 // the snapshot the netlogger IdentitySource serves reverse-resolves each of
-// them. This is the attribution guarantee that replaced the hash-inversion
-// ReverseDNSDomains surface: dnsbpf writes and route_map keys both come from
-// this one table.
+// them. This is the attribution guarantee: dnsbpf writes and route_map keys
+// both come from this one table.
 func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
@@ -1213,7 +1212,7 @@ func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	wantDsts = append(wantDsts, consts.MonitoringServiceHostnames...)
 
 	snap := h.identity.Snapshot()
-	byDst := make(map[string]uint32, len(snap))
+	byDst := make(map[string]ebpf.RouteIdentity, len(snap))
 	for id, dst := range snap {
 		byDst[dst] = id
 	}

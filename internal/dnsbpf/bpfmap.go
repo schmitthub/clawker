@@ -1,6 +1,7 @@
 package dnsbpf
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -17,7 +18,7 @@ const DefaultPinPath = clawkerebpf.PinPath + "/" + clawkerebpf.DNSCacheMapName
 // expire_ts uses wall-clock seconds (time.Now().Unix() + TTL), matching
 // the garbage collector in controlplane/firewall/ebpf/manager.go GarbageCollectDNS().
 type dnsEntry struct {
-	Identity uint32
+	Identity clawkerebpf.RouteIdentity // named uint32 — encodes identically into the kernel map
 	ExpireTS uint32
 	Source   uint8
 	Pad      [3]uint8
@@ -63,13 +64,23 @@ func OpenBPFMap(pinPath string) (*BPFMap, error) {
 //
 // Source precedence (cilium ipcache analog): an existing DNSSourceSeed entry
 // — written by CP SyncRoutes for an IP-literal rule — outranks a DNS-derived
-// write, so it is left untouched. The lookup-then-update pair is not atomic,
-// but the only competing seed writer is the CP's rare reconcile, which also
-// wins any interleave: a seed written after our lookup is simply restored by
-// the next reconcile's re-seed.
-func (b *BPFMap) Update(ip, identity, ttlSeconds uint32) {
+// write, so it is left untouched. A lookup that fails for any reason other
+// than ErrKeyNotExist also skips the write: the entry's source is unknown and
+// overwriting could clobber a seed with a short-TTL DNS entry the GC would
+// then evict. The lookup-then-update pair is not atomic, but the only
+// competing seed writer is the CP's rare reconcile, which also wins any
+// interleave: a seed written after our lookup is simply restored by the next
+// reconcile's re-seed.
+func (b *BPFMap) Update(ip uint32, identity clawkerebpf.RouteIdentity, ttlSeconds uint32) {
 	var cur dnsEntry
-	if err := b.m.Lookup(ip, &cur); err == nil && cur.Source == clawkerebpf.DNSSourceSeed {
+	err := b.m.Lookup(ip, &cur)
+	switch {
+	case err == nil && cur.Source == clawkerebpf.DNSSourceSeed:
+		return
+	case err != nil && !errors.Is(err, ebpf.ErrKeyNotExist):
+		// Fail toward preserving a possible seed; the next DNS answer retries.
+		log.Warningf("looking up dns_cache for ip=%s: %v; skipping write",
+			clawkerebpf.Uint32ToIP(ip), err)
 		return
 	}
 	entry := dnsEntry{

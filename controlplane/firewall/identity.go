@@ -1,31 +1,28 @@
 package firewall
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"sort"
 	"sync"
 
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// Identity space partitioning. Identities are userspace-allocated u32 route
-// identities keying dns_cache and route_map (Cilium's local-identity pattern:
-// allocated, never derived, never renumbered while live — a hash-derived or
-// recomputed identity would let pinned dns_cache entries alias another
-// domain's route after rule churn).
-const (
-	// IdentityNone is the zero identity: "no domain attribution".
-	// dns_cache misses and direct-IP connects observe it.
-	IdentityNone uint32 = 0
-
-	// MinIdentity is the first allocatable identity. [1, MinIdentity) is
-	// reserved for future well-known infra identities.
-	MinIdentity uint32 = 256
-)
+// MinIdentity is the first allocatable identity, partitioning the identity
+// space: 0 is the "none" sentinel ([ebpf.RouteIdentity.IsNone]) and
+// [1, MinIdentity) is reserved for future well-known infra identities.
+// Identities are userspace-allocated ebpf.RouteIdentity values keying
+// dns_cache and route_map (Cilium's local-identity pattern: allocated, never
+// derived, never renumbered while live — a hash-derived or recomputed
+// identity would let pinned dns_cache entries alias another domain's route
+// after rule churn).
+const MinIdentity ebpf.RouteIdentity = 256
 
 // IdentityEntry is one persisted dst→identity allocation. IDs are int64 in
 // the schema (the storage field set has no unsigned kind) but always hold
@@ -67,15 +64,44 @@ func NewIdentityStore(cfg config.Config) (*storage.Store[IdentityTableFile], err
 	return storage.New[IdentityTableFile]("",
 		storage.WithFilenames(consts.RouteIdentitiesFile),
 		storage.WithPaths(dataDir),
-		storage.WithLock(), // CP and break-glass tooling may share this file.
+		storage.WithLock(), // flock: defend against a second CP process racing the table.
 	)
+}
+
+// identityStore is the persistence surface the allocator consumes — satisfied
+// by *storage.Store[IdentityTableFile]. Narrowed to the one method used so
+// package-internal tests can swap in a failing store without widening the
+// allocator's constructor signature.
+type identityStore interface {
+	Txn(fn func(tx *storage.Tx[IdentityTableFile]) error) error
 }
 
 // IdentityResolver answers "which identity does this dst hold" for route
 // building and Corefile generation. Wire (*IdentityAllocator).IdentityFor.
 // Returning ok=false means the dst holds no identity — consumers fail closed
 // (no route, no dnsbpf write).
-type IdentityResolver func(dst string) (uint32, bool)
+type IdentityResolver func(dst string) (ebpf.RouteIdentity, bool)
+
+// missTrackingResolver wraps idFor so every dst it cannot answer for is
+// recorded (deduped, first-seen order — dedicated-listener fan-out asks about
+// one dst once per in-range port). The returned collect func snapshots the
+// misses after a generation pass; callers surface them so a fail-closed drop
+// ("domain resolves via DNS but connect() denies") is never silent.
+func missTrackingResolver(idFor IdentityResolver) (IdentityResolver, func() []string) {
+	seen := make(map[string]struct{})
+	var missed []string
+	tracking := func(dst string) (ebpf.RouteIdentity, bool) {
+		id, ok := idFor(dst)
+		if !ok {
+			if _, dup := seen[dst]; !dup {
+				seen[dst] = struct{}{}
+				missed = append(missed, dst)
+			}
+		}
+		return id, ok
+	}
+	return tracking, func() []string { return missed }
+}
 
 // IdentityAllocator owns the sticky dst→identity table. Allocation is
 // round-robin next-free over MinIdentity..MaxUint32; a live dst keeps
@@ -83,10 +109,16 @@ type IdentityResolver func(dst string) (uint32, bool)
 // persisted), and a released identity is not reissued until the cursor wraps.
 type IdentityAllocator struct {
 	mu    sync.Mutex
-	store *storage.Store[IdentityTableFile]
-	byDst map[string]uint32
-	byID  map[uint32]string
-	next  uint32
+	store identityStore
+	byDst map[string]ebpf.RouteIdentity
+	byID  map[ebpf.RouteIdentity]string
+	next  ebpf.RouteIdentity
+	// needsPersist is set whenever a sync mutates the table and cleared
+	// only on a successful persist, so a failed write is retried by the
+	// next sync even when that sync itself changes nothing — otherwise the
+	// table would silently never reach disk and a restart would renumber
+	// every live identity.
+	needsPersist bool
 }
 
 // NewIdentityAllocator loads the persisted table. A corrupt table (identity
@@ -96,8 +128,8 @@ type IdentityAllocator struct {
 func NewIdentityAllocator(store *storage.Store[IdentityTableFile]) (*IdentityAllocator, error) {
 	var a IdentityAllocator
 	a.store = store
-	a.byDst = make(map[string]uint32)
-	a.byID = make(map[uint32]string)
+	a.byDst = make(map[string]ebpf.RouteIdentity)
+	a.byID = make(map[ebpf.RouteIdentity]string)
 	a.next = MinIdentity
 
 	entries, next, err := readPersistedTable(store)
@@ -109,14 +141,24 @@ func NewIdentityAllocator(store *storage.Store[IdentityTableFile]) (*IdentityAll
 			return nil, adoptErr
 		}
 	}
-	if next >= int64(MinIdentity) && next <= math.MaxUint32 {
-		a.next = uint32(next)
+	switch {
+	case next >= int64(MinIdentity) && next <= math.MaxUint32:
+		a.next = ebpf.RouteIdentity(next)
+	case len(a.byDst) > 0:
+		// The persisted cursor is what keeps released identities out of
+		// circulation until the space wraps; a populated table without a
+		// usable cursor cannot honor that, so it gets the same
+		// startup-gate treatment as ambiguous entries. An empty table
+		// keeps the MinIdentity default — a fresh or never-persisted
+		// file legitimately carries no cursor.
+		return nil, fmt.Errorf("identity table corrupt: cursor %d out of range [%d, %d]",
+			next, MinIdentity, uint32(math.MaxUint32))
 	}
 	return &a, nil
 }
 
 // readPersistedTable reads the raw entries + cursor from disk.
-func readPersistedTable(store *storage.Store[IdentityTableFile]) ([]IdentityEntry, int64, error) {
+func readPersistedTable(store identityStore) ([]IdentityEntry, int64, error) {
 	var entries []IdentityEntry
 	var next int64
 	err := store.Txn(func(tx *storage.Tx[IdentityTableFile]) error {
@@ -139,7 +181,7 @@ func (a *IdentityAllocator) adoptEntry(e IdentityEntry) error {
 	if e.ID < int64(MinIdentity) || e.ID > math.MaxUint32 {
 		return fmt.Errorf("identity table corrupt: %q has out-of-range identity %d", e.Dst, e.ID)
 	}
-	id := uint32(e.ID)
+	id := ebpf.RouteIdentity(e.ID)
 	if prev, dup := a.byID[id]; dup {
 		return fmt.Errorf("identity table corrupt: identity %d held by both %q and %q", id, prev, e.Dst)
 	}
@@ -151,22 +193,12 @@ func (a *IdentityAllocator) adoptEntry(e IdentityEntry) error {
 	return nil
 }
 
-// SyncFromRules reconciles the table against a rule set — the
-// rule-dst-only convenience over [IdentityAllocator.SyncDsts].
-func (a *IdentityAllocator) SyncFromRules(rules []config.EgressRule) error {
-	dsts := make([]string, 0, len(rules))
-	for _, r := range rules {
-		dsts = append(dsts, r.Dst)
-	}
-	return a.SyncDsts(dsts)
-}
-
 // SyncDsts reconciles the table against the full desired dst set (rule dsts
 // plus reserved internal hosts): dsts present keep their identity (sticky),
 // new dsts are allocated, dsts no longer in the set are released. The set is
 // declarative and this is its only writer, so set-diff gives the same
-// lifetime semantics as per-caller reference counting. Persists only when
-// the table changed.
+// lifetime semantics as per-caller reference counting. Persists when the
+// table changed or an earlier persist is still owed (see needsPersist).
 func (a *IdentityAllocator) SyncDsts(dsts []string) error {
 	desired := make(map[string]struct{}, len(dsts))
 	for _, d := range dsts {
@@ -180,6 +212,35 @@ func (a *IdentityAllocator) SyncDsts(dsts []string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if a.byDst == nil || a.byID == nil {
+		// Zero-value allocator: allocating into nil maps would panic,
+		// and CP code degrades instead of crashing.
+		return errors.New("identity allocator not constructed")
+	}
+
+	released := a.releaseStaleLocked(desired)
+	allocated, err := a.allocateMissingLocked(desired)
+	if err != nil {
+		return err
+	}
+
+	a.needsPersist = a.needsPersist || released || allocated
+	if !a.needsPersist {
+		return nil
+	}
+	if persistErr := a.persistLocked(); persistErr != nil {
+		// needsPersist stays set: the in-memory maps already mutated, so
+		// the next sync must retry the write even when it changes
+		// nothing itself.
+		return persistErr
+	}
+	a.needsPersist = false
+	return nil
+}
+
+// releaseStaleLocked drops every allocation whose dst is no longer in the
+// desired set. Returns true when anything was released. Caller holds a.mu.
+func (a *IdentityAllocator) releaseStaleLocked(desired map[string]struct{}) bool {
 	dirty := false
 	for dst, id := range a.byDst {
 		if _, keep := desired[dst]; !keep {
@@ -188,27 +249,30 @@ func (a *IdentityAllocator) SyncDsts(dsts []string) error {
 			dirty = true
 		}
 	}
+	return dirty
+}
+
+// allocateMissingLocked mints an identity for every desired dst that holds
+// none. Returns true when anything was allocated. Caller holds a.mu.
+func (a *IdentityAllocator) allocateMissingLocked(desired map[string]struct{}) (bool, error) {
+	dirty := false
 	for dst := range desired {
 		if _, have := a.byDst[dst]; have {
 			continue
 		}
 		id, err := a.nextFreeLocked()
 		if err != nil {
-			return err
+			return dirty, err
 		}
 		a.byDst[dst] = id
 		a.byID[id] = dst
 		dirty = true
 	}
-
-	if !dirty {
-		return nil
-	}
-	return a.persistLocked()
+	return dirty, nil
 }
 
 // IdentityFor returns the identity for a dst (normalized before lookup).
-func (a *IdentityAllocator) IdentityFor(dst string) (uint32, bool) {
+func (a *IdentityAllocator) IdentityFor(dst string) (ebpf.RouteIdentity, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	id, ok := a.byDst[normalizeDst(dst)]
@@ -217,7 +281,7 @@ func (a *IdentityAllocator) IdentityFor(dst string) (uint32, bool) {
 
 // DomainFor returns the dst holding an identity — the netlogger attribution
 // surface (identity → dst_host is a direct read, not a hash inversion).
-func (a *IdentityAllocator) DomainFor(id uint32) (string, bool) {
+func (a *IdentityAllocator) DomainFor(id ebpf.RouteIdentity) (string, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	dst, ok := a.byID[id]
@@ -225,16 +289,16 @@ func (a *IdentityAllocator) DomainFor(id uint32) (string, bool) {
 }
 
 // Snapshot returns a copy of the live identity→dst table.
-func (a *IdentityAllocator) Snapshot() map[uint32]string {
+func (a *IdentityAllocator) Snapshot() map[ebpf.RouteIdentity]string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make(map[uint32]string, len(a.byID))
+	out := make(map[ebpf.RouteIdentity]string, len(a.byID))
 	maps.Copy(out, a.byID)
 	return out
 }
 
 // nextFreeLocked advances the round-robin cursor to the next unheld identity.
-func (a *IdentityAllocator) nextFreeLocked() (uint32, error) {
+func (a *IdentityAllocator) nextFreeLocked() (ebpf.RouteIdentity, error) {
 	start := a.next
 	for {
 		candidate := a.next

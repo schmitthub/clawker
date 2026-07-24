@@ -110,10 +110,8 @@ struct dns_entry {
 	__u8  source;    // DNS_SOURCE_* write-precedence tag (userspace-only)
 	__u8  _pad[3];
 };
-// The value grew 8→12 bytes when source was added — the schema mismatch makes
-// Manager.Load() remove and recreate the pinned dns_cache on the first boot
-// after an upgrade, flushing any stale pre-identity entries. Mirrored Go-side
-// by TestDNSEntry_SizeMatchesABI.
+// A dns_entry size change is the pinned-map migration lever — Load() removes
+// schema-mismatched maps. Mirrored Go-side by TestDNSEntry_SizeMatchesABI.
 _Static_assert(sizeof(struct dns_entry) == 12, "dns_entry must stay 12 bytes");
 
 // Global per-domain route key (shared across all enforced containers).

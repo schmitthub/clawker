@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -26,7 +27,7 @@ func corefileTestIDs(rules []config.EgressRule) firewall.IdentityResolver {
 		dsts = append(dsts, strings.TrimSuffix(strings.TrimPrefix(r.Dst, "."), "."))
 	}
 	sort.Strings(dsts)
-	ids := make(map[string]uint32, len(dsts))
+	ids := make(map[string]ebpf.RouteIdentity, len(dsts))
 	next := firewall.MinIdentity
 	for _, d := range dsts {
 		if d == "" {
@@ -38,7 +39,7 @@ func corefileTestIDs(rules []config.EgressRule) firewall.IdentityResolver {
 		ids[d] = next
 		next++
 	}
-	return func(dst string) (uint32, bool) {
+	return func(dst string) (ebpf.RouteIdentity, bool) {
 		id, ok := ids[dst]
 		return id, ok
 	}
@@ -85,8 +86,9 @@ func TestGenerateCorefile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := firewall.GenerateCorefile(tt.rules, 18902, corefileTestIDs(tt.rules))
+			got, missed, err := firewall.GenerateCorefile(tt.rules, 18902, corefileTestIDs(tt.rules))
 			require.NoError(t, err)
+			assert.Empty(t, missed, "corefileTestIDs answers every dst — no misses expected")
 
 			goldenPath := filepath.Join("testdata", tt.goldenFile)
 			want, err := os.ReadFile(goldenPath)
@@ -103,8 +105,9 @@ func TestGenerateCorefile(t *testing.T) {
 // test fails — keeping the firewall plane and the compose plane in
 // lockstep.
 func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
-	got, err := firewall.GenerateCorefile(nil, 18902, corefileTestIDs(nil))
+	got, missed, err := firewall.GenerateCorefile(nil, 18902, corefileTestIDs(nil))
 	require.NoError(t, err)
+	assert.Empty(t, missed)
 
 	for _, host := range consts.MonitoringServiceHostnames {
 		zone := fmt.Sprintf("%s {", host)
@@ -122,16 +125,70 @@ func TestGenerateCorefile_UnknownActionDoesNotWidenScope(t *testing.T) {
 		Dst: "example.com", Action: "allow",
 		Proto: "", Port: "", PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
 	}}
-	baseline, err := firewall.GenerateCorefile(baselineRules, 18902, corefileTestIDs(baselineRules))
+	baseline, baselineMissed, err := firewall.GenerateCorefile(baselineRules, 18902, corefileTestIDs(baselineRules))
 	require.NoError(t, err)
+	assert.Empty(t, baselineMissed)
 
 	typoRules := []config.EgressRule{
 		{Dst: "example.com", Action: "allow"},
 		{Dst: ".example.com", Action: "allwo"}, // typo: unknown action, not an effective allow
 	}
-	withTypo, err := firewall.GenerateCorefile(typoRules, 18902, corefileTestIDs(baselineRules))
+	withTypo, typoMissed, err := firewall.GenerateCorefile(typoRules, 18902, corefileTestIDs(baselineRules))
 	require.NoError(t, err)
+	assert.Empty(t, typoMissed)
 
 	assert.Equal(t, string(baseline), string(withTypo),
 		"typo'd-action wildcard rule must not flip example.com out of exact-only scoping")
+}
+
+// TestGenerateCorefile_ResolverMissOmitsDnsbpf pins the fail-closed contract
+// for a PARTIAL resolver miss: the missed domain keeps its forward zone
+// (resolution keeps working) but gets no dnsbpf directive (nothing written to
+// dns_cache — connect() denies), resolvable domains keep theirs, and the miss
+// is reported to the caller.
+func TestGenerateCorefile_ResolverMissOmitsDnsbpf(t *testing.T) {
+	const missDst = "missing.example.com"
+	rules := []config.EgressRule{
+		{
+			Dst: "github.com", Action: "allow",
+			Proto: "", Port: "", PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+		{
+			Dst: missDst, Action: "allow",
+			Proto: "", Port: "", PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+	}
+	full := corefileTestIDs(rules)
+	missOne := func(dst string) (ebpf.RouteIdentity, bool) {
+		if dst == missDst {
+			return 0, false
+		}
+		return full(dst)
+	}
+
+	got, missed, err := firewall.GenerateCorefile(rules, 18902, missOne)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{missDst}, missed)
+
+	zone := func(domain string) string {
+		for block := range strings.SplitSeq(string(got), "\n\n") {
+			if strings.HasPrefix(block, domain+" {") {
+				return block
+			}
+		}
+		return ""
+	}
+
+	missedZone := zone(missDst)
+	require.NotEmpty(t, missedZone, "missed domain must keep its forward zone")
+	assert.Contains(t, missedZone, "forward .", "missed domain must still forward (resolution keeps working)")
+	assert.NotContains(t, missedZone, "dnsbpf", "missed domain must not carry a dnsbpf directive")
+
+	githubZone := zone("github.com")
+	require.NotEmpty(t, githubZone)
+	githubID, ok := full("github.com")
+	require.True(t, ok)
+	assert.Contains(t, githubZone, fmt.Sprintf("dnsbpf %d", githubID),
+		"resolvable domain must keep its dnsbpf directive")
 }

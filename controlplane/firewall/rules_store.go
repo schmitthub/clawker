@@ -399,8 +399,10 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 // Identity matches what the Corefile hands dnsbpf for the same dst (INV:
 // normalizeDomain + the IdentityAllocator form the shared identity contract
 // across firewall / dnsbpf / ebpf). A dst the resolver cannot answer for
-// produces NO route — fail closed; callers observe the gap via the
-// allocator having been synced from the same rule set beforehand.
+// produces NO route — fail closed — and is reported in the second return
+// (deduped, first-seen order) so callers with a logger can surface the gap:
+// a missed dst still resolves via DNS but denies at connect(), the most
+// confusing failure mode to debug from the agent side.
 //
 // TLS/HTTP rules (http/https/ws/wss) emit L4ProtoTCP routes to the
 // main egress listener (ports.EgressPort). https/wss FQDN rules also
@@ -416,11 +418,16 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 // Any divergence here silently misroutes traffic (e.g. SSH landing on
 // the main TLS listener — tls_inspector sees raw TCP, no SNI match,
 // deny chain resets).
-func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts, idFor IdentityResolver) []ebpf.Route {
+func RoutesFromRules(
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	idFor IdentityResolver,
+) ([]ebpf.Route, []string) {
+	tracking, missedDsts := missTrackingResolver(idFor)
 	out := make([]ebpf.Route, 0, len(rules))
-	out = appendDedicatedTCPRoutes(out, rules, ports, idFor)
-	out, udpSeen := appendDedicatedUDPRoutes(out, rules, ports, idFor)
-	return appendSharedListenerRoutes(out, rules, ports, idFor, udpSeen)
+	out = appendDedicatedTCPRoutes(out, rules, ports, tracking)
+	out, udpSeen := appendDedicatedUDPRoutes(out, rules, ports, tracking)
+	return appendSharedListenerRoutes(out, rules, ports, tracking, udpSeen), missedDsts()
 }
 
 // portU16 narrows a port int to the BPF route's uint16 form. Ports reach
