@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"reflect"
 	"regexp"
@@ -226,7 +227,11 @@ func validatePathRulePath(path string) error {
 		// the leading regexPathMarker. Reject loudly instead of silently never
 		// matching.
 		if !literalPathChars.MatchString(path) {
-			return fmt.Errorf("literal path rule %q contains characters not valid in a URL path; prefix the path with %q to write a regex rule", path, regexPathMarker)
+			return fmt.Errorf(
+				"literal path rule %q contains characters not valid in a URL path; prefix the path with %q to write a regex rule",
+				path,
+				regexPathMarker,
+			)
 		}
 		return nil
 	}
@@ -235,7 +240,12 @@ func validatePathRulePath(path string) error {
 	// must be shell-quoted on the CLI (~, (, |, ? are shell metacharacters).
 	anchored := strings.TrimPrefix(rx, "^")
 	if !strings.HasPrefix(anchored, "/") {
-		return fmt.Errorf("regex path rule %q must anchor at the path root (start with %q or %q)", path, regexPathMarker+"/", regexPathMarker+"^/")
+		return fmt.Errorf(
+			"regex path rule %q must anchor at the path root (start with %q or %q)",
+			path,
+			regexPathMarker+"/",
+			regexPathMarker+"^/",
+		)
 	}
 	if _, err := regexp.Compile(rx); err != nil {
 		return fmt.Errorf("regex path rule %q does not compile: %w", path, err)
@@ -385,10 +395,14 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 }
 
 // RoutesFromRules projects a rule set into the BPF route_map entry form.
-// Destinations are normalized before hashing so the resulting DomainHash
-// matches whatever CoreDNS writes into dns_cache at resolve time (INV:
-// normalizeDomain + ebpf.DomainHash form the shared hashing contract
-// across firewall / dnsbpf / ebpf).
+// Destinations are normalized before identity lookup so the resulting
+// Identity matches what the Corefile hands dnsbpf for the same dst (INV:
+// normalizeDomain + the IdentityAllocator form the shared identity contract
+// across firewall / dnsbpf / ebpf). A dst the resolver cannot answer for
+// produces NO route — fail closed — and is reported in the second return
+// (deduped, first-seen order) so callers with a logger can surface the gap:
+// a missed dst still resolves via DNS but denies at connect(), the most
+// confusing failure mode to debug from the agent side.
 //
 // TLS/HTTP rules (http/https/ws/wss) emit L4ProtoTCP routes to the
 // main egress listener (ports.EgressPort). https/wss FQDN rules also
@@ -404,93 +418,171 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 // Any divergence here silently misroutes traffic (e.g. SSH landing on
 // the main TLS listener — tls_inspector sees raw TCP, no SNI match,
 // deny chain resets).
-func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
+func RoutesFromRules(
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	idFor IdentityResolver,
+) ([]ebpf.Route, []string) {
+	tracking, missedDsts := missTrackingResolver(idFor)
 	out := make([]ebpf.Route, 0, len(rules))
+	out = appendDedicatedTCPRoutes(out, rules, ports, tracking)
+	out, udpSeen := appendDedicatedUDPRoutes(out, rules, ports, tracking)
+	return appendSharedListenerRoutes(out, rules, ports, tracking, udpSeen), missedDsts()
+}
 
-	// mappingRoute projects a dedicated-listener mapping (TCP/SSH or raw UDP) into
-	// an eBPF route. A single-IP dst (TCPMappings/UDPMappings skip only CIDR) was
-	// never resolved by CoreDNS, so it has no dns_cache entry — carry SeedIP and
-	// SyncRoutes seeds dns_cache[ip]=DomainHash(ip), letting connect4/sendmsg4 hit on
-	// the literal IP and redirect to the dedicated STATIC-pinned listener. An FQDN
-	// has no SeedIP (its dns_cache entry comes from CoreDNS).
-	mappingRoute := func(m TCPMapping, proto uint8) ebpf.Route {
-		r := ebpf.Route{
-			DomainHash: ebpf.DomainHash(m.Dst),
-			DstPort:    uint16(m.DstPort),
-			EnvoyPort:  uint16(m.EnvoyPort),
-			L4Proto:    proto,
-		}
-		if v4 := net.ParseIP(m.Dst).To4(); v4 != nil {
-			r.SeedIP = ebpf.IPToUint32(v4)
-		}
-		return r
+// portU16 narrows a port int to the BPF route's uint16 form. Ports reach
+// route projection post-validation (rule ports are bounded to 1-65535 and
+// listener ports come from EnvoyPorts), so an out-of-range value is a
+// programming error upstream — it fails closed to 0, a port no real
+// connect() carries and no listener binds.
+func portU16(p int) uint16 {
+	if p < 0 || p > math.MaxUint16 {
+		return 0
 	}
+	return uint16(p)
+}
 
-	// TCP/SSH: TCPMappings is the source of truth for which rules produce a
-	// dedicated listener, the effective destination port, and the Envoy listener
-	// port. It expands a port_range into one mapping per in-range port, so this pass
-	// mirrors that fan-out one-to-one. m.Dst is an FQDN or a single IP literal (CIDR
-	// is skipped — it rides the shared egress listener); a bare IP carries SeedIP.
+// mappingRoute projects a dedicated-listener mapping (TCP/SSH or raw UDP) into
+// an eBPF route. A single-IP dst (TCPMappings/UDPMappings skip only CIDR) was
+// never resolved by CoreDNS, so it has no dns_cache entry — carry SeedIP and
+// SyncRoutes seeds dns_cache[ip]=identity, letting connect4/sendmsg4 hit on
+// the literal IP and redirect to the dedicated STATIC-pinned listener. An FQDN
+// has no SeedIP (its dns_cache entry comes from CoreDNS).
+func mappingRoute(m TCPMapping, proto uint8, idFor IdentityResolver) (ebpf.Route, bool) {
+	id, ok := idFor(m.Dst)
+	if !ok {
+		return ebpf.Route{}, false
+	}
+	r := ebpf.Route{
+		Identity:  id,
+		DstPort:   portU16(m.DstPort),
+		EnvoyPort: portU16(m.EnvoyPort),
+		L4Proto:   proto,
+		SeedIP:    0,
+	}
+	if v4 := net.ParseIP(m.Dst).To4(); v4 != nil {
+		r.SeedIP = ebpf.IPToUint32(v4)
+	}
+	return r, true
+}
+
+// appendDedicatedTCPRoutes handles TCP/SSH: TCPMappings is the source of
+// truth for which rules produce a dedicated listener, the effective
+// destination port, and the Envoy listener port. It expands a port_range into
+// one mapping per in-range port, so this pass mirrors that fan-out
+// one-to-one. m.Dst is an FQDN or a single IP literal (CIDR is skipped — it
+// rides the shared egress listener); a bare IP carries SeedIP.
+func appendDedicatedTCPRoutes(
+	out []ebpf.Route,
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	idFor IdentityResolver,
+) []ebpf.Route {
 	for _, m := range TCPMappings(rules, ports) {
 		if m.Dst == "" {
 			continue
 		}
-		out = append(out, mappingRoute(m, ebpf.L4ProtoTCP))
+		if r, ok := mappingRoute(m, ebpf.L4ProtoTCP, idFor); ok {
+			out = append(out, r)
+		}
 	}
+	return out
+}
 
-	// Raw UDP: UDPMappings is the source of truth for which udp rules get a
-	// dedicated udp_proxy listener and its port — the L4ProtoUDP peer of the TCP
-	// pass above. The l4_proto discriminator keeps a co-keyed tcp/https route on the
-	// same {domain, port} independent. Like the TCP pass, m.Dst is an FQDN or a
-	// single IP literal (CIDR skipped, fails closed); a bare IP carries SeedIP.
-	//
-	// udpSeen dedups L4ProtoUDP routes across BOTH this pass and the h3-over-https
-	// pass below — the raw-udp pass runs first, so an explicit `proto: udp` rule
-	// stays authoritative on a {domain, port} collision (e.g. udp:443 + https).
+// appendDedicatedUDPRoutes handles raw UDP: UDPMappings is the source of
+// truth for which udp rules get a dedicated udp_proxy listener and its port —
+// the L4ProtoUDP peer of the TCP pass. The l4_proto discriminator keeps a
+// co-keyed tcp/https route on the same {domain, port} independent. Like the
+// TCP pass, m.Dst is an FQDN or a single IP literal (CIDR skipped, fails
+// closed); a bare IP carries SeedIP.
+//
+// The returned udpSeen set dedups L4ProtoUDP routes across BOTH this pass and
+// the h3-over-https pass — the raw-udp pass runs first, so an explicit
+// `proto: udp` rule stays authoritative on a {domain, port} collision
+// (e.g. udp:443 + https).
+func appendDedicatedUDPRoutes(
+	out []ebpf.Route,
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	idFor IdentityResolver,
+) ([]ebpf.Route, map[string]struct{}) {
 	udpSeen := make(map[string]struct{})
 	for _, m := range UDPMappings(rules, ports) {
 		if m.Dst == "" {
 			continue
 		}
 		udpSeen[fmt.Sprintf("%s:%d", m.Dst, m.DstPort)] = struct{}{}
-		out = append(out, mappingRoute(m, ebpf.L4ProtoUDP))
+		if r, ok := mappingRoute(m, ebpf.L4ProtoUDP, idFor); ok {
+			out = append(out, r)
+		}
 	}
+	return out, udpSeen
+}
 
-	// TLS/HTTP (http/https/ws/wss): second pass — all ride the shared egress
-	// listener, so the route just maps (domain, dst port) → EgressPort. ws/wss
-	// are http/https with a websocket upgrade enrichment in Envoy; at the eBPF
-	// layer they are indistinguishable from their base proto (same host:port →
-	// same egress redirect), so a ws+http or wss+https pair for one origin must
-	// collapse to a SINGLE route. Dedup by (domain, dst port) — emitting both
-	// would write the same route_map key twice (harmless but noisy) and obscures
-	// the one-stack-per-origin invariant the Envoy generator enforces.
+// sharedListenerDst decides whether a rule rides the shared egress listener
+// and, if so, returns its normalized dst, effective port, and lowered proto.
+// SSH/TCP/UDP rules are handled by the dedicated-listener passes; IP/CIDR
+// dsts ride prefix_ranges; a TLS rule reaches here post-NormalizeRule with a
+// single Port (the pre-Submit store write fills the proto default, e.g. 443)
+// — a range or missing single port is a misconfigured TLS rule and is
+// dropped rather than guessed (port_range is opaque-only; invalid specs are
+// already dropped by NormalizeAndDedup).
+func sharedListenerDst(r config.EgressRule) (string, int, string, bool) {
+	action := strings.ToLower(r.Action)
+	if action != "allow" && action != "" {
+		return "", 0, "", false
+	}
+	proto := strings.ToLower(r.Proto)
+	switch proto {
+	case protoSSH, protoTCP, protoUDP:
+		return "", 0, "", false
+	}
+	if isIPOrCIDR(r.Dst) {
+		return "", 0, "", false
+	}
+	dst := normalizeDomain(r.Dst)
+	if dst == "" {
+		return "", 0, "", false
+	}
+	port, ok := r.SinglePort()
+	if !ok {
+		return "", 0, "", false
+	}
+	return dst, port, proto, true
+}
+
+// appendSharedListenerRoutes handles TLS/HTTP (http/https/ws/wss): all ride
+// the shared egress listener, so the route just maps (domain, dst port) →
+// EgressPort. ws/wss are http/https with a websocket upgrade enrichment in
+// Envoy; at the eBPF layer they are indistinguishable from their base proto
+// (same host:port → same egress redirect), so a ws+http or wss+https pair for
+// one origin must collapse to a SINGLE route. Dedup by (domain, dst port) —
+// emitting both would write the same route_map key twice (harmless but
+// noisy) and obscures the one-stack-per-origin invariant the Envoy generator
+// enforces.
+//
+// h3-over-https: a TLS-bearing FQDN rule (https/wss) also gets a QUIC/h3
+// listener in Envoy (quicSNIChainLayer, on UDP EgressPort) that the TCP chain
+// advertises via alt-svc. Project an L4ProtoUDP route to the SAME EgressPort
+// so the eBPF layer redirects the agent's QUIC datagrams to that listener
+// instead of denying them — this is what flips a QUIC attempt to an
+// allowed-domain from "denied" to "allowed". Plaintext http/ws have no
+// cleartext h3 sibling, so they get no UDP route. Skipped if a raw `udp` rule
+// already claimed this {domain, port} (raw-udp pass is authoritative). Both
+// connected (connect4) and unconnected (sendmsg4) QUIC datagrams follow this
+// route; recvmsg4/getpeername4 restore the reply source from udp_flow_map so
+// the app observes responses as if from the original dst.
+func appendSharedListenerRoutes(
+	out []ebpf.Route,
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	idFor IdentityResolver,
+	udpSeen map[string]struct{},
+) []ebpf.Route {
 	seen := make(map[string]struct{})
 	for _, r := range rules {
-		action := strings.ToLower(r.Action)
-		if action != "allow" && action != "" {
-			continue
-		}
-		proto := strings.ToLower(r.Proto)
-		if proto == "ssh" || proto == "tcp" {
-			continue // handled above (TCPMappings → dedicated TCP listener)
-		}
-		if proto == "udp" {
-			continue // handled above (UDPMappings → dedicated udp_proxy listener, L4ProtoUDP)
-		}
-		if isIPOrCIDR(r.Dst) {
-			continue
-		}
-		dst := normalizeDomain(r.Dst)
-		if dst == "" {
-			continue
-		}
-		// TLS rules reach here post-NormalizeRule with a single Port (the
-		// pre-Submit store write fills the proto default, e.g. 443). A range or
-		// missing single port is a misconfigured TLS rule and we drop it rather
-		// than guess (port_range is opaque-only; invalid specs are already
-		// dropped by NormalizeAndDedup).
-		port, ok := r.SinglePort()
-		if !ok {
+		dst, port, proto, eligible := sharedListenerDst(r)
+		if !eligible {
 			continue
 		}
 		key := fmt.Sprintf("%s:%d", dst, port)
@@ -498,70 +590,31 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 			continue
 		}
 		seen[key] = struct{}{}
+		id, ok := idFor(dst)
+		if !ok {
+			continue
+		}
 		out = append(out, ebpf.Route{
-			DomainHash: ebpf.DomainHash(dst),
-			DstPort:    uint16(port),
-			EnvoyPort:  uint16(ports.EgressPort),
-			L4Proto:    ebpf.L4ProtoTCP,
+			Identity:  id,
+			DstPort:   portU16(port),
+			EnvoyPort: portU16(ports.EgressPort),
+			L4Proto:   ebpf.L4ProtoTCP,
+			SeedIP:    0,
 		})
-
-		// h3-over-https: a TLS-bearing FQDN rule (https/wss) also gets a QUIC/h3
-		// listener in Envoy (quicSNIChainLayer, on UDP EgressPort) that the TCP
-		// chain advertises via alt-svc. Project an L4ProtoUDP route to the SAME
-		// EgressPort so the eBPF layer redirects the agent's QUIC datagrams to that
-		// listener instead of denying them — this is what flips a QUIC attempt to an
-		// allowed-domain from "denied" to "allowed". Plaintext http/ws have no
-		// cleartext h3 sibling, so they get no UDP route. Skipped if a raw `udp`
-		// rule already claimed this {domain, port} (raw-udp pass is authoritative).
-		// Both connected (connect4) and unconnected (sendmsg4) QUIC datagrams
-		// follow this route; recvmsg4/getpeername4 restore the reply source from
-		// udp_flow_map so the app observes responses as if from the original dst.
-		if proto == "https" || proto == "wss" {
-			if _, dup := udpSeen[key]; !dup {
-				udpSeen[key] = struct{}{}
-				out = append(out, ebpf.Route{
-					DomainHash: ebpf.DomainHash(dst),
-					DstPort:    uint16(port),
-					EnvoyPort:  uint16(ports.EgressPort),
-					L4Proto:    ebpf.L4ProtoUDP,
-				})
-			}
+		if proto != protoHTTPS && proto != protoWSS {
+			continue
 		}
-	}
-	return out
-}
-
-// SeedDomainsFromRules returns the destination strings that RoutesFromRules
-// seeds into dns_cache as IP literals — one entry per distinct bare-IPv4
-// dedicated-listener mapping (TCP/SSH/UDP). These are exactly the strings whose
-// ebpf.DomainHash equals the SeedIP routes' DomainHash, so feeding them through
-// the netlogger ReverseDNSMap lets it attribute those seeded entries (dst_host
-// becomes the IP literal) instead of logging them as unattributed.
-//
-// CoreDNS never resolves a literal IP, so these dsts are absent from
-// AllResolvableDomains (the Corefile zone set); the netlogger DomainSource is
-// the union of the two (see Handler.ReverseDNSDomains). This mirrors
-// mappingRoute's SeedIP condition in RoutesFromRules exactly — both walk
-// TCPMappings + UDPMappings and key off net.ParseIP(dst).To4(); the TLS pass
-// never seeds because it skips IP/CIDR destinations.
-func SeedDomainsFromRules(rules []config.EgressRule, ports EnvoyPorts) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	add := func(dst string) {
-		if net.ParseIP(dst).To4() == nil {
-			return // FQDN (CoreDNS-resolved) or non-IPv4 — no SeedIP, no dns_cache seed
+		if _, dup := udpSeen[key]; dup {
+			continue
 		}
-		if _, dup := seen[dst]; dup {
-			return // one IP rule may fan out to many ports → one dns_cache key
-		}
-		seen[dst] = struct{}{}
-		out = append(out, dst)
-	}
-	for _, m := range TCPMappings(rules, ports) {
-		add(m.Dst)
-	}
-	for _, m := range UDPMappings(rules, ports) {
-		add(m.Dst)
+		udpSeen[key] = struct{}{}
+		out = append(out, ebpf.Route{
+			Identity:  id,
+			DstPort:   portU16(port),
+			EnvoyPort: portU16(ports.EgressPort),
+			L4Proto:   ebpf.L4ProtoUDP,
+			SeedIP:    0,
+		})
 	}
 	return out
 }
@@ -582,7 +635,10 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 		r = NormalizeRule(r)
 		// Skip rules that normalize to an empty domain (e.g., "." or "..").
 		if normalizeDomain(r.Dst) == "" {
-			warnings = append(warnings, fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst))
+			warnings = append(
+				warnings,
+				fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst),
+			)
 			continue
 		}
 		// Validate the dynamic port spec at ingestion. A malformed port/range is
@@ -892,7 +948,12 @@ func pathRuleEnforcementWarning(r config.EgressRule) string {
 	if hasMethods {
 		what = "path/method rules"
 	}
-	return fmt.Sprintf("ignoring %s on %s:%s — not an HTTP-family proto (http/https/ws/wss); no L7 request line to inspect", what, r.Dst, r.Proto)
+	return fmt.Sprintf(
+		"ignoring %s on %s:%s — not an HTTP-family proto (http/https/ws/wss); no L7 request line to inspect",
+		what,
+		r.Dst,
+		r.Proto,
+	)
 }
 
 // mergeOverlappingSpans sorts [lo,hi] spans ascending and merges any that

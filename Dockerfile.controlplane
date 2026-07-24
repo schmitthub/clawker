@@ -97,9 +97,13 @@ ENV GOMODCACHE=/tmp/gomodcache
 COPY go.mod go.sum ./
 RUN go mod download
 
-# The bpf2go compile only needs the BPF C source + gen.go.
+# The bpf2go compile only needs the BPF C source + the two gen.go files
+# (production bindings + the bpftest prog-run harness bindings). Only gen.go
+# files are present in this stage, so the recursive generate can't trip over
+# other //go:generate directives (e.g. the moq one in manager.go).
 COPY controlplane/firewall/ebpf/bpf/ controlplane/firewall/ebpf/bpf/
 COPY controlplane/firewall/ebpf/gen.go controlplane/firewall/ebpf/
+COPY controlplane/firewall/ebpf/bpftest/gen.go controlplane/firewall/ebpf/bpftest/
 
 RUN go generate ./controlplane/firewall/ebpf/...
 
@@ -240,3 +244,7 @@ COPY --from=bpf-builder /build/controlplane/firewall/ebpf/clawker_x86_bpfel.go  
 COPY --from=bpf-builder /build/controlplane/firewall/ebpf/clawker_x86_bpfel.o   /clawker_x86_bpfel.o
 COPY --from=bpf-builder /build/controlplane/firewall/ebpf/clawker_arm64_bpfel.go /clawker_arm64_bpfel.go
 COPY --from=bpf-builder /build/controlplane/firewall/ebpf/clawker_arm64_bpfel.o  /clawker_arm64_bpfel.o
+COPY --from=bpf-builder /build/controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.go  /testprogs_x86_bpfel.go
+COPY --from=bpf-builder /build/controlplane/firewall/ebpf/bpftest/testprogs_x86_bpfel.o   /testprogs_x86_bpfel.o
+COPY --from=bpf-builder /build/controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.go /testprogs_arm64_bpfel.go
+COPY --from=bpf-builder /build/controlplane/firewall/ebpf/bpftest/testprogs_arm64_bpfel.o  /testprogs_arm64_bpfel.o

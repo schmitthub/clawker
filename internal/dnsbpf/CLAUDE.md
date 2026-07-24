@@ -4,47 +4,50 @@ CoreDNS plugin that populates the clawker BPF `dns_cache` map in real time. Inst
 
 Runtime owner: `internal/controlplane/firewall.Stack` builds the `clawker-coredns:latest` image on demand (embeds `cmd/coredns-clawker` via `//go:embed`), manages its container lifecycle, and provides the pinned `dns_cache` map at `/sys/fs/bpf/clawker/dns_cache`.
 
-Purpose: let the BPF `connect4` program route per-domain TCP traffic (e.g. `ssh github.com` vs `ssh gitlab.com`, both on port 22) to the correct Envoy listener. CoreDNS resolves → the plugin writes `dns_cache[resolved_ip] = {domain_hash, expire_ts}` → the BPF fast path looks it up on the next `connect()`.
+Purpose: let the BPF `connect4` program route per-domain TCP traffic (e.g. `ssh github.com` vs `ssh gitlab.com`, both on port 22) to the correct Envoy listener. CoreDNS resolves → the plugin writes `dns_cache[resolved_ip] = {identity, expire_ts, source}` → the BPF fast path looks it up on the next `connect()`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `dnsbpf.go` | `Handler` — implements `plugin.Handler`. Captures responses via `nonwriter`, extracts A records, writes to the BPF map, forwards the original response upstream. |
-| `setup.go` | `setup` (Caddy controller callback) — parses the `dnsbpf` block, opens the shared BPF map once via `sync.Once`, captures the zone name, registers the handler. Runs on every server-block init (including CoreDNS reloads). |
-| `bpfmap.go` | `BPFMap` — thin `cilium/ebpf` wrapper around the pinned `dns_cache` map, matching `struct dns_entry` in `bpf/common.h`. `Update(ip, hash, ttl)` log-and-drops individual write failures (non-fatal — the next DNS answer retries). |
+| `dnsbpf.go` | `Handler` — implements `plugin.Handler`. Captures responses via `nonwriter`, extracts A records, clamps TTLs to `minTTLSeconds` (60s — cilium tofqdns-min-ttl analog), writes to the BPF map under the zone's CP-allocated identity, forwards the original response upstream. |
+| `setup.go` | `setup` (Caddy controller callback) — parses the `dnsbpf <identity>` directive (exactly one required non-zero u32 argument; the directive may appear at most once per server block — a repeat returns `plugin.ErrOnce`), opens the shared BPF map once via `sync.Once`, registers the handler. Runs on every server-block init (including CoreDNS reloads). |
+| `bpfmap.go` | `BPFMap` — thin `cilium/ebpf` wrapper around the pinned `dns_cache` map, matching `struct dns_entry` in `bpf/common.h`. `Update(ip, identity, ttl)` refuses to overwrite a `DNSSourceSeed` entry (CP SyncRoutes-owned IP-literal seed — source precedence), skips the write when the precedence lookup fails with anything other than `ErrKeyNotExist` (the source is unknown — writing could clobber a seed), writes `DNSSourceDNS` otherwise, and log-and-drops individual lookup/write failures (non-fatal — the next DNS answer retries). `dnsCacheMap` is the injectable map seam for unit tests. |
 | `log.go` | CoreDNS-style logger (thin wrapper around `coredns/coredns/plugin/pkg/log`). |
 | `dnsbpf_test.go` | Unit tests using a `cannedHandler` downstream stub to exercise ServeDNS without a real resolver. |
+| `setup_test.go` | Directive parse-error table tests (missing/extra/invalid/zero/duplicate) — all branches return before the shared BPF map opens, so they run without a kernel. |
 
 ## Key Types
 
 ```go
 type MapWriter interface {
-    Update(ip, domainHash, ttlSeconds uint32)
+    Update(ip uint32, identity clawkerebpf.RouteIdentity, ttlSeconds uint32)
 }
 
 type Handler struct {
-    Next plugin.Handler
-    Zone string    // Corefile zone (e.g., "github.com." or ".example.com.")
-    Map  MapWriter // Shared BPF map writer; nil skips writes
+    Next     plugin.Handler
+    Zone     string    // Corefile zone (e.g., "github.com." or ".example.com.") — diagnostic context only, not read at runtime
+    Identity clawkerebpf.RouteIdentity // CP-allocated route identity, parsed from the directive argument
+    Map      MapWriter // Shared BPF map writer; nil skips writes
 }
 
-type BPFMap struct { m *ebpf.Map }
+type BPFMap struct { m dnsCacheMap }
 func OpenBPFMap(pinPath string) (*BPFMap, error)
-func (b *BPFMap) Update(ip, domainHash, ttlSeconds uint32)
+func (b *BPFMap) Update(ip uint32, identity clawkerebpf.RouteIdentity, ttlSeconds uint32)
 func (b *BPFMap) Close() error
 
 const DefaultPinPath = "/sys/fs/bpf/clawker/dns_cache"
 const pluginName    = "dnsbpf"
+const minTTLSeconds = 60
 ```
 
-## Domain Hash Contract
+## Route Identity Contract
 
-The plugin computes the domain hash **from the Corefile zone name, not the query name**. This is load-bearing for wildcard zones: the Corefile generator (`coredns_config.go`) calls `normalizeDomain` on the destination before writing zone names, so a `.example.com` rule produces zone `example.com { dnsbpf; forward … }` (no leading dot). `zoneToDomain` strips the trailing dot, yielding `example.com`, and `DomainHash("example.com")` matches the hash that `internal/controlplane/firewall.Handler.FirewallSyncRoutes` wrote into `route_map` (which also calls `normalizeDomain` before `DomainHash`).
+The plugin derives NOTHING itself. Each zone's route identity is allocated CP-side by `firewall.IdentityAllocator` and delivered as the directive's argument by the Corefile generator (`coredns_config.go` writes `dnsbpf 261` per zone; a destination with no identity gets no directive — fail closed). Keying `dns_cache` writes by the **zone's** identity (not the query name) is what makes wildcard zones work: all subdomains of `.example.com` map to the one identity `route_map` is keyed on. Because the zone set and its identity arguments are regenerated together from one allocation, and live destinations are never renumbered (sticky identities), the `dns_cache` and `route_map` keyspaces can never drift.
 
-The hash function is `clawkerebpf.DomainHash` (FNV-1a of `strings.ToLower(domain)`) — the exact same call `internal/controlplane/firewall/ebpf` and `internal/controlplane/firewall` (via `normalizeDomain`) use. Do not inline a second hash implementation here; reuse the one from `internal/controlplane/firewall/ebpf` so the three call sites stay synchronized.
+Write precedence (cilium ipcache source-precedence analog): `Update` first looks the key up and leaves any `clawkerebpf.DNSSourceSeed` entry untouched — those are written by CP `SyncRoutes` for IP-literal rules and owned by its reconcile lifecycle. DNS-derived writes carry `clawkerebpf.DNSSourceDNS`.
 
-`zoneToDomain(zone)` strips the trailing dot (`"github.com." → "github.com"`) before hashing, matching how the CP firewall normalizes destination strings before writing to the route map.
+TTLs below `minTTLSeconds` (60s) are clamped up — very short CDN TTLs would otherwise let the userspace GC sweep an entry between the DNS answer and the app's `connect()` (cilium's tofqdns-min-ttl analog).
 
 ## Shared Map Lifecycle
 
@@ -65,4 +68,4 @@ The custom CoreDNS container (`clawker-coredns:latest`, built on demand by the C
 
 ## Imports
 
-Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `internal/controlplane/firewall/ebpf` (for `DomainHash`, `IPToUint32`, `Uint32ToIP`). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `internal/controlplane/firewall` embeds the built binary but does not import this package.
+Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `controlplane/firewall/ebpf` (for `IPToUint32`, `Uint32ToIP`, and the `DNSSource*` precedence constants). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `internal/controlplane/firewall` embeds the built binary but does not import this package.

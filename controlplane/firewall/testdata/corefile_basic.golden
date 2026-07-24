@@ -9,7 +9,7 @@ github.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 261
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -24,7 +24,7 @@ api.github.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 258
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -39,7 +39,7 @@ registry.npmjs.org {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 265
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -54,7 +54,7 @@ proxy.golang.org {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 264
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -72,7 +72,7 @@ docker.internal {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 259
     forward . 127.0.0.11
 }
 
@@ -82,7 +82,7 @@ otel-collector {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 262
     forward . 127.0.0.11
 }
 
@@ -92,7 +92,7 @@ prometheus {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf
+    dnsbpf 263
     forward . 127.0.0.11
 }
 

@@ -118,6 +118,7 @@ type Handler struct {
 	enrolled   *pubsub.Topic[ebpf.EBPFContainerEnrolled]
 	certDirF   func() (string, error)
 	listAgents func(ctx context.Context) ([]string, error)
+	identity   *IdentityAllocator
 
 	// resolveHostFn is injectable for tests. nil defaults to
 	// net.DefaultResolver.LookupHost.
@@ -170,6 +171,16 @@ type HandlerDeps struct {
 	// tests pass a temp dir so RotateCA does not touch the real data path.
 	// nil defaults to cfg.FirewallCertSubdir.
 	CertDirFn func() (string, error)
+
+	// Identity is the sticky route-identity allocator. Nil degrades to
+	// "no identities": RoutesFromRules emits no routes and GenerateCorefile
+	// emits no dnsbpf directives — dedicated-listener protos (ssh/tcp) land
+	// on the catch-all TLS listener and are rejected by Envoy, UDP denies at
+	// the BPF hook, and HTTPS still rides the shared listener under Envoy
+	// SNI enforcement: net posture fail closed. Production wiring in
+	// cmd/clawkercp always provides one; only handler unit tests that never
+	// reconcile omit it.
+	Identity *IdentityAllocator
 
 	// ListAgents returns canonical container IDs of every running
 	// managed agent the CP knows about. FirewallInit uses it to rebuild
@@ -251,6 +262,7 @@ func NewHandler(deps HandlerDeps) (*Handler, error) {
 		enrolled:       deps.EnrolledTopic,
 		certDirF:       certDirFn,
 		listAgents:     deps.ListAgents,
+		identity:       deps.Identity,
 		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
 		storedCgroupID: make(map[string]uint64),
@@ -309,6 +321,12 @@ func (h *Handler) FirewallInit(
 		// into an indefinite pre-ready hang instead of a loud exit.
 		qctx, cancel := context.WithTimeout(qctx, consts.FirewallStackBringupTimeout)
 		defer cancel()
+		// Identity sync precedes bringup: EnsureRunning generates the
+		// Corefile from the resolver this sync feeds.
+		//nolint:contextcheck // the identity table write goes through internal/storage, whose lock/write API carries no context
+		if err := h.syncIdentities(); err != nil {
+			return nil, err
+		}
 		if err := h.stack.EnsureRunning(qctx); err != nil {
 			return nil, err
 		}
@@ -842,88 +860,11 @@ func (h *Handler) FirewallListRules(
 	return &adminv1.FirewallListRulesResult{Rules: adminv1.EgressRulesToProto(r.Rules)}, nil
 }
 
-// AllResolvableDomains returns every domain name CoreDNS will serve a
-// zone for under the current firewall rule set — the union of allow-rule
-// destinations (after normalization, skipping IP/CIDR destinations and
-// deny rules) and the internal hosts CoreDNS forwards out of band
-// (`docker.internal` + the monitoring service hostnames). The set is
-// constructed with the same passes [GenerateCorefile] uses, so the
-// returned slice and the zones in the active Corefile are identical by
-// construction. Order is unspecified.
-//
-// netlogger's reverse-DNS map calls this on its refresh timer to
-// rebuild the `domain_hash → domain` table dnsbpf populates as it
-// answers queries. Reads bypass the action queue: an eventually
-// consistent view (lagging by at most one refresh interval) is fine
-// for attribution on security telemetry; queue contention would buy
-// nothing observable.
-func (h *Handler) AllResolvableDomains() []string {
-	if h.store == nil {
-		return h.reservedHosts()
-	}
-	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-	return h.resolvableDomains(rules)
-}
-
 // reservedHosts is the internal-host prefix shared by every resolvable-domain
 // path: docker.internal plus the monitoring service hostnames CoreDNS forwards
 // out of band. CoreDNS serves these regardless of the rule set.
 func (h *Handler) reservedHosts() []string {
 	return append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
-}
-
-// resolvableDomains derives the CoreDNS zone set (reserved hosts + allow-rule
-// destinations, skipping IP/CIDR and deny rules) from an already-normalized
-// rule slice. It does no store I/O so a caller can feed it one snapshot and
-// reuse the same slice for [SeedDomainsFromRules], keeping both halves of the
-// reverse-DNS union consistent (see [Handler.ReverseDNSDomains]).
-func (h *Handler) resolvableDomains(rules []config.EgressRule) []string {
-	internalHosts := h.reservedHosts()
-	out := make([]string, 0, len(internalHosts))
-	seen := make(map[string]bool, len(rules)+len(internalHosts))
-	for _, host := range internalHosts {
-		seen[host] = true
-		out = append(out, host)
-	}
-	for _, r := range rules {
-		if !isAllowDomain(r) {
-			continue
-		}
-		domain := normalizeDomain(r.Dst)
-		if seen[domain] {
-			continue
-		}
-		seen[domain] = true
-		out = append(out, domain)
-	}
-	return out
-}
-
-// ReverseDNSDomains returns every string whose [ebpf.DomainHash] can appear in
-// the BPF dns_cache: the CoreDNS-served zones ([AllResolvableDomains]) plus the
-// IP-literal seeds [SyncRoutes] writes for bare-IP routes
-// ([SeedDomainsFromRules]). It is the netlogger reverse-DNS DomainSource.
-//
-// AllResolvableDomains alone is incomplete: it deliberately omits IP/CIDR rules
-// (they are not CoreDNS zones), but SyncRoutes still seeds dns_cache[ip] =
-// DomainHash(ip) for every bare-IP rule. Sourcing the reverse map from the
-// domain set only left each such seed permanently unattributed
-// (event=netlogger_reverse_dns_unattributed every refresh tick) and stamped its
-// egress records with an empty dst_host despite the destination being known.
-// Unioning the seeds in attributes those records to the IP literal and silences
-// the false-positive warning. Order is unspecified; the two sets never collide
-// (an IP literal is never a domain zone).
-//
-// The rule snapshot is read once and feeds both the zone derivation and the
-// IP-seed derivation, so the two halves can never straddle a mid-flight rule
-// mutation (and the normalize pass runs once, not twice).
-func (h *Handler) ReverseDNSDomains() []string {
-	if h.store == nil {
-		return h.reservedHosts()
-	}
-	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-	out := h.resolvableDomains(rules)
-	return append(out, SeedDomainsFromRules(rules, h.envoyPorts())...)
 }
 
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
@@ -1083,6 +1024,13 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 		return StackReloadResult{Restarted: false}, nil
 	}
 
+	// Identity sync precedes Reload: ensureConfigs regenerates the
+	// Corefile from the resolver this sync feeds.
+	//nolint:contextcheck // the identity table write goes through internal/storage, whose lock/write API carries no context
+	if syncErr := h.syncIdentities(); syncErr != nil {
+		return nil, syncErr
+	}
+
 	var errs []error
 	if err := h.stack.Reload(qctx); err != nil {
 		errs = append(errs, err)
@@ -1116,7 +1064,53 @@ func (h *Handler) routesFromStore() []ebpf.Route {
 	for _, w := range warnings {
 		h.log.Warn().Str("normalize_warning", w).Msg("firewall: rule normalization warning")
 	}
-	return RoutesFromRules(rules, h.envoyPorts())
+	routes, missed := RoutesFromRules(rules, h.envoyPorts(), h.identityFor)
+	// Partial misses only — with no allocator wired every dst misses by
+	// design and event=identity_allocator_unset already covers the full
+	// degrade (see syncIdentities).
+	if len(missed) > 0 && h.identity != nil {
+		h.log.Warn().Str("event", "identity_resolver_miss").
+			Strs("dsts", missed).
+			Int("count", len(missed)).
+			Msg("firewall: route generation dropped dsts holding no route identity (fail closed) — they resolve via DNS but deny at connect()")
+	}
+	return routes
+}
+
+// identityFor is the Handler's IdentityResolver. With no allocator wired it
+// answers ok=false for everything — no routes, no dnsbpf directives, fail
+// closed (see HandlerDeps.Identity).
+func (h *Handler) identityFor(dst string) (ebpf.RouteIdentity, bool) {
+	if h.identity == nil {
+		return 0, false
+	}
+	return h.identity.IdentityFor(dst)
+}
+
+// syncIdentities reconciles the sticky identity table against the current
+// rule set plus the reserved internal hosts BEFORE configs are generated or
+// routes synced, so the Corefile's dnsbpf directives and route_map keys are
+// answered from one table. Runs inside the queued closures (bringup +
+// reconcile), which the ActionQueue serializes — no concurrent sync.
+func (h *Handler) syncIdentities() error {
+	if h.identity == nil {
+		h.log.Warn().Str("event", "identity_allocator_unset").
+			Msg("firewall: no identity allocator wired; routes and dnsbpf directives will be empty (fail closed)")
+		return nil
+	}
+	var rules []config.EgressRule
+	if h.store != nil {
+		rules, _ = NormalizeAndDedup(h.store.Read().Rules)
+	}
+	dsts := make([]string, 0, len(rules)+len(consts.MonitoringServiceHostnames)+1)
+	for _, r := range rules {
+		dsts = append(dsts, r.Dst)
+	}
+	dsts = append(dsts, h.reservedHosts()...)
+	if err := h.identity.SyncDsts(dsts); err != nil {
+		return fmt.Errorf("syncing route identities: %w", err)
+	}
+	return nil
 }
 
 // envoyPorts returns the EnvoyPorts config for route building, falling

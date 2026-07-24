@@ -144,7 +144,7 @@ func (RemoveRuleStatus) EnumDescriptor() ([]byte, []int) {
 // Route is one entry in the global route_map.
 type Route struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	DomainHash    uint32                 `protobuf:"varint,1,opt,name=domain_hash,json=domainHash,proto3" json:"domain_hash,omitempty"`
+	Identity      uint32                 `protobuf:"varint,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	DstPort       uint32                 `protobuf:"varint,2,opt,name=dst_port,json=dstPort,proto3" json:"dst_port,omitempty"`
 	EnvoyPort     uint32                 `protobuf:"varint,3,opt,name=envoy_port,json=envoyPort,proto3" json:"envoy_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -181,9 +181,9 @@ func (*Route) Descriptor() ([]byte, []int) {
 	return file_admin_v1_admin_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Route) GetDomainHash() uint32 {
+func (x *Route) GetIdentity() uint32 {
 	if x != nil {
-		return x.DomainHash
+		return x.Identity
 	}
 	return 0
 }
@@ -1829,10 +1829,9 @@ var File_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\x14admin/v1/admin.proto\x12\x10clawker.admin.v1\"b\n" +
-	"\x05Route\x12\x1f\n" +
-	"\vdomain_hash\x18\x01 \x01(\rR\n" +
-	"domainHash\x12\x19\n" +
+	"\x14admin/v1/admin.proto\x12\x10clawker.admin.v1\"]\n" +
+	"\x05Route\x12\x1a\n" +
+	"\bidentity\x18\x01 \x01(\rR\bidentity\x12\x19\n" +
 	"\bdst_port\x18\x02 \x01(\rR\adstPort\x12\x1d\n" +
 	"\n" +
 	"envoy_port\x18\x03 \x01(\rR\tenvoyPort\"\xbe\x01\n" +

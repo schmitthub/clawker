@@ -21,13 +21,79 @@ var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 // resolution time.
 const corefileLogFormat = `source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`
 
+// classifyZoneRules records which allowed domains carry a wildcard (.X) rule
+// and which domains are explicitly denied. An exact-only allow (X, no
+// wildcard) must NXDOMAIN its subdomains — the same exact-host contract
+// Envoy's SNI matching enforces — while a wildcard allow forwards the whole
+// subtree. Deny domains become dedicated NXDOMAIN zones that win over any
+// broader allow via CoreDNS longest-zone matching (e.g. deny sub.X under .X).
+func classifyZoneRules(
+	rules []config.EgressRule,
+	reserved map[string]bool,
+) (map[string]bool, map[string]bool, []string) {
+	wildcard := make(map[string]bool)
+	denySeen := make(map[string]bool)
+	var denyDomains []string
+	for _, r := range rules {
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		domain := normalizeDomain(r.Dst)
+		if reserved[domain] {
+			continue
+		}
+		switch {
+		case isDenyRule(r):
+			if !denySeen[domain] {
+				denySeen[domain] = true
+				denyDomains = append(denyDomains, domain)
+			}
+		case isAllowDomain(r) && isWildcardDomain(r.Dst):
+			wildcard[domain] = true
+		}
+	}
+	return wildcard, denySeen, denyDomains
+}
+
+// collectAllowDomains returns the unique allowed domains in rule order (skip
+// IPs, CIDRs, deny rules, reserved names, and any name that is also
+// explicitly denied — the deny zone wins).
+func collectAllowDomains(rules []config.EgressRule, reserved, denySeen map[string]bool) []string {
+	emitted := make(map[string]bool)
+	var allowDomains []string
+	for _, r := range rules {
+		if !isAllowDomain(r) {
+			continue
+		}
+		domain := normalizeDomain(r.Dst)
+		if reserved[domain] || emitted[domain] || denySeen[domain] {
+			continue
+		}
+		emitted[domain] = true
+		allowDomains = append(allowDomains, domain)
+	}
+	return allowDomains
+}
+
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.
 // healthPort is the port the CoreDNS health plugin listens on (inside the container).
 //
 // Only "allow" rules with domain destinations (not IPs/CIDRs) get forward zones.
 // Each allowed domain gets its own zone forwarding to Cloudflare malware-blocking DNS.
 // The catch-all "." zone returns NXDOMAIN for everything else.
-func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error) {
+//
+// A zone whose dst the resolver cannot answer for keeps its forward zone but
+// gets no dnsbpf directive (see writeAllowZone) — fail closed: no dns_cache
+// writes for the zone, so its traffic falls back to Envoy enforcement (UDP
+// denies at the BPF hook; see HandlerDeps.Identity). Those dsts are reported
+// in the second return (deduped, first-seen order) so callers with a logger
+// can surface the gap.
+func GenerateCorefile(
+	rules []config.EgressRule,
+	healthPort int,
+	idFor IdentityResolver,
+) ([]byte, []string, error) {
+	tracking, missedDsts := missTrackingResolver(idFor)
 	var b strings.Builder
 
 	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
@@ -52,54 +118,13 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 		reserved[host] = true
 	}
 
-	// First pass: record which allowed domains carry a wildcard (.X) rule and
-	// which domains are explicitly denied. An exact-only allow (X, no wildcard)
-	// must NXDOMAIN its subdomains — the same exact-host contract Envoy's SNI
-	// matching enforces — while a wildcard allow forwards the whole subtree.
-	// Deny domains become dedicated NXDOMAIN zones that win over any broader
-	// allow via CoreDNS longest-zone matching (e.g. deny sub.X under .X).
-	wildcard := make(map[string]bool)
-	denySeen := make(map[string]bool)
-	var denyDomains []string
-	for _, r := range rules {
-		if isIPOrCIDR(r.Dst) {
-			continue
-		}
-		domain := normalizeDomain(r.Dst)
-		if reserved[domain] {
-			continue
-		}
-		switch {
-		case isDenyRule(r):
-			if !denySeen[domain] {
-				denySeen[domain] = true
-				denyDomains = append(denyDomains, domain)
-			}
-		case isAllowDomain(r) && isWildcardDomain(r.Dst):
-			wildcard[domain] = true
-		}
-	}
-
-	// Collect unique allowed domains (skip IPs, CIDRs, deny rules, reserved
-	// names, and any name that is also explicitly denied — the deny zone wins).
-	emitted := make(map[string]bool)
-	var allowDomains []string
-	for _, r := range rules {
-		if !isAllowDomain(r) {
-			continue
-		}
-		domain := normalizeDomain(r.Dst)
-		if reserved[domain] || emitted[domain] || denySeen[domain] {
-			continue
-		}
-		emitted[domain] = true
-		allowDomains = append(allowDomains, domain)
-	}
+	wildcard, denySeen, denyDomains := classifyZoneRules(rules, reserved)
+	allowDomains := collectAllowDomains(rules, reserved, denySeen)
 
 	// Per-domain forward zones. Exact-only domains additionally NXDOMAIN every
 	// subdomain (see writeAllowZone); wildcard domains forward the whole subtree.
 	for _, domain := range allowDomains {
-		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain])
+		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain], tracking)
 	}
 
 	// Deny zones: NXDOMAIN the domain and its entire subtree, beating any
@@ -111,7 +136,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// Internal host forward zones (Docker DNS). Never exact-scoped — e.g.
 	// host.docker.internal is a subdomain of docker.internal and must resolve.
 	for _, host := range internalHosts {
-		writeAllowZone(&b, host, []string{"127.0.0.11"}, false)
+		writeAllowZone(&b, host, []string{"127.0.0.11"}, false, tracking)
 	}
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
@@ -125,7 +150,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	b.WriteString("    reload 2s\n")
 	b.WriteString("}\n")
 
-	return []byte(b.String()), nil
+	return []byte(b.String()), missedDsts(), nil
 }
 
 // isAllowDomain returns true if the rule is an allow rule targeting a domain
@@ -209,7 +234,7 @@ func subdomainRegex(domain string) string {
 // hook blocks all IPv6 to prevent dual-stack firewall bypass. Returning AAAA
 // records that can't connect misleads clients (e.g. npm/node don't fall back on
 // EPERM); NODATA tells clients to prefer IPv4.
-func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exactOnly bool) {
+func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exactOnly bool, idFor IdentityResolver) {
 	fmt.Fprintf(b, "%s {\n", domain)
 	b.WriteString("    otel\n")
 	fmt.Fprintf(b, "    log . \"%s\"\n", corefileLogFormat)
@@ -223,7 +248,14 @@ func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exact
 	b.WriteString("    template IN AAAA . {\n")
 	b.WriteString("        rcode NOERROR\n")
 	b.WriteString("    }\n")
-	b.WriteString("    dnsbpf\n")
+	// The dnsbpf directive carries the zone's route identity so the plugin
+	// writes dns_cache entries without deriving anything itself. A zone whose
+	// dst holds no identity gets NO dnsbpf directive — resolution still works,
+	// but nothing is written to dns_cache (fail closed — see
+	// HandlerDeps.Identity for the per-proto posture).
+	if id, ok := idFor(domain); ok {
+		fmt.Fprintf(b, "    dnsbpf %d\n", id)
+	}
 	fmt.Fprintf(b, "    forward . %s\n", strings.Join(upstreams, " "))
 	b.WriteString("}\n\n")
 }

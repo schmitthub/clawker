@@ -1,6 +1,7 @@
 package firewall_test
 
 import (
+	"hash/fnv"
 	"net"
 	"strings"
 	"testing"
@@ -47,8 +48,18 @@ func TestValidateDst(t *testing.T) {
 		{name: "new gTLD", dst: "my.example.technology"},
 
 		// Domain length boundaries (253 chars max after normalization).
-		{name: "total 253 chars valid", dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)},
-		{name: "total 254 chars invalid", dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 62), wantErr: true},
+		{
+			name: "total 253 chars valid",
+			dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+				strings.Repeat("c", 63) + "." + strings.Repeat("d", 61),
+			wantErr: false,
+		},
+		{
+			name: "total 254 chars invalid",
+			dst: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+				strings.Repeat("c", 63) + "." + strings.Repeat("d", 62),
+			wantErr: true,
+		},
 
 		// Valid IPs and CIDRs.
 		{name: "IPv4", dst: "192.168.1.1"},
@@ -99,104 +110,30 @@ func TestValidateDst(t *testing.T) {
 // misroutes traffic — e.g. an SSH rule whose BPF route points at the
 // main TLS listener gets reset by tls_inspector's deny chain.
 // routePresent reports whether out contains a route matching the structural
-// routing fields (DomainHash, DstPort, EnvoyPort, L4Proto), ignoring SeedIP. The
+// routing fields (Identity, DstPort, EnvoyPort, L4Proto), ignoring SeedIP. The
 // mapping↔route parity loops use it to assert no Envoy listener is orphaned without
 // re-deriving SeedIP (the table cases pin that exactly via require.Equal).
-func routePresent(out []ebpf.Route, hash uint32, dstPort, envoyPort uint16, l4 uint8) bool {
+func routePresent(out []ebpf.Route, id ebpf.RouteIdentity, dstPort, envoyPort uint16, l4 uint8) bool {
 	for _, r := range out {
-		if r.DomainHash == hash && r.DstPort == dstPort && r.EnvoyPort == envoyPort && r.L4Proto == l4 {
+		if r.Identity == id && r.DstPort == dstPort && r.EnvoyPort == envoyPort && r.L4Proto == l4 {
 			return true
 		}
 	}
 	return false
 }
 
-// TestSeedDomainsFromRules covers which destinations SeedDomainsFromRules
-// surfaces — exactly the bare-IPv4 dedicated-listener mappings (TCP/SSH/UDP),
-// the ones SyncRoutes seeds into dns_cache. FQDNs (CoreDNS-resolved), CIDRs
-// (shared egress listener, no seed), and IP rules that ride the shared listener
-// (https/http to a bare IP — the TLS pass skips IP) must not appear.
-func TestSeedDomainsFromRules(t *testing.T) {
-	t.Parallel()
-	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}
-
-	tests := []struct {
-		name  string
-		rules []config.EgressRule
-		want  []string
-	}{
-		{
-			name:  "bare-ip tcp rule seeds the ip literal",
-			rules: []config.EgressRule{{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4243"}},
-			want:  []string{"45.79.112.203"},
-		},
-		{
-			name:  "bare-ip udp rule seeds the ip literal",
-			rules: []config.EgressRule{{Dst: "10.0.0.5", Proto: "udp", Action: "allow", Port: "3478"}},
-			want:  []string{"10.0.0.5"},
-		},
-		{
-			name:  "fqdn tcp rule does not seed (CoreDNS resolves it)",
-			rules: []config.EgressRule{{Dst: "github.com", Proto: "tcp", Action: "allow", Port: "22"}},
-			want:  nil,
-		},
-		{
-			name:  "cidr rule does not seed (rides shared egress listener)",
-			rules: []config.EgressRule{{Dst: "10.0.0.0/24", Proto: "tcp", Action: "allow", Port: "443"}},
-			want:  nil,
-		},
-		{
-			name:  "bare-ip https rule does not seed (TLS pass skips IP)",
-			rules: []config.EgressRule{{Dst: "1.2.3.4", Proto: "https", Action: "allow", Port: "443"}},
-			want:  nil,
-		},
-		{
-			name:  "ip rule with a port range collapses to a single dns_cache key",
-			rules: []config.EgressRule{{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4242-4243"}},
-			want:  []string{"45.79.112.203"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := firewall.SeedDomainsFromRules(tt.rules, ports)
-			assert.ElementsMatch(t, tt.want, got)
-		})
-	}
+// tid is an arbitrary-but-stable test mapping from dst to a fake route
+// identity, standing in for the production IdentityAllocator (which
+// allocates, never derives). Any pure function of dst works here; the
+// tests only need per-dst stability within a run.
+func tid(dst string) ebpf.RouteIdentity {
+	h := fnv.New32a()
+	h.Write([]byte(dst))
+	return ebpf.RouteIdentity(h.Sum32())
 }
 
-// TestSeedDomainsFromRules_MatchesSeedRoutes is the anti-drift guard: every
-// SeedIP route RoutesFromRules emits must have its hash covered by a string
-// SeedDomainsFromRules returns, and vice versa. If this holds, the netlogger
-// ReverseDNSMap attributes every seeded dns_cache entry — no orphaned hash can
-// fire netlogger_reverse_dns_unattributed. The two functions share TCPMappings
-// + UDPMappings, so this catches any future divergence in the SeedIP condition.
-func TestSeedDomainsFromRules_MatchesSeedRoutes(t *testing.T) {
-	t.Parallel()
-	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}
-	rules := []config.EgressRule{
-		{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4242-4243"},
-		{Dst: "10.0.0.5", Proto: "udp", Action: "allow", Port: "3478"},
-		{Dst: "github.com", Proto: "tcp", Action: "allow", Port: "22"},   // FQDN — no seed
-		{Dst: "api.example.com", Proto: "https", Action: "allow"},        // FQDN https — no seed
-		{Dst: "10.0.0.0/24", Proto: "tcp", Action: "allow", Port: "443"}, // CIDR — no seed
-		{Dst: "1.2.3.4", Proto: "https", Action: "allow", Port: "443"},   // bare-IP https — no seed
-	}
-
-	routeSeedHashes := make(map[uint32]struct{})
-	for _, r := range firewall.RoutesFromRules(rules, ports) {
-		if r.SeedIP != 0 {
-			routeSeedHashes[r.DomainHash] = struct{}{}
-		}
-	}
-
-	domainSeedHashes := make(map[uint32]struct{})
-	for _, d := range firewall.SeedDomainsFromRules(rules, ports) {
-		domainSeedHashes[ebpf.DomainHash(d)] = struct{}{}
-	}
-
-	assert.Equal(t, routeSeedHashes, domainSeedHashes,
-		"SeedDomainsFromRules hashes must equal the set of SeedIP route hashes")
-}
+// tidResolver adapts tid to the IdentityResolver shape RoutesFromRules takes.
+func tidResolver(dst string) (ebpf.RouteIdentity, bool) { return tid(dst), true }
 
 func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	t.Parallel()
@@ -213,7 +150,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "github.com", Proto: "tcp", Port: "8080" /* Action: "" */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("github.com"), DstPort: 8080, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{Identity: tid("github.com"), DstPort: 8080, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
 			},
 		},
 		{
@@ -222,7 +159,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "git.example.com", Proto: "ssh", Action: "allow" /* Port: 0 */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("git.example.com"), DstPort: 22, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{Identity: tid("git.example.com"), DstPort: 22, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
 			},
 		},
 		{
@@ -231,7 +168,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "a.example.com", Proto: "tcp", Action: "allow" /* Port: 0 */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{Identity: tid("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
 			},
 		},
 		{
@@ -241,8 +178,8 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "b.example.com", Proto: "tcp", Action: "allow", Port: "8080"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("b.example.com"), DstPort: 8080, EnvoyPort: 11001, L4Proto: ebpf.L4ProtoTCP},
+				{Identity: tid("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
+				{Identity: tid("b.example.com"), DstPort: 8080, EnvoyPort: 11001, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
 			},
 		},
 		{
@@ -255,8 +192,8 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "api.example.com", Proto: "https", Action: "allow", Port: "443"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP},
+				{Identity: tid("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
+				{Identity: tid("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP, SeedIP: 0},
 			},
 		},
 		{
@@ -272,14 +209,14 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "git.example.com", Proto: "ssh", Action: "deny"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("git.example.com"), DstPort: 22, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{Identity: tid("git.example.com"), DstPort: 22, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
 			},
 		},
 		{
 			// TCP-IP now gets a SEEDED dedicated-listener route (mirrors UDP-IP):
 			// TCPMappings skips only CIDR, so a bare-IP tcp/ssh rule gets its own
 			// STATIC-pinned listener at TCPPortBase+idx, and RoutesFromRules projects
-			// it with SeedIP set so SyncRoutes seeds dns_cache[ip]=DomainHash(ip) (no
+			// it with SeedIP set so SyncRoutes seeds dns_cache[ip]=identity(ip) (no
 			// CoreDNS resolution exists for a literal IP). The eBPF connect4 NAT
 			// rewrites the socket dst, so a single IP CANNOT ride the shared egress
 			// listener's prefix_ranges — the dedicated STATIC listener is the fix.
@@ -292,18 +229,18 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			},
 			want: []ebpf.Route{
 				{
-					DomainHash: ebpf.DomainHash("10.0.0.1"),
-					DstPort:    22,
-					EnvoyPort:  11000,
-					L4Proto:    ebpf.L4ProtoTCP,
-					SeedIP:     ebpf.IPToUint32(net.ParseIP("10.0.0.1").To4()),
+					Identity:  tid("10.0.0.1"),
+					DstPort:   22,
+					EnvoyPort: 11000,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    ebpf.IPToUint32(net.ParseIP("10.0.0.1").To4()),
 				},
 			},
 		},
 		{
 			// UDP-IP DOES get a route: UDPMappings gives a bare-IP udp rule its own
 			// dedicated STATIC-pinned listener, and RoutesFromRules projects it with
-			// SeedIP set so SyncRoutes seeds dns_cache[ip]=DomainHash(ip) — that lets
+			// SeedIP set so SyncRoutes seeds dns_cache[ip]=identity(ip) — that lets
 			// connect4/sendmsg4 hit on the literal IP (no CoreDNS resolution exists).
 			name: "udp ip dst projects a seeded route",
 			rules: []config.EgressRule{
@@ -311,11 +248,11 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			},
 			want: []ebpf.Route{
 				{
-					DomainHash: ebpf.DomainHash("10.0.0.5"),
-					DstPort:    3478,
-					EnvoyPort:  12000,
-					L4Proto:    ebpf.L4ProtoUDP,
-					SeedIP:     ebpf.IPToUint32(net.ParseIP("10.0.0.5").To4()),
+					Identity:  tid("10.0.0.5"),
+					DstPort:   3478,
+					EnvoyPort: 12000,
+					L4Proto:   ebpf.L4ProtoUDP,
+					SeedIP:    ebpf.IPToUint32(net.ParseIP("10.0.0.5").To4()),
 				},
 			},
 		},
@@ -327,7 +264,13 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "relay.example.com", Proto: "udp", Action: "allow", Port: "3478"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("relay.example.com"), DstPort: 3478, EnvoyPort: 12000, L4Proto: ebpf.L4ProtoUDP},
+				{
+					Identity:  tid("relay.example.com"),
+					DstPort:   3478,
+					EnvoyPort: 12000,
+					L4Proto:   ebpf.L4ProtoUDP,
+					SeedIP:    0,
+				},
 			},
 		},
 		{
@@ -339,8 +282,20 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "dual.example.com", Proto: "udp", Action: "allow", Port: "443"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("dual.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("dual.example.com"), DstPort: 443, EnvoyPort: 12000, L4Proto: ebpf.L4ProtoUDP},
+				{
+					Identity:  tid("dual.example.com"),
+					DstPort:   443,
+					EnvoyPort: 11000,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    0,
+				},
+				{
+					Identity:  tid("dual.example.com"),
+					DstPort:   443,
+					EnvoyPort: 12000,
+					L4Proto:   ebpf.L4ProtoUDP,
+					SeedIP:    0,
+				},
 			},
 		},
 		{
@@ -352,9 +307,27 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "cluster.example.com", Proto: "tcp", Action: "allow", Port: "9000-9002"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9000, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9001, EnvoyPort: 11001, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9002, EnvoyPort: 11002, L4Proto: ebpf.L4ProtoTCP},
+				{
+					Identity:  tid("cluster.example.com"),
+					DstPort:   9000,
+					EnvoyPort: 11000,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    0,
+				},
+				{
+					Identity:  tid("cluster.example.com"),
+					DstPort:   9001,
+					EnvoyPort: 11001,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    0,
+				},
+				{
+					Identity:  tid("cluster.example.com"),
+					DstPort:   9002,
+					EnvoyPort: 11002,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    0,
+				},
 			},
 		},
 		{
@@ -370,8 +343,20 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "stream.example.com", Proto: "wss", Action: "allow", Port: "443"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP},
-				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP},
+				{
+					Identity:  tid("stream.example.com"),
+					DstPort:   443,
+					EnvoyPort: 10000,
+					L4Proto:   ebpf.L4ProtoTCP,
+					SeedIP:    0,
+				},
+				{
+					Identity:  tid("stream.example.com"),
+					DstPort:   443,
+					EnvoyPort: 10000,
+					L4Proto:   ebpf.L4ProtoUDP,
+					SeedIP:    0,
+				},
 			},
 		},
 	}
@@ -379,29 +364,88 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := firewall.RoutesFromRules(tt.rules, ports)
+			got, missed := firewall.RoutesFromRules(tt.rules, ports, tidResolver)
 			require.Equal(t, tt.want, got)
+			assert.Empty(t, missed, "tidResolver answers every dst — no misses expected")
 
 			// Parity check: every TCP/SSH mapping TCPMappings produces must appear
 			// in the route set, matched on the structural fields that drive listener
-			// routing (DomainHash, DstPort, EnvoyPort, L4Proto). SeedIP exactness is
+			// routing (Identity, DstPort, EnvoyPort, L4Proto). SeedIP exactness is
 			// pinned by the table `want` above via require.Equal — re-deriving it here
 			// would only mirror RoutesFromRules' own formula and could never fail. This
 			// guards the orphaned-listener invariant against Envoy/eBPF-side drift.
 			for _, m := range firewall.TCPMappings(tt.rules, ports) {
-				assert.Truef(t, routePresent(got, ebpf.DomainHash(m.Dst), uint16(m.DstPort), uint16(m.EnvoyPort), ebpf.L4ProtoTCP),
-					"TCPMappings mapping %s:%d has no matching BPF route — Envoy listener would be orphaned", m.Dst, m.DstPort)
+				assert.Truef(
+					t,
+					routePresent(got, tid(m.Dst), uint16(m.DstPort), uint16(m.EnvoyPort), ebpf.L4ProtoTCP),
+					"TCPMappings mapping %s:%d has no matching BPF route — Envoy listener would be orphaned",
+					m.Dst,
+					m.DstPort,
+				)
 			}
 
 			// UDP parity: every UDPMappings entry (FQDN or single IP — CIDR is dropped
 			// by its isCIDR skipDst) must appear as an L4ProtoUDP route on the same
 			// structural fields. SeedIP is pinned by the table cases, not re-derived here.
 			for _, m := range firewall.UDPMappings(tt.rules, ports) {
-				assert.Truef(t, routePresent(got, ebpf.DomainHash(m.Dst), uint16(m.DstPort), uint16(m.EnvoyPort), ebpf.L4ProtoUDP),
-					"UDPMappings mapping %s:%d has no matching BPF route — udp_proxy listener would be orphaned", m.Dst, m.DstPort)
+				assert.Truef(
+					t,
+					routePresent(got, tid(m.Dst), uint16(m.DstPort), uint16(m.EnvoyPort), ebpf.L4ProtoUDP),
+					"UDPMappings mapping %s:%d has no matching BPF route — udp_proxy listener would be orphaned",
+					m.Dst,
+					m.DstPort,
+				)
 			}
 		})
 	}
+}
+
+// TestRoutesFromRules_ResolverMissFailsClosed pins the fail-closed contract
+// for a PARTIAL resolver miss: the missed dst gets NO route at all (never an
+// Identity:0 route — 0 is the "none" sentinel and would alias in route_map),
+// every other rule's routes are unaffected, and the miss is reported exactly
+// once even when dedicated-listener fan-out asks about the dst repeatedly
+// (one https lookup + one tcp-mapping lookup here).
+func TestRoutesFromRules_ResolverMissFailsClosed(t *testing.T) {
+	t.Parallel()
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000, HealthPort: 0}
+	const missDst = "missing.example.com"
+
+	missOne := func(dst string) (ebpf.RouteIdentity, bool) {
+		if dst == missDst {
+			return 0, false
+		}
+		return tid(dst), true
+	}
+
+	rules := []config.EgressRule{
+		{
+			Dst: "github.com", Proto: "https", Action: "allow", Port: "443",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+		{
+			Dst: missDst, Proto: "https", Action: "allow", Port: "443",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+		{
+			Dst: missDst, Proto: "tcp", Action: "allow", Port: "8080",
+			PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+		},
+	}
+
+	got, missed := firewall.RoutesFromRules(rules, ports, missOne)
+
+	assert.Equal(t, []string{missDst}, missed,
+		"miss must be reported exactly once despite multiple lookups for the same dst")
+	for _, r := range got {
+		assert.NotZerof(t, r.Identity, "no route may carry Identity:0 — a miss must drop the route, got %+v", r)
+		assert.NotEqualf(t, tid(missDst), r.Identity, "missed dst must produce no route, got %+v", r)
+	}
+	want := []ebpf.Route{
+		{Identity: tid("github.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP, SeedIP: 0},
+		{Identity: tid("github.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP, SeedIP: 0},
+	}
+	assert.Equal(t, want, got, "routes for resolvable dsts must be unaffected by the miss")
 }
 
 // TestEgressRulesFileFields_AllFieldsHaveDescriptions guards the storage
@@ -591,7 +635,12 @@ func TestNormalizeAndDedup_ResolvesOpaquePortConflicts(t *testing.T) {
 			},
 			want: func(t *testing.T, out []config.EgressRule) {
 				assert.Equal(t, []string{"4242"}, portsFor(out, "tcp", "allow"))
-				assert.Equal(t, []string{"4242"}, portsFor(out, "ssh", "allow"), "ssh rule preserved (not merged into tcp)")
+				assert.Equal(
+					t,
+					[]string{"4242"},
+					portsFor(out, "ssh", "allow"),
+					"ssh rule preserved (not merged into tcp)",
+				)
 			},
 		},
 		{
@@ -604,7 +653,12 @@ func TestNormalizeAndDedup_ResolvesOpaquePortConflicts(t *testing.T) {
 				{Dst: dst, Proto: "tcp", Port: "4242", Action: "deny"},
 			},
 			want: func(t *testing.T, out []config.EgressRule) {
-				assert.Equal(t, []string{"4242"}, portsFor(out, "tcp", "allow"), "allow single NOT carved (no range present)")
+				assert.Equal(
+					t,
+					[]string{"4242"},
+					portsFor(out, "tcp", "allow"),
+					"allow single NOT carved (no range present)",
+				)
 				assert.Equal(t, []string{"4242"}, portsFor(out, "tcp", "deny"), "deny single survives")
 			},
 		},

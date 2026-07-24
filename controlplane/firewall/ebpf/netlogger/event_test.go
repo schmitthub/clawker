@@ -21,14 +21,14 @@ import (
 func TestParseEvent_RoundTrip(t *testing.T) {
 	ip := net.IPv4(203, 0, 113, 7)
 	in := ebpf.EgressEvent{
-		TsNs:       1234567890,
-		CgroupId:   424242,
-		DomainHash: 0xdeadbeef,
-		DstIp:      ebpf.IPToBytes16(ip),
-		DstPort:    443,
-		Verdict:    ebpf.EgressVerdictAllowed,
-		Flags:      0,
-		L4Proto:    1, // SOCK_STREAM
+		TsNs:     1234567890,
+		CgroupId: 424242,
+		Identity: 0xdeadbeef,
+		DstIp:    ebpf.IPToBytes16(ip),
+		DstPort:  443,
+		Verdict:  ebpf.EgressVerdictAllowed,
+		Flags:    0,
+		L4Proto:  1, // SOCK_STREAM
 	}
 	raw := mustEncode(t, in)
 
@@ -42,8 +42,8 @@ func TestParseEvent_RoundTrip(t *testing.T) {
 	if got.BPFTsNs != in.TsNs {
 		t.Errorf("BPFTsNs = %d; want %d", got.BPFTsNs, in.TsNs)
 	}
-	if got.DomainHash != in.DomainHash {
-		t.Errorf("DomainHash = %x; want %x", got.DomainHash, in.DomainHash)
+	if uint32(got.Identity) != in.Identity {
+		t.Errorf("Identity = %x; want %x", got.Identity, in.Identity)
 	}
 	want := netip.AddrFrom4([4]byte{203, 0, 113, 7})
 	if got.DstIP != want {

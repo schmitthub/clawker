@@ -133,8 +133,8 @@ Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state
 | `ipv6` | bool | native IPv6 |
 | `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
 | `no_dst` | bool | `Event.NoDst` — sock_create event with no destination |
-| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`. **Omitted** when `Event.Domain` is empty (direct-IP connect, domain outside firewall rules, stale dnsbpf entry); operators filter via `NOT _exists_:attributes.dst_host`. |
-| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.Identity)`. **Omitted** when `Event.Domain` is empty (direct-IP connect, domain outside firewall rules, stale dnsbpf entry); operators filter via `NOT _exists_:attributes.dst_host`. |
+| `identity` | string | `strconv.FormatUint(uint64(Event.Identity), 10)` — CP-allocated route identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
 
 ## Verification Workflow
 

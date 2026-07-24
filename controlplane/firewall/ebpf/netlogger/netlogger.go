@@ -54,7 +54,7 @@ const defaultQueueBuffer = 8192
 const defaultStopTimeout = 5 * time.Second
 
 // defaultReverseDNSInterval is the periodic refresh cadence for the
-// reverse-DNS observed-hash set. 5s is well under the dns_cache TTL
+// reverse-DNS observed-identity set. 5s is well under the dns_cache TTL
 // horizon and is cheap (one map iterate per tick over a bounded
 // pinned map).
 const defaultReverseDNSInterval = 5 * time.Second
@@ -98,16 +98,14 @@ type Deps struct {
 	// (Config interface — never hardcode label strings). Required.
 	Cfg config.Config
 
-	// Domains supplies the live set of domains dnsbpf may resolve
-	// under the current firewall configuration. ReverseDNSMap hashes
-	// each entry on every refresh tick to rebuild the hash→domain
-	// table the otelSink reads when stamping `dst_host` on each
-	// emitted security record. Production wiring: a closure over
-	// firewall.Handler.ReverseDNSDomains (CoreDNS zones + IP-literal
-	// dns_cache seeds). Nil is supported —
+	// Identities supplies the live route-identity table (identity→dst)
+	// under the current firewall configuration — the table the
+	// otelSink reads when stamping `dst_host` on each emitted
+	// security record. Production wiring: a closure over the
+	// firewall IdentityAllocator's Snapshot. Nil is supported —
 	// every emitted record then carries dst_host="" (degraded
 	// attribution; firewall enforcement unaffected).
-	Domains DomainSource
+	Identities IdentitySource
 
 	// OtelLoggerProvider drives the production sink. nil routes
 	// every event into nopSink — the test-only default that drops
@@ -141,7 +139,11 @@ type Deps struct {
 // permitted to import moby directly under the docker-client.md
 // exception.
 type ContainerInspecter interface {
-	ContainerInspect(ctx context.Context, id string, opts mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error)
+	ContainerInspect(
+		ctx context.Context,
+		id string,
+		opts mobyclient.ContainerInspectOptions,
+	) (mobyclient.ContainerInspectResult, error)
 }
 
 // Service is the long-lived netlogger handle. Constructed via New,
@@ -218,7 +220,7 @@ func New(deps Deps) (*Service, error) {
 	}
 
 	cache := NewLabelCache(deps.Log)
-	revDNS := NewReverseDNSMap(deps.Mgr.DNSCache(), deps.Domains, deps.Log)
+	revDNS := NewReverseDNSMap(deps.Mgr.DNSCache(), deps.Identities, deps.Log)
 	metrics := NewMetrics()
 
 	return &Service{

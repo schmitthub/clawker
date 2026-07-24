@@ -5,8 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/schmitthub/clawker/internal/logger"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // CircuitOptions configures a circuitExporter. The breaker is

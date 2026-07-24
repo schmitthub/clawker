@@ -11,13 +11,13 @@
 //	ebpf-manager sync-routes <routesJSON>                Replace global route_map with new routes
 //	ebpf-manager bypass  <cgroupPath>                    Set bypass flag (unrestricted egress)
 //	ebpf-manager unbypass <cgroupPath>                   Clear bypass flag
-//	ebpf-manager dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
+//	ebpf-manager dns-update <ip> <identity> <ttl>      Update DNS cache entry
 //	ebpf-manager gc-dns                                  Remove expired DNS cache entries
 //	ebpf-manager dump <cgroupPath>                       Inspect container_map for one cgroup
-//	ebpf-manager dump-routes [--json]                    Dump global route_map (every {domain_hash, dst_port, l4_proto} → envoy_port)
+//	ebpf-manager dump-routes [--json]                    Dump global route_map (every {identity, dst_port, l4_proto} → envoy_port)
 //	ebpf-manager dump-containers [--json]                Dump container_map (every cgroup → BPF container_config)
 //	ebpf-manager dump-bypass [--json]                    Dump bypass_map (every cgroup → bypass flag)
-//	ebpf-manager dump-dns [--json]                       Dump dns_cache (every IP → {domain_hash, expire_ts})
+//	ebpf-manager dump-dns [--json]                       Dump dns_cache (every IP → {identity, expire_ts})
 //	ebpf-manager resolve <hostname>                      Resolve hostname to IPv4 from CP netns
 package main
 
@@ -71,7 +71,8 @@ func main() {
 		requireArgs(3) // sync-routes <routesJSON>
 		runSyncRoutes(log, os.Args[2])
 	case "dns-update":
-		requireArgs(5) // dns-update <ip> <domainHash> <ttl>
+		const dnsUpdateArgc = 5 // dns-update <ip> <identity> <ttl>
+		requireArgs(dnsUpdateArgc)
 		runDNSUpdate(log, os.Args[2], os.Args[3], os.Args[4])
 	case "gc-dns":
 		runGCDNS(log)
@@ -142,6 +143,16 @@ func runSyncRoutes(log *logger.Logger, routesJSON string) {
 	if err := json.Unmarshal([]byte(routesJSON), &routes); err != nil {
 		fatal("sync-routes", fmt.Errorf("parsing routes JSON: %w", err))
 	}
+	for i, r := range routes {
+		if r.Identity == 0 || r.DstPort == 0 {
+			fatal("sync-routes", fmt.Errorf(
+				"route[%d]: identity and dstPort are required and must be non-zero (got identity=%d dstPort=%d); check the JSON field names against this binary's schema",
+				i,
+				r.Identity,
+				r.DstPort,
+			))
+		}
+	}
 
 	mgr := clawkerebpf.NewManager(log)
 	if err := mgr.OpenPinned(); err != nil {
@@ -210,14 +221,14 @@ func runUnbypass(log *logger.Logger, cgroupPath string) {
 	fmt.Printf("bypass disabled cgroup_id=%d\n", cgroupID)
 }
 
-func runDNSUpdate(log *logger.Logger, ipStr, domainHashStr, ttlStr string) {
+func runDNSUpdate(log *logger.Logger, ipStr, identityStr, ttlStr string) {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		fatal("dns-update", fmt.Errorf("invalid IP: %s", ipStr))
 	}
-	domainHash, err := strconv.ParseUint(domainHashStr, 10, 32)
+	identity, err := strconv.ParseUint(identityStr, 10, 32)
 	if err != nil {
-		fatal("dns-update", fmt.Errorf("parsing domain hash: %w", err))
+		fatal("dns-update", fmt.Errorf("parsing identity: %w", err))
 	}
 	ttl, err := strconv.ParseUint(ttlStr, 10, 32)
 	if err != nil {
@@ -230,8 +241,12 @@ func runDNSUpdate(log *logger.Logger, ipStr, domainHashStr, ttlStr string) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.UpdateDNSCache(clawkerebpf.IPToUint32(ip), uint32(domainHash), uint32(ttl)); err != nil {
-		fatal("dns-update", err)
+	if updateErr := mgr.UpdateDNSCache(
+		clawkerebpf.IPToUint32(ip),
+		clawkerebpf.RouteIdentity(identity),
+		uint32(ttl),
+	); updateErr != nil {
+		fatal("dns-update", updateErr)
 	}
 }
 
@@ -316,8 +331,8 @@ func runDumpRoutes(log *logger.Logger, asJSON bool) {
 	}
 	fmt.Printf("route_map: %d entries\n", len(routes))
 	for _, r := range routes {
-		fmt.Printf("  domain_hash=0x%08x dst_port=%d proto=%s -> envoy_port=%d\n",
-			r.DomainHash, r.DstPort, l4ProtoLabel(r.L4Proto), r.EnvoyPort)
+		fmt.Printf("  identity=%d dst_port=%d proto=%s -> envoy_port=%d\n",
+			r.Identity, r.DstPort, l4ProtoLabel(r.L4Proto), r.EnvoyPort)
 	}
 }
 
@@ -406,8 +421,8 @@ func runDumpDNS(log *logger.Logger, asJSON bool) {
 	}
 	fmt.Printf("dns_cache: %d entries\n", len(entries))
 	for _, e := range entries {
-		fmt.Printf("  ip=%s domain_hash=0x%08x expire_ts=%d\n",
-			e.IP, e.DomainHash, e.ExpireTS)
+		fmt.Printf("  ip=%s identity=%d expire_ts=%d\n",
+			e.IP, e.Identity, e.ExpireTS)
 	}
 }
 
@@ -450,7 +465,7 @@ Commands:
   sync-routes <routesJSON>                Replace global route_map
   bypass  <cgroupPath>                    Set bypass flag
   unbypass <cgroupPath>                   Clear bypass flag
-  dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
+  dns-update <ip> <identity> <ttl>      Update DNS cache entry
   gc-dns                                  Remove expired DNS cache entries
   dump <cgroupPath>                       Inspect container_map for one cgroup
   dump-routes [--json]                    Dump global route_map

@@ -1441,3 +1441,116 @@ security:
 	assert.Equal(t, "403", subDeniedCode,
 		"subdomain path /quickstart should be blocked by wildcard path_default:deny, got %q", subDeniedCode)
 }
+
+// resolveInContainer resolves domain via the managed CoreDNS from inside a
+// fresh agent container and returns the first IPv4 it answered. The
+// resolution side effect is the point: the dnsbpf plugin writes
+// dns_cache[ip] = {identity, ttl} for the zone, and the pinned map outlives
+// the container.
+func resolveInContainer(t *testing.T, h *harness.Harness, agent, domain string) string {
+	t.Helper()
+	res := h.RunInContainer(agent, "getent", "ahostsv4", domain)
+	require.NoError(t, res.Err, "resolving %s failed\nstdout: %s\nstderr: %s",
+		domain, res.Stdout, res.Stderr)
+	fields := strings.Fields(res.Stdout)
+	require.NotEmpty(t, fields, "no A record for %s\nstdout: %s", domain, res.Stdout)
+	ip := net.ParseIP(fields[0])
+	require.NotNil(t, ip, "unparseable IP %q for %s", fields[0], domain)
+	return ip.String()
+}
+
+// identityProbeDomain is the destination the identity-stability tests pin:
+// a required rule, so it is always allowed and always holds an identity.
+const identityProbeDomain = "api.anthropic.com"
+
+// curlPinnedIP curls the identity probe domain but pins the connection to ip
+// via --resolve, so NO new DNS query happens — the BPF connect4 path must
+// route on whatever identity the pinned dns_cache already holds for that IP.
+// This is the cached-entry regression window rule churn and CP restarts must
+// not break.
+func curlPinnedIP(h *harness.Harness, agent, ip string) *harness.RunResult {
+	return h.RunInContainer(agent,
+		"curl", "-s", "--max-time", "15", "--connect-timeout", "10",
+		"--resolve", identityProbeDomain+":443:"+ip,
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://"+identityProbeDomain)
+}
+
+// TestFirewall_IdentityStableAcrossRuleChurn is the end-to-end renumbering
+// regression test for the sticky route-identity allocator. dns_cache is
+// populated asynchronously by CoreDNS and is NOT rewritten on reconcile, so
+// an allocator that renumbered live destinations on rule churn (e.g.
+// deterministic sort-and-number) would leave the cached entry pointing at a
+// reassigned identity — route_map miss or, worse, another domain's route.
+// The pinned-IP curl exercises exactly that cached entry: it must still
+// route after unrelated rules are added and removed.
+func TestFirewall_IdentityStableAcrossRuleChurn(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	ip := resolveInContainer(t, h, "identity-churn", identityProbeDomain)
+
+	// Sanity: the cached entry routes before any churn.
+	pre := curlPinnedIP(h, "identity-churn", ip)
+	require.NoError(t, pre.Err, "pinned-IP curl before churn failed\nstdout: %s\nstderr: %s",
+		pre.Stdout, pre.Stderr)
+
+	// Churn: rules that sort before AND after the target domain, added and
+	// removed so every reconcile regenerates the Corefile + route_map. A
+	// renumbering allocator shifts the target's position on each of these.
+	for _, dst := range []string{"aaa-churn.example.com", "zzz-churn.example.com", "example.com"} {
+		addRes := h.Run("firewall", "add", dst)
+		require.NoError(t, addRes.Err, "firewall add %s failed\nstdout: %s\nstderr: %s",
+			dst, addRes.Stdout, addRes.Stderr)
+	}
+	rmRes := h.Run("firewall", "remove", "aaa-churn.example.com")
+	require.NoError(t, rmRes.Err, "firewall remove failed\nstdout: %s\nstderr: %s",
+		rmRes.Stdout, rmRes.Stderr)
+
+	// The pre-churn dns_cache entry must still route to the right listener.
+	post := curlPinnedIP(h, "identity-churn", ip)
+	require.NoError(t, post.Err,
+		"pinned-IP curl AFTER rule churn failed — cached dns_cache identity no longer routes "+
+			"(renumbering regression)\nstdout: %s\nstderr: %s",
+		post.Stdout, post.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(post.Stdout), "should get an HTTP response code")
+
+	// Cleanup the churn rules so the store isn't polluted for later asserts.
+	for _, dst := range []string{"zzz-churn.example.com", "example.com"} {
+		res := h.Run("firewall", "remove", dst)
+		require.NoError(t, res.Err, "firewall remove %s failed\nstdout: %s\nstderr: %s",
+			dst, res.Stdout, res.Stderr)
+	}
+}
+
+// TestFirewall_IdentityStableAcrossCPRestart proves identity persistence:
+// the allocator table is written to route-identities.yaml, and a restarted
+// CP must re-bind every still-configured destination to its previous
+// identity. The pinned dns_cache survives a clean CP restart (FlushAll
+// deliberately leaves it), so a resolve-before-restart / pinned-IP-curl-
+// after-restart pair fails if the new CP hands out different identities.
+func TestFirewall_IdentityStableAcrossCPRestart(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	ip := resolveInContainer(t, h, "identity-restart", identityProbeDomain)
+
+	pre := curlPinnedIP(h, "identity-restart", ip)
+	require.NoError(t, pre.Err, "pinned-IP curl before restart failed\nstdout: %s\nstderr: %s",
+		pre.Stdout, pre.Stderr)
+
+	downRes := h.Run("controlplane", "down")
+	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s",
+		downRes.Stdout, downRes.Stderr)
+	upRes := h.Run("controlplane", "up")
+	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s",
+		upRes.Stdout, upRes.Stderr)
+	fwRes := h.Run("firewall", "up")
+	require.NoError(t, fwRes.Err, "firewall up after restart failed\nstdout: %s\nstderr: %s",
+		fwRes.Stdout, fwRes.Stderr)
+
+	post := curlPinnedIP(h, "identity-restart", ip)
+	require.NoError(t, post.Err,
+		"pinned-IP curl AFTER CP restart failed — persisted identity table did not re-bind "+
+			"the cached dns_cache identity\nstdout: %s\nstderr: %s",
+		post.Stdout, post.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(post.Stdout), "should get an HTTP response code")
+}

@@ -3,6 +3,7 @@ package ebpf
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -50,14 +51,16 @@ type Manager struct {
 	// Only populated when this Manager instance attaches programs (daemon mode).
 	links map[uint64][]link.Link
 
-	// seedMu guards seededIPs. SyncRoutes (gRPC handler goroutine) and
-	// GarbageCollectDNS (periodic goroutine) both touch it.
+	// seedMu guards seededIPs, which is only touched by SyncRoutes (gRPC
+	// handler goroutine) but from potentially concurrent calls.
 	seedMu sync.Mutex
 	// seededIPs is the set of IP-literal destinations whose dns_cache entries
-	// SyncRoutes owns. GarbageCollectDNS never evicts these: a CoreDNS overwrite
-	// would otherwise lower the entry's TTL to a short DNS TTL and GC would drop
-	// it, failing a still-valid IP rule's route closed until the next reconcile.
-	// SyncRoutes is the only deleter of seeded entries (when the IP rule goes).
+	// SyncRoutes owns, kept so a reconcile can delete entries for IP rules
+	// that went away (orphan diff). Runtime protection of live seeds does not
+	// depend on this set: seeded entries carry DNSSourceSeed in the map value
+	// itself, which the dnsbpf plugin refuses to overwrite and
+	// GarbageCollectDNS refuses to evict — so precedence survives a CP
+	// restart even before the first SyncRoutes rebuilds this set.
 	seededIPs map[uint32]struct{}
 }
 
@@ -383,7 +386,10 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 		case errors.Is(err, ebpf.ErrKeyNotExist):
 			stale = append(stale, key)
 		default:
-			m.log.Warn().Err(err).Uint64("cgroup_id", key).Msg("ebpf: container_map lookup failed; preserving bypass entry")
+			m.log.Warn().
+				Err(err).
+				Uint64("cgroup_id", key).
+				Msg("ebpf: container_map lookup failed; preserving bypass entry")
 			errs = append(errs, fmt.Errorf("container_map[%d] lookup: %w", key, err))
 		}
 	}
@@ -494,7 +500,10 @@ func (m *Manager) FlushAll() error {
 		}
 		for _, k := range keys {
 			if err := m.objs.UdpFlowMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush udp_flow_map[cookie=%d,backend_port=%d]: %w", k.Cookie, k.BackendPort, err))
+				errs = append(
+					errs,
+					fmt.Errorf("flush udp_flow_map[cookie=%d,backend_port=%d]: %w", k.Cookie, k.BackendPort, err),
+				)
 			}
 		}
 	}
@@ -718,84 +727,95 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	for _, k := range keysToDelete {
 		if err := m.objs.RouteMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			m.log.Warn().Err(err).
-				Uint32("domain_hash", k.DomainHash).
+				Uint32("identity", k.Identity).
 				Uint16("dst_port", k.DstPort).
 				Uint8("l4_proto", k.L4Proto).
 				Msg("ebpf sync-routes: deleting stale route_map entry")
-			errs = append(errs, fmt.Errorf("delete route_map[domain_hash=%d, dst_port=%d, l4_proto=%d]: %w", k.DomainHash, k.DstPort, k.L4Proto, err))
+			errs = append(errs, fmt.Errorf("delete route_map[identity=%d, dst_port=%d, l4_proto=%d]: %w",
+				k.Identity, k.DstPort, k.L4Proto, err))
 		}
 	}
 
 	// Populate with new routes.
 	for _, r := range routes {
 		key := clawkerRouteKey{
-			DomainHash: r.DomainHash,
-			DstPort:    r.DstPort,
-			L4Proto:    r.L4Proto,
+			// Kernel-map encode boundary: the generated bpf2go key carries
+			// the raw on-wire uint32.
+			Identity: uint32(r.Identity),
+			DstPort:  r.DstPort,
+			L4Proto:  r.L4Proto,
 		}
 		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
 		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
 			m.log.Warn().Err(err).
-				Uint32("domain_hash", r.DomainHash).
+				Uint32("identity", uint32(r.Identity)).
 				Uint16("dst_port", r.DstPort).
 				Uint8("l4_proto", r.L4Proto).
 				Msg("ebpf sync-routes: updating route_map")
-			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d, l4_proto=%d]: %w", r.DomainHash, r.DstPort, r.L4Proto, err))
+			errs = append(
+				errs,
+				fmt.Errorf(
+					"update route_map[identity=%d, dst_port=%d, l4_proto=%d]: %w",
+					r.Identity,
+					r.DstPort,
+					r.L4Proto,
+					err,
+				),
+			)
 		}
 	}
 
 	// Seed dns_cache for IP-literal routes. The agent connects to a bare IP,
 	// which CoreDNS never resolved, so connect4/sendmsg4's dns_cache lookup would
-	// miss and the datagram would be denied. Writing dns_cache[ip]=DomainHash(ip)
-	// (the same hash the route is keyed on) makes the existing lookup hit. FQDN
+	// miss and the datagram would be denied. Writing dns_cache[ip]=Identity
+	// (the same identity the route is keyed on) makes the existing lookup hit. FQDN
 	// routes carry SeedIP==0 — CoreDNS populates their dns_cache entry.
 	//
 	// dns_cache is keyed by destination IP and has two writers: this seed and
-	// the CoreDNS dnsbpf plugin (which rewrites dns_cache[ip] on every A record).
+	// the CoreDNS dnsbpf plugin (which writes dns_cache[ip] on every A record).
 	// If an operator configures both an FQDN rule and a bare-IP rule for an IP
-	// the FQDN resolves to, both writers contend for that one key. The seed is
-	// insert-only (UpdateNoExist) so CoreDNS — the high-frequency, per-resolution
-	// writer — stays authoritative on any contested IP: an ErrKeyExist means
-	// CoreDNS already owns the entry, which is a no-op for us, not a failure.
-	// Both rules still route to valid Envoy listeners either way, so this only
-	// affects access-log attribution on the contested IP, never enforcement.
-	// GarbageCollectDNS skips every IP in m.seededIPs, so even after a CoreDNS
-	// overwrite lowers the entry to a short DNS TTL the seed is never evicted
-	// while the IP rule is live — the route can't fail closed between reconciles.
-	// The durable collision fix (keying routes on FQDN hashes) is tracked
-	// separately.
+	// the FQDN resolves to, both writers contend for that one key. Precedence
+	// is by source tag (cilium ipcache source-precedence analog): the seed
+	// writes DNSSourceSeed and wins — it represents an explicit operator rule
+	// whose route must hold regardless of DNS churn, so dnsbpf skips any key
+	// tagged DNSSourceSeed and GarbageCollectDNS never evicts one. Both rules
+	// still route to valid Envoy listeners either way; the contested IP's
+	// access-log attribution follows the seeded rule. The seed's sole removal
+	// path is the orphan diff below, when the IP rule is removed.
 	seeded := 0
 	for _, r := range routes {
 		if r.SeedIP == 0 {
 			continue
 		}
-		if err := m.seedDNSCacheIfAbsent(r.SeedIP, r.DomainHash, dnsSeedTTLSeconds); err != nil {
+		if err := m.seedDNSCache(r.SeedIP, r.Identity, dnsSeedTTLSeconds); err != nil {
 			m.log.Warn().Err(err).
 				Uint32("seed_ip", r.SeedIP).
-				Uint32("domain_hash", r.DomainHash).
+				Uint32("identity", uint32(r.Identity)).
 				Msg("ebpf sync-routes: seeding dns_cache for IP rule")
-			errs = append(errs, fmt.Errorf("seed dns_cache[ip=%d, domain_hash=%d]: %w", r.SeedIP, r.DomainHash, err))
+			errs = append(errs, fmt.Errorf("seed dns_cache[ip=%d, identity=%d]: %w", r.SeedIP, r.Identity, err))
 			continue
 		}
 		seeded++
 	}
 
 	// Update the protected-seed set and remove dns_cache entries for IP rules
-	// that went away. Without the delete, an orphan seed would linger for the
-	// full seed TTL misattributing access-log records; dropping it also lets a
-	// later GC pass reclaim the slot. A co-resident FQDN rule for the same IP
-	// just re-resolves through CoreDNS on its next query.
+	// that went away. Seed entries carry DNSSourceSeed, which GarbageCollectDNS
+	// never evicts and the dnsbpf plugin refuses to overwrite — this orphan
+	// delete is their sole removal path, so a dropped delete would pin the
+	// stale entry forever (denying that IP's allowed traffic, or aliasing a
+	// reissued identity). A co-resident FQDN rule for the same IP just
+	// re-resolves through CoreDNS on its next query.
 	m.seedMu.Lock()
-	next, orphaned := diffSeededIPs(routes, m.seededIPs)
+	next, seedErrs := reconcileSeeds(m.objs.DnsCache, routes, m.seededIPs, m.log)
 	m.seededIPs = next
 	m.seedMu.Unlock()
-	for _, ip := range orphaned {
-		if err := m.objs.DnsCache.Delete(ip); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.log.Debug().Err(err).Uint32("ip", ip).Msg("ebpf sync-routes: removing orphan dns_cache seed (non-fatal)")
-		}
-	}
+	errs = append(errs, seedErrs...)
 
-	m.log.Info().Int("routes", len(routes)).Int("ip_seeds", seeded).Int("errors", len(errs)).Msg("global route_map synced")
+	m.log.Info().
+		Int("routes", len(routes)).
+		Int("ip_seeds", seeded).
+		Int("errors", len(errs)).
+		Msg("global route_map synced")
 	return errors.Join(errs...)
 }
 
@@ -818,6 +838,38 @@ func diffSeededIPs(routes []Route, prev map[uint32]struct{}) (next map[uint32]st
 	return next, orphaned
 }
 
+// reconcileSeeds computes the next tracked-seed set for a SyncRoutes call and
+// deletes dns_cache entries for orphaned IP-literal seeds. ErrKeyNotExist
+// counts as success (the entry is already gone). An IP whose delete fails any
+// other way stays in the returned set: seed entries are exempt from GC
+// eviction, so this delete is their only removal path — retaining the IP makes
+// the next reconcile's diff list it as an orphan again and retry. Each failure
+// is also returned so SyncRoutes surfaces a non-nil error to the caller.
+func reconcileSeeds(
+	dnsCache bypassMap,
+	routes []Route,
+	prev map[uint32]struct{},
+	log *logger.Logger,
+) (map[uint32]struct{}, []error) {
+	var errs []error
+	next, orphaned := diffSeededIPs(routes, prev)
+	for _, ip := range orphaned {
+		err := dnsCache.Delete(ip)
+		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
+			continue
+		}
+		if log != nil {
+			log.Warn().Err(err).
+				Str("event", "dns_seed_orphan_delete_failed").
+				Uint32("ip", ip).
+				Msg("ebpf sync-routes: removing orphan dns_cache seed")
+		}
+		next[ip] = struct{}{}
+		errs = append(errs, fmt.Errorf("delete orphan dns_cache seed[ip=%d]: %w", ip, err))
+	}
+	return next, errs
+}
+
 // Disable sets the bypass flag for a container, allowing unrestricted egress.
 func (m *Manager) Disable(cgroupID uint64) error {
 	val := uint8(1)
@@ -837,32 +889,49 @@ func (m *Manager) Enable(cgroupID uint64) error {
 	return nil
 }
 
-// UpdateDNSCache writes a DNS resolution result to the dns_cache map,
-// overwriting any existing entry for the IP (last-writer-wins). Used by the
-// break-glass ebpf-manager CLI, where a manual override is the intent.
-func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32) error {
-	entry := clawkerDnsEntry{
-		DomainHash: domainHash,
-		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+// dnsExpiryTS returns the wall-clock expiry for a TTL, saturating at
+// MaxUint32 so the int64→uint32 narrowing can never wrap (expire_ts is a
+// u32 on the BPF side).
+func dnsExpiryTS(ttlSeconds uint32) uint32 {
+	exp := time.Now().Unix() + int64(ttlSeconds)
+	if exp <= 0 || exp > math.MaxUint32 {
+		return math.MaxUint32
 	}
-	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
+	return uint32(exp)
 }
 
-// seedDNSCacheIfAbsent writes a dns_cache entry only when the IP is not already
-// present (UpdateNoExist). Used by SyncRoutes to seed IP-literal routes without
-// clobbering a CoreDNS-populated entry for the same IP — ErrKeyExist means
-// CoreDNS already owns the key and is treated as a successful no-op. See the
-// two-writer contention note in SyncRoutes.
-func (m *Manager) seedDNSCacheIfAbsent(ip uint32, domainHash uint32, ttlSeconds uint32) error {
+// UpdateDNSCache writes a DNS resolution result to the dns_cache map,
+// overwriting any existing entry for the IP (last-writer-wins). Used by the
+// break-glass ebpf-manager CLI, where a manual override is the intent. The
+// entry is tagged DNSSourceDNS, so the dnsbpf plugin may later overwrite it
+// on a fresh resolution and GC expires it at its TTL like any DNS entry.
+func (m *Manager) UpdateDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error {
 	entry := clawkerDnsEntry{
-		DomainHash: domainHash,
-		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+		// Kernel-map encode boundary: raw on-wire uint32.
+		Identity: uint32(identity),
+		ExpireTs: dnsExpiryTS(ttlSeconds),
+		Source:   DNSSourceDNS,
 	}
-	if err := m.objs.DnsCache.Update(ip, entry, ebpf.UpdateNoExist); err != nil {
-		if errors.Is(err, ebpf.ErrKeyExist) {
-			return nil
-		}
-		return err
+	if err := m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("ebpf dns-update: %w", err)
+	}
+	return nil
+}
+
+// seedDNSCache writes a DNSSourceSeed dns_cache entry for an IP-literal
+// route, overwriting any DNS-derived entry for the same IP — seeds take
+// precedence (see the two-writer contention note in SyncRoutes). The dnsbpf
+// plugin refuses to overwrite a DNSSourceSeed entry, so the seed holds until
+// SyncRoutes' orphan diff removes it.
+func (m *Manager) seedDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error {
+	entry := clawkerDnsEntry{
+		// Kernel-map encode boundary: raw on-wire uint32.
+		Identity: uint32(identity),
+		ExpireTs: dnsExpiryTS(ttlSeconds),
+		Source:   DNSSourceSeed,
+	}
+	if err := m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("ebpf seed dns_cache: %w", err)
 	}
 	return nil
 }
@@ -894,6 +963,53 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cl
 	return cleared, failed, firstErr
 }
 
+// dnsEntryEvictable reports whether a dns_cache entry may be evicted by GC at
+// wall-clock now. Three vetoes, in order:
+//   - not yet expired;
+//   - DNSSourceSeed — IP-literal rule seeds are removed by SyncRoutes' orphan
+//     diff when the rule goes away, never by TTL expiry. The source tag in the
+//     map value (not the in-memory seededIPs set) carries this, so the
+//     protection holds across a CP restart, before the first SyncRoutes;
+//   - a live UDP flow to the IP (cilium's zombie-DNS analog: tofqdns zombie
+//     tracking keeps a name→IP mapping alive while connections persist). The
+//     BPF sendmsg4 path looks dns_cache up on every unconnected datagram, so
+//     evicting an expired entry mid-QUIC-stream would deny the flow's next
+//     datagram. The entry stays until the flow leaves udp_flow_map (LRU
+//     eviction of the idle flow), then the next sweep reclaims it.
+//
+// Pure — split out from GarbageCollectDNS for unit testability.
+func dnsEntryEvictable(ip uint32, entry clawkerDnsEntry, now uint32, liveUDP map[uint32]struct{}) bool {
+	if entry.ExpireTs >= now {
+		return false
+	}
+	if entry.Source == DNSSourceSeed {
+		return false
+	}
+	if _, live := liveUDP[ip]; live {
+		return false
+	}
+	return true
+}
+
+// liveUDPDstIPs walks udp_flow_map and returns the set of original
+// destination IPs (network byte order — the same representation dns_cache is
+// keyed by) that have reverse-NAT state, i.e. a UDP flow the kernel still
+// considers live. udp_flow_map is LRU, so abandoned flows age out without a
+// userspace sweep and stop vetoing eviction on their own.
+func (m *Manager) liveUDPDstIPs() (map[uint32]struct{}, error) {
+	live := make(map[uint32]struct{})
+	var k clawkerUdpFlowKey
+	var v clawkerUdpFlowVal
+	iter := m.objs.UdpFlowMap.Iterate()
+	for iter.Next(&k, &v) {
+		live[v.OrigDstIp] = struct{}{}
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("ebpf: iterating udp_flow_map: %w", err)
+	}
+	return live, nil
+}
+
 // GarbageCollectDNS removes expired entries from the dns_cache map and
 // returns (cleared, err): cleared is the number of entries actually evicted,
 // and err is non-nil (via joinDNSGCErrors) when the sweep could not reclaim —
@@ -902,32 +1018,42 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cl
 // still returns nil. The non-nil err lets the CP main loop's degraded-GC
 // detector trip on a persistently wedged sweep rather than mistaking a no-op
 // pass for progress. Individual delete failures are also logged at Debug and
-// the next GC pass retries them. The protected IP-literal seeds (m.seededIPs,
-// owned by SyncRoutes) are never evicted.
+// the next GC pass retries them. Two classes of expired entry are spared:
+// DNSSourceSeed entries (IP-literal rule seeds, lifecycle owned by
+// SyncRoutes) and entries whose IP still has a live flow in udp_flow_map
+// (cilium's zombie-DNS analog — see dnsEntryEvictable).
 func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 	now := uint32(time.Now().Unix())
 
-	// Snapshot the protected IP-literal seeds. Their lifecycle is owned by
-	// SyncRoutes (it deletes them when the IP rule is removed); GC must never
-	// evict a live seed, or a CoreDNS overwrite + short TTL would fail the rule's
-	// route closed until the next reconcile.
-	m.seedMu.Lock()
-	protected := m.seededIPs
-	m.seedMu.Unlock()
+	// Snapshot the set of original destination IPs with live UDP flows.
+	// Liveness is the eviction veto for expired entries; if the flow map
+	// can't be enumerated the veto set is unknown, so the sweep evicts
+	// nothing rather than risk killing a mid-stream flow.
+	liveUDP, flowErr := m.liveUDPDstIPs()
+	if flowErr != nil {
+		m.log.Warn().
+			Err(flowErr).
+			Msg("ebpf gc-dns: iterating udp_flow_map — skipping this sweep (next pass will retry)")
+		return 0, joinDNSGCErrors(flowErr, 0, nil)
+	}
 
 	var ip uint32
 	var entry clawkerDnsEntry
 	var expired []uint32
+	zombies := 0
 
 	iter := m.objs.DnsCache.Iterate()
 	for iter.Next(&ip, &entry) {
-		if entry.ExpireTs >= now {
-			continue
-		}
-		if _, isSeed := protected[ip]; isSeed {
+		if !dnsEntryEvictable(ip, entry, now, liveUDP) {
+			if entry.ExpireTs < now && entry.Source != DNSSourceSeed {
+				zombies++
+			}
 			continue
 		}
 		expired = append(expired, ip)
+	}
+	if zombies > 0 {
+		m.log.Debug().Int("zombies", zombies).Msg("ebpf gc-dns: sparing expired dns_cache entries with live UDP flows")
 	}
 
 	iterErr := iter.Err()
@@ -1003,7 +1129,7 @@ func (m *Manager) RatelimitDrops() *ebpf.Map {
 }
 
 // DNSCache returns the pinned dns_cache map handle. Exposed so the
-// netlogger reverse-DNS map can iterate {IPv4 -> domain_hash} entries
+// netlogger reverse-DNS map can iterate {IPv4 -> identity} entries
 // without re-opening the pinned file. Read-only access pattern.
 func (m *Manager) DNSCache() *ebpf.Map {
 	return m.objs.DnsCache
@@ -1024,12 +1150,13 @@ type BypassEntry struct {
 
 // DNSCacheEntry mirrors one dns_cache map entry: an IPv4 address
 // (network byte order — matches ctx->user_ip4 in the BPF connect hook
-// and the ContainerConfig IP fields), its FNV-1a domain hash, and
+// and the ContainerConfig IP fields), its route identity, and
 // wall-clock expiration.
 type DNSCacheEntry struct {
-	IP         net.IP `json:"ip"`
-	DomainHash uint32 `json:"domain_hash"`
-	ExpireTS   uint32 `json:"expire_ts"`
+	IP       net.IP        `json:"ip"`
+	Identity RouteIdentity `json:"identity"`
+	ExpireTS uint32        `json:"expireTs"`
+	Source   uint8         `json:"source"` // DNSSource* write-precedence tag
 }
 
 // DumpRoutes returns every entry in the global route_map.
@@ -1049,10 +1176,11 @@ func (m *Manager) DumpRoutes() ([]Route, error) {
 	iter := m.objs.RouteMap.Iterate()
 	for iter.Next(&k, &v) {
 		out = append(out, Route{
-			DomainHash: k.DomainHash,
-			DstPort:    k.DstPort,
-			EnvoyPort:  v.EnvoyPort,
-			L4Proto:    k.L4Proto,
+			// Kernel-map decode boundary: bpf2go key carries the raw uint32.
+			Identity:  RouteIdentity(k.Identity),
+			DstPort:   k.DstPort,
+			EnvoyPort: v.EnvoyPort,
+			L4Proto:   k.L4Proto,
 		})
 	}
 	if err := iter.Err(); err != nil {
@@ -1117,9 +1245,11 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 	iter := m.objs.DnsCache.Iterate()
 	for iter.Next(&ip, &entry) {
 		out = append(out, DNSCacheEntry{
-			IP:         Uint32ToIP(ip),
-			DomainHash: entry.DomainHash,
-			ExpireTS:   entry.ExpireTs,
+			IP: Uint32ToIP(ip),
+			// Kernel-map decode boundary: bpf2go entry carries the raw uint32.
+			Identity: RouteIdentity(entry.Identity),
+			ExpireTS: entry.ExpireTs,
+			Source:   entry.Source,
 		})
 	}
 	if err := iter.Err(); err != nil {
@@ -1129,15 +1259,15 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 }
 
 // Route describes a per-domain egress route for a container, identified by
-// domain hash. L4Proto (L4ProtoTCP/L4ProtoUDP) selects the transport so TCP and
-// UDP routes for the same {domain, port} stay independent in the route_map.
+// route identity. L4Proto (L4ProtoTCP/L4ProtoUDP) selects the transport so TCP
+// and UDP routes for the same {domain, port} stay independent in the route_map.
 type Route struct {
-	DomainHash uint32 `json:"domain_hash"`
-	DstPort    uint16 `json:"dst_port"`
-	EnvoyPort  uint16 `json:"envoy_port"`
-	L4Proto    uint8  `json:"l4_proto"`
+	Identity  RouteIdentity `json:"identity"`
+	DstPort   uint16        `json:"dstPort"`
+	EnvoyPort uint16        `json:"envoyPort"`
+	L4Proto   uint8         `json:"l4Proto"`
 	// SeedIP, when non-zero, is a literal IPv4 dst (network byte order) whose
-	// dns_cache entry SyncRoutes must seed (dns_cache[SeedIP]=DomainHash) so the
+	// dns_cache entry SyncRoutes must seed (dns_cache[SeedIP]=Identity) so the
 	// connect4/sendmsg4 lookup hits. The agent connects to the bare IP, which
 	// CoreDNS never resolved, so without the seed the lookup misses. Zero for
 	// FQDN routes (CoreDNS populates dns_cache on resolution).
@@ -1145,18 +1275,17 @@ type Route struct {
 }
 
 // dnsSeedTTLSeconds is the TTL for SyncRoutes-seeded IP-literal dns_cache
-// entries. Seeding is insert-only (seedDNSCacheIfAbsent uses UpdateNoExist and
-// no-ops on ErrKeyExist), so a re-seed on a subsequent rule change/reload never
-// refreshes an existing entry's TTL — it must outlive the reconcile cadence on
-// its own. The long TTL is therefore load-bearing: it keeps the seed alive
-// across reconciles without GarbageCollectDNS evicting it (which is also why
-// GarbageCollectDNS skips m.seededIPs while the IP rule is live).
+// entries. The value is nominal: seeds carry DNSSourceSeed, which
+// GarbageCollectDNS never evicts regardless of expire_ts — their sole removal
+// path is SyncRoutes' orphan diff when the IP rule goes away. A far-future
+// TTL keeps break-glass dumps honest (the entry is not "expired") rather
+// than providing the protection itself.
 const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
 // NewContainerConfig builds a BPF container_config from network parameters.
 func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
-	hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error) {
-
+	hostProxyIP string, hostProxyPort, egressPort uint16,
+) (clawkerContainerConfig, error) {
 	netAddr, netMask, err := CIDRToAddrMask(cidr)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", cidr, err)

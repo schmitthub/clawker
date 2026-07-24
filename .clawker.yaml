@@ -7,6 +7,8 @@ agent:
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
+    - TERM_PROGRAM
+    - TERM_PROGRAM_VERSION
 harnesses:
   claude:
     config:

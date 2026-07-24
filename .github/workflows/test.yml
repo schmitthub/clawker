@@ -28,3 +28,26 @@ jobs:
           path: coverage.out
           if-no-files-found: ignore
           retention-days: 7
+
+  bpf:
+    # Privileged BPF prog-run suite (cilium bpf/tests pattern): SYSCALL
+    # wrapper programs #including the production common.h run under
+    # BPF_PROG_TEST_RUN against real kernel maps. Needs CAP_BPF — the test
+    # binary runs under sudo via `make test-bpf` — and the pinned BPF apt
+    # toolchain, which only resolves on ubuntu-24.04.
+    name: BPF Prog-Run Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install BPF toolchain
+        run: sudo apt-get update && sudo make bpf-deps
+
+      - name: Run privileged BPF prog-run tests
+        run: make test-bpf
