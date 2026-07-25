@@ -244,7 +244,7 @@ var _ config.Config = &ConfigMock{}
 //			TestRepoDirEnvVarFunc: func() string {
 //				panic("mock out the TestRepoDirEnvVar method")
 //			},
-//			WorkspaceDefaultModeFunc: func() string {
+//			WorkspaceDefaultModeFunc: func() config.Mode {
 //				panic("mock out the WorkspaceDefaultMode method")
 //			},
 //		}
@@ -480,7 +480,7 @@ type ConfigMock struct {
 	TestRepoDirEnvVarFunc func() string
 
 	// WorkspaceDefaultModeFunc mocks the WorkspaceDefaultMode method.
-	WorkspaceDefaultModeFunc func() string
+	WorkspaceDefaultModeFunc func() config.Mode
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -2845,7 +2845,7 @@ func (mock *ConfigMock) TestRepoDirEnvVarCalls() []struct {
 }
 
 // WorkspaceDefaultMode calls WorkspaceDefaultModeFunc.
-func (mock *ConfigMock) WorkspaceDefaultMode() string {
+func (mock *ConfigMock) WorkspaceDefaultMode() config.Mode {
 	if mock.WorkspaceDefaultModeFunc == nil {
 		panic("ConfigMock.WorkspaceDefaultModeFunc: method is nil but Config.WorkspaceDefaultMode was just called")
 	}

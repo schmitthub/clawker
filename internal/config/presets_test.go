@@ -181,7 +181,7 @@ func TestPresets_SchemaDefaultsFillGaps(t *testing.T) {
 			f.writeProject(t, p.YAML)
 			cfg := f.load(t)
 
-			assert.Equal(t, "bind", cfg.WorkspaceDefaultMode(),
+			assert.Equal(t, config.ModeBind, cfg.WorkspaceDefaultMode(),
 				"preset %q: workspace.default_mode should be filled by schema default", p.Name)
 		})
 	}

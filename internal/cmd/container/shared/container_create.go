@@ -1910,7 +1910,7 @@ func setupHostProxy(
 // before resolveWorkDir creates a git worktree we'd only reject later.
 // workspace.SetupMounts enforces the same invariant as the load-bearing guard;
 // this is the fail-fast UX layer.
-func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, defaultMode string) error {
+func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, defaultMode config.Mode) error {
 	if containerOpts.Worktree == "" {
 		return nil
 	}
@@ -2326,7 +2326,7 @@ func buildCreateTimeEnv(
 ) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
-		workspaceMode = opts.Config.WorkspaceDefaultMode()
+		workspaceMode = string(opts.Config.WorkspaceDefaultMode())
 	}
 
 	agentCfg := opts.Config.AgentConfig()

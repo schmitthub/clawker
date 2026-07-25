@@ -116,7 +116,7 @@ func TestNewBlankConfig(t *testing.T) {
 
 	build := cfg.BuildConfig()
 	assert.Equal(t, []string{"ripgrep"}, build.Packages)
-	assert.Equal(t, "bind", cfg.WorkspaceDefaultMode())
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 	assert.False(t, cfg.SecurityConfig().DockerSocket)
 
 	// Virtual-layer defaults: absent keys resolve to the shipped harness and
@@ -192,7 +192,38 @@ workspace:
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"cowsay"}, cfg.BuildConfig().Packages)
-	assert.Equal(t, "snapshot", cfg.WorkspaceDefaultMode())
+	assert.Equal(t, ModeSnapshot, cfg.WorkspaceDefaultMode())
+}
+
+func TestWorkspaceDefaultMode_EnumEnforcedAtDecode(t *testing.T) {
+	t.Run("invalid value fails construction", func(t *testing.T) {
+		_, err := NewFromString("workspace:\n  default_mode: bogus\n", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid mode")
+	})
+
+	t.Run("invalid value rejected by Set", func(t *testing.T) {
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		err = cfg.ProjectStore().Set([]string{"workspace", "default_mode"}, "bogus")
+		require.Error(t, err)
+		// Nothing staged: the accessor still reports unset.
+		assert.Equal(t, Mode(""), cfg.WorkspaceDefaultMode())
+	})
+
+	t.Run("valid values load", func(t *testing.T) {
+		for _, mode := range []Mode{ModeBind, ModeSnapshot} {
+			cfg, err := NewFromString("workspace:\n  default_mode: "+string(mode)+"\n", "")
+			require.NoError(t, err)
+			assert.Equal(t, mode, cfg.WorkspaceDefaultMode())
+		}
+	})
+
+	t.Run("unset reads as empty mode", func(t *testing.T) {
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		assert.Equal(t, Mode(""), cfg.WorkspaceDefaultMode())
+	})
 }
 
 func TestNewFromString_settingsOnly(t *testing.T) {
@@ -350,7 +381,7 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	// NewConfig loads defaults — verify critical values are present
-	assert.Equal(t, "bind", cfg.WorkspaceDefaultMode())
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 	assert.True(t, cfg.FirewallEnabled())
 
 	mon := cfg.MonitoringConfig()
@@ -388,7 +419,7 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "emacs", cfg.AgentConfig().Editor)
 
 	// Defaults for unset values should still be present
-	assert.Equal(t, "bind", cfg.WorkspaceDefaultMode())
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 }
 
 func TestNewConfig_monitorExtensionsFileOverridesDefault(t *testing.T) {
@@ -450,7 +481,7 @@ func TestSetProject_mutation(t *testing.T) {
 	assert.Equal(t, "emacs", cfg.AgentConfig().Editor)
 
 	// Other values should be preserved
-	assert.Equal(t, "bind", cfg.WorkspaceDefaultMode())
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 }
 
 func TestSetSettings_mutation(t *testing.T) {

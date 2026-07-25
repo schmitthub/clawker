@@ -15,6 +15,10 @@
 package config
 
 import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -26,6 +30,24 @@ const (
 	// ModeSnapshot represents ephemeral volume copy (isolated).
 	ModeSnapshot Mode = "snapshot"
 )
+
+// UnmarshalYAML enforces the mode enum at the yaml layer: every decode of a
+// Mode-typed schema field — the constructor's strict load and Set's candidate
+// decode alike — rejects a value outside the enum, so an invalid mode can
+// neither load from disk nor be staged for write. Unknown KEYS stay tolerated
+// by the store; this gates only the VALUE of a declared mode field.
+func (m *Mode) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return fmt.Errorf("decoding workspace mode: %w", err)
+	}
+	parsed, err := ParseMode(s)
+	if err != nil {
+		return err
+	}
+	*m = parsed
+	return nil
+}
 
 // Schema key segments — the yaml tag of each node the store verbs address.
 // Keys are segment slices now (storage.Get/Set/Remove), so these names are the

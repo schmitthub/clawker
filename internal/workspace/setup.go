@@ -27,13 +27,18 @@ var ErrWorktreeSnapshot = errors.New(
 // ResolveMode applies workspace-mode precedence: an explicit override (CLI
 // --mode flag) wins, otherwise the project's configured default mode. An empty
 // resulting value resolves to ModeBind (config.ParseMode's default); only an
-// unrecognized non-empty value returns an error.
-func ResolveMode(override, defaultMode string) (config.Mode, error) {
+// unrecognized non-empty override returns an error — the config side is
+// already enum-gated at decode, so only the flag value still needs parsing.
+func ResolveMode(override string, defaultMode config.Mode) (config.Mode, error) {
 	modeStr := override
 	if modeStr == "" {
-		modeStr = defaultMode
+		modeStr = string(defaultMode)
 	}
-	return config.ParseMode(modeStr)
+	mode, err := config.ParseMode(modeStr)
+	if err != nil {
+		return "", fmt.Errorf("resolving workspace mode: %w", err)
+	}
+	return mode, nil
 }
 
 // SetupMountsConfig holds configuration for workspace mount setup

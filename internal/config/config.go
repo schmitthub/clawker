@@ -84,8 +84,9 @@ type Config interface {
 	AgentConfig() AgentConfig
 
 	// WorkspaceDefaultMode returns `workspace.default_mode` (bind/snapshot);
-	// empty when unset (no defaults layer).
-	WorkspaceDefaultMode() string
+	// empty when unset (no defaults layer). The value is enum-gated at decode
+	// (Mode.UnmarshalYAML), so a loaded config can only ever hold a valid mode.
+	WorkspaceDefaultMode() Mode
 
 	// SecurityConfig returns the `security:` block — the container security
 	// posture (firewall rules, docker socket, capabilities, host proxy, git
@@ -702,10 +703,10 @@ func (c *configImpl) AgentConfig() AgentConfig {
 	return agent
 }
 
-func (c *configImpl) WorkspaceDefaultMode() string {
-	mode, err := storage.Get[string](c.project, keyWorkspace, keyDefaultMode)
+func (c *configImpl) WorkspaceDefaultMode() Mode {
+	mode, err := storage.Get[Mode](c.project, keyWorkspace, keyDefaultMode)
 	if err != nil {
-		return ""
+		return "" // absent (ErrKeyNotFound) → unset; invalid values cannot survive the construction decode
 	}
 	return mode
 }

@@ -78,13 +78,37 @@ func (s MySchema) Fields() storage.FieldSet {
 
 `KindLast` is the extension boundary. Consumer kinds use `storage.KindLast + 1`, `+ 2`, etc. When `normalizeStruct` encounters an unknown type, it tries the `KindFunc` before panicking. A `KindFunc` that returns a kind `<= KindLast` panics — consumer kinds must be strictly greater. StoreUI enforces read-only on consumer-defined kinds (`> KindLast`) in `fieldsToBrowserFields`.
 
+## Enum-Shaped Fields (closed value sets)
+
+A field whose value must come from a closed set gets a named type with a
+validating `yaml.Unmarshaler` — the yaml-native mechanism, zero engine
+involvement. Storage's strict decode IS a yaml.v3 `Decode`, so the unmarshaler
+runs at both validation moments automatically: an invalid on-disk value fails
+construction, and `Set` rejects it in the candidate decode (nothing staged).
+Reference: `config.Mode` (`internal/config/consts.go`) backing
+`workspace.default_mode`.
+
+```go
+func (m *Mode) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil { ... }
+	parsed, err := ParseMode(s) // the enum gate
+	...
+}
+```
+
+Unknown KEYS stay tolerated (dropped/preserved by the store); the unmarshaler
+gates only the VALUE of the declared field. Do not build engine-side enum
+tags for this — the unmarshaler interface already is the validation seam.
+
 ## When Adding a New Config Field
 
 1. Add the field to the struct in `schema.go` with `yaml`, `label`, and `desc` tags
 2. If it needs a default, add `default:"value"` tag
 3. If it's load-bearing, add `required:"true"` tag
-4. If its type falls outside every shape storage classifies (struct-valued slices and maps are native — check the `FieldKind` list first), register a custom `FieldKind` via `KindFunc` in the schema's `Fields()` method — do not add domain types to storage
-5. CI enforces non-empty `desc` via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`
+4. If its value comes from a closed set, use a named type with a validating `UnmarshalYAML` (see "Enum-Shaped Fields")
+5. If its type falls outside every shape storage classifies (struct-valued slices and maps are native — check the `FieldKind` list first), register a custom `FieldKind` via `KindFunc` in the schema's `Fields()` method — do not add domain types to storage
+6. CI enforces non-empty `desc` via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`
 
 ## No Hardcoded YAML Templates
 

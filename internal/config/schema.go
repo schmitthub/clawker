@@ -229,7 +229,9 @@ func (a *AgentConfig) SharedDirEnabled() bool {
 
 // WorkspaceConfig defines workspace mounting behavior
 type WorkspaceConfig struct {
-	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)" default:"bind" required:"true"`
+	// DefaultMode is Mode-typed so its UnmarshalYAML gates the enum on every
+	// decode — a value outside bind/snapshot fails the load and Set alike.
+	DefaultMode Mode `yaml:"default_mode" label:"Default Mode" desc:"bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)" default:"bind" required:"true"`
 }
 
 // PathRule defines an HTTP/HTTPS path-level filtering rule for MITM inspection.

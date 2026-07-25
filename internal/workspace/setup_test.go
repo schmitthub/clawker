@@ -336,7 +336,7 @@ func TestResolveMode(t *testing.T) {
 	tests := []struct {
 		name        string
 		override    string
-		defaultMode string
+		defaultMode config.Mode
 		want        config.Mode
 		wantErr     bool
 	}{
