@@ -74,7 +74,7 @@ func listRun(_ context.Context, opts *ListOptions) error {
 	if err != nil {
 		return err
 	}
-	aliases := cfg.Project().Aliases
+	aliases := cfg.Aliases()
 	if len(aliases) == 0 {
 		fmt.Fprintln(ios.ErrOut, "No aliases configured.")
 		fmt.Fprintln(ios.ErrOut, "Use 'clawker alias set <alias> <expansion>' to create one.")
@@ -118,7 +118,7 @@ func buildAliasRows(cfg config.Config, aliases map[string]string) []aliasRow {
 	rows := make([]aliasRow, 0, len(aliases))
 	for name, expansion := range aliases {
 		source := sourceDefault
-		if winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(name)); ok && winner.Path != "" {
+		if winner, ok := cfg.ProjectStore().Provenance(shared.AliasKey(name)...); ok && winner.Path != "" {
 			source = winner.Path
 		}
 		rows = append(rows, aliasRow{Name: name, Expansion: expansion, Source: source})

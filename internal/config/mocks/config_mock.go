@@ -19,11 +19,20 @@ var _ config.Config = &ConfigMock{}
 //
 //		// make and configure a mocked config.Config
 //		mockedConfig := &ConfigMock{
+//			AgentConfigFunc: func() config.AgentConfig {
+//				panic("mock out the AgentConfig method")
+//			},
+//			AliasesFunc: func() map[string]string {
+//				panic("mock out the Aliases method")
+//			},
 //			BridgePIDFilePathFunc: func(containerID string) (string, error) {
 //				panic("mock out the BridgePIDFilePath method")
 //			},
 //			BridgesSubdirFunc: func() (string, error) {
 //				panic("mock out the BridgesSubdir method")
+//			},
+//			BuildConfigFunc: func() config.BuildConfig {
+//				panic("mock out the BuildConfig method")
 //			},
 //			BuildSubdirFunc: func() (string, error) {
 //				panic("mock out the BuildSubdir method")
@@ -48,6 +57,9 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			ContainerUIDFunc: func() int {
 //				panic("mock out the ContainerUID method")
+//			},
+//			ControlPlaneSettingsFunc: func() config.ControlPlaneSettings {
+//				panic("mock out the ControlPlaneSettings method")
 //			},
 //			CoreDNSHealthHostPortFunc: func() int {
 //				panic("mock out the CoreDNSHealthHostPort method")
@@ -96,6 +108,12 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
+//			},
+//			FirewallEnabledFunc: func() bool {
+//				panic("mock out the FirewallEnabled method")
+//			},
+//			HarnessConfigForFunc: func(name string) *config.HarnessConfig {
+//				panic("mock out the HarnessConfigFor method")
 //			},
 //			HostProxyConfigFunc: func() config.HostProxyConfig {
 //				panic("mock out the HostProxyConfig method")
@@ -154,6 +172,9 @@ var _ config.Config = &ConfigMock{}
 //			ManagedLabelValueFunc: func() string {
 //				panic("mock out the ManagedLabelValue method")
 //			},
+//			MonitorExtensionsFunc: func() []string {
+//				panic("mock out the MonitorExtensions method")
+//			},
 //			MonitorSubdirFunc: func() (string, error) {
 //				panic("mock out the MonitorSubdir method")
 //			},
@@ -172,14 +193,20 @@ var _ config.Config = &ConfigMock{}
 //			PidsSubdirFunc: func() (string, error) {
 //				panic("mock out the PidsSubdir method")
 //			},
-//			ProjectFunc: func() *config.Project {
-//				panic("mock out the Project method")
+//			PostInitForFunc: func(name string) string {
+//				panic("mock out the PostInitFor method")
+//			},
+//			PreRunForFunc: func(name string) string {
+//				panic("mock out the PreRunFor method")
 //			},
 //			ProjectConfigFileNameFunc: func() string {
 //				panic("mock out the ProjectConfigFileName method")
 //			},
 //			ProjectEgressRulesFunc: func() []config.EgressRule {
 //				panic("mock out the ProjectEgressRules method")
+//			},
+//			ProjectNameFunc: func() string {
+//				panic("mock out the ProjectName method")
 //			},
 //			ProjectRootFunc: func() string {
 //				panic("mock out the ProjectRoot method")
@@ -199,8 +226,8 @@ var _ config.Config = &ConfigMock{}
 //			PurposeMonitoringFunc: func() string {
 //				panic("mock out the PurposeMonitoring method")
 //			},
-//			SettingsFunc: func() *config.Settings {
-//				panic("mock out the Settings method")
+//			SecurityConfigFunc: func() config.SecurityConfig {
+//				panic("mock out the SecurityConfig method")
 //			},
 //			SettingsFileNameFunc: func() string {
 //				panic("mock out the SettingsFileName method")
@@ -217,6 +244,9 @@ var _ config.Config = &ConfigMock{}
 //			TestRepoDirEnvVarFunc: func() string {
 //				panic("mock out the TestRepoDirEnvVar method")
 //			},
+//			WorkspaceDefaultModeFunc: func() string {
+//				panic("mock out the WorkspaceDefaultMode method")
+//			},
 //		}
 //
 //		// use mockedConfig in code that requires config.Config
@@ -224,11 +254,20 @@ var _ config.Config = &ConfigMock{}
 //
 //	}
 type ConfigMock struct {
+	// AgentConfigFunc mocks the AgentConfig method.
+	AgentConfigFunc func() config.AgentConfig
+
+	// AliasesFunc mocks the Aliases method.
+	AliasesFunc func() map[string]string
+
 	// BridgePIDFilePathFunc mocks the BridgePIDFilePath method.
 	BridgePIDFilePathFunc func(containerID string) (string, error)
 
 	// BridgesSubdirFunc mocks the BridgesSubdir method.
 	BridgesSubdirFunc func() (string, error)
+
+	// BuildConfigFunc mocks the BuildConfig method.
+	BuildConfigFunc func() config.BuildConfig
 
 	// BuildSubdirFunc mocks the BuildSubdir method.
 	BuildSubdirFunc func() (string, error)
@@ -253,6 +292,9 @@ type ConfigMock struct {
 
 	// ContainerUIDFunc mocks the ContainerUID method.
 	ContainerUIDFunc func() int
+
+	// ControlPlaneSettingsFunc mocks the ControlPlaneSettings method.
+	ControlPlaneSettingsFunc func() config.ControlPlaneSettings
 
 	// CoreDNSHealthHostPortFunc mocks the CoreDNSHealthHostPort method.
 	CoreDNSHealthHostPortFunc func() int
@@ -301,6 +343,12 @@ type ConfigMock struct {
 
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
+
+	// FirewallEnabledFunc mocks the FirewallEnabled method.
+	FirewallEnabledFunc func() bool
+
+	// HarnessConfigForFunc mocks the HarnessConfigFor method.
+	HarnessConfigForFunc func(name string) *config.HarnessConfig
 
 	// HostProxyConfigFunc mocks the HostProxyConfig method.
 	HostProxyConfigFunc func() config.HostProxyConfig
@@ -359,6 +407,9 @@ type ConfigMock struct {
 	// ManagedLabelValueFunc mocks the ManagedLabelValue method.
 	ManagedLabelValueFunc func() string
 
+	// MonitorExtensionsFunc mocks the MonitorExtensions method.
+	MonitorExtensionsFunc func() []string
+
 	// MonitorSubdirFunc mocks the MonitorSubdir method.
 	MonitorSubdirFunc func() (string, error)
 
@@ -377,14 +428,20 @@ type ConfigMock struct {
 	// PidsSubdirFunc mocks the PidsSubdir method.
 	PidsSubdirFunc func() (string, error)
 
-	// ProjectFunc mocks the Project method.
-	ProjectFunc func() *config.Project
+	// PostInitForFunc mocks the PostInitFor method.
+	PostInitForFunc func(name string) string
+
+	// PreRunForFunc mocks the PreRunFor method.
+	PreRunForFunc func(name string) string
 
 	// ProjectConfigFileNameFunc mocks the ProjectConfigFileName method.
 	ProjectConfigFileNameFunc func() string
 
 	// ProjectEgressRulesFunc mocks the ProjectEgressRules method.
 	ProjectEgressRulesFunc func() []config.EgressRule
+
+	// ProjectNameFunc mocks the ProjectName method.
+	ProjectNameFunc func() string
 
 	// ProjectRootFunc mocks the ProjectRoot method.
 	ProjectRootFunc func() string
@@ -404,8 +461,8 @@ type ConfigMock struct {
 	// PurposeMonitoringFunc mocks the PurposeMonitoring method.
 	PurposeMonitoringFunc func() string
 
-	// SettingsFunc mocks the Settings method.
-	SettingsFunc func() *config.Settings
+	// SecurityConfigFunc mocks the SecurityConfig method.
+	SecurityConfigFunc func() config.SecurityConfig
 
 	// SettingsFileNameFunc mocks the SettingsFileName method.
 	SettingsFileNameFunc func() string
@@ -422,8 +479,17 @@ type ConfigMock struct {
 	// TestRepoDirEnvVarFunc mocks the TestRepoDirEnvVar method.
 	TestRepoDirEnvVarFunc func() string
 
+	// WorkspaceDefaultModeFunc mocks the WorkspaceDefaultMode method.
+	WorkspaceDefaultModeFunc func() string
+
 	// calls tracks calls to the methods.
 	calls struct {
+		// AgentConfig holds details about calls to the AgentConfig method.
+		AgentConfig []struct {
+		}
+		// Aliases holds details about calls to the Aliases method.
+		Aliases []struct {
+		}
 		// BridgePIDFilePath holds details about calls to the BridgePIDFilePath method.
 		BridgePIDFilePath []struct {
 			// ContainerID is the containerID argument value.
@@ -431,6 +497,9 @@ type ConfigMock struct {
 		}
 		// BridgesSubdir holds details about calls to the BridgesSubdir method.
 		BridgesSubdir []struct {
+		}
+		// BuildConfig holds details about calls to the BuildConfig method.
+		BuildConfig []struct {
 		}
 		// BuildSubdir holds details about calls to the BuildSubdir method.
 		BuildSubdir []struct {
@@ -455,6 +524,9 @@ type ConfigMock struct {
 		}
 		// ContainerUID holds details about calls to the ContainerUID method.
 		ContainerUID []struct {
+		}
+		// ControlPlaneSettings holds details about calls to the ControlPlaneSettings method.
+		ControlPlaneSettings []struct {
 		}
 		// CoreDNSHealthHostPort holds details about calls to the CoreDNSHealthHostPort method.
 		CoreDNSHealthHostPort []struct {
@@ -503,6 +575,14 @@ type ConfigMock struct {
 		}
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
+		}
+		// FirewallEnabled holds details about calls to the FirewallEnabled method.
+		FirewallEnabled []struct {
+		}
+		// HarnessConfigFor holds details about calls to the HarnessConfigFor method.
+		HarnessConfigFor []struct {
+			// Name is the name argument value.
+			Name string
 		}
 		// HostProxyConfig holds details about calls to the HostProxyConfig method.
 		HostProxyConfig []struct {
@@ -561,6 +641,9 @@ type ConfigMock struct {
 		// ManagedLabelValue holds details about calls to the ManagedLabelValue method.
 		ManagedLabelValue []struct {
 		}
+		// MonitorExtensions holds details about calls to the MonitorExtensions method.
+		MonitorExtensions []struct {
+		}
 		// MonitorSubdir holds details about calls to the MonitorSubdir method.
 		MonitorSubdir []struct {
 		}
@@ -579,14 +662,24 @@ type ConfigMock struct {
 		// PidsSubdir holds details about calls to the PidsSubdir method.
 		PidsSubdir []struct {
 		}
-		// Project holds details about calls to the Project method.
-		Project []struct {
+		// PostInitFor holds details about calls to the PostInitFor method.
+		PostInitFor []struct {
+			// Name is the name argument value.
+			Name string
+		}
+		// PreRunFor holds details about calls to the PreRunFor method.
+		PreRunFor []struct {
+			// Name is the name argument value.
+			Name string
 		}
 		// ProjectConfigFileName holds details about calls to the ProjectConfigFileName method.
 		ProjectConfigFileName []struct {
 		}
 		// ProjectEgressRules holds details about calls to the ProjectEgressRules method.
 		ProjectEgressRules []struct {
+		}
+		// ProjectName holds details about calls to the ProjectName method.
+		ProjectName []struct {
 		}
 		// ProjectRoot holds details about calls to the ProjectRoot method.
 		ProjectRoot []struct {
@@ -606,8 +699,8 @@ type ConfigMock struct {
 		// PurposeMonitoring holds details about calls to the PurposeMonitoring method.
 		PurposeMonitoring []struct {
 		}
-		// Settings holds details about calls to the Settings method.
-		Settings []struct {
+		// SecurityConfig holds details about calls to the SecurityConfig method.
+		SecurityConfig []struct {
 		}
 		// SettingsFileName holds details about calls to the SettingsFileName method.
 		SettingsFileName []struct {
@@ -624,9 +717,15 @@ type ConfigMock struct {
 		// TestRepoDirEnvVar holds details about calls to the TestRepoDirEnvVar method.
 		TestRepoDirEnvVar []struct {
 		}
+		// WorkspaceDefaultMode holds details about calls to the WorkspaceDefaultMode method.
+		WorkspaceDefaultMode []struct {
+		}
 	}
+	lockAgentConfig             sync.RWMutex
+	lockAliases                 sync.RWMutex
 	lockBridgePIDFilePath       sync.RWMutex
 	lockBridgesSubdir           sync.RWMutex
+	lockBuildConfig             sync.RWMutex
 	lockBuildSubdir             sync.RWMutex
 	lockBundleDeclarations      sync.RWMutex
 	lockCPIPLastOctet           sync.RWMutex
@@ -635,6 +734,7 @@ type ConfigMock struct {
 	lockConfigDirEnvVar         sync.RWMutex
 	lockContainerGID            sync.RWMutex
 	lockContainerUID            sync.RWMutex
+	lockControlPlaneSettings    sync.RWMutex
 	lockCoreDNSHealthHostPort   sync.RWMutex
 	lockCoreDNSHealthPath       sync.RWMutex
 	lockCoreDNSIPLastOctet      sync.RWMutex
@@ -651,6 +751,8 @@ type ConfigMock struct {
 	lockEnvoyUDPPortBase        sync.RWMutex
 	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
+	lockFirewallEnabled         sync.RWMutex
+	lockHarnessConfigFor        sync.RWMutex
 	lockHostProxyConfig         sync.RWMutex
 	lockHostProxyLogFilePath    sync.RWMutex
 	lockHostProxyPIDFilePath    sync.RWMutex
@@ -670,27 +772,85 @@ type ConfigMock struct {
 	lockLoggingConfig           sync.RWMutex
 	lockLogsSubdir              sync.RWMutex
 	lockManagedLabelValue       sync.RWMutex
+	lockMonitorExtensions       sync.RWMutex
 	lockMonitorSubdir           sync.RWMutex
 	lockMonitoringConfig        sync.RWMutex
 	lockOpenSearchDashboardsURL sync.RWMutex
 	lockOpenSearchURL           sync.RWMutex
 	lockOtelCollectorURL        sync.RWMutex
 	lockPidsSubdir              sync.RWMutex
-	lockProject                 sync.RWMutex
+	lockPostInitFor             sync.RWMutex
+	lockPreRunFor               sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
 	lockProjectEgressRules      sync.RWMutex
+	lockProjectName             sync.RWMutex
 	lockProjectRoot             sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockPurposeAgent            sync.RWMutex
 	lockPurposeFirewall         sync.RWMutex
 	lockPurposeMonitoring       sync.RWMutex
-	lockSettings                sync.RWMutex
+	lockSecurityConfig          sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
 	lockSettingsStore           sync.RWMutex
 	lockShareSubdir             sync.RWMutex
 	lockStateDirEnvVar          sync.RWMutex
 	lockTestRepoDirEnvVar       sync.RWMutex
+	lockWorkspaceDefaultMode    sync.RWMutex
+}
+
+// AgentConfig calls AgentConfigFunc.
+func (mock *ConfigMock) AgentConfig() config.AgentConfig {
+	if mock.AgentConfigFunc == nil {
+		panic("ConfigMock.AgentConfigFunc: method is nil but Config.AgentConfig was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockAgentConfig.Lock()
+	mock.calls.AgentConfig = append(mock.calls.AgentConfig, callInfo)
+	mock.lockAgentConfig.Unlock()
+	return mock.AgentConfigFunc()
+}
+
+// AgentConfigCalls gets all the calls that were made to AgentConfig.
+// Check the length with:
+//
+//	len(mockedConfig.AgentConfigCalls())
+func (mock *ConfigMock) AgentConfigCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockAgentConfig.RLock()
+	calls = mock.calls.AgentConfig
+	mock.lockAgentConfig.RUnlock()
+	return calls
+}
+
+// Aliases calls AliasesFunc.
+func (mock *ConfigMock) Aliases() map[string]string {
+	if mock.AliasesFunc == nil {
+		panic("ConfigMock.AliasesFunc: method is nil but Config.Aliases was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockAliases.Lock()
+	mock.calls.Aliases = append(mock.calls.Aliases, callInfo)
+	mock.lockAliases.Unlock()
+	return mock.AliasesFunc()
+}
+
+// AliasesCalls gets all the calls that were made to Aliases.
+// Check the length with:
+//
+//	len(mockedConfig.AliasesCalls())
+func (mock *ConfigMock) AliasesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockAliases.RLock()
+	calls = mock.calls.Aliases
+	mock.lockAliases.RUnlock()
+	return calls
 }
 
 // BridgePIDFilePath calls BridgePIDFilePathFunc.
@@ -749,6 +909,33 @@ func (mock *ConfigMock) BridgesSubdirCalls() []struct {
 	mock.lockBridgesSubdir.RLock()
 	calls = mock.calls.BridgesSubdir
 	mock.lockBridgesSubdir.RUnlock()
+	return calls
+}
+
+// BuildConfig calls BuildConfigFunc.
+func (mock *ConfigMock) BuildConfig() config.BuildConfig {
+	if mock.BuildConfigFunc == nil {
+		panic("ConfigMock.BuildConfigFunc: method is nil but Config.BuildConfig was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockBuildConfig.Lock()
+	mock.calls.BuildConfig = append(mock.calls.BuildConfig, callInfo)
+	mock.lockBuildConfig.Unlock()
+	return mock.BuildConfigFunc()
+}
+
+// BuildConfigCalls gets all the calls that were made to BuildConfig.
+// Check the length with:
+//
+//	len(mockedConfig.BuildConfigCalls())
+func (mock *ConfigMock) BuildConfigCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockBuildConfig.RLock()
+	calls = mock.calls.BuildConfig
+	mock.lockBuildConfig.RUnlock()
 	return calls
 }
 
@@ -965,6 +1152,33 @@ func (mock *ConfigMock) ContainerUIDCalls() []struct {
 	mock.lockContainerUID.RLock()
 	calls = mock.calls.ContainerUID
 	mock.lockContainerUID.RUnlock()
+	return calls
+}
+
+// ControlPlaneSettings calls ControlPlaneSettingsFunc.
+func (mock *ConfigMock) ControlPlaneSettings() config.ControlPlaneSettings {
+	if mock.ControlPlaneSettingsFunc == nil {
+		panic("ConfigMock.ControlPlaneSettingsFunc: method is nil but Config.ControlPlaneSettings was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockControlPlaneSettings.Lock()
+	mock.calls.ControlPlaneSettings = append(mock.calls.ControlPlaneSettings, callInfo)
+	mock.lockControlPlaneSettings.Unlock()
+	return mock.ControlPlaneSettingsFunc()
+}
+
+// ControlPlaneSettingsCalls gets all the calls that were made to ControlPlaneSettings.
+// Check the length with:
+//
+//	len(mockedConfig.ControlPlaneSettingsCalls())
+func (mock *ConfigMock) ControlPlaneSettingsCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockControlPlaneSettings.RLock()
+	calls = mock.calls.ControlPlaneSettings
+	mock.lockControlPlaneSettings.RUnlock()
 	return calls
 }
 
@@ -1397,6 +1611,65 @@ func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
 	mock.lockFirewallDataSubdir.RLock()
 	calls = mock.calls.FirewallDataSubdir
 	mock.lockFirewallDataSubdir.RUnlock()
+	return calls
+}
+
+// FirewallEnabled calls FirewallEnabledFunc.
+func (mock *ConfigMock) FirewallEnabled() bool {
+	if mock.FirewallEnabledFunc == nil {
+		panic("ConfigMock.FirewallEnabledFunc: method is nil but Config.FirewallEnabled was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFirewallEnabled.Lock()
+	mock.calls.FirewallEnabled = append(mock.calls.FirewallEnabled, callInfo)
+	mock.lockFirewallEnabled.Unlock()
+	return mock.FirewallEnabledFunc()
+}
+
+// FirewallEnabledCalls gets all the calls that were made to FirewallEnabled.
+// Check the length with:
+//
+//	len(mockedConfig.FirewallEnabledCalls())
+func (mock *ConfigMock) FirewallEnabledCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFirewallEnabled.RLock()
+	calls = mock.calls.FirewallEnabled
+	mock.lockFirewallEnabled.RUnlock()
+	return calls
+}
+
+// HarnessConfigFor calls HarnessConfigForFunc.
+func (mock *ConfigMock) HarnessConfigFor(name string) *config.HarnessConfig {
+	if mock.HarnessConfigForFunc == nil {
+		panic("ConfigMock.HarnessConfigForFunc: method is nil but Config.HarnessConfigFor was just called")
+	}
+	callInfo := struct {
+		Name string
+	}{
+		Name: name,
+	}
+	mock.lockHarnessConfigFor.Lock()
+	mock.calls.HarnessConfigFor = append(mock.calls.HarnessConfigFor, callInfo)
+	mock.lockHarnessConfigFor.Unlock()
+	return mock.HarnessConfigForFunc(name)
+}
+
+// HarnessConfigForCalls gets all the calls that were made to HarnessConfigFor.
+// Check the length with:
+//
+//	len(mockedConfig.HarnessConfigForCalls())
+func (mock *ConfigMock) HarnessConfigForCalls() []struct {
+	Name string
+} {
+	var calls []struct {
+		Name string
+	}
+	mock.lockHarnessConfigFor.RLock()
+	calls = mock.calls.HarnessConfigFor
+	mock.lockHarnessConfigFor.RUnlock()
 	return calls
 }
 
@@ -1913,6 +2186,33 @@ func (mock *ConfigMock) ManagedLabelValueCalls() []struct {
 	return calls
 }
 
+// MonitorExtensions calls MonitorExtensionsFunc.
+func (mock *ConfigMock) MonitorExtensions() []string {
+	if mock.MonitorExtensionsFunc == nil {
+		panic("ConfigMock.MonitorExtensionsFunc: method is nil but Config.MonitorExtensions was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockMonitorExtensions.Lock()
+	mock.calls.MonitorExtensions = append(mock.calls.MonitorExtensions, callInfo)
+	mock.lockMonitorExtensions.Unlock()
+	return mock.MonitorExtensionsFunc()
+}
+
+// MonitorExtensionsCalls gets all the calls that were made to MonitorExtensions.
+// Check the length with:
+//
+//	len(mockedConfig.MonitorExtensionsCalls())
+func (mock *ConfigMock) MonitorExtensionsCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockMonitorExtensions.RLock()
+	calls = mock.calls.MonitorExtensions
+	mock.lockMonitorExtensions.RUnlock()
+	return calls
+}
+
 // MonitorSubdir calls MonitorSubdirFunc.
 func (mock *ConfigMock) MonitorSubdir() (string, error) {
 	if mock.MonitorSubdirFunc == nil {
@@ -2075,30 +2375,67 @@ func (mock *ConfigMock) PidsSubdirCalls() []struct {
 	return calls
 }
 
-// Project calls ProjectFunc.
-func (mock *ConfigMock) Project() *config.Project {
-	if mock.ProjectFunc == nil {
-		panic("ConfigMock.ProjectFunc: method is nil but Config.Project was just called")
+// PostInitFor calls PostInitForFunc.
+func (mock *ConfigMock) PostInitFor(name string) string {
+	if mock.PostInitForFunc == nil {
+		panic("ConfigMock.PostInitForFunc: method is nil but Config.PostInitFor was just called")
 	}
 	callInfo := struct {
-	}{}
-	mock.lockProject.Lock()
-	mock.calls.Project = append(mock.calls.Project, callInfo)
-	mock.lockProject.Unlock()
-	return mock.ProjectFunc()
+		Name string
+	}{
+		Name: name,
+	}
+	mock.lockPostInitFor.Lock()
+	mock.calls.PostInitFor = append(mock.calls.PostInitFor, callInfo)
+	mock.lockPostInitFor.Unlock()
+	return mock.PostInitForFunc(name)
 }
 
-// ProjectCalls gets all the calls that were made to Project.
+// PostInitForCalls gets all the calls that were made to PostInitFor.
 // Check the length with:
 //
-//	len(mockedConfig.ProjectCalls())
-func (mock *ConfigMock) ProjectCalls() []struct {
+//	len(mockedConfig.PostInitForCalls())
+func (mock *ConfigMock) PostInitForCalls() []struct {
+	Name string
 } {
 	var calls []struct {
+		Name string
 	}
-	mock.lockProject.RLock()
-	calls = mock.calls.Project
-	mock.lockProject.RUnlock()
+	mock.lockPostInitFor.RLock()
+	calls = mock.calls.PostInitFor
+	mock.lockPostInitFor.RUnlock()
+	return calls
+}
+
+// PreRunFor calls PreRunForFunc.
+func (mock *ConfigMock) PreRunFor(name string) string {
+	if mock.PreRunForFunc == nil {
+		panic("ConfigMock.PreRunForFunc: method is nil but Config.PreRunFor was just called")
+	}
+	callInfo := struct {
+		Name string
+	}{
+		Name: name,
+	}
+	mock.lockPreRunFor.Lock()
+	mock.calls.PreRunFor = append(mock.calls.PreRunFor, callInfo)
+	mock.lockPreRunFor.Unlock()
+	return mock.PreRunForFunc(name)
+}
+
+// PreRunForCalls gets all the calls that were made to PreRunFor.
+// Check the length with:
+//
+//	len(mockedConfig.PreRunForCalls())
+func (mock *ConfigMock) PreRunForCalls() []struct {
+	Name string
+} {
+	var calls []struct {
+		Name string
+	}
+	mock.lockPreRunFor.RLock()
+	calls = mock.calls.PreRunFor
+	mock.lockPreRunFor.RUnlock()
 	return calls
 }
 
@@ -2153,6 +2490,33 @@ func (mock *ConfigMock) ProjectEgressRulesCalls() []struct {
 	mock.lockProjectEgressRules.RLock()
 	calls = mock.calls.ProjectEgressRules
 	mock.lockProjectEgressRules.RUnlock()
+	return calls
+}
+
+// ProjectName calls ProjectNameFunc.
+func (mock *ConfigMock) ProjectName() string {
+	if mock.ProjectNameFunc == nil {
+		panic("ConfigMock.ProjectNameFunc: method is nil but Config.ProjectName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectName.Lock()
+	mock.calls.ProjectName = append(mock.calls.ProjectName, callInfo)
+	mock.lockProjectName.Unlock()
+	return mock.ProjectNameFunc()
+}
+
+// ProjectNameCalls gets all the calls that were made to ProjectName.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectNameCalls())
+func (mock *ConfigMock) ProjectNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectName.RLock()
+	calls = mock.calls.ProjectName
+	mock.lockProjectName.RUnlock()
 	return calls
 }
 
@@ -2318,30 +2682,30 @@ func (mock *ConfigMock) PurposeMonitoringCalls() []struct {
 	return calls
 }
 
-// Settings calls SettingsFunc.
-func (mock *ConfigMock) Settings() *config.Settings {
-	if mock.SettingsFunc == nil {
-		panic("ConfigMock.SettingsFunc: method is nil but Config.Settings was just called")
+// SecurityConfig calls SecurityConfigFunc.
+func (mock *ConfigMock) SecurityConfig() config.SecurityConfig {
+	if mock.SecurityConfigFunc == nil {
+		panic("ConfigMock.SecurityConfigFunc: method is nil but Config.SecurityConfig was just called")
 	}
 	callInfo := struct {
 	}{}
-	mock.lockSettings.Lock()
-	mock.calls.Settings = append(mock.calls.Settings, callInfo)
-	mock.lockSettings.Unlock()
-	return mock.SettingsFunc()
+	mock.lockSecurityConfig.Lock()
+	mock.calls.SecurityConfig = append(mock.calls.SecurityConfig, callInfo)
+	mock.lockSecurityConfig.Unlock()
+	return mock.SecurityConfigFunc()
 }
 
-// SettingsCalls gets all the calls that were made to Settings.
+// SecurityConfigCalls gets all the calls that were made to SecurityConfig.
 // Check the length with:
 //
-//	len(mockedConfig.SettingsCalls())
-func (mock *ConfigMock) SettingsCalls() []struct {
+//	len(mockedConfig.SecurityConfigCalls())
+func (mock *ConfigMock) SecurityConfigCalls() []struct {
 } {
 	var calls []struct {
 	}
-	mock.lockSettings.RLock()
-	calls = mock.calls.Settings
-	mock.lockSettings.RUnlock()
+	mock.lockSecurityConfig.RLock()
+	calls = mock.calls.SecurityConfig
+	mock.lockSecurityConfig.RUnlock()
 	return calls
 }
 
@@ -2477,5 +2841,32 @@ func (mock *ConfigMock) TestRepoDirEnvVarCalls() []struct {
 	mock.lockTestRepoDirEnvVar.RLock()
 	calls = mock.calls.TestRepoDirEnvVar
 	mock.lockTestRepoDirEnvVar.RUnlock()
+	return calls
+}
+
+// WorkspaceDefaultMode calls WorkspaceDefaultModeFunc.
+func (mock *ConfigMock) WorkspaceDefaultMode() string {
+	if mock.WorkspaceDefaultModeFunc == nil {
+		panic("ConfigMock.WorkspaceDefaultModeFunc: method is nil but Config.WorkspaceDefaultMode was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockWorkspaceDefaultMode.Lock()
+	mock.calls.WorkspaceDefaultMode = append(mock.calls.WorkspaceDefaultMode, callInfo)
+	mock.lockWorkspaceDefaultMode.Unlock()
+	return mock.WorkspaceDefaultModeFunc()
+}
+
+// WorkspaceDefaultModeCalls gets all the calls that were made to WorkspaceDefaultMode.
+// Check the length with:
+//
+//	len(mockedConfig.WorkspaceDefaultModeCalls())
+func (mock *ConfigMock) WorkspaceDefaultModeCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockWorkspaceDefaultMode.RLock()
+	calls = mock.calls.WorkspaceDefaultMode
+	mock.lockWorkspaceDefaultMode.RUnlock()
 	return calls
 }

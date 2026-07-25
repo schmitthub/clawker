@@ -32,8 +32,8 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors. Also `BundleDeclarationsAt(root)` — bundle declarations of ONE project root without a full config load (dual-placement probe of EVERY directory under the root — nested walk-up layers are declaring layers; dot-dirs/symlinks not descended; permission-denied SUBdirs skipped and returned as the second value for the caller to surface, mid-walk-vanished SUBdirs (build churn) skipped silently, unreadable root stays fatal — for the project + local files, bundles-node validation only, deliberately NO migrations and NO writes since it runs against other projects' files): the loader behind the bundle cache's GC roots, which union every REGISTERED project's declared source values |
-| `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
+| `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, value accessors. Also `BundleDeclarationsAt(root)` — bundle declarations of ONE project root without a full config load (dual-placement probe of EVERY directory under the root — nested walk-up layers are declaring layers; dot-dirs/symlinks not descended; permission-denied SUBdirs skipped and returned as the second value for the caller to surface, mid-walk-vanished SUBdirs (build churn) skipped silently, unreadable root stays fatal — for the project + local files, bundles-node validation only, deliberately NO migrations and NO writes since it runs against other projects' files): the loader behind the bundle cache's GC roots, which union every REGISTERED project's declared source values |
+| `consts.go` | Deprecated Config interface wrappers + config-backed accessors + the unexported `key*` schema key segments (the addressing vocabulary the accessors and migrations share). Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods; `EgressRule` + egress vocabulary consts |
 | `harness_schema.go` | Harness `harness.yaml` manifest shape (`Manifest`, `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`, `ManagedPromptSpec`) + closed-vocabulary consts (resolvers, seed-apply tokens, JSON-rewrite kinds, managed-prompt owners `PromptOwnerRoot`/`PromptOwnerUser`). Parsed here; loaded/validated/rendered by `internal/bundler` |
 | `stack_schema.go` | Stack `stack.yaml` manifest shape (`StackManifest` — the metadata half; fragments are loaded by `internal/bundler`) |
@@ -44,13 +44,13 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |
 | `port.go` | `Port` type with `UnmarshalYAML` — typed wrapper for settings port fields |
 | `egress_port.go` | `ParsePortSpec`, `ValidatePortSpec`, `PortSpan`, `SinglePort` — port range parsing for egress rules |
-| `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time, per file layer. Project chain (in order): legacy run-list → `[]string` conversion; strip of deleted `build.image`/`build.dockerfile`/`build.context`/`agent.claude_code.use_host_auth` keys (one-shot stderr notice naming each key + value + replacement); `agent.claude_code` → `harnesses.claude` rewrite (field-for-field move, or drop with a notice when a `harnesses.claude` entry already out-ranks it; the read shim in `schema.go` stays for unmigrated read-only contexts). Before the move, `filterHarnessBlockForMove` strips everything the strict `harnesses:` front door (`validate.go`) would reject — unknown fields, unknown `config` sub-fields, an out-of-vocabulary `config.strategy` — surfacing each stripped key + value in a notice: moving them raw would durably rewrite the file into a shape `validateProjectNodes` rejects on that same load and every one after. All notices go through `storage.Store.Noticef` + `MigratingLayerPath()`, so each names its owning file and prints only after the rewrite commits (a failed rewrite degrades to in-memory migration with a warning; see `internal/storage/CLAUDE.md`). Settings chain: legacy monitoring-key removal/rename |
+| `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time, per file layer. Project chain (in order): legacy run-list → `[]string` conversion; strip of deleted `build.image`/`build.dockerfile`/`build.context`/`agent.claude_code.use_host_auth` keys (one-shot stderr notice naming each key + value + replacement); `agent.claude_code` → `harnesses.claude` rewrite (field-for-field move, or drop with a notice when a `harnesses.claude` entry already out-ranks it; the read shim in `config.go` (`HarnessConfigFor`) stays for unmigrated read-only contexts). Before the move, `filterHarnessBlockForMove` strips everything the strict `harnesses:` front door (`validate.go`) would reject — unknown fields, unknown `config` sub-fields, an out-of-vocabulary `config.strategy` — surfacing each stripped key + value in a notice: moving them raw would durably rewrite the file into a shape `validateProjectNodes` rejects on that same load and every one after. All notices go through `storage.Store.Noticef` + `MigratingLayerPath()`, so each names its owning file and prints only after the rewrite commits (a failed rewrite degrades to in-memory migration with a warning; see `internal/storage/CLAUDE.md`). Settings chain: legacy monitoring-key removal/rename |
 | `validate.go` | `validateProjectNodes(*storage.Store[Project]) error` — front-door validation for the `harnesses:`, `build.harnesses:`, and `bundles:` nodes, called by `NewConfig`/`NewFromString`/`NewBlankConfig`/`NewProjectStoreFromPreset`. Walks each discovered layer (never the merged tree, so errors name the actual file) and rejects a bad harness/overlay name or `build.harness` selection value (`internal/consts.ValidateHarnessRef` — bare or qualified, reserved aliases bare-only; `build.harness` must also be a string), a bad stack-name reference (`build.stacks`, overlay `stacks`, via `consts.ValidateComponentRef`), an unknown field under one of these nodes, a `harnesses.<name>.config.strategy` outside the copy/fresh vocabulary, or a malformed `bundles:` source. `ValidateBundleSource` is the typed write-front-door twin for `clawker bundle install`. Settings has no front-door validator. NOT invoked on the `ProjectStore().Set`/`Write` mutation path — a write front-door must call it (or equivalent per-value checks) itself |
 | `storeui/project/` | `Overrides`, `LayerTargets`, `Edit` — project store UI helpers |
 | `storeui/settings/` | `Overrides`, `LayerTargets`, `Edit` — settings store UI helpers |
 | `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
 | `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
-| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)` |
+| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `SecurityConfig(mutators...)` |
 
 ## Public API
 
@@ -61,7 +61,8 @@ func NewConfig(opts ...NewConfigOption) (Config, error)          // Full product
 func WithProjectRoot(root string) NewConfigOption                // Bounds project-config walk-up at root (caller resolves it, e.g. project.Registry.ResolveRoot). Empty root → walk-up disabled (config-dir only; correct for CP/host-proxy/bridge daemons).
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
-func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) // Isolated project store from preset YAML only — no file discovery, no user-level merging. For project init.
+func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) // Isolated project store seeded from preset YAML only (storage.NewFromString) — no file discovery, no user-level merging. For project init.
+func ProjectConfigExistsIn(dir string) (bool, error)            // Does dir itself hold a project config file? (both filenames, dual placement, migrations wired; no walk-up, no config dir)
 func Presets() []Preset                                         // Language preset definitions for project init
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
@@ -73,19 +74,56 @@ func UserProjectConfigFilePath() (string, error)
 
 ### Config Interface (method groups)
 
-**Store accessors** (preferred):
+**Value accessors** (the preferred consumer surface). There is **no whole-schema
+getter** — `Project() *Project` and `Settings() *Settings` are gone. A consumer
+asks for the one value, or the one nested block that genuinely travels together,
+that it needs; every accessor is one `storage.Get[V]` on the key it names, with
+`ErrKeyNotFound` (unset) folded onto the zero value. Schema defaults reach the
+accessors through the store's defaults layer, never through a second
+accessor-level default — the one exception is `FirewallEnabled()`, whose domain
+default is `true`.
+
+| Project (`clawker.yaml`) | Key | Returns |
+| --- | --- | --- |
+| `ProjectName()` | `name` | `string` |
+| `Aliases()` | `aliases` | `map[string]string` |
+| `BuildConfig()` | `build` | `BuildConfig` |
+| `AgentConfig()` | `agent` | `AgentConfig` |
+| `WorkspaceDefaultMode()` | `workspace.default_mode` | `string` |
+| `SecurityConfig()` | `security` | `SecurityConfig` |
+| `HarnessConfigFor(name)` | `harnesses.<name>` (→ legacy `agent.claude_code` for the default harness) | `*HarnessConfig` (nil-tolerant) |
+| `PostInitFor(name)` / `PreRunFor(name)` | `agent.post_init` + `harnesses.<name>.post_init` (resp. `pre_run`) | `string` |
+| `MonitorExtensions()` | `monitor.extensions` | `[]string` |
+| `ProjectEgressRules()` | `security.firewall.rules` + `add_domains` | `[]EgressRule` |
+| `BundleDeclarations()` | per-layer `bundles` | `[]BundleDeclaration` |
+| `ProjectRoot()` | (the walk-up anchor) | `string` |
+
+| Settings (`settings.yaml`) | Key | Returns |
+| --- | --- | --- |
+| `LoggingConfig()` | `logging` | `LoggingConfig` |
+| `MonitoringConfig()` | `monitoring` | `MonitoringConfig` |
+| `HostProxyConfig()` | `host_proxy` | `HostProxyConfig` |
+| `ControlPlaneSettings()` | `control_plane` | `ControlPlaneSettings` |
+| `FirewallEnabled()` | `firewall.enable` (default **true**) | `bool` |
+
+`HarnessConfigFor` addresses the map entry as a **key segment**, so a qualified
+harness name (`namespace.bundle.component`) is matched exactly — a dotted key
+can no longer be reparsed into nested nodes.
+
+**Store accessors** (the raw-verb escape hatch — mutation lives here):
 ```go
 ProjectStore() *storage.Store[Project]     // Direct access to project config store
 SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
 
-**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `ProjectEgressRules()`, `EgressRulesFileName()`
+`configImpl` is the one store-backed package that does **not** embed
+`*storage.Store[T]`: two schemas means two stores, whose promoted verb sets
+would collide. These two accessors are the named escape hatches embedding would
+otherwise provide.
 
 `ProjectEgressRules()` returns the project's `security.firewall` contribution as `[]EgressRule`: explicit rules verbatim, then `add_domains` shorthand expansions. It deliberately excludes the harness's required egress floor — that lives in the harness bundle's `harness.yaml` and is composed in by `bundler.EgressRules(cfg, name)`, which is what firewall sync paths call.
 
-**Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
-
-**Mutation**: Use `ProjectStore().Set(path, value)` / `SettingsStore().Set(path, value)` (and `Remove(path)`; returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
+**Mutation**: `ProjectStore().Set(key []string, value)` / `SettingsStore().Set(...)` — keys are **segment slices** (`[]string{"agent", "editor"}`), never dotted strings, so a map key containing a dot (an alias named `a.b`, a qualified harness name) is addressed exactly. `Remove(key ...string)` is the one unset verb (`Set(key, nil)` is `ErrNilValue`). Persist with `Write()` (or `WriteFieldTo(path, key...)` for one field to one layer).
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`). The registry filename is `consts.RegistryFile` (`"registry.yaml"`) — there is no Config accessor for it; `internal/project` owns the registry.
 
@@ -143,17 +181,20 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 | --- | --- | --- |
 | `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; read-only |
 | `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; read-only |
-| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports `ProjectStore().Set(path, value)`, `Write()`, env overrides |
+| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports `ProjectStore().Set(key, value)`, `Write()`, env overrides |
+| `SecurityConfig(mutators ...func(*config.SecurityConfig))` | `SecurityConfig` | A `SecurityConfig` **value** for code that takes one directly rather than through a `Config` double. No mutators = the "project declares no `security:` block" baseline; one mutator per field a test actually cares about |
 
-`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. For mutation tests, use `NewIsolatedTestConfig` which returns a real file-backed `Config` with a live `storage.Store` that supports `ProjectStore().Set(path, value)` / `SettingsStore().Set(path, value)` and `Write()`.
+`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` whose every read Func delegates to a seeded in-memory `Config` (built on `config.NewFromString`, the option-free seam: no discovery, no disk). Override any Func field for partial mocking; moq records calls (`mock.BuildConfigCalls()` etc.). The store accessors hand back the seam's real stores, which have **no write path** — `Write()` through them fails by design. For mutation tests use `NewIsolatedTestConfig`, which is file-backed.
 
 ## Gotchas
 
+- **No whole-schema read anywhere** — `Read()` is gone from the engine and `Project()`/`Settings()` are gone from the interface. Package-internal code reads with `storage.Get[V](store, key...)`; consumers use the value accessors above.
 - **Unknown fields are silently accepted** by `NewFromString`/`NewConfig` — **except** under `harnesses:` and `build.harnesses:` (including its nested `inject:`), where `validate.go`'s front-door check rejects an unknown field as a load error naming the file and key path. This is a deliberate, narrower exception to the general rule below, not a project-wide strict-decode.
 - **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
 - **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `aliases`. Settings keys: `logging`, `monitoring`, `host_proxy`, `firewall`, `control_plane`, `docker`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
 - **Aliases are project config** — `Project.Aliases` (union-merged across all layers, ships default `go` and `wt` aliases) is what the CLI registers as commands; walk-up files, the user config-dir `clawker.yaml`, and shipped defaults all apply. Settings has no aliases key.
-- **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
+- **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields on a group struct. `FirewallEnabled()` and the nil-tolerant methods on the group structs (`HostProxyEnabled()`, `MountProjectsEnabled()`, `GitSSHEnabled()`, …) handle nil-to-default conversion.
+- **Unset vs set-empty** — a bare `key:` is unset (transparent: lower layers and defaults show through, `Get` → `ErrKeyNotFound`, accessor → zero value); an explicit `""`/`[]`/`{}` is set-and-empty and wins the merge. Clearing a field is `Remove`, never `Set(key, "")`.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
 - **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
 - **Registry owned by project** — both the `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types and the `Store[ProjectRegistry]` live in `internal/project`. `config` has no registry surface.

@@ -97,7 +97,7 @@ type CPContainerConfig struct {
 var localhost = netip.MustParseAddr(consts.Localhost)
 
 // BuildCPContainerConfig constructs the CPContainerConfig for the control
-// plane container. Reads all ports from cfg.Settings().ControlPlane —
+// plane container. Reads all ports from cfg.ControlPlaneSettings() —
 // defaults come from struct tags via the storage layer.
 //
 // Bind mounts:
@@ -113,7 +113,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		return nil, fmt.Errorf("cp container config: %w", err)
 	}
 
-	cp := cfg.Settings().ControlPlane
+	cp := cfg.ControlPlaneSettings()
 
 	portBinding := func(port int) (network.Port, []network.PortBinding) {
 		return network.MustParsePort(fmt.Sprintf("%d/tcp", port)),
@@ -372,7 +372,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // provider failure as non-fatal so the daemon survives a collector
 // that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
-	mon := cfg.SettingsStore().Read().Monitoring
+	mon := cfg.MonitoringConfig()
 	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	return []string{
 		consts.EnvOTLPEndpoint + "=" + endpoint,

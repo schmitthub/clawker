@@ -19,14 +19,20 @@ var _ state.StateStore = &StateStoreMock{}
 //
 //		// make and configure a mocked state.StateStore
 //		mockedStateStore := &StateStoreMock{
+//			CheckedAtFunc: func() time.Time {
+//				panic("mock out the CheckedAt method")
+//			},
+//			LastSeenChangelogFunc: func() string {
+//				panic("mock out the LastSeenChangelog method")
+//			},
+//			LatestVersionFunc: func() string {
+//				panic("mock out the LatestVersion method")
+//			},
 //			RecordUpdateCheckFunc: func(checkedAt time.Time, latestVersion string) error {
 //				panic("mock out the RecordUpdateCheck method")
 //			},
 //			SetLastSeenChangelogFunc: func(version string) error {
 //				panic("mock out the SetLastSeenChangelog method")
-//			},
-//			StateFunc: func() *state.State {
-//				panic("mock out the State method")
 //			},
 //		}
 //
@@ -35,17 +41,32 @@ var _ state.StateStore = &StateStoreMock{}
 //
 //	}
 type StateStoreMock struct {
+	// CheckedAtFunc mocks the CheckedAt method.
+	CheckedAtFunc func() time.Time
+
+	// LastSeenChangelogFunc mocks the LastSeenChangelog method.
+	LastSeenChangelogFunc func() string
+
+	// LatestVersionFunc mocks the LatestVersion method.
+	LatestVersionFunc func() string
+
 	// RecordUpdateCheckFunc mocks the RecordUpdateCheck method.
 	RecordUpdateCheckFunc func(checkedAt time.Time, latestVersion string) error
 
 	// SetLastSeenChangelogFunc mocks the SetLastSeenChangelog method.
 	SetLastSeenChangelogFunc func(version string) error
 
-	// StateFunc mocks the State method.
-	StateFunc func() *state.State
-
 	// calls tracks calls to the methods.
 	calls struct {
+		// CheckedAt holds details about calls to the CheckedAt method.
+		CheckedAt []struct {
+		}
+		// LastSeenChangelog holds details about calls to the LastSeenChangelog method.
+		LastSeenChangelog []struct {
+		}
+		// LatestVersion holds details about calls to the LatestVersion method.
+		LatestVersion []struct {
+		}
 		// RecordUpdateCheck holds details about calls to the RecordUpdateCheck method.
 		RecordUpdateCheck []struct {
 			// CheckedAt is the checkedAt argument value.
@@ -58,13 +79,93 @@ type StateStoreMock struct {
 			// Version is the version argument value.
 			Version string
 		}
-		// State holds details about calls to the State method.
-		State []struct {
-		}
 	}
+	lockCheckedAt            sync.RWMutex
+	lockLastSeenChangelog    sync.RWMutex
+	lockLatestVersion        sync.RWMutex
 	lockRecordUpdateCheck    sync.RWMutex
 	lockSetLastSeenChangelog sync.RWMutex
-	lockState                sync.RWMutex
+}
+
+// CheckedAt calls CheckedAtFunc.
+func (mock *StateStoreMock) CheckedAt() time.Time {
+	if mock.CheckedAtFunc == nil {
+		panic("StateStoreMock.CheckedAtFunc: method is nil but StateStore.CheckedAt was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockCheckedAt.Lock()
+	mock.calls.CheckedAt = append(mock.calls.CheckedAt, callInfo)
+	mock.lockCheckedAt.Unlock()
+	return mock.CheckedAtFunc()
+}
+
+// CheckedAtCalls gets all the calls that were made to CheckedAt.
+// Check the length with:
+//
+//	len(mockedStateStore.CheckedAtCalls())
+func (mock *StateStoreMock) CheckedAtCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockCheckedAt.RLock()
+	calls = mock.calls.CheckedAt
+	mock.lockCheckedAt.RUnlock()
+	return calls
+}
+
+// LastSeenChangelog calls LastSeenChangelogFunc.
+func (mock *StateStoreMock) LastSeenChangelog() string {
+	if mock.LastSeenChangelogFunc == nil {
+		panic("StateStoreMock.LastSeenChangelogFunc: method is nil but StateStore.LastSeenChangelog was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockLastSeenChangelog.Lock()
+	mock.calls.LastSeenChangelog = append(mock.calls.LastSeenChangelog, callInfo)
+	mock.lockLastSeenChangelog.Unlock()
+	return mock.LastSeenChangelogFunc()
+}
+
+// LastSeenChangelogCalls gets all the calls that were made to LastSeenChangelog.
+// Check the length with:
+//
+//	len(mockedStateStore.LastSeenChangelogCalls())
+func (mock *StateStoreMock) LastSeenChangelogCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockLastSeenChangelog.RLock()
+	calls = mock.calls.LastSeenChangelog
+	mock.lockLastSeenChangelog.RUnlock()
+	return calls
+}
+
+// LatestVersion calls LatestVersionFunc.
+func (mock *StateStoreMock) LatestVersion() string {
+	if mock.LatestVersionFunc == nil {
+		panic("StateStoreMock.LatestVersionFunc: method is nil but StateStore.LatestVersion was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockLatestVersion.Lock()
+	mock.calls.LatestVersion = append(mock.calls.LatestVersion, callInfo)
+	mock.lockLatestVersion.Unlock()
+	return mock.LatestVersionFunc()
+}
+
+// LatestVersionCalls gets all the calls that were made to LatestVersion.
+// Check the length with:
+//
+//	len(mockedStateStore.LatestVersionCalls())
+func (mock *StateStoreMock) LatestVersionCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockLatestVersion.RLock()
+	calls = mock.calls.LatestVersion
+	mock.lockLatestVersion.RUnlock()
+	return calls
 }
 
 // RecordUpdateCheck calls RecordUpdateCheckFunc.
@@ -132,32 +233,5 @@ func (mock *StateStoreMock) SetLastSeenChangelogCalls() []struct {
 	mock.lockSetLastSeenChangelog.RLock()
 	calls = mock.calls.SetLastSeenChangelog
 	mock.lockSetLastSeenChangelog.RUnlock()
-	return calls
-}
-
-// State calls StateFunc.
-func (mock *StateStoreMock) State() *state.State {
-	if mock.StateFunc == nil {
-		panic("StateStoreMock.StateFunc: method is nil but StateStore.State was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockState.Lock()
-	mock.calls.State = append(mock.calls.State, callInfo)
-	mock.lockState.Unlock()
-	return mock.StateFunc()
-}
-
-// StateCalls gets all the calls that were made to State.
-// Check the length with:
-//
-//	len(mockedStateStore.StateCalls())
-func (mock *StateStoreMock) StateCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockState.RLock()
-	calls = mock.calls.State
-	mock.lockState.RUnlock()
 	return calls
 }

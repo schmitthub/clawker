@@ -76,7 +76,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if !cfg.Settings().Firewall.FirewallEnabled() {
+	if !cfg.FirewallEnabled() {
 		warnIfStackRunning(ctx, opts, ios)
 		return nil
 	}

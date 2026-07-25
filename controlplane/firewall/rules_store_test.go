@@ -3,6 +3,8 @@ package firewall_test
 import (
 	"hash/fnv"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // TestValidateDst exercises the pure ValidateDst function across the full
@@ -955,4 +959,45 @@ func TestNormalizeAndDedup_MethodsOnOpaqueWarns(t *testing.T) {
 	}}
 	_, warnings = firewall.NormalizeAndDedup(httpFamily)
 	assert.Empty(t, warnings)
+}
+
+// TestEgressRulesStore_Canonicalize covers the on-disk heal the Stack runs
+// before every config generation: a legacy file whose rules carry no proto,
+// action, or port is rewritten in canonical form, and a second pass is a no-op.
+// The idempotency half is the load-bearing assertion — a heal that always
+// reports a rewrite would re-save (and flock) the file on every single reload.
+func TestEgressRulesStore_Canonicalize(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	dataDir, err := cfg.FirewallDataSubdir()
+	require.NoError(t, err)
+	// A file as an older binary left it: proto/action/port all unset, plus a
+	// duplicate that only dedups after the proto default fills in.
+	legacy := "rules:\n    - dst: example.com\n    - dst: example.com\n      proto: https\n      port: \"443\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, consts.EgressRulesFile), []byte(legacy), 0o644))
+
+	store, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+
+	healed, err := store.Canonicalize()
+	require.NoError(t, err)
+	assert.True(t, healed, "legacy shape must be rewritten")
+
+	rules, _, err := store.Rules()
+	require.NoError(t, err)
+	require.Len(t, rules, 1, "the two entries collapse once the proto default fills in")
+	assert.Equal(t, "https", rules[0].Proto)
+	assert.Equal(t, "443", rules[0].Port)
+	assert.Equal(t, "allow", rules[0].Action)
+
+	healed, err = store.Canonicalize()
+	require.NoError(t, err)
+	assert.False(t, healed, "an already-canonical file must not be rewritten again")
+
+	// Reopen from disk: the canonical form is what actually landed, not just
+	// what the in-memory tree holds.
+	reopened, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+	persisted, _, err := reopened.Rules()
+	require.NoError(t, err)
+	assert.Equal(t, rules, persisted)
 }

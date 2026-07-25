@@ -27,6 +27,37 @@ const (
 	ModeSnapshot Mode = "snapshot"
 )
 
+// Schema key segments — the yaml tag of each node the store verbs address.
+// Keys are segment slices now (storage.Get/Set/Remove), so these names are the
+// addressing vocabulary shared by the typed accessors and the migrations; a
+// node renamed in schema.go is renamed here once, not in every call site.
+const (
+	keyName         = "name"
+	keyAliases      = "aliases"
+	keyAgent        = "agent"
+	keyClaudeCode   = "claude_code"
+	keyPostInit     = "post_init"
+	keyPreRun       = "pre_run"
+	keyBuild        = "build"
+	keyInstructions = "instructions"
+	keyHarnesses    = "harnesses"
+	keyConfig       = "config"
+	keySecurity     = "security"
+	keyFirewall     = "firewall"
+	keyEnable       = "enable"
+	keyRules        = "rules"
+	keyAddDomains   = "add_domains"
+	keyWorkspace    = "workspace"
+	keyDefaultMode  = "default_mode"
+	keyMonitor      = "monitor"
+	keyExtensions   = "extensions"
+	keyBundles      = "bundles"
+	keyLogging      = "logging"
+	keyMonitoring   = "monitoring"
+	keyHostProxy    = "host_proxy"
+	keyControlPlane = "control_plane"
+)
+
 // ---------------------------------------------------------------------------
 // Package-level file path helpers — deprecated pass-throughs to internal/consts.
 // ---------------------------------------------------------------------------

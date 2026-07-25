@@ -9,15 +9,18 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/text"
 )
 
-var ErrNotInProjectPath = errors.New("not in a registered project path")
-var ErrProjectNotRegistered = errors.New("project root is not registered")
-var ErrWorktreeExists = errors.New("worktree already exists for branch")
+var (
+	ErrNotInProjectPath     = errors.New("not in a registered project path")
+	ErrProjectNotRegistered = errors.New("project root is not registered")
+	ErrWorktreeExists       = errors.New("worktree already exists for branch")
+)
 
 type PruneStaleResult struct {
 	Prunable []string
@@ -28,11 +31,11 @@ type PruneStaleResult struct {
 
 type worktreeService struct {
 	log       *logger.Logger
-	reg       *Registry
+	reg       Registry
 	newGitMgr GitManagerFactory
 }
 
-func newWorktreeService(log *logger.Logger, reg *Registry, gitFactory GitManagerFactory) *worktreeService {
+func newWorktreeService(log *logger.Logger, reg Registry, gitFactory GitManagerFactory) *worktreeService {
 	return &worktreeService{
 		log:       log,
 		reg:       reg,
@@ -40,7 +43,11 @@ func newWorktreeService(log *logger.Logger, reg *Registry, gitFactory GitManager
 	}
 }
 
-func (s *worktreeService) CreateWorktree(_ context.Context, projectRoot, branch, base string, noTrack bool) (string, error) {
+func (s *worktreeService) CreateWorktree(
+	_ context.Context,
+	projectRoot, branch, base string,
+	noTrack bool,
+) (string, error) {
 	return s.addWorktree(projectRoot, branch, base, noTrack)
 }
 
@@ -55,12 +62,9 @@ func (s *worktreeService) addWorktree(projectRoot, branch, base string, noTrack 
 		return "", fmt.Errorf("branch %q: %w", branch, ErrWorktreeExists)
 	}
 
-	manager, err := s.newGitMgr(projectRoot)
+	manager, err := s.gitManager(projectRoot)
 	if err != nil {
-		if errors.Is(err, git.ErrNotRepository) {
-			return "", fmt.Errorf("project root is not a git repository: %w", err)
-		}
-		return "", fmt.Errorf("initializing git manager: %w", err)
+		return "", err
 	}
 
 	provider, err := newFlatWorktreeDirProvider(projectRoot, entry)
@@ -72,14 +76,9 @@ func (s *worktreeService) addWorktree(projectRoot, branch, base string, noTrack 
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}
 
-	if err := s.reg.registerWorktree(projectRoot, branch, worktreePath); err != nil {
+	if regErr := s.reg.RegisterWorktree(projectRoot, branch, worktreePath); regErr != nil {
 		_ = manager.RemoveWorktree(provider, branch)
-		return "", fmt.Errorf("updating project registry: %w", err)
-	}
-
-	if err := s.reg.save(); err != nil {
-		_ = manager.RemoveWorktree(provider, branch)
-		return "", fmt.Errorf("saving project registry: %w", err)
+		return "", fmt.Errorf("updating project registry: %w", regErr)
 	}
 
 	return worktreePath, nil
@@ -91,12 +90,9 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, projectRoot, branch 
 		return err
 	}
 
-	manager, err := s.newGitMgr(projectRoot)
+	manager, err := s.gitManager(projectRoot)
 	if err != nil {
-		if errors.Is(err, git.ErrNotRepository) {
-			return fmt.Errorf("project root is not a git repository: %w", err)
-		}
-		return fmt.Errorf("initializing git manager: %w", err)
+		return err
 	}
 
 	provider, err := newFlatWorktreeDirProvider(projectRoot, entry)
@@ -107,11 +103,8 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, projectRoot, branch 
 		return fmt.Errorf("removing worktree: %w", err)
 	}
 
-	if err := s.reg.unregisterWorktree(projectRoot, branch); err != nil {
-		return fmt.Errorf("updating project registry: %w", err)
-	}
-	if err := s.reg.save(); err != nil {
-		return fmt.Errorf("saving project registry: %w", err)
+	if regErr := s.reg.UnregisterWorktree(projectRoot, branch); regErr != nil {
+		return fmt.Errorf("updating project registry: %w", regErr)
 	}
 
 	if deleteBranch {
@@ -125,7 +118,11 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, projectRoot, branch 
 	return nil
 }
 
-func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneStaleResult, error) {
+func (s *worktreeService) PruneStaleWorktrees(
+	_ context.Context,
+	projectRoot string,
+	dryRun bool,
+) (*PruneStaleResult, error) {
 	projectEntry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
 		return nil, err
@@ -136,12 +133,9 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 		return result, nil
 	}
 
-	manager, err := s.newGitMgr(projectRoot)
+	manager, err := s.gitManager(projectRoot)
 	if err != nil {
-		if errors.Is(err, git.ErrNotRepository) {
-			return nil, fmt.Errorf("project root is not a git repository: %w", err)
-		}
-		return nil, fmt.Errorf("initializing git manager: %w", err)
+		return nil, err
 	}
 
 	wtMgr, err := manager.Worktrees()
@@ -150,79 +144,127 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 	}
 
 	for name, wt := range projectEntry.Worktrees {
-		path := wt.Path
-		if path == "" {
-			// Path must be set — skip entries with missing paths
+		verdict, classifyErr := classifyStaleWorktree(manager, wtMgr, name, wt.Path)
+		if classifyErr != nil {
+			return nil, classifyErr
+		}
+		switch verdict {
+		case worktreePrunable:
 			result.Prunable = append(result.Prunable, name)
-			continue
-		}
-
-		_, statErr := os.Stat(path)
-		dirExists := statErr == nil
-		if statErr != nil && !os.IsNotExist(statErr) {
-			return nil, fmt.Errorf("checking worktree %s: %w", name, statErr)
-		}
-
-		// Use directory basename for git worktree existence check — matches how
-		// SetupWorktree registers worktrees with git (by dir basename, not branch name).
-		wtName := filepath.Base(path)
-		gitWorktreeExists, err := wtMgr.Exists(wtName)
-		if err != nil {
-			return nil, fmt.Errorf("checking git worktree %s: %w", name, err)
-		}
-
-		branchExists, err := manager.BranchExists(name)
-		if err != nil {
-			return nil, fmt.Errorf("checking branch %s: %w", name, err)
-		}
-
-		// Prunable if any of: dir missing, git worktree metadata gone, or branch gone
-		if !dirExists || !gitWorktreeExists || !branchExists {
-			// Check if worktree is locked (protected from pruning)
-			locked, lockErr := manager.IsWorktreeLocked(wtName)
-			if lockErr != nil {
-				return nil, fmt.Errorf("checking worktree lock %s: %w", name, lockErr)
-			}
-			if locked {
-				result.Locked = append(result.Locked, name)
-				continue
-			}
-			result.Prunable = append(result.Prunable, name)
+		case worktreeLocked:
+			result.Locked = append(result.Locked, name)
+		case worktreeLive:
 		}
 	}
 
 	if dryRun {
 		return result, nil
 	}
+	s.unregisterPrunable(projectRoot, result)
+	return result, nil
+}
 
-	for _, name := range result.Prunable {
-		if err := s.reg.unregisterWorktree(projectRoot, name); err != nil {
-			result.Failed[name] = fmt.Errorf("updating project registry: %w", err)
-			continue
+// gitManager opens the project root's git manager, translating the
+// not-a-repository case into the caller-facing message.
+func (s *worktreeService) gitManager(projectRoot string) (*git.GitManager, error) {
+	manager, err := s.newGitMgr(projectRoot)
+	if err != nil {
+		if errors.Is(err, git.ErrNotRepository) {
+			return nil, fmt.Errorf("project root is not a git repository: %w", err)
 		}
-		if err := s.reg.save(); err != nil {
-			result.Failed[name] = fmt.Errorf("saving project registry: %w", err)
+		return nil, fmt.Errorf("initializing git manager: %w", err)
+	}
+	return manager, nil
+}
+
+// unregisterPrunable drops each prunable worktree from the registry, recording
+// per-entry failures in result.Failed rather than aborting the sweep.
+func (s *worktreeService) unregisterPrunable(projectRoot string, result *PruneStaleResult) {
+	for _, name := range result.Prunable {
+		if err := s.reg.UnregisterWorktree(projectRoot, name); err != nil {
+			result.Failed[name] = fmt.Errorf("updating project registry: %w", err)
 			continue
 		}
 		result.Removed = append(result.Removed, name)
 	}
+}
 
-	return result, nil
+// pruneVerdict is the per-worktree outcome of the staleness check.
+type pruneVerdict int
+
+const (
+	// worktreeLive: the worktree is intact and stays registered.
+	worktreeLive pruneVerdict = iota
+	// worktreePrunable: the worktree drifted (directory, git metadata, or
+	// branch gone) and its registry entry can be dropped.
+	worktreePrunable
+	// worktreeLocked: the worktree drifted but is locked against pruning.
+	worktreeLocked
+)
+
+// classifyStaleWorktree decides whether one registered worktree is prunable.
+// A worktree is stale when its directory, its git metadata, or its branch is
+// gone; a stale worktree that git has locked (`git worktree lock`) is reported
+// as locked instead so pruning skips it. Filesystem and git errors other than
+// "not found" abort the whole prune rather than being read as staleness.
+func classifyStaleWorktree(
+	manager *git.GitManager,
+	wtMgr *git.WorktreeManager,
+	name, path string,
+) (pruneVerdict, error) {
+	if path == "" {
+		// Path must be set — an entry with no path can only be dropped.
+		return worktreePrunable, nil
+	}
+
+	_, statErr := os.Stat(path)
+	dirExists := statErr == nil
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return worktreeLive, fmt.Errorf("checking worktree %s: %w", name, statErr)
+	}
+
+	// Use directory basename for git worktree existence check — matches how
+	// SetupWorktree registers worktrees with git (by dir basename, not branch name).
+	wtName := filepath.Base(path)
+	gitWorktreeExists, err := wtMgr.Exists(wtName)
+	if err != nil {
+		return worktreeLive, fmt.Errorf("checking git worktree %s: %w", name, err)
+	}
+
+	branchExists, err := manager.BranchExists(name)
+	if err != nil {
+		return worktreeLive, fmt.Errorf("checking branch %s: %w", name, err)
+	}
+
+	if dirExists && gitWorktreeExists && branchExists {
+		return worktreeLive, nil
+	}
+
+	locked, err := manager.IsWorktreeLocked(wtName)
+	if err != nil {
+		return worktreeLive, fmt.Errorf("checking worktree lock %s: %w", name, err)
+	}
+	if locked {
+		return worktreeLocked, nil
+	}
+	return worktreePrunable, nil
 }
 
 func (s *worktreeService) findProjectByRoot(projectRoot string) (ProjectEntry, error) {
 	if projectRoot == "" {
-		return ProjectEntry{}, fmt.Errorf("project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'")
+		return ProjectEntry{}, errors.New(
+			"project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'",
+		)
 	}
-	resolvedProjectRoot := resolveRootPath(projectRoot)
-
-	for _, entry := range s.reg.projects() {
-		if resolveRootPath(entry.Root) == resolvedProjectRoot {
-			return entry, nil
-		}
+	entries, err := s.reg.Projects()
+	if err != nil {
+		return ProjectEntry{}, fmt.Errorf("listing projects: %w", err)
 	}
-
-	return ProjectEntry{}, ErrProjectNotRegistered
+	index := indexOfRoot(entries, projectRoot)
+	if index < 0 {
+		return ProjectEntry{}, ErrProjectNotRegistered
+	}
+	return entries[index], nil
 }
 
 // generateWorktreeDirName produces a flat directory name for a worktree:

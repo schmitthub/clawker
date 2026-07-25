@@ -409,7 +409,7 @@ monitoring:
 			require.NoError(t, ledger.Merge(units, time.Unix(0, 0).UTC()))
 			union := ledger.Union()
 
-			data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), union)
+			data, err := monitor.NewMonitorTemplateData(cfg.MonitoringConfig(), union)
 			require.NoError(t, err)
 
 			otel, err := monitor.RenderTemplate("otel-config.yaml", monitor.OtelConfigTemplate, data)
@@ -468,7 +468,7 @@ func TestWriteOpenSearchBootstrap_UnitCollisions(t *testing.T) {
 	cfg := projectConfig(t, "", []string{"synthetic-codex"}, "synthetic-codex")
 	units, err := monitor.ResolveUnits(cfg)
 	require.NoError(t, err)
-	data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), nil)
+	data, err := monitor.NewMonitorTemplateData(cfg.MonitoringConfig(), nil)
 	require.NoError(t, err)
 
 	// Successful overlay content is locked by the bootstrap-tree golden

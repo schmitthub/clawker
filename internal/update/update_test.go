@@ -10,7 +10,6 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/httpmock"
-	"github.com/schmitthub/clawker/internal/state"
 	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
 )
 
@@ -242,7 +241,7 @@ func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
 	// TTL-fresh state: CheckedAt is "now", so the freshness gate suppresses
 	// before any fetch or persist.
 	m := statemocks.NewBlankState()
-	m.StateFunc = func() *state.State { return &state.State{CheckedAt: time.Now()} }
+	m.CheckedAtFunc = time.Now
 
 	info, err := CheckForUpdate(context.Background(), reg.Client(), m, "1.0.0", consts.GitHubRepo)
 	if err != nil {

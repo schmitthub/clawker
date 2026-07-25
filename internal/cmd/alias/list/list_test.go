@@ -11,15 +11,14 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// newListEnv builds a config whose project store layers a real file (the
+// newListEnv builds a real config whose project store layers a real file (the
 // user config-dir clawker.yaml) over the shipped defaults, so SOURCE rows
-// carry actual provenance.
+// carry actual provenance. Walk-up is disabled (no project root), so the
+// config-dir file and the defaults are the whole layer stack.
 func newListEnv(t *testing.T, userAliasesYAML string) (config.Config, string) {
 	t.Helper()
 	configDir := t.TempDir()
@@ -29,16 +28,9 @@ func newListEnv(t *testing.T, userAliasesYAML string) (config.Config, string) {
 		require.NoError(t, os.WriteFile(path, []byte(userAliasesYAML), 0o644))
 	}
 
-	store, err := storage.New[config.Project](storage.GenerateDefaultsYAML[config.Project](),
-		storage.WithFilenames("clawker.yaml"),
-		storage.WithConfigDir(),
-	)
+	cfg, err := config.NewConfig()
 	require.NoError(t, err)
-
-	mock := configmocks.NewBlankConfig()
-	mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
-	mock.ProjectFunc = func() *config.Project { return store.Read() }
-	return mock, path
+	return cfg, path
 }
 
 func executeList(t *testing.T, cfg config.Config, args ...string) (stdout, stderr string, err error) {

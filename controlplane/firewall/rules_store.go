@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -13,6 +14,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -32,18 +34,315 @@ func (f EgressRulesFile) Fields() storage.FieldSet {
 	return storage.NormalizeFields(f)
 }
 
-// NewRulesStore creates a storage.Store[EgressRulesFile] for egress-rules.yaml.
-// The store uses the firewall data subdirectory for file discovery.
-func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
+// EgressRulesStore is the domain facade over the persisted egress rule set.
+// Consumers (the firewall Handler and the Envoy/CoreDNS Stack) depend on this
+// interface and never touch storage.Store or know a file exists.
+//
+// Every read answers with the CANONICAL rule set — NormalizeAndDedup applied —
+// because the canonical form is the only shape the generators, the certificate
+// pass, the route projection, and the rule-count display may act on. A raw
+// whole-schema read does not exist.
+//
+// Each write owns one mutation semantic (merge-add, key removal, path removal,
+// canonical rewrite). They are NOT field-disjoint the way the store-backed
+// rules file describes — the schema carries a single `rules` field, so every
+// write targets it — which is exactly why the implementation serializes them
+// itself instead of relying on field ownership (see egressRulesStoreImpl.mu).
+//
+//go:generate moq -rm -pkg mocks -out mocks/egress_rules_store_mock.go . EgressRulesStore
+type EgressRulesStore interface {
+	// Rules returns the canonical (normalized + deduped) rule set together
+	// with the normalization warnings the pass produced — one per dropped or
+	// coalesced rule. Callers with a logger surface the warnings; callers that
+	// only need the rules discard them.
+	Rules() ([]config.EgressRule, []string, error)
+	// Routes projects the canonical rule set into the BPF route_map entry
+	// form for the given listener layout and identity table. The second
+	// return holds the dsts that hold no identity: those produce NO route
+	// (fail closed) and callers with a logger report them, because a missed
+	// dst still resolves via DNS but denies at connect().
+	Routes(ports EnvoyPorts, idFor IdentityResolver) ([]ebpf.Route, []string, error)
+
+	// AddRules merges incoming rules into the stored set (see MergeRule for
+	// the per-key semantics) and persists the result. It reports one
+	// AddStatus per incoming rule, in input order. A batch whose canonical
+	// form matches what is already stored writes nothing and comes back
+	// all-AddStatusUnchanged, so callers can skip the stack reconcile.
+	AddRules(incoming []config.EgressRule) ([]AddStatus, error)
+	// RemoveRule deletes the rule whose RuleKey matches target and persists
+	// the result. matched=false means no stored rule shares the key and
+	// nothing was written.
+	RemoveRule(target config.EgressRule) (matched bool, err error)
+	// RemovePathRule deletes one PathRule entry (by exact path) from the rule
+	// whose RuleKey matches target, leaving the rule itself in place.
+	// matched=false means either the rule key or the path was absent and
+	// nothing was written.
+	RemovePathRule(target config.EgressRule, path string) (matched bool, err error)
+	// Canonicalize rewrites the stored rules in canonical form when the
+	// on-disk shape differs from it — a legacy file with an unset proto,
+	// action, or port, or a duplicate that dedups away. Reports whether it
+	// wrote. Idempotent: an already-canonical file is a no-op.
+	Canonicalize() (healed bool, err error)
+}
+
+// egressRulesStoreImpl is the storage-backed EgressRulesStore. It embeds
+// *storage.Store[EgressRulesFile] so the engine verbs stay reachable as the
+// escape hatch; they never leak past the interface, since the type is
+// unexported and only ever handed out as EgressRulesStore.
+type egressRulesStoreImpl struct {
+	*storage.Store[EgressRulesFile]
+}
+
+// NewRulesStore opens the egress-rules store in the firewall data
+// subdirectory. The constructor IS the load — discovery, merge, and the strict
+// schema decode all run here, so a malformed rules file surfaces as a CP
+// startup error rather than as an empty rule set at first read. All option
+// wiring lives here, once.
+//
+//nolint:ireturn // returns the EgressRulesStore domain interface by design — egressRulesStoreImpl stays package-private
+func NewRulesStore(cfg config.Config) (EgressRulesStore, error) {
 	dataDir, err := cfg.FirewallDataSubdir()
 	if err != nil {
 		return nil, fmt.Errorf("firewall: resolving data dir: %w", err)
 	}
-	return storage.New[EgressRulesFile]("",
-		storage.WithFilenames(cfg.EgressRulesFileName()),
+	store, err := storage.New[EgressRulesFile](
+		storage.WithFilenames(consts.EgressRulesFile),
+		storage.WithDefaultFilename(consts.EgressRulesFile),
 		storage.WithPaths(dataDir),
 		storage.WithLock(), // Cross-process flock — multiple CLI/daemon instances share this file.
 	)
+	if err != nil {
+		return nil, fmt.Errorf("firewall: loading egress rules: %w", err)
+	}
+	return &egressRulesStoreImpl{Store: store}, nil
+}
+
+// NewRulesStoreFromString is the in-memory seam: the seed YAML is the only
+// layer, decoded through the real schema with no directory, no discovery, and
+// no disk. It deliberately omits every path option so it can never read or
+// write a file — that is the whole point. Used by tests (and any consumer
+// double built on mocks/) that need a seeded rule set without an isolated
+// filesystem; the write methods error on the result by design.
+//
+//nolint:ireturn // returns the EgressRulesStore domain interface by design — egressRulesStoreImpl stays package-private
+func NewRulesStoreFromString(seed string) (EgressRulesStore, error) {
+	store, err := storage.NewFromString[EgressRulesFile](seed)
+	if err != nil {
+		return nil, fmt.Errorf("firewall: loading egress rules from string: %w", err)
+	}
+	return &egressRulesStoreImpl{Store: store}, nil
+}
+
+// Rules implements EgressRulesStore.
+func (s *egressRulesStoreImpl) Rules() ([]config.EgressRule, []string, error) {
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		// Absence (ErrKeyNotFound) is the empty rule set — a fresh file. Any
+		// other read failure is surfaced rather than folded: "no rules" is a
+		// meaningful state that wipes generated listeners and route_map
+		// entries, so an unreadable store must never masquerade as it.
+		return nil, nil, fmt.Errorf("firewall: reading egress rules: %w", err)
+	}
+	rules, warnings := NormalizeAndDedup(stored)
+	return rules, warnings, nil
+}
+
+// Routes implements EgressRulesStore.
+func (s *egressRulesStoreImpl) Routes(ports EnvoyPorts, idFor IdentityResolver) ([]ebpf.Route, []string, error) {
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return nil, nil, fmt.Errorf("firewall: reading egress rules for route generation: %w", err)
+	}
+	rules, _ := NormalizeAndDedup(stored)
+	routes, missed := RoutesFromRules(rules, ports, idFor)
+	return routes, missed, nil
+}
+
+// AddRules implements EgressRulesStore. On RuleKey collision the existing
+// entry is merged in place (caller wins on Action/PathDefault; PathRules union
+// by Path with caller winning on path collision); new keys are appended.
+//
+// Destination validation happens upstream in the RPC (ValidateRule) — this
+// method trusts its input and never reports an invalid rule.
+func (s *egressRulesStoreImpl) AddRules(incoming []config.EgressRule) ([]AddStatus, error) {
+	normalized := make([]config.EgressRule, 0, len(incoming))
+	for _, r := range incoming {
+		normalized = append(normalized, NormalizeRule(r))
+	}
+
+	// An absent rules key is the empty store, the correct starting point for a
+	// merge — every other read error is real and aborts the add.
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return nil, fmt.Errorf("firewall: add rules: reading rules: %w", err)
+	}
+	// Canonicalize the stored rules the same way every reader does. Indexing
+	// the RAW stored rules by RuleKey would miss carved spans: an opaque allow
+	// range overlapping a deny is split by NormalizeAndDedup into per-span
+	// rules, so a re-add of the original range matches no key and looks new.
+	before, _ := NormalizeAndDedup(stored)
+	existing, statuses := mergeIntoRuleSet(before, normalized)
+	// Re-canonicalize and compare against the pre-merge canonical form. A
+	// freshly-"added" opaque range can carve back to spans already present,
+	// making the operation a true no-op. The canonical before/after diff —
+	// not the per-rule RuleKey heuristic, which can't see the carve — is the
+	// authoritative write+reconcile gate.
+	after, _ := NormalizeAndDedup(existing)
+	if rulesCanonicalEqual(before, after) {
+		// Canonical state did not move: force Unchanged so the caller skips
+		// the stack reconcile. Keeps a re-apply of an identical (even carved)
+		// rule batch a true no-op — no write, no reload.
+		for i := range statuses {
+			statuses[i] = AddStatusUnchanged
+		}
+		return statuses, nil
+	}
+	if setErr := s.Set([]string{rulesField}, after); setErr != nil {
+		return nil, fmt.Errorf("firewall: add rules: updating rules: %w", setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return nil, fmt.Errorf("firewall: add rules: writing rules: %w", writeErr)
+	}
+	return statuses, nil
+}
+
+// RemoveRule implements EgressRulesStore.
+func (s *egressRulesStoreImpl) RemoveRule(target config.EgressRule) (bool, error) {
+	targetKey := RuleKey(NormalizeRule(target))
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return false, fmt.Errorf("firewall: remove rule: reading rules: %w", err)
+	}
+	normalized, _ := NormalizeAndDedup(stored)
+	matched := false
+	filtered := make([]config.EgressRule, 0, len(normalized))
+	for _, r := range normalized {
+		if RuleKey(r) == targetKey {
+			matched = true
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	if !matched {
+		return false, nil
+	}
+	if setErr := s.Set([]string{rulesField}, filtered); setErr != nil {
+		return false, fmt.Errorf("firewall: remove rule: updating rules: %w", setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return false, fmt.Errorf("firewall: remove rule: writing rules: %w", writeErr)
+	}
+	return true, nil
+}
+
+// RemovePathRule implements EgressRulesStore.
+func (s *egressRulesStoreImpl) RemovePathRule(target config.EgressRule, path string) (bool, error) {
+	targetKey := RuleKey(NormalizeRule(target))
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return false, fmt.Errorf("firewall: remove path rule: reading rules: %w", err)
+	}
+	normalized, _ := NormalizeAndDedup(stored)
+	idx := -1
+	for i, r := range normalized {
+		if RuleKey(r) == targetKey {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false, nil
+	}
+	r := normalized[idx]
+	matched := false
+	filtered := make([]config.PathRule, 0, len(r.PathRules))
+	for _, p := range r.PathRules {
+		if p.Path == path {
+			matched = true
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	if !matched {
+		return false, nil
+	}
+	r.PathRules = filtered
+	normalized[idx] = r
+	if setErr := s.Set([]string{rulesField}, normalized); setErr != nil {
+		return false, fmt.Errorf("firewall: remove path rule: updating rules: %w", setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return false, fmt.Errorf("firewall: remove path rule: writing rules: %w", writeErr)
+	}
+	return true, nil
+}
+
+// Canonicalize implements EgressRulesStore.
+func (s *egressRulesStoreImpl) Canonicalize() (bool, error) {
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return false, fmt.Errorf("firewall: canonicalizing rules: reading rules: %w", err)
+	}
+	rules, _ := NormalizeAndDedup(stored)
+	if !needsCanonicalRewrite(stored, rules) {
+		return false, nil
+	}
+	if setErr := s.Set([]string{rulesField}, rules); setErr != nil {
+		return false, fmt.Errorf("firewall: canonicalizing rules: updating rules: %w", setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return false, fmt.Errorf("firewall: canonicalizing rules: writing rules: %w", writeErr)
+	}
+	return true, nil
+}
+
+// mergeIntoRuleSet merges normalized incoming rules into a canonical rule set,
+// returning the merged set and one AddStatus per incoming rule in input order.
+// On RuleKey collision the existing entry is replaced by MergeRule's result (an
+// identical merge reports Unchanged); a new key is appended. The input set is
+// not mutated.
+func mergeIntoRuleSet(existing, incoming []config.EgressRule) ([]config.EgressRule, []AddStatus) {
+	out := append([]config.EgressRule(nil), existing...)
+	statuses := make([]AddStatus, len(incoming))
+	index := make(map[string]int, len(out))
+	for i, r := range out {
+		index[RuleKey(r)] = i
+	}
+	for i, r := range incoming {
+		key := RuleKey(r)
+		j, collides := index[key]
+		if !collides {
+			index[key] = len(out)
+			out = append(out, r)
+			statuses[i] = AddStatusAdded
+			continue
+		}
+		merged := MergeRule(out[j], r)
+		if reflect.DeepEqual(out[j], merged) {
+			statuses[i] = AddStatusUnchanged
+			continue
+		}
+		out[j] = merged
+		statuses[i] = AddStatusModified
+	}
+	return out, statuses
+}
+
+// needsCanonicalRewrite reports whether the canonical form of the stored rules
+// differs from what is on disk — a dropped duplicate, or a defaulted
+// proto/action/port filled in by NormalizeRule. Only then is the rewrite worth
+// taking.
+func needsCanonicalRewrite(stored, canonical []config.EgressRule) bool {
+	if len(canonical) != len(stored) {
+		return true
+	}
+	for i, r := range stored {
+		c := canonical[i]
+		if r.Proto != c.Proto || r.Action != c.Action || r.Port != c.Port {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateDst checks that a destination is a valid lowercase domain name,
@@ -895,7 +1194,7 @@ func spansEqual(a, b [][2]int) bool {
 // would report a spurious difference. Within a canonical set each
 // (RuleKey, action) pair is unique (carved spans have distinct ports; allow/deny
 // differ in action), so sorting by that key yields a stable total order to
-// compare. Used by addRulesToStore to gate the write+reconcile on a real change.
+// compare. Used by AddRules to gate the write+reconcile on a real change.
 func rulesCanonicalEqual(a, b []config.EgressRule) bool {
 	if len(a) != len(b) {
 		return false

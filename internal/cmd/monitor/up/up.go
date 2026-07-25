@@ -176,7 +176,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 // printServiceURLs prints the host-facing stack URLs after a detached up.
 func printServiceURLs(ios *iostreams.IOStreams, cfg config.Config) {
 	cs := ios.ColorScheme()
-	mc := cfg.SettingsStore().Read().Monitoring
+	mc := cfg.MonitoringConfig()
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	dashboards := fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)

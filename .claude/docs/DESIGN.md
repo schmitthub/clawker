@@ -219,21 +219,21 @@ type Config interface {
 }
 ```
 
-`cfg.ProjectStore().Set(path, value)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(path, value)` / `cfg.SettingsStore().Write()` are the mutation API — thin wrappers on `Store[T].Set` / `Store[T].Write` (with `Remove(path)` for clears).
+`cfg.ProjectStore().Set(key, value)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(key, value)` / `cfg.SettingsStore().Write()` are the raw mutation escape hatch — the engine verbs on the two stores (with `Remove(key...)` for clears). Keys are segment slices.
 
-**Usage:**
-- `cfg.Project().Build.Image` — from merged config walk-up
-- `cfg.Settings().Logging.MaxSizeMB` — from settings.yaml
-- `cfg.MonitoringConfig()` — deprecated convenience accessor (prefer `cfg.SettingsStore().Read().Monitoring`)
+**Usage (reads are value-specific accessors — there is no whole-schema getter):**
+- `cfg.BuildConfig().Image` — from merged config walk-up
+- `cfg.LoggingConfig().MaxSizeMB` — from settings.yaml
+- `cfg.MonitoringConfig()` — group accessor for the monitoring block
 - `cfg.ConfigDirEnvVar()` — constants via interface methods
 
-**No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
+**No collision risk:** each accessor names its schema explicitly (`BuildConfig` is project-side, `LoggingConfig` settings-side).
 
-**Path-based mutation.** `cfg.ProjectStore().Set(path, value)` / `Remove(path)` and `cfg.SettingsStore().Set(path, value)` mutate by dotted path; `Read()` returns the typed snapshot and `Get(path, &dest)` decodes one field. There is no closure mutator.
+**Key-based mutation.** `cfg.ProjectStore().Set([]string{"build", "image"}, v)` / `Remove("build", "image")` mutate by segment key; reads decode one value via `storage.Get[V](store, key...)` or, preferably, a config accessor. There is no closure mutator and no snapshot getter.
 
 #### Node-Native Architecture
 
-Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The typed struct `*T` is an immutable snapshot decoded from the merged node and published via `atomic.Pointer` (lock-free `Read`).
+Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The merged tree is the single in-memory representation: `storage.Get[V]` decodes the requested subtree on demand, and every mutation is validated by a strict decode of the candidate tree into `T` before it commits.
 
 ```
 Load:   file/string → layer node ─→ merge nodes → decode → immutable *T
@@ -309,17 +309,17 @@ func migrateOldBuildKey(s *storage.Store[Project]) (bool, error) {
         return false, nil // already current or never had old shape
     }
     // Transform: old shape → new shape, then drop the legacy key.
-    if err := s.Set("new_key", v); err != nil {
+    if err := s.Set([]string{"new_key"}, v); err != nil {
         return false, err
     }
-    if _, err := s.Remove("old_key"); err != nil {
+    if err := s.Remove("old_key"); err != nil {
         return false, err
     }
     return true, nil // signal: re-save needed
 }
 ```
 
-- Each migration checks if the old data shape exists via the store's `Has`/`Get`
+- Each migration checks if the old data shape exists via `storage.Get` + `errors.Is(err, storage.ErrKeyNotFound)` (or `Keys`)
 - If found: transform → re-save → done
 - If not found: skip (already current or never applied)
 - No version field, no migration chain, no ordering constraints
@@ -328,13 +328,13 @@ func migrateOldBuildKey(s *storage.Store[Project]) (bool, error) {
 
 #### Write Model
 
-All writes go through `Set(path, value)` + `Write()` on the store obtained from the `Config` interface:
+All writes go through `Set(key, value)` + `Write()` on the store obtained from the `Config` interface:
 
 ```go
-cfg.ProjectStore().Set("build.image", "ubuntu:24.04")
-cfg.ProjectStore().Write(storage.ToPath(localPath))
+cfg.ProjectStore().Set([]string{"build", "image"}, "ubuntu:24.04")
+cfg.ProjectStore().WriteTo(localPath)
 
-cfg.SettingsStore().Set("logging.max_size_mb", 100)
+cfg.SettingsStore().Set([]string{"logging", "max_size_mb"}, 100)
 cfg.SettingsStore().Write()
 ```
 
@@ -735,7 +735,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Embedded binaries**: The eBPF manager binary is embedded via `controlplane/manager/embed_ebpf.go` (`go:embed`); the custom CoreDNS binary via `controlplane/firewall/embed_coredns.go`. Each package builds its image on demand from the embedded binary using an inline Dockerfile SHA-pinned to `alpine:3.21`.
 
-**Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
+**Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store is `firewall.EgressRulesStore`, the domain facade over `storage.Store[EgressRulesFile]` with file-level locking (and an in-process mutex across its read-modify-write cycles).
 
 **Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
 

@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,30 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/storage"
 )
 
 // Conformance: E21 — validation walks each layer so the error names the real file, not the merged tree.
-// TestValidateProjectNodes_FileProvenance proves the per-layer walk
-// names the actual offending file, not just the virtual/seed layer.
+// TestValidateProjectNodes_FileProvenance proves the per-layer walk names the
+// actual offending file, not just the virtual/seed layer. NewConfig is the
+// front door validateProjectNodes runs inside, so the assertion is on the load
+// the CLI performs: a bad harness name in the project file fails it, naming
+// that file.
 func TestValidateProjectNodes_FileProvenance(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, consts.ProjectConfigFile), []byte(`
-harnesses:
-  Bad_Name:
-    mount_projects: false
-`), 0o644))
+	f := newProjectEnv(t)
+	f.writeProject(t, "harnesses:\n  Bad_Name:\n    mount_projects: false\n")
 
-	store, err := storage.New[Project]("",
-		storage.WithFilenames(consts.ProjectConfigFile),
-		storage.WithPaths(dir),
-	)
-	require.NoError(t, err)
-
-	err = validateProjectNodes(store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), consts.ProjectConfigFile)
-	assert.Contains(t, err.Error(), "harnesses.Bad_Name")
+	errMsg := f.loadErr(t)
+	assert.Contains(t, errMsg, consts.ProjectConfigFile)
+	assert.Contains(t, errMsg, "harnesses.Bad_Name")
 }
 
 // TestValidateProjectNodes_MalformedShapes drives every "must be a
@@ -96,33 +85,20 @@ build:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			winDir, loseDir := t.TempDir(), t.TempDir()
-			require.NoError(
-				t,
-				os.WriteFile(filepath.Join(winDir, consts.ProjectConfigFile), []byte(winning), 0o644),
-			)
-			require.NoError(
-				t,
-				os.WriteFile(filepath.Join(loseDir, consts.ProjectConfigFile), []byte(tc.losing), 0o644),
-			)
+			// The local override is the higher-priority layer of the same
+			// walk-up level, so the valid layer wins the merge: the typed decode
+			// of the merged tree succeeds and only the per-layer walk can flag
+			// the project file below it.
+			f := newProjectEnv(t)
+			f.writeLocal(t, winning)
+			f.writeProject(t, tc.losing)
 
-			// First path = highest priority: the valid layer wins the merge,
-			// so store construction (typed decode of the merged tree) succeeds
-			// and only the per-layer walk can flag the losing file.
-			store, err := storage.New[Project]("",
-				storage.WithFilenames(consts.ProjectConfigFile),
-				storage.WithPaths(winDir, loseDir),
-			)
-			require.NoError(
-				t,
-				err,
-				"malformed losing layer must not break store construction — that is the silent-shadow hazard",
-			)
-
-			err = validateProjectNodes(store)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantErr)
-			assert.Contains(t, err.Error(), consts.ProjectConfigFile)
+			errMsg := f.loadErr(t)
+			assert.Contains(t, errMsg, tc.wantErr)
+			assert.Contains(t, errMsg, consts.ProjectConfigFile,
+				"the error must name the file the malformed node lives in")
+			assert.NotContains(t, errMsg, consts.ProjectLocalConfigFile,
+				"the winning layer is well-formed — it must not be blamed")
 		})
 	}
 }

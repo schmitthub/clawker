@@ -45,17 +45,13 @@ agent:
     mount_projects: false
 `
 
-// testConfig returns a minimal *config.Project loaded through NewFromString.
-func testConfig() *config.Project {
-	cfg, err := config.NewFromString(testConfigYAML, "")
-	if err != nil {
-		panic(fmt.Sprintf("testConfig: %v", err))
-	}
-	return cfg.Project()
+// testConfig returns a minimal Config double seeded from testConfigYAML.
+func testConfig() *configmocks.ConfigMock {
+	return configmocks.NewFromString(testConfigYAML, "")
 }
 
-// testConfigWithFirewall returns a *config.Project with firewall enabled and custom domains.
-func testConfigWithFirewall(domains ...string) *config.Project {
+// testConfigWithFirewall returns a Config double with firewall domains set.
+func testConfigWithFirewall(domains ...string) *configmocks.ConfigMock {
 	var b strings.Builder
 	for _, d := range domains {
 		b.WriteString("\n    - ")
@@ -69,11 +65,7 @@ security:
   firewall:
     add_domains:%s
 `, b.String())
-	cfg, err := config.NewFromString(yaml, "")
-	if err != nil {
-		panic(fmt.Sprintf("testConfigWithFirewall: %v", err))
-	}
-	return cfg.Project()
+	return configmocks.NewFromString(yaml, "")
 }
 
 // testFlags returns a FlagSet from a minimal cobra command with container flags registered.
@@ -84,26 +76,22 @@ func testFlags() *cobra.Command {
 	return cmd
 }
 
-// testMockConfig returns a *configmocks.ConfigMock for container-create tests.
+// testCreateConfig builds a CreateContainerOptions with test defaults.
+//
 // Project-root / ignore-file resolution goes through the injected
 // ProjectRegistry closure, which reads the registry from the isolated data
 // dir set up by setupAuthEnv (testenv.New): with no registry on disk,
 // CreateContainer degrades to empty ignore patterns — the intended "not in
 // a project" behavior.
-// The cfg parameter ensures Project() returns a consistent project name for volume naming.
-func testMockConfig(project *config.Project) *configmocks.ConfigMock {
-	mock := configmocks.NewBlankConfig()
-	if project != nil {
-		mock.ProjectFunc = func() *config.Project { return project }
-	}
-	return mock
-}
-
-// testCreateConfig builds a CreateContainerOptions with test defaults.
-func testCreateConfig(fake *mocks.FakeClient, project *config.Project, containerOpts *ContainerCreateOptions, cmd *cobra.Command) *CreateContainerOptions {
+func testCreateConfig(
+	fake *mocks.FakeClient,
+	cfg config.Config,
+	containerOpts *ContainerCreateOptions,
+	cmd *cobra.Command,
+) *CreateContainerOptions {
 	return &CreateContainerOptions{
 		Client:      fake.Client,
-		Config:      testMockConfig(project),
+		Config:      cfg,
 		ProjectName: "testproject",
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
@@ -111,9 +99,7 @@ func testCreateConfig(fake *mocks.FakeClient, project *config.Project, container
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
 		},
-		ProjectRegistry: func() (*projectpkg.Registry, error) {
-			return projectpkg.NewRegistry()
-		},
+		ProjectRegistry: projectpkg.NewRegistry,
 		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
@@ -143,13 +129,11 @@ func TestCreateContainer_HappyPath(t *testing.T) {
 	fake.AssertCalled(t, "ContainerCreate")
 }
 
-// snapshotModeProject builds a *config.Project whose workspace.default_mode is
+// snapshotModeProject builds a Config double whose workspace.default_mode is
 // snapshot, for exercising the config-default branch of the worktree guard.
-func snapshotModeProject(t *testing.T) *config.Project {
+func snapshotModeProject(t *testing.T) *configmocks.ConfigMock {
 	t.Helper()
-	cfg, err := config.NewFromString("workspace:\n  default_mode: snapshot\n", "")
-	require.NoError(t, err)
-	return cfg.Project()
+	return configmocks.NewFromString("workspace:\n  default_mode: snapshot\n", "")
 }
 
 // TestCreateContainer_RejectsWorktreeInSnapshotMode locks in the fail-fast
@@ -162,7 +146,7 @@ func TestCreateContainer_RejectsWorktreeInSnapshotMode(t *testing.T) {
 	setupAuthEnv(t)
 	tests := []struct {
 		name    string
-		project *config.Project
+		project *configmocks.ConfigMock
 		mode    string
 	}{
 		{name: "explicit --mode snapshot override", project: testConfig(), mode: "snapshot"},
@@ -262,8 +246,16 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	cfg := testConfig()
-	cfg.Agent.PostInit = "npm install -g typescript\n"
+	cfg := configmocks.NewFromString(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+agent:
+  post_init: "npm install -g typescript\n"
+  claude_code:
+    mount_projects: false
+`, "")
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -290,12 +282,18 @@ func TestCreateContainer_HarnessPostInit(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	cfg := testConfig()
-	harnessCfg := testHarnessCfg("")
-	harnessCfg.PostInit = "claude mcp add foo\n"
-	cfg.Harnesses = map[string]config.HarnessConfig{
-		consts.DefaultHarnessName: *harnessCfg,
-	}
+	cfg := configmocks.NewFromString(fmt.Sprintf(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+agent:
+  claude_code:
+    mount_projects: false
+harnesses:
+  %s:
+    post_init: "claude mcp add foo\n"
+`, consts.DefaultHarnessName), "")
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -313,8 +311,16 @@ func TestCreateContainer_HarnessPostInit(t *testing.T) {
 
 func TestCreateContainer_NoPostInit(t *testing.T) {
 	// No PostInit configured → no CopyToContainer calls
-	cfg := testConfig()
-	cfg.Agent.ClaudeCode = testHarnessCfg("fresh")
+	cfg := configmocks.NewFromString(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+agent:
+  claude_code:
+    config:
+      strategy: fresh
+`, "")
 
 	setupAuthEnv(t)
 	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
@@ -362,8 +368,16 @@ func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 		return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
 	}
 
-	cfg := testConfig()
-	cfg.Agent.PostInit = "npm install -g typescript\n"
+	cfg := configmocks.NewFromString(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+agent:
+  post_init: "npm install -g typescript\n"
+  claude_code:
+    mount_projects: false
+`, "")
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -410,8 +424,17 @@ func TestCreateContainer_EnvFileError(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	cfg := testConfig()
-	cfg.Agent.EnvFile = []string{"/nonexistent/file.env"}
+	cfg := configmocks.NewFromString(`
+workspace:
+  default_mode: bind
+security:
+  enable_host_proxy: false
+agent:
+  env_file:
+    - /nonexistent/file.env
+  claude_code:
+    mount_projects: false
+`, "")
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()

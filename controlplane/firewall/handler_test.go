@@ -787,16 +787,16 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 
 	// Pre-seed the store via the handler's own helper so the rules land
 	// on disk exactly as a prior CP run would have left them.
-	statuses, err := h.addRulesToStore([]config.EgressRule{
+	statuses, err := h.store.AddRules([]config.EgressRule{
 		{Dst: "github.com", Proto: "ssh", Port: "22", Action: "allow"},
 		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
 	require.NoError(t, err)
 	require.Len(t, statuses, 2, "one status per input rule")
 	for _, s := range statuses {
-		require.Equal(t, addStatusAdded, s, "both rules are brand-new")
+		require.Equal(t, AddStatusAdded, s, "both rules are brand-new")
 	}
-	// addRulesToStore writes to disk only; no Submit, so no SyncRoutes
+	// AddRules writes to disk only; no Submit, so no SyncRoutes
 	// calls have been recorded yet.
 	require.Empty(t, mock.SyncRoutesCalls(), "store seed must not invoke SyncRoutes")
 
@@ -856,7 +856,7 @@ func TestHandler_FirewallInit_EmitsNormalizeWarningsButSyncsSurvivors(t *testing
 	// Two rules that normalize to the same key → first lands as ADDED,
 	// the second collides on the same RuleKey and reports UNCHANGED
 	// (identical re-apply after the first insert).
-	statuses, err := h.addRulesToStore([]config.EgressRule{
+	statuses, err := h.store.AddRules([]config.EgressRule{
 		{Dst: "Example.Com", Proto: "https", Port: "443", Action: "allow"},
 		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
@@ -1353,7 +1353,7 @@ func assertReason(t *testing.T, err error, wantReason string) {
 // for the path_rules-propagation bug. Pre-seeding the store with a path
 // rule, then re-sending the same key with a different path rule, must
 // produce a rule whose PathRules list contains BOTH entries — not the
-// first-write-wins skip the old addRulesToStore exhibited.
+// first-write-wins skip the old per-key merge exhibited.
 func TestHandler_AddRules_KeyCollision_MergesPathRules(t *testing.T) {
 	mock := noopMock()
 	h, stack := ruleStoreHandler(t, mock)

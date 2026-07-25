@@ -28,11 +28,11 @@ func ResolveHarnessName(cfg config.Config, explicit string) (string, error) {
 		}
 		return explicit, nil
 	}
-	if proj := cfg.Project(); proj != nil && proj.Build.Harness != "" {
-		if err := consts.ValidateHarnessRef(proj.Build.Harness); err != nil {
+	if harness := cfg.BuildConfig().Harness; harness != "" {
+		if err := consts.ValidateHarnessRef(harness); err != nil {
 			return "", fmt.Errorf("build.harness: %w", err)
 		}
-		return proj.Build.Harness, nil
+		return harness, nil
 	}
 	return DefaultHarnessName, nil
 }
@@ -86,7 +86,7 @@ func IsKnownHarness(cfg config.Config, name string) bool {
 // resolver so a generation performs one memoized installed-bundle scan, not
 // one per key.
 func validateOverlayKeys(cfg config.Config, r *bundle.Resolver) error {
-	overlays := cfg.Project().Build.Harnesses
+	overlays := cfg.BuildConfig().Harnesses
 	keys := make([]string, 0, len(overlays))
 	for key := range overlays {
 		keys = append(keys, key)

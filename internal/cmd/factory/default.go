@@ -198,8 +198,7 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
-	settings := cfg.SettingsStore().Read()
-	loggingCfg := settings.Logging
+	loggingCfg := cfg.LoggingConfig()
 
 	// File logging is on by default for user diagnostics.
 	// Only skip if explicitly disabled via settings.yaml.
@@ -211,7 +210,7 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get logs subdir: %w", err)
 	}
-	monitoringCfg := settings.Monitoring
+	monitoringCfg := cfg.MonitoringConfig()
 
 	// Build OTEL config from settings if enabled. CLI runs on the host and
 	// reaches the collector via its host-published OTLP/gRPC port —
@@ -280,7 +279,7 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 			// and pass it down as a primitive so PM stays config-free. This is a
 			// one-way edge (PM reads config); config never reads PM — its anchor
 			// comes from the shared registry facade.
-			svc, err = project.NewProjectManager(log, nil, cfg.Project().Name, reg)
+			svc, err = project.NewProjectManager(log, nil, cfg.ProjectName(), reg)
 		})
 		return svc, err
 	}
@@ -359,7 +358,7 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 			return nil, fmt.Errorf("admin client: config: %w", err)
 		}
 
-		cp := cfg.Settings().ControlPlane
+		cp := cfg.ControlPlaneSettings()
 		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
 			grpc.WithKeepaliveParams(adminClientKeepalive),
 		)
@@ -424,13 +423,13 @@ func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManage
 // registry facade once. This is the only production constructor of registry
 // storage — config walk-up anchoring, the git manager, the project manager,
 // and commands all share the instance through f.ProjectRegistry.
-func projectRegistryFunc() func() (*project.Registry, error) {
+func projectRegistryFunc() func() (project.Registry, error) {
 	var (
 		once sync.Once
-		reg  *project.Registry
+		reg  project.Registry
 		err  error
 	)
-	return func() (*project.Registry, error) {
+	return func() (project.Registry, error) {
 		once.Do(func() {
 			reg, err = project.NewRegistry()
 		})

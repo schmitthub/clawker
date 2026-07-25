@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
@@ -26,18 +25,20 @@ func sanitizePresetName(name string) string {
 	return "preset-" + s
 }
 
-// readProjectConfig reads and parses .clawker.yaml from the given directory.
-func readProjectConfig(t *testing.T, dir string) *config.Project {
+// readProjectConfig reads .clawker.yaml from the given directory and loads it
+// through config's own defaults-free constructor: the assertions below are
+// about what `project init` actually WROTE to the file, so a defaults layer
+// would let a missing preset value pass as if it had been written.
+//
+//nolint:ireturn // config exports only the Config interface; configImpl is package-private.
+func readProjectConfig(t *testing.T, dir string) config.Config {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, ".clawker.yaml"))
 	require.NoError(t, err, "reading .clawker.yaml")
 
-	store, err := storage.New[config.Project](
-		string(data),
-		storage.WithDefaultsFromStruct[config.Project](),
-	)
+	cfg, err := config.NewFromString(string(data), "")
 	require.NoError(t, err, "parsing .clawker.yaml")
-	return store.Read()
+	return cfg
 }
 
 // TestPresetBuilds_E2E verifies that every language preset produces a valid
@@ -73,12 +74,14 @@ func TestPresetBuilds_E2E(t *testing.T) {
 				preset.Name, initRes.Stdout, initRes.Stderr)
 
 			// Verify written config has VCS domains from --vcs github.
-			snap := readProjectConfig(t, setup.ProjectDir)
-			assert.Contains(t, snap.Security.Firewall.AddDomains, "github.com",
+			written := readProjectConfig(t, setup.ProjectDir)
+			sec := written.SecurityConfig()
+			require.NotNil(t, sec.Firewall, "preset %s: firewall config should exist", preset.Name)
+			assert.Contains(t, sec.Firewall.AddDomains, "github.com",
 				"preset %s: config should contain github.com from --vcs", preset.Name)
-			assert.Contains(t, snap.Security.Firewall.AddDomains, "api.github.com",
+			assert.Contains(t, sec.Firewall.AddDomains, "api.github.com",
 				"preset %s: config should contain api.github.com from --vcs", preset.Name)
-			assert.NotEmpty(t, snap.Build.Packages,
+			assert.NotEmpty(t, written.BuildConfig().Packages,
 				"preset %s: config should have build.packages set", preset.Name)
 
 			// Build the image (suppress progress output for clean test logs).
@@ -193,25 +196,25 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 				"init failed\nstdout: %s\nstderr: %s",
 				initRes.Stdout, initRes.Stderr)
 
-			snap := readProjectConfig(t, setup.ProjectDir)
+			sec := readProjectConfig(t, setup.ProjectDir).SecurityConfig()
+			require.NotNil(t, sec.Firewall, "firewall config should exist")
 
 			// Verify expected domains are present.
 			for _, d := range tt.wantDomains {
-				assert.Contains(t, snap.Security.Firewall.AddDomains, d,
+				assert.Contains(t, sec.Firewall.AddDomains, d,
 					"config should contain domain %s", d)
 			}
 
 			// Verify unwanted domains are absent.
 			for _, d := range tt.notWantDomains {
-				assert.NotContains(t, snap.Security.Firewall.AddDomains, d,
+				assert.NotContains(t, sec.Firewall.AddDomains, d,
 					"config should not contain domain %s", d)
 			}
 
 			// Verify SSH rule.
 			if tt.wantSSHRule != "" {
-				require.NotNil(t, snap.Security.Firewall, "firewall config should exist")
 				found := false
-				for _, r := range snap.Security.Firewall.Rules {
+				for _, r := range sec.Firewall.Rules {
 					if r.Dst == tt.wantSSHRule && r.Port == "22" && r.Proto == "ssh" {
 						found = true
 						break
@@ -220,19 +223,17 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 				assert.True(t, found, "should have SSH rule for %s:22", tt.wantSSHRule)
 			} else {
 				// No SSH rule expected.
-				if snap.Security.Firewall != nil {
-					for _, r := range snap.Security.Firewall.Rules {
-						assert.NotEqual(t, "22", r.Port,
-							"should not have port 22 rule but found one for %s", r.Dst)
-					}
+				for _, r := range sec.Firewall.Rules {
+					assert.NotEqual(t, "22", r.Port,
+						"should not have port 22 rule but found one for %s", r.Dst)
 				}
 			}
 
 			// Verify GPG setting.
 			if tt.wantGPGFalse {
-				require.NotNil(t, snap.Security.GitCredentials, "git_credentials should exist")
-				require.NotNil(t, snap.Security.GitCredentials.ForwardGPG, "forward_gpg should be set")
-				assert.False(t, *snap.Security.GitCredentials.ForwardGPG, "forward_gpg should be false")
+				require.NotNil(t, sec.GitCredentials, "git_credentials should exist")
+				require.NotNil(t, sec.GitCredentials.ForwardGPG, "forward_gpg should be set")
+				assert.False(t, *sec.GitCredentials.ForwardGPG, "forward_gpg should be false")
 			}
 		})
 	}
@@ -380,59 +381,63 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	assert.FileExists(t, settingsPath, "init should bootstrap settings.yaml")
 
 	// --- Read and verify the written project config ---
-	snap := readProjectConfig(t, setup.ProjectDir)
+	written := readProjectConfig(t, setup.ProjectDir)
+	build := written.BuildConfig()
+	agent := written.AgentConfig()
+	sec := written.SecurityConfig()
+	require.NotNil(t, sec.Firewall, "firewall config should exist")
 
 	// Preset build settings should be written, not user-level ones.
-	assert.Equal(t, []string{"go"}, snap.Build.Stacks,
+	assert.Equal(t, []string{"go"}, build.Stacks,
 		"should have Go preset stack, not user-level stacks")
-	assert.Equal(t, []string{"ripgrep"}, snap.Build.Packages,
+	assert.Equal(t, []string{"ripgrep"}, build.Packages,
 		"should have Go preset packages, not user-level nodejs/npm/gh")
 
 	// User-level build instructions should NOT appear — Go preset has none,
 	// so Instructions pointer should be nil (not populated from user config).
-	assert.Nil(t, snap.Build.Instructions,
+	assert.Nil(t, build.Instructions,
 		"user-level build instructions should not bleed through")
 
 	// User-level agent config should NOT appear.
-	assert.Empty(t, snap.Agent.FromEnv,
+	assert.Empty(t, agent.FromEnv,
 		"user-level from_env should not bleed through")
-	assert.Empty(t, snap.Agent.PostInit,
+	assert.Empty(t, agent.PostInit,
 		"user-level post_init should not bleed through")
 
 	// Preset firewall domains should be present.
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "proxy.golang.org")
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "sum.golang.org")
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "storage.googleapis.com")
+	assert.Contains(t, sec.Firewall.AddDomains, "proxy.golang.org")
+	assert.Contains(t, sec.Firewall.AddDomains, "sum.golang.org")
+	assert.Contains(t, sec.Firewall.AddDomains, "storage.googleapis.com")
 
 	// GitLab VCS domains should be present.
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "gitlab.com")
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "registry.gitlab.com")
+	assert.Contains(t, sec.Firewall.AddDomains, "gitlab.com")
+	assert.Contains(t, sec.Firewall.AddDomains, "registry.gitlab.com")
 
 	// User-level domains should NOT appear.
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "pypi.org",
+	assert.NotContains(t, sec.Firewall.AddDomains, "pypi.org",
 		"user-level pypi.org should not bleed through")
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "registry.npmjs.org",
+	assert.NotContains(t, sec.Firewall.AddDomains, "registry.npmjs.org",
 		"user-level registry.npmjs.org should not bleed through")
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "registry-1.docker.io",
+	assert.NotContains(t, sec.Firewall.AddDomains, "registry-1.docker.io",
 		"user-level registry-1.docker.io should not bleed through")
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "mcp.deepwiki.com",
+	assert.NotContains(t, sec.Firewall.AddDomains, "mcp.deepwiki.com",
 		"user-level mcp.deepwiki.com should not bleed through")
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "astral.sh",
+	assert.NotContains(t, sec.Firewall.AddDomains, "astral.sh",
 		"user-level astral.sh should not bleed through")
 
 	// GitHub domains from user config should NOT appear (GitLab was selected).
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com",
+	assert.NotContains(t, sec.Firewall.AddDomains, "github.com",
 		"github.com from user config should not appear when GitLab selected")
 
 	// Exactly one SSH rule: gitlab.com (from VCS selection), not github.com (from user config).
-	require.Len(t, snap.Security.Firewall.Rules, 1,
+	require.Len(t, sec.Firewall.Rules, 1,
 		"should have exactly one SSH rule (gitlab), not two")
-	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
-	assert.Equal(t, "22", snap.Security.Firewall.Rules[0].Port)
-	assert.Equal(t, "ssh", snap.Security.Firewall.Rules[0].Proto)
+	assert.Equal(t, "gitlab.com", sec.Firewall.Rules[0].Dst)
+	assert.Equal(t, "22", sec.Firewall.Rules[0].Port)
+	assert.Equal(t, "ssh", sec.Firewall.Rules[0].Proto)
 
 	// GPG should be disabled (--no-gpg flag).
-	require.NotNil(t, snap.Security.GitCredentials)
-	require.NotNil(t, snap.Security.GitCredentials.ForwardGPG)
-	assert.False(t, *snap.Security.GitCredentials.ForwardGPG)
+	require.NotNil(t, sec.GitCredentials)
+	require.NotNil(t, sec.GitCredentials.ForwardGPG)
+	assert.False(t, *sec.GitCredentials.ForwardGPG)
 }

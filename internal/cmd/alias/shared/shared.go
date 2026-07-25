@@ -3,6 +3,7 @@
 package shared
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -14,6 +15,11 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
+
+// keyAliases is the project-config key holding the alias map. Alias entries
+// are dynamic map keys under it, addressed as the segment pair
+// {keyAliases, <name>} — never as a dotted string.
+const keyAliases = "aliases"
 
 // ValidCommandFunc reports whether name belongs to a real (non-alias)
 // clawker command or one of its cobra aliases. The root command provides
@@ -29,12 +35,6 @@ func ValidateName(name string) error {
 		return fmt.Errorf("alias name %q must be a single word", name)
 	case strings.HasPrefix(name, "-"):
 		return fmt.Errorf("alias name %q must not start with %q", name, "-")
-	case strings.Contains(name, "."):
-		// The store addresses alias entries by the dotted field path
-		// "aliases.<name>"; a dot in the name reparses as nesting — set
-		// writes the wrong nested shape (corrupting the file) and delete
-		// silently no-ops on disk.
-		return fmt.Errorf("alias name %q must not contain %q", name, ".")
 	}
 	return nil
 }
@@ -82,7 +82,7 @@ func DefaultAliases() (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading default config: %w", err)
 	}
-	return cfg.Project().Aliases, nil
+	return cfg.Aliases(), nil
 }
 
 // SetTarget resolves the file that alias set writes to: the user-level
@@ -112,28 +112,11 @@ func ExportTarget(cfg config.Config) (string, error) {
 	return "", fmt.Errorf("no project config found in the walk-up; run inside a clawker project (see 'clawker init')")
 }
 
-// OpenFileStore opens an isolated store on a single project config file —
-// no defaults layer, no walk-up, no user-level merging. This scopes a write
-// to exactly the alias entries: the composite project store marks every
-// defaults-provenance field dirty at construction (how init/bootstrap
-// materializes defaults), so a write through it would also backfill any
-// schema fields the file doesn't carry — fine for init, surprising as a side
-// effect of an alias command.
-func OpenFileStore(target string) (*storage.Store[config.Project], error) {
-	store, err := storage.New[config.Project]("",
-		storage.WithPaths(filepath.Dir(target)),
-		storage.WithFilenames(filepath.Base(target)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("opening project config %s: %w", target, err)
-	}
-	return store, nil
-}
-
-// AliasFieldPath returns the dotted store path for one alias entry,
-// e.g. "aliases.go" — the key used in provenance and layer lookups.
-func AliasFieldPath(name string) string {
-	return "aliases." + name
+// AliasKey returns the store key segments addressing one alias entry —
+// {"aliases", name}. Segments, never a dotted string: a name containing a
+// literal dot addresses the map entry exactly instead of reparsing as nesting.
+func AliasKey(name string) []string {
+	return []string{keyAliases, name}
 }
 
 // SamePath reports whether a and b denote the same file after cleaning.
@@ -141,26 +124,48 @@ func SamePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// WriteAliases applies mutate to the isolated store on path (see
-// OpenFileStore), persists it, and reports the write on out. mutate
-// receives a non-nil aliases map.
-func WriteAliases(out io.Writer, path string, mutate func(map[string]string)) error {
-	store, err := OpenFileStore(path)
-	if err != nil {
-		return err
+// WriteAliasEntries stages each name→expansion entry in the project store and
+// flushes each one to path, then reports the write on out. Every other staged
+// field stays staged: WriteFieldTo persists exactly the key it names, merged
+// into the file's current contents, so an alias command touches nothing but
+// its own alias entries.
+func WriteAliasEntries(out io.Writer, cfg config.Config, path string, entries map[string]string) error {
+	if len(entries) == 0 {
+		return nil // nothing staged, nothing written, nothing to report
 	}
-	var aliases map[string]string
-	if _, err = store.Get("aliases", &aliases); err != nil {
-		return fmt.Errorf("reading aliases from %s: %w", path, err)
+	store := cfg.ProjectStore()
+	for name, expansion := range entries {
+		key := AliasKey(name)
+		if err := store.Set(key, expansion); err != nil {
+			return fmt.Errorf("setting alias %q: %w", name, err)
+		}
+		if err := store.WriteFieldTo(path, key...); err != nil {
+			return fmt.Errorf("saving %s: %w", path, err)
+		}
 	}
-	if aliases == nil {
-		aliases = make(map[string]string)
+	fmt.Fprintf(out, "Wrote %s\n", path)
+	return nil
+}
+
+// DeleteAliasEntry stages the removal of the alias from the merged view and
+// flushes the deletion to path, then reports the write on out.
+//
+// Removing from the merged view is what stages the deletion, so the caller
+// walks the file layers highest priority first: each flush drops the entry
+// from one file, and the remerge that follows re-exposes the next layer's
+// value for the next removal. A name the merged view no longer serves a live
+// value for — every remaining layer entry is a bare `name:` (unset) — stages
+// nothing and writes nothing; there is no live alias left to delete.
+func DeleteAliasEntry(out io.Writer, cfg config.Config, path, name string) error {
+	store := cfg.ProjectStore()
+	key := AliasKey(name)
+	if err := store.Remove(key...); err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil
+		}
+		return fmt.Errorf("removing alias %q: %w", name, err)
 	}
-	mutate(aliases)
-	if err = store.Set("aliases", aliases); err != nil {
-		return fmt.Errorf("updating %s: %w", path, err)
-	}
-	if err := store.WriteTo(path); err != nil {
+	if err := store.WriteFieldTo(path, key...); err != nil {
 		return fmt.Errorf("saving %s: %w", path, err)
 	}
 	fmt.Fprintf(out, "Wrote %s\n", path)
@@ -176,7 +181,7 @@ func LayersContaining(cfg config.Config, name string) []string {
 		if layer.Path == "" {
 			continue // defaults / string-backed layer
 		}
-		aliases, ok := layer.Data["aliases"].(map[string]any)
+		aliases, ok := layer.Data[keyAliases].(map[string]any)
 		if !ok {
 			continue
 		}

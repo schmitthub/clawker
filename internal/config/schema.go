@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -187,44 +186,6 @@ func (c *HarnessConfig) ConfigStrategy() string {
 		return ConfigStrategyCopy
 	}
 	return c.Config.Strategy
-}
-
-// HarnessConfigFor returns the effective per-harness initialization config
-// for the named harness: the project harnesses map entry when present, else
-// the legacy agent.claude_code block for the built-in default harness
-// (deprecated shim), else nil — every accessor on HarnessConfig is
-// nil-tolerant and yields defaults.
-func (p *Project) HarnessConfigFor(name string) *HarnessConfig {
-	if p == nil {
-		return nil
-	}
-	if hc, ok := p.Harnesses[name]; ok {
-		return &hc
-	}
-	if name == consts.DefaultHarnessName {
-		return p.Agent.ClaudeCode
-	}
-	return nil
-}
-
-// PostInitFor returns the composed post-init script for the named harness:
-// the harness-agnostic agent.post_init base followed by the harness map
-// entry's post_init. Blank layers are skipped; both blank yields "".
-func (p *Project) PostInitFor(name string) string {
-	if p == nil {
-		return ""
-	}
-	return composeHookScript(p.Agent.PostInit, p.HarnessConfigFor(name).postInit())
-}
-
-// PreRunFor returns the composed pre-run script for the named harness:
-// the harness-agnostic agent.pre_run base followed by the harness map
-// entry's pre_run. Blank layers are skipped; both blank yields "".
-func (p *Project) PreRunFor(name string) string {
-	if p == nil {
-		return ""
-	}
-	return composeHookScript(p.Agent.PreRun, p.HarnessConfigFor(name).preRun())
 }
 
 // postInit returns the per-harness post_init script, nil-tolerant.
@@ -412,13 +373,6 @@ func ParseMode(s string) (Mode, error) {
 	}
 }
 
-// KeyNotFoundError indicates a configuration key was not found.
-type KeyNotFoundError struct {
-	Key string
-}
-
-func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
-
 // Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
 type Settings struct {
 	Logging      LoggingConfig        `yaml:"logging,omitempty"`
@@ -442,7 +396,7 @@ type DockerSettings struct {
 // bind to 127.0.0.1 inside the container.
 //
 // Defaults come from struct tags via the storage layer — no OrDefault
-// methods needed. cfg.Settings().ControlPlane.AdminPort always has a value.
+// methods needed. cfg.ControlPlaneSettings().AdminPort always has a value.
 type ControlPlaneSettings struct {
 	AdminPort         int `yaml:"admin_port,omitempty"          label:"Admin Port"          desc:"gRPC admin API port (CLI ↔ CP)"                                                        default:"7443"`
 	HealthPort        int `yaml:"health_port,omitempty"         label:"Health Port"         desc:"Plain HTTP /healthz readiness endpoint"                                                default:"7080"`

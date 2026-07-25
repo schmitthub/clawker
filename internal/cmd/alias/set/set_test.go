@@ -33,7 +33,7 @@ func loadAliases(t *testing.T) map[string]string {
 	t.Helper()
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
-	return cfg.Project().Aliases
+	return cfg.Aliases()
 }
 
 func TestSetRun(t *testing.T) {
@@ -47,6 +47,15 @@ func TestSetRun(t *testing.T) {
 		assert.Contains(t, stdout, "Wrote "+env.Dirs.Config)
 
 		assert.Equal(t, "version --short", loadAliases(t)["v"])
+	})
+
+	t.Run("dotted name is stored as one alias entry", func(t *testing.T) {
+		testenv.New(t)
+		_, err := executeSet(t, isVersion, "a.b", "version --short")
+		require.NoError(t, err)
+
+		// The name addresses one map entry, not a nested a: {b: ...} tree.
+		assert.Equal(t, "version --short", loadAliases(t)["a.b"])
 	})
 
 	t.Run("shadowing a builtin command is rejected", func(t *testing.T) {

@@ -287,8 +287,8 @@ func TestStore_Write(t *testing.T) {
     store.opts.paths = []string{dir}
     store.opts.filenames = []string{"config.yaml"}
 
-    require.NoError(t, store.Set("name", "updated"))
-    require.NoError(t, store.Set("version", 99))
+    require.NoError(t, store.Set([]string{"name"}, "updated"))
+    require.NoError(t, store.Set([]string{"version"}, 99))
     require.NoError(t, store.Write())
 
     result := mustReadConfig(t, writePath)

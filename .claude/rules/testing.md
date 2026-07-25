@@ -30,14 +30,15 @@ Each package in the dependency DAG must provide test utilities so dependents can
 |---------|------------|----------|
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `mocks/` | `FakeClient`, fixtures, assertions, moby mock transport |
-| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `SecurityConfig(mutators...)`, `ConfigMock` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
 | `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq-generated) |
 | `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq-generated) |
 | `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq-generated) |
-| `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq-generated) |
+| `controlplane/firewall` | `mocks/` | `EgressRulesStoreMock`, `RouteIdentityStoreMock` (moq-generated; the package's own tests use real stores) |
+| `controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq-generated) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
@@ -55,6 +56,7 @@ Use the lightest helper that fits the assertion:
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
 - `configmocks.NewFromString(projectYAML, settingsYAML)` — test double with specific YAML values, NO defaults. Pass empty strings for schemas you don't care about. Returns `*ConfigMock`.
 - `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need `SetProject`/`SetSettings`/`WriteProject`/`WriteSettings` or env var overrides. Returns `Config`.
+- `configmocks.SecurityConfig(mutators...)` — a `config.SecurityConfig` **value**, for code under test that takes the group struct directly instead of a whole `Config` (e.g. `shared.BuildConfigs`). Bare `SecurityConfig()` is the "no `security:` block" baseline; pass one mutator per field the test asserts on. Use it instead of writing a bare `config.SecurityConfig{}` literal at the call site, so the omitted-field decision lives in one place.
 
 `NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Mutation methods (`SetProject`, `SetSettings`, `WriteProject`, `WriteSettings`) are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
 

@@ -8,8 +8,8 @@ import (
 // slice or map field (as opposed to last-wins).
 const mergeUnion = "union"
 
-// provenance maps field paths to the index of the layer that provided the
-// winning value. E.g. "build.image" → 2 means layer[2] won that field.
+// provenance maps joined field keys to the index of the layer that provided
+// the winning value.
 type provenance map[string]int
 
 // fieldMeta holds per-field schema metadata used by tree operations.
@@ -20,11 +20,12 @@ type fieldMeta struct {
 	kind     FieldKind // Go type classification (KindMap, KindStringSlice, etc.)
 }
 
-// tagRegistry maps dotted field paths to their schema metadata.
+// tagRegistry maps joined field keys (see paths.go) to their schema metadata.
 // Built once from the struct type T during construction.
 type tagRegistry map[string]fieldMeta
 
-// buildTagRegistry builds the tag registry from the schema's Fields() output.
+// buildTagRegistry builds the tag registry from the schema's Fields() output,
+// converting each field's dotted Path() to the internal joined-key form.
 // Used by mergeNodes (merge strategy) and isOpaqueField (opaque-value detection).
 // Routes through Fields() (not NormalizeFields directly) so consumer-registered
 // KindFunc classifiers are applied.
@@ -33,7 +34,7 @@ func buildTagRegistry[T Schema]() tagRegistry {
 	fields := zero.Fields()
 	reg := make(tagRegistry, fields.Len())
 	for _, f := range fields.All() {
-		reg[f.Path()] = fieldMeta{
+		reg[schemaKey(f.Path())] = fieldMeta{
 			mergeTag: f.MergeTag(),
 			kind:     f.Kind(),
 		}

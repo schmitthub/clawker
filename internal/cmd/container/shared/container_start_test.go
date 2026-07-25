@@ -119,23 +119,6 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	}
 }
 
-func TestBootstrapServices_NilProjectAndSettingsDoNotPanic(t *testing.T) {
-	t.Parallel()
-
-	cfg := configmocks.NewBlankConfig()
-	cfg.ProjectFunc = func() *config.Project { return nil }
-	cfg.SettingsFunc = func() *config.Settings { return nil }
-
-	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		Config:       func() (config.Config, error) { return cfg, nil },
-		ControlPlane: noopCPManager(),
-		Client:       okClientProvider(t),
-	})
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-}
-
 // TestBootstrapServices_PreRunDelivery proves the every-start pre_run
 // contract: the hook script is always copied to the container (user body
 // when set, no-op wrapper when unset so a removed hook overwrites stale

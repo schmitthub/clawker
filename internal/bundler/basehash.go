@@ -167,7 +167,7 @@ const dockerignoreFileName = ".dockerignore"
 // image from the build context, so nothing is hashed — including the ignore
 // file — and the hash stays byte-identical to the Dockerfile-only hash.
 func (g *ProjectGenerator) hashCopySources(h hash.Hash) error {
-	instructions := g.cfg.Project().Build.Instructions
+	instructions := g.cfg.BuildConfig().Instructions
 	if instructions == nil || len(instructions.Copy) == 0 {
 		return nil
 	}

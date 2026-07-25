@@ -26,7 +26,7 @@ func TestWriteTargets_ExplicitDirOnly_NoCWDCandidate(t *testing.T) {
 	cfgDir := t.TempDir()
 	t.Chdir(t.TempDir())
 
-	store, err := storage.New[targetsSchema]("", storage.WithFilenames("settings.yaml"), storage.WithPaths(cfgDir))
+	store, err := storage.New[targetsSchema](storage.WithFilenames("settings.yaml"), storage.WithPaths(cfgDir))
 	require.NoError(t, err)
 
 	targets, err := store.WriteTargets()
@@ -50,7 +50,7 @@ func TestWriteTargets_WalkUp_CWDDualPlacementFirst(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 
-	store, err := storage.New[targetsSchema]("",
+	store, err := storage.New[targetsSchema](
 		storage.WithFilenames("config.yaml"),
 		storage.WithWalkUp(cwd),
 		storage.WithPaths(cfgDir),
@@ -74,7 +74,7 @@ func TestWriteTargets_WalkUp_DotClawkerDirForm(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(filepath.Join(cwd, consts.DotClawkerDir), 0o755))
 
-	store, err := storage.New[targetsSchema]("", storage.WithFilenames("config.yaml"), storage.WithWalkUp(cwd))
+	store, err := storage.New[targetsSchema](storage.WithFilenames("config.yaml"), storage.WithWalkUp(cwd))
 	require.NoError(t, err)
 
 	targets, err := store.WriteTargets()
@@ -100,7 +100,7 @@ func TestWriteTargets_WalkUpPrefersInPlayLayer(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(localPath), 0o755))
 	require.NoError(t, os.WriteFile(localPath, []byte("name: local\n"), 0o644))
 
-	store, err := storage.New[targetsSchema]("",
+	store, err := storage.New[targetsSchema](
 		storage.WithFilenames("config.local.yaml", "config.yaml"),
 		storage.WithDefaultFilename("config.yaml"),
 		storage.WithWalkUp(cwd),
@@ -129,7 +129,7 @@ func TestWriteTargets_DefaultFilenameWins(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 
-	store, err := storage.New[targetsSchema]("",
+	store, err := storage.New[targetsSchema](
 		storage.WithFilenames("config.local.yaml", "config.yaml"),
 		storage.WithDefaultFilename("config.yaml"),
 		storage.WithWalkUp(cwd),
@@ -146,7 +146,7 @@ func TestWriteTargets_DirsDualPlacement(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(t.TempDir())
 
-	store, err := storage.New[targetsSchema]("", storage.WithFilenames("config.yaml"), storage.WithDirs(dir))
+	store, err := storage.New[targetsSchema](storage.WithFilenames("config.yaml"), storage.WithDirs(dir))
 	require.NoError(t, err)
 
 	targets, err := store.WriteTargets()
@@ -171,7 +171,7 @@ func TestWriteTargets_LayerDedupAndAppend(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(cwd, ".config.yaml"), []byte("name: sub\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(parent, ".config.yaml"), []byte("name: root\n"), 0o600))
 
-	store, err := storage.New[targetsSchema]("", storage.WithFilenames("config.yaml"), storage.WithWalkUp(parent))
+	store, err := storage.New[targetsSchema](storage.WithFilenames("config.yaml"), storage.WithWalkUp(parent))
 	require.NoError(t, err)
 
 	targets, err := store.WriteTargets()
@@ -219,7 +219,7 @@ func TestSiblingTarget_Rediscoverable(t *testing.T) {
 	siblingPath := storage.SiblingTarget(mainPath, "config.local.yaml")
 	require.NoError(t, os.WriteFile(siblingPath, []byte("name: local\n"), 0o600))
 
-	store, err := storage.New[targetsSchema]("",
+	store, err := storage.New[targetsSchema](
 		storage.WithFilenames("config.local.yaml", "config.yaml"),
 		storage.WithWalkUp(cwd),
 	)
@@ -249,7 +249,7 @@ func TestWriteTargets_AllTargetsRediscoverable(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(cwd, consts.DotClawkerDir), 0o755))
 
 	newStore := func() *storage.Store[targetsSchema] {
-		s, sErr := storage.New[targetsSchema]("",
+		s, sErr := storage.New[targetsSchema](
 			storage.WithFilenames("config.yaml"),
 			storage.WithWalkUp(cwd),
 			storage.WithDirs(dualDir),

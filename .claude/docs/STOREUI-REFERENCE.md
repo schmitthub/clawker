@@ -79,25 +79,28 @@ Add `edit.NewCmdSettingsEdit(f, nil)` (or the noun-appropriate constructor) to t
 
 ```
 Edit[T storage.Schema](ios, store, opts...):
-  1. store.Read() → *T snapshot
-  2. WalkFields(snapshot) → []Field via reflection (runtime values)
-  2b. enrichWithSchema(fields, snapshot.Fields()) → replace labels/descriptions/kinds/defaults with Schema struct tag metadata
-  3. ApplyOverrides(fields, overrides) → filtered + customized fields (TUI-specific only: Hidden, ReadOnly, Kind, Options)
-  4. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
-  5. Wire OnFieldSaved, OnFieldDeleted, and OnRefresh callbacks
-  6. tui.NewFieldBrowser(cfg) → tui.RunProgram()
-  7. Return Result{Saved, Cancelled, SavedCount}
+  1. schemaFields[T](store) → []Field: T.Fields() metadata (path/label/desc/kind/default/required)
+     + one storage.Get[V] per declared leaf for the current merged value
+     (ErrKeyNotFound = unset → value blank, default shown)
+  2. ApplyOverrides(fields, overrides) → filtered + customized fields (TUI-specific only: Hidden, ReadOnly, Kind, Options)
+  3. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
+  4. Wire OnFieldSaved, OnFieldDeleted, and OnRefresh callbacks
+  5. tui.NewFieldBrowser(cfg) → tui.RunProgram()
+  6. Return Result{Saved, Cancelled, SavedCount}
 ```
+
+There is no whole-struct snapshot anywhere in the flow — each field's value is
+decoded individually from the merged tree.
 
 ### Per-Field Save Flow
 
 When a user edits a field and picks a save target:
 
-1. Coerce the TUI string into the field's typed value via a fresh `T`: `SetFieldValue(&fresh, fieldPath, value)` then `GetFieldValue(&fresh, fieldPath)` — then `store.Set(fieldPath, typed)` updates in-memory
-2. (conditional) `store.MarkForWrite(fieldPath)` — force-dirty the path when saving to a non-provenance-winner layer (i.e., the merged value is unchanged but the target layer file needs updating)
-3. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
+1. Coerce the TUI string into the field's typed value via a fresh `T`: `SetFieldValue(&fresh, fieldPath, value)` then `GetFieldValue(&fresh, fieldPath)`
+2. Stage it: `store.Set(fieldKey(fieldPath), typed)` — `fieldKey` splits the dotted schema path into segments. `Set` is unconditionally dirty, so saving to a non-provenance-winner layer needs no force-dirty step (the old `MarkForWrite` workaround is gone). An editor that produced no value (cleared map/struct) routes to `Remove` instead — `Set(key, nil)` is `ErrNilValue` by design.
+3. `store.WriteFieldTo(target.Path, fieldKey(fieldPath)...)` — persist exactly this field to the chosen layer file; other staged fields stay staged.
 
-`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. The TUI string is type-coerced before `Set` via `SetFieldValue`/`GetFieldValue`; deletes go through `store.Remove(path)`.
+`WriteFieldTo` internally remerges layers, so re-read values reflect the true merged state after each save. Deletes go through `store.Remove(key...)`, tolerating `ErrKeyNotFound` on an already-unset row.
 
 ### Field Discovery (WalkFields)
 
@@ -173,15 +176,14 @@ Multiline text editor wrapping `bubbles/textarea`.
 
 | Method | Purpose |
 |--------|---------|
-| `store.Read()` | Get immutable `*T` snapshot |
-| `store.Get(path, out)` | Decode an in-memory field by dotted path into a typed `out` |
-| `store.Set(path, value)` | Set an in-memory field by dotted path |
-| `store.Remove(path)` | Remove a dotted path from tree + re-publish snapshot |
+| `storage.Get[V](store, key...)` | Decode one field's merged value into V; `ErrKeyNotFound` = unset |
+| `store.Keys(key...)` | Child key names (existence/enumeration) |
+| `store.Set(key []string, value)` | Stage an in-memory field by segment key |
+| `store.Remove(key...)` | Delete a key (the unset verb) |
+| `store.WriteFieldTo(path, key...)` | Persist one dirty field to an explicit layer file |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
-| `store.Provenance(path)` | Which layer won a specific field |
-| `store.ProvenanceMap()` | All fields → source file paths |
-| `store.MarkForWrite(path)` | Force-mark a dotted path as dirty so it is included in the next `Write` |
-| `store.Write(storage.ToPath(path))` | Write to explicit absolute path |
+| `store.Provenance(key...)` | Which layer won a specific field |
+| `store.ProvenanceMap()` | Display-form field keys → source file paths (display-only) |
 
 ## Testing Patterns
 
@@ -219,28 +221,29 @@ func TestRoundTrip(t *testing.T) {
     require.NoError(t, storeui.SetFieldValue(&fresh, "field.path", "new-value"))
     typed, err := storeui.GetFieldValue(&fresh, "field.path")
     require.NoError(t, err)
-    require.NoError(t, store.Set("field.path", typed))
+    require.NoError(t, store.Set([]string{"field", "path"}, typed))
     require.NoError(t, store.Write())
 
     // Reload from disk — independent verification
     fresh := reloadStore[myStruct](t, dir)
-    got := fresh.Read()
-    assert.Equal(t, "new-value", got.Field.Path)
+    got, err := storage.Get[string](fresh, "field", "path")
+    require.NoError(t, err)
+    assert.Equal(t, "new-value", got)
 }
 ```
 
-Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.New[T]("", ...)` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
+Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.New[T](...)` + `WithFilenames` + `WithPaths` for filesystem-backed tests; `storage.NewFromString[T](yaml)` for in-memory fixtures.
 
 ### Testing WalkFields
 
 Verify walked fields match store reads and that field kinds are correct:
 
 ```go
-func TestWalkFields_MatchesStoreRead(t *testing.T) {
-    store, _ := newTestStore[myStruct](t, env, yaml)
-    snap := store.Read()
-    fields := storeui.WalkFields(snap)
-    // Assert field count, paths, values, kinds
+func TestWalkFields_PathsMatchSchema(t *testing.T) {
+    fields := storeui.WalkFields(myStruct{})
+    // Assert field count, paths, kinds against the schema struct
+    // (WalkFields reflects a value, not a store — the editor itself reads
+    // values per field via storage.Get)
 }
 ```
 

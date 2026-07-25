@@ -9,6 +9,9 @@ import (
 
 	gogit "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -17,13 +20,13 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // newTestRegistry constructs a registry over the isolated data dir that the
 // test environment points the CLAWKER_*_DIR env vars at.
-func newTestRegistry(t *testing.T) *project.Registry {
+//
+//nolint:ireturn // returns the project.Registry domain interface by design — its impl stays package-private
+func newTestRegistry(t *testing.T) project.Registry {
 	t.Helper()
 	reg, err := project.NewRegistry()
 	require.NoError(t, err)
@@ -86,7 +89,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -148,7 +151,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -193,7 +196,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -238,7 +241,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -287,7 +290,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -337,7 +340,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -376,7 +379,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -487,7 +490,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -525,7 +528,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -576,7 +579,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return gitMgr, nil
 		}
 
-		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.ProjectName(), newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 

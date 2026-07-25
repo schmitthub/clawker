@@ -145,12 +145,12 @@ type MonitorTemplateData struct {
 	ISMIndexPatternsJSON string
 }
 
-// NewMonitorTemplateData constructs template data from Settings and the seeded
-// unit union. Service hostnames are populated from [consts.MonitoringService*] —
-// changing a hostname in consts propagates here without further edits.
-// Settings.Monitoring drives ports/heap; the union drives collector routing and
-// the shared retention policy's index patterns.
-func NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemplateData, error) {
+// NewMonitorTemplateData constructs template data from the monitoring settings
+// block and the seeded unit union. Service hostnames are populated from
+// [consts.MonitoringService*] — changing a hostname in consts propagates here
+// without further edits. mon drives ports/heap; the union drives collector
+// routing and the shared retention policy's index patterns.
+func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (MonitorTemplateData, error) {
 	routings, err := BuildUnitRoutings(units)
 	if err != nil {
 		return MonitorTemplateData{}, err
@@ -159,7 +159,6 @@ func NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemp
 	if err != nil {
 		return MonitorTemplateData{}, err
 	}
-	mon := s.Monitoring
 	return MonitorTemplateData{
 		Units:                       routings,
 		ISMIndexPatternsJSON:        ismPatterns,

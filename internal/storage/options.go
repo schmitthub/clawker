@@ -1,6 +1,6 @@
 package storage
 
-// Option configures store construction via New.
+// Option configures store construction via New / NewFromString.
 type Option func(*Options)
 
 // Migration is a caller-provided function that inspects and optionally mutates a
@@ -186,6 +186,12 @@ func WithMigrations[T Schema](fns ...Migration[T]) Option {
 
 // WithLock enables flock-based advisory locking for Write operations.
 // Use for stores that need cross-process mutual exclusion (e.g. a store
+// written by concurrent CLI invocations).
+func WithLock() Option {
+	return func(o *Options) {
+		o.Lock = true
+	}
+}
 
 // writeFilename returns the filename used when creating a file at a location
 // with no existing layer: DefaultFilename, falling back to the first
@@ -198,13 +204,6 @@ func (o *Options) writeFilename() string {
 		return o.Filenames[0]
 	}
 	return ""
-}
-
-// written by concurrent CLI invocations).
-func WithLock() Option {
-	return func(o *Options) {
-		o.Lock = true
-	}
 }
 
 // WithHeader stamps the given text as a comment block at the top of the file

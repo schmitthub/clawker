@@ -65,7 +65,7 @@ func refreshRun(ctx context.Context, opts *RefreshOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if !cfg.Settings().Firewall.FirewallEnabled() {
+	if !cfg.FirewallEnabled() {
 		return errors.New("firewall is disabled — set `firewall.enable: true` in settings.yaml to use it")
 	}
 

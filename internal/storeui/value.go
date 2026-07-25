@@ -119,6 +119,21 @@ func GetFieldValue(v any, path string) (any, error) {
 	return f.Interface(), nil
 }
 
+// isNilValue reports whether a value read back by GetFieldValue carries nothing
+// at all — an untyped nil, or a typed nil pointer/map/slice produced by clearing
+// an editor. storage.Set rejects those (ErrNilValue); unsetting is Remove's job.
+// An empty-but-allocated value (`""`, `[]string{}`) is NOT nil: it is a real
+// value that masks lower layers.
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	nilable := rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Map ||
+		rv.Kind() == reflect.Slice || rv.Kind() == reflect.Interface
+	return nilable && rv.IsNil()
+}
+
 // navigateToParent walks all but the last segment of path, returning the struct
 // value holding the leaf field. ok=false means an intermediate pointer was nil,
 // so the whole path resolves to a nil value.

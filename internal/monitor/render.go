@@ -27,13 +27,13 @@ type StackRender struct {
 	OtelConfigChanged bool
 }
 
-// PrepareTemplateData builds [MonitorTemplateData] from settings and the seeded
-// unit union, then mints (idempotently) and populates the OTEL mTLS host cert
-// paths that compose.yaml bind-mounts into the collector for its trusted
-// otlp/infra receiver. Shared by `monitor init` and `monitor up` so both render
-// identical config from the same inputs.
-func PrepareTemplateData(s *config.Settings, union []SeededUnit) (MonitorTemplateData, error) {
-	data, err := NewMonitorTemplateData(s, union)
+// PrepareTemplateData builds [MonitorTemplateData] from the monitoring settings
+// block and the seeded unit union, then mints (idempotently) and populates the
+// OTEL mTLS host cert paths that compose.yaml bind-mounts into the collector for
+// its trusted otlp/infra receiver. Shared by `monitor init` and `monitor up` so
+// both render identical config from the same inputs.
+func PrepareTemplateData(mon config.MonitoringConfig, union []SeededUnit) (MonitorTemplateData, error) {
+	data, err := NewMonitorTemplateData(mon, union)
 	if err != nil {
 		return MonitorTemplateData{}, err
 	}

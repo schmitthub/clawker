@@ -82,7 +82,7 @@ func layerLabel(l storage.LayerInfo) string {
 }
 
 func validateHarnessesNode(label string, data map[string]any) error {
-	raw, ok := data["harnesses"]
+	raw, ok := data[keyHarnesses]
 	if !ok {
 		return nil
 	}
@@ -90,10 +90,10 @@ func validateHarnessesNode(label string, data map[string]any) error {
 	if !isMap {
 		return fmt.Errorf("%s: harnesses: must be a mapping of name to config", label)
 	}
-	return validateEntryMap(label, "harnesses", m, consts.ValidateHarnessRef,
+	return validateEntryMap(label, keyHarnesses, m, consts.ValidateHarnessRef,
 		"must be a mapping", knownHarnessConfigFields(),
 		func(keyPath string, entry map[string]any) error {
-			if c, hasConfig := entry["config"]; hasConfig {
+			if c, hasConfig := entry[keyConfig]; hasConfig {
 				if err := validateHarnessConfigOptions(label, keyPath+".config", c); err != nil {
 					return err
 				}
@@ -103,7 +103,7 @@ func validateHarnessesNode(label string, data map[string]any) error {
 }
 
 func validateBuildNode(label string, data map[string]any) error {
-	raw, ok := data["build"]
+	raw, ok := data[keyBuild]
 	if !ok {
 		return nil
 	}
@@ -180,7 +180,7 @@ var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // lower-priority file behind a valid winning layer.
 func validateBundlesNode(layer storage.LayerInfo) error {
 	label := layerLabel(layer)
-	raw, ok := layer.Data["bundles"]
+	raw, ok := layer.Data[keyBundles]
 	if !ok || raw == nil {
 		return nil
 	}

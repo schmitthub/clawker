@@ -28,7 +28,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
@@ -85,7 +84,7 @@ type Stack struct {
 	docker    *docker.Client
 	cfg       config.Config
 	log       *logger.Logger
-	store     *storage.Store[EgressRulesFile]
+	store     EgressRulesStore
 	otelCerts OtelCertProvisioner
 	// idFor answers dst→identity for Corefile generation (dnsbpf
 	// directives). Never nil — NewStack substitutes a fail-closed stub.
@@ -143,7 +142,7 @@ func NewStack(
 	dc *docker.Client,
 	cfg config.Config,
 	log *logger.Logger,
-	store *storage.Store[EgressRulesFile],
+	store EgressRulesStore,
 	otelCerts OtelCertProvisioner,
 	idFor IdentityResolver,
 ) *Stack {
@@ -359,7 +358,10 @@ func (s *Stack) WaitForHealthy(ctx context.Context) error {
 // network topology. Docker API errors propagate — callers distinguish
 // "stack down" from "Docker unreachable".
 func (s *Stack) Status(ctx context.Context) (*Status, error) {
-	rules, _ := NormalizeAndDedup(s.store.Read().Rules)
+	rules, _, err := s.store.Rules()
+	if err != nil {
+		return nil, fmt.Errorf("firewall stack status: %w", err)
+	}
 
 	envoyRunning, err := s.isRunning(ctx, envoyContainerName)
 	if err != nil {
@@ -461,47 +463,25 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
 
-	// Heal legacy/partial rule state: normalize the stored rules and re-save
-	// when the canonical form differs. The read-modify-write is serialized via a
-	// store transaction so it can't interleave with a concurrent handler rule
-	// write and lose an update.
-	var rules []config.EgressRule
-	if err = s.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
-		var stored []config.EgressRule
-		if _, gErr := tx.Get(rulesField, &stored); gErr != nil {
-			return fmt.Errorf("reading rules store: %w", gErr)
-		}
-		var warnings []string
-		rules, warnings = NormalizeAndDedup(stored)
-		// Log warnings here (not after the Txn) so they survive a heal-write
-		// failure below.
-		for _, w := range warnings {
-			s.log.Warn().Msg(w)
-		}
-		healed := false
-		if len(rules) != len(stored) {
-			healed = true
-		} else {
-			for i, r := range stored {
-				n := rules[i]
-				if r.Proto != n.Proto || r.Action != n.Action || r.Port != n.Port {
-					healed = true
-					break
-				}
-			}
-		}
-		if healed {
-			if sErr := tx.Set(rulesField, rules); sErr != nil {
-				return fmt.Errorf("healing rules store: %w", sErr)
-			}
-			if wErr := tx.Write(); wErr != nil {
-				return fmt.Errorf("writing healed rules: %w", wErr)
-			}
-			s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
-		}
-		return nil
-	}); err != nil {
-		return "", fmt.Errorf("syncing rules store: %w", err)
+	// Read the canonical rule set — everything below (certs, Envoy, Corefile)
+	// is generated from it — and log the normalization warnings BEFORE asking
+	// the store to heal, so they survive a failed heal write.
+	rules, warnings, err := s.store.Rules()
+	if err != nil {
+		return "", fmt.Errorf("reading rules store: %w", err)
+	}
+	for _, w := range warnings {
+		s.log.Warn().Msg(w)
+	}
+	// Heal legacy/partial on-disk rule state: the store re-saves in canonical
+	// form when the stored shape differs (unset proto/action/port, or a
+	// duplicate that dedups away).
+	healed, err := s.store.Canonicalize()
+	if err != nil {
+		return "", fmt.Errorf("healing rules store: %w", err)
+	}
+	if healed {
+		s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
 	}
 
 	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {
@@ -649,7 +629,7 @@ func (s *Stack) alsConfig() ALSConfig {
 	if !s.infraCertsReady {
 		return ALSConfig{}
 	}
-	return ALSConfig{Port: int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort), MTLS: true}
+	return ALSConfig{Port: int(s.cfg.MonitoringConfig().OtelInfraPort), MTLS: true}
 }
 
 func (s *Stack) envoyPorts() EnvoyPorts {
@@ -798,7 +778,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// paths below.
 		env = append(env, fmt.Sprintf(consts.EnvCoreDNSOtelEndpoint+"=%s:%d",
 			consts.MonitoringServiceOtelCollector,
-			s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort))
+			s.cfg.MonitoringConfig().OtelInfraPort))
 	}
 	return containerSpec{
 		image:     corednsImageTag,
@@ -828,7 +808,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 func (s *Stack) driftLabels() map[string]string {
 	return map[string]string{
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
-		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort)),
+		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.MonitoringConfig().OtelInfraPort)),
 		labelStackBuildSHA:   consts.CPBinarySHA,
 	}
 }

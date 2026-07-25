@@ -56,7 +56,7 @@ func CheckForChanges(ctx context.Context, client *http.Client, st state.StateSto
 		return nil, fmt.Errorf("parsing current version %q: %w", current, err)
 	}
 
-	cursor, err := semver.NewVersion(st.State().LastSeenChangelog)
+	cursor, err := semver.NewVersion(st.LastSeenChangelog())
 	if err != nil {
 		// First run of a changelog-aware binary: the cursor is empty (or an
 		// unparseable leftover). Seed it at current and show nothing — the cursor

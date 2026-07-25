@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // fixedTime is a stable RFC3339 instant for round-trip assertions — avoids the
@@ -39,10 +40,9 @@ func TestState_New_CreatesFileAtDefaultLocation(t *testing.T) {
 	// Reopening from disk reads the persisted values back.
 	reopened, err := New()
 	require.NoError(t, err)
-	got := reopened.State()
-	assert.True(t, got.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, got.CheckedAt)
-	assert.Equal(t, "1.2.3", got.LatestVersion)
-	assert.Empty(t, got.LastSeenChangelog)
+	assert.True(t, reopened.CheckedAt().Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, reopened.CheckedAt())
+	assert.Equal(t, "1.2.3", reopened.LatestVersion())
+	assert.Empty(t, reopened.LastSeenChangelog())
 }
 
 // TestState_New_ReadsLegacyFileInPlace proves an existing on-disk state file
@@ -62,10 +62,9 @@ func TestState_New_ReadsLegacyFileInPlace(t *testing.T) {
 	st, err := New()
 	require.NoError(t, err)
 
-	got := st.State()
-	assert.True(t, got.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, got.CheckedAt)
-	assert.Equal(t, "1.2.3", got.LatestVersion)
-	assert.Empty(t, got.LastSeenChangelog, "changelog cursor starts unseeded")
+	assert.True(t, st.CheckedAt().Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, st.CheckedAt())
+	assert.Equal(t, "1.2.3", st.LatestVersion())
+	assert.Empty(t, st.LastSeenChangelog(), "changelog cursor starts unseeded")
 }
 
 // TestStateMigrations walks the full legacy chain. One row per historical
@@ -76,10 +75,12 @@ func TestState_New_ReadsLegacyFileInPlace(t *testing.T) {
 // row implicitly exercises the whole chain.
 func TestStateMigrations(t *testing.T) {
 	cases := []struct {
-		name       string
-		legacy     string   // on-disk YAML as some past binary wrote it
-		want       State    // expected snapshot after the chain runs
-		absentKeys []string // keys that must be gone from the re-saved file
+		name        string
+		legacy      string    // on-disk YAML as some past binary wrote it
+		wantChecked time.Time // expected CheckedAt() after the chain runs
+		wantLatest  string    // expected LatestVersion()
+		wantSeen    string    // expected LastSeenChangelog()
+		absentKeys  []string  // keys that must be gone from the re-saved file
 	}{
 		{
 			name: "pre-store update checker drops latest_url + current_version",
@@ -87,8 +88,9 @@ func TestStateMigrations(t *testing.T) {
 				"latest_version: 1.2.3\n" +
 				"latest_url: https://example.test/old\n" +
 				"current_version: 0.9.0\n",
-			want:       State{CheckedAt: fixedTime, LatestVersion: "1.2.3"},
-			absentKeys: []string{"latest_url", "current_version"},
+			wantChecked: fixedTime,
+			wantLatest:  "1.2.3",
+			absentKeys:  []string{"latest_url", "current_version"},
 		},
 	}
 
@@ -103,10 +105,15 @@ func TestStateMigrations(t *testing.T) {
 			require.NoError(t, err)
 
 			// (a) typed read through the chain.
-			got := st.State()
-			assert.True(t, got.CheckedAt.Equal(tc.want.CheckedAt), "CheckedAt: want %v, got %v", tc.want.CheckedAt, got.CheckedAt)
-			assert.Equal(t, tc.want.LatestVersion, got.LatestVersion)
-			assert.Equal(t, tc.want.LastSeenChangelog, got.LastSeenChangelog)
+			assert.True(
+				t,
+				st.CheckedAt().Equal(tc.wantChecked),
+				"CheckedAt: want %v, got %v",
+				tc.wantChecked,
+				st.CheckedAt(),
+			)
+			assert.Equal(t, tc.wantLatest, st.LatestVersion())
+			assert.Equal(t, tc.wantSeen, st.LastSeenChangelog())
 
 			// (b) on-disk cleanliness: dead keys stripped from the re-saved file.
 			migrated, err := os.ReadFile(path)
@@ -126,8 +133,8 @@ func TestStateMigrations(t *testing.T) {
 }
 
 // TestState_SeedFromString covers the seed seam: NewFromString merges a YAML
-// string as the virtual layer, so State() reflects it without touching disk.
-// This is how consumer tests inject arbitrary starting state.
+// string as the virtual layer, so the accessors reflect it without touching
+// disk. This is how consumer tests inject arbitrary starting state.
 func TestState_SeedFromString(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -172,14 +179,19 @@ func TestState_SeedFromString(t *testing.T) {
 			st, err := NewFromString(tc.seed)
 			require.NoError(t, err)
 
-			got := st.State()
 			if tc.wantChecked.IsZero() {
-				assert.True(t, got.CheckedAt.IsZero(), "CheckedAt should be zero, got %v", got.CheckedAt)
+				assert.True(t, st.CheckedAt().IsZero(), "CheckedAt should be zero, got %v", st.CheckedAt())
 			} else {
-				assert.True(t, got.CheckedAt.Equal(tc.wantChecked), "CheckedAt: want %v, got %v", tc.wantChecked, got.CheckedAt)
+				assert.True(
+					t,
+					st.CheckedAt().Equal(tc.wantChecked),
+					"CheckedAt: want %v, got %v",
+					tc.wantChecked,
+					st.CheckedAt(),
+				)
 			}
-			assert.Equal(t, tc.wantLatest, got.LatestVersion)
-			assert.Equal(t, tc.wantSeen, got.LastSeenChangelog)
+			assert.Equal(t, tc.wantLatest, st.LatestVersion())
+			assert.Equal(t, tc.wantSeen, st.LastSeenChangelog())
 		})
 	}
 }
@@ -223,10 +235,9 @@ func TestState_WritersDoNotClobber(t *testing.T) {
 			// Reopen from disk: both writers' fields survive.
 			got, err := New()
 			require.NoError(t, err)
-			st := got.State()
-			assert.True(t, st.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, st.CheckedAt)
-			assert.Equal(t, "1.2.3", st.LatestVersion)
-			assert.Equal(t, "0.13.0", st.LastSeenChangelog)
+			assert.True(t, got.CheckedAt().Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, got.CheckedAt())
+			assert.Equal(t, "1.2.3", got.LatestVersion())
+			assert.Equal(t, "0.13.0", got.LastSeenChangelog())
 		})
 	}
 }

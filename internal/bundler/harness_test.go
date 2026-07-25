@@ -78,22 +78,14 @@ func TestResolveHarnessName(t *testing.T) {
 		assert.Equal(t, "codex", name)
 	})
 
-	t.Run("nil project falls back to the built-in default", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", "")
-		cfg.ProjectFunc = func() *config.Project { return nil }
-		name, err := bundler.ResolveHarnessName(cfg, "")
-		require.NoError(t, err)
-		assert.Equal(t, bundler.DefaultHarnessName, name)
-	})
-
 	t.Run("invalid configured default errors naming build.harness", func(t *testing.T) {
 		// The config front door rejects a bad name at load, so an invalid
 		// value can only arrive through an unvalidated in-memory mutation
 		// (store Set has no validation hook) — inject it the same way.
 		cfg := configmocks.NewFromString("", "")
-		proj := *cfg.Project()
-		proj.Build.Harness = "Bad_Name"
-		cfg.ProjectFunc = func() *config.Project { return &proj }
+		build := cfg.BuildConfig()
+		build.Harness = "Bad_Name"
+		cfg.BuildConfigFunc = func() config.BuildConfig { return build }
 		_, err := bundler.ResolveHarnessName(cfg, "")
 		require.ErrorContains(t, err, "build.harness")
 	})

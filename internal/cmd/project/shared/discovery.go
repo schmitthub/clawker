@@ -3,7 +3,6 @@ package shared
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -14,9 +13,16 @@ import (
 //
 // It first checks the factory-constructed config's discovered layers (which
 // covers registered projects via walk-up). If no layer is found under dir —
-// e.g. because the project isn't registered yet — it constructs a temporary
-// store with storage.WithDirs to probe the directory using the same
-// dual-placement and extension rules as the storage engine.
+// e.g. because the project isn't registered yet — it asks config to probe the
+// directory (config.ProjectConfigExistsIn), which applies the same
+// dual-placement and extension rules a real load would.
+//
+// A probe that cannot answer (an unreadable or unparseable file that even the
+// migrations cannot repair) reports no local config: the callers use this to
+// decide whether they are about to claim a fresh directory, and a file they
+// cannot load is not a project config they can carry forward. The load error
+// itself resurfaces, fully rendered, the moment any command actually reads
+// that config.
 func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	dirPrefix := filepath.Clean(dir) + string(filepath.Separator)
 
@@ -28,21 +34,11 @@ func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	}
 
 	// Slow path: probe the directory directly for unregistered projects.
-	// Derive filenames from the config interface so nothing is hardcoded here.
-	mainFile := cfg.ProjectConfigFileName() // "clawker.yaml"
-	ext := filepath.Ext(mainFile)           // ".yaml"
-	base := strings.TrimSuffix(mainFile, ext)
-	localFile := base + ".local" + ext // the gitignored local override variant
-
-	probe, err := storage.New[config.Project]("",
-		storage.WithFilenames(mainFile, localFile),
-		storage.WithDirs(dir),
-		storage.WithMigrations(config.ProjectMigrations()...),
-	)
+	exists, err := config.ProjectConfigExistsIn(dir)
 	if err != nil {
 		return false
 	}
-	return len(probe.Layers()) > 0
+	return exists
 }
 
 // isLayerUnderDir checks if a layer's file resides in dir (flat form) or

@@ -126,8 +126,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Determine workspace mode (CLI flag overrides config default)
-	project := cfg.Cfg.Project()
-	mode, err := ResolveMode(cfg.ModeOverride, project.Workspace.DefaultMode)
+	mode, err := ResolveMode(cfg.ModeOverride, cfg.Cfg.WorkspaceDefaultMode())
 	if err != nil {
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
@@ -242,7 +241,8 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure and mount shared directory (if enabled)
-	if project.Agent.SharedDirEnabled() {
+	agentCfg := cfg.Cfg.AgentConfig()
+	if agentCfg.SharedDirEnabled() {
 		sharePath, err := cfg.Cfg.ShareSubdir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to ensure share directory: %w", err)
@@ -251,7 +251,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Add docker socket mount if enabled
-	if project.Security.DockerSocket {
+	if cfg.Cfg.SecurityConfig().DockerSocket {
 		mounts = append(mounts, GetDockerSocketMount())
 	}
 

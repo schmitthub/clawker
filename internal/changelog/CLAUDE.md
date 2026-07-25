@@ -75,7 +75,7 @@ const ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL +
 
 - **`st == nil`** → **error** (a programming error: the caller wires state via the
   factory). It is not a silent no-op.
-- **First run** — the cursor (`st.State().LastSeenChangelog`) is empty or does not
+- **First run** — the cursor (`st.LastSeenChangelog()`) is empty or does not
   parse as a version → seed the cursor at `current` and return `nil` **without
   fetching**. There is **no catch-up backfill** across a changelog-blind
   upgrade; the cursor is "last seen" from here on.

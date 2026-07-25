@@ -44,7 +44,7 @@ type Factory struct {
 	// single constructor of registry storage. Config walk-up anchoring,
 	// the project manager, and any command needing project-root resolution
 	// all share this instance.
-	ProjectRegistry func() (*project.Registry, error)
+	ProjectRegistry func() (project.Registry, error)
 	ProjectManager  func() (project.ProjectManager, error)
 	GitManager      func() (*git.GitManager, error)
 	HostProxy       func() hostproxy.Service

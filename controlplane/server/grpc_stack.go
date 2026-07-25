@@ -248,27 +248,38 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	return stack, nil
 }
 
-// Serve starts the recovered serve goroutines for both listeners. The
-// admin listener always serves; the agent listener serves only when it
-// was brought up (identity gate available). A non-nil Serve error from
-// either server is deposited on failed without blocking — the channel is
-// orchestrator-owned and buffered to cover every serve goroutine.
-func (s *GRPCStack) Serve(failed chan<- error) {
+// ServeAgent starts the recovered serve goroutine for the agent listener
+// (no-op when the identity gate was unavailable and the listener was never
+// brought up). It runs during startup, before the CP is ready: clawkerd
+// dial-back and agent registration are boot-time flows and must not wait
+// on the admin surface. A non-nil Serve error is deposited on failed
+// without blocking — the channel is orchestrator-owned and buffered to
+// cover every serve goroutine.
+func (s *GRPCStack) ServeAgent(failed chan<- error) {
+	if s.agentServer == nil {
+		return
+	}
+	go func() {
+		s.log.Info().Int("port", s.agentPort).Msg("gRPC agent API serving")
+		if err := s.agentServer.Serve(s.agentLis); err != nil {
+			failed <- fmt.Errorf("gRPC agent serve: %w", err)
+		}
+	}()
+}
+
+// ServeAdmin starts the recovered serve goroutine for the admin listener.
+// The orchestrator calls it only AFTER the startup gates and SetReady, so
+// no admin RPC — in particular no rule mutation — can be accepted while
+// the CP is still booting. The listener socket is bound at construction,
+// so a client that connects early simply waits in the accept backlog until
+// the CP is ready rather than getting connection-refused.
+func (s *GRPCStack) ServeAdmin(failed chan<- error) {
 	go func() {
 		s.log.Info().Int("port", s.adminPort).Msg("gRPC admin API serving")
 		if err := s.adminServer.Serve(s.adminLis); err != nil {
 			failed <- fmt.Errorf("gRPC admin serve: %w", err)
 		}
 	}()
-
-	if s.agentServer != nil {
-		go func() {
-			s.log.Info().Int("port", s.agentPort).Msg("gRPC agent API serving")
-			if err := s.agentServer.Serve(s.agentLis); err != nil {
-				failed <- fmt.Errorf("gRPC agent serve: %w", err)
-			}
-		}()
-	}
 }
 
 // GracefulStop drains in-flight RPCs on both listeners, then returns. If

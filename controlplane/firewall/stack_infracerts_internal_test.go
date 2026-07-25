@@ -65,7 +65,7 @@ func TestStack_ensureInfraClientCerts_DispatchesPerService(t *testing.T) {
 func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set("monitoring.otel_infra_port", 4319))
+	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 
 	prov := &fakeOtelProvisioner{}
 	store, err := NewRulesStore(cfg)
@@ -107,7 +107,7 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set("monitoring.otel_infra_port", 4319))
+	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 
 	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
 	assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before returning MTLS=true")

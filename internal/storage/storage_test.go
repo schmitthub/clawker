@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- deterministic seeds for oracle/golden tests
@@ -11,7 +12,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -220,16 +220,6 @@ func TestStore_Load(t *testing.T) {
 	}
 }
 
-// mustLoadTestMap writes YAML data to a file and returns the raw map + path.
-func mustLoadTestMap(t *testing.T, dir, name, data string) (map[string]any, string) {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(path, []byte(data), 0o644))
-	node, err := loadNode(path)
-	require.NoError(t, err)
-	return nodeToMap(node), path
-}
-
 // mustNode encodes a Go value (map/slice/scalar) into a yaml.Node, for building
 // layer nodes from inline literals in tests.
 func mustNode(t *testing.T, v any) *yaml.Node {
@@ -265,6 +255,56 @@ func mustReadFile(t *testing.T, path string) string {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(raw)
+}
+
+// mustGet reads the merged value at key, failing the test when it is absent.
+//
+//nolint:ireturn // Get is generic; the helper mirrors its type parameter.
+func mustGet[V any, T Schema](t *testing.T, s *Store[T], key ...string) V {
+	t.Helper()
+	v, err := Get[V](s, key...)
+	require.NoError(t, err)
+	return v
+}
+
+// getOr reads the merged value at key, yielding V's zero value when the key is
+// unset — for assembling a whole-struct view from individual keys.
+//
+//nolint:ireturn // Get is generic; the helper mirrors its type parameter.
+func getOr[V any, T Schema](t *testing.T, s *Store[T], key ...string) V {
+	t.Helper()
+	v, err := Get[V](s, key...)
+	if err != nil {
+		require.ErrorIs(t, err, ErrKeyNotFound)
+		var zero V
+		return zero
+	}
+	return v
+}
+
+// requireAbsent asserts that key resolves to nothing in the merged tree.
+func requireAbsent[T Schema](t *testing.T, s *Store[T], key ...string) {
+	t.Helper()
+	_, err := Get[any](s, key...)
+	require.ErrorIs(t, err, ErrKeyNotFound, "key %v must be absent", key)
+}
+
+// mergedConfig assembles the fields the merge tests assert on by reading each
+// key through Get — there is no whole-tree read.
+func mergedConfig(t *testing.T, s *Store[testConfig]) testConfig {
+	t.Helper()
+	return testConfig{
+		Name:    getOr[string](t, s, "name"),
+		Version: getOr[int](t, s, "version"),
+		Build: testBuild{
+			Image:  getOr[string](t, s, "build", "image"),
+			Target: getOr[string](t, s, "build", "target"),
+		},
+		Packages: getOr[[]string](t, s, "packages"),
+		Plugins:  getOr[[]string](t, s, "plugins"),
+		Tags:     getOr[[]string](t, s, "tags"),
+		Env:      getOr[map[string]string](t, s, "env"),
+	}
 }
 
 // testHeader is a stand-in yaml-language-server directive for WithHeader tests.
@@ -397,7 +437,7 @@ func TestStore_Merge(t *testing.T) {
 				assert.Equal(t, tt.wantEnv, cfg.Env)
 			}
 			for key, wantIdx := range tt.wantProv {
-				assert.Equal(t, wantIdx, prov[key], "provenance for %s", key)
+				assert.Equal(t, wantIdx, prov[schemaKey(key)], "provenance for %s", key)
 			}
 		})
 	}
@@ -409,11 +449,11 @@ func TestStore_Write(t *testing.T) {
 		cfgPath := filepath.Join(dir, "config.yaml")
 		require.NoError(t, os.WriteFile(cfgPath, []byte(testFullData()), 0o644))
 
-		store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
+		store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
 		require.NoError(t, err)
 
-		require.NoError(t, store.Set("name", "updated"))
-		require.NoError(t, store.Set("version", 99))
+		require.NoError(t, store.Set([]string{"name"}, "updated"))
+		require.NoError(t, store.Set([]string{"version"}, 99))
 		require.NoError(t, store.Write())
 
 		result := mustReadConfig(t, cfgPath)
@@ -427,7 +467,7 @@ func TestStore_Write(t *testing.T) {
 		cfgPath := filepath.Join(dir, "config.yaml")
 		require.NoError(t, os.WriteFile(cfgPath, []byte(testFullData()), 0o644))
 
-		store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
+		store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
 		require.NoError(t, err)
 
 		// No Set — nothing dirty, write should not modify file.
@@ -438,10 +478,10 @@ func TestStore_Write(t *testing.T) {
 	})
 
 	t.Run("write fails without paths", func(t *testing.T) {
-		store, err := New[testConfig](testFullData())
+		store, err := NewFromString[testConfig](testFullData())
 		require.NoError(t, err)
 
-		require.NoError(t, store.Set("name", "nope"))
+		require.NoError(t, store.Set([]string{"name"}, "nope"))
 		assert.Error(t, store.Write())
 	})
 
@@ -450,10 +490,10 @@ func TestStore_Write(t *testing.T) {
 		cfgPath := filepath.Join(dir, "config.yaml")
 		require.NoError(t, os.WriteFile(cfgPath, []byte(testFullData()), 0o644))
 
-		store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir), WithLock())
+		store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(dir), WithLock())
 		require.NoError(t, err)
 
-		require.NoError(t, store.Set("name", "locked-write"))
+		require.NoError(t, store.Set([]string{"name"}, "locked-write"))
 		require.NoError(t, store.Write())
 
 		result := mustReadConfig(t, cfgPath)
@@ -473,7 +513,7 @@ func TestStore_Header(t *testing.T) {
 		if header != "" {
 			opts = append(opts, WithHeader(header))
 		}
-		s, err := New[testConfig]("", opts...)
+		s, err := New[testConfig](opts...)
 		require.NoError(t, err)
 		return s
 	}
@@ -481,7 +521,7 @@ func TestStore_Header(t *testing.T) {
 	t.Run("stamped as first line", func(t *testing.T) {
 		dir := t.TempDir()
 		s := newStore(dir, testHeader)
-		require.NoError(t, s.Set("name", "demo"))
+		require.NoError(t, s.Set([]string{"name"}, "demo"))
 		require.NoError(t, s.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
@@ -493,12 +533,12 @@ func TestStore_Header(t *testing.T) {
 	t.Run("not duplicated on re-write", func(t *testing.T) {
 		dir := t.TempDir()
 		s := newStore(dir, testHeader)
-		require.NoError(t, s.Set("name", "demo"))
+		require.NoError(t, s.Set([]string{"name"}, "demo"))
 		require.NoError(t, s.Write())
 
 		// Fresh store discovers + re-reads the already-stamped file.
 		s2 := newStore(dir, testHeader)
-		require.NoError(t, s2.Set("version", 2))
+		require.NoError(t, s2.Set([]string{"version"}, 2))
 		require.NoError(t, s2.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
@@ -506,9 +546,9 @@ func TestStore_Header(t *testing.T) {
 			"header must appear exactly once after re-write\nfile:\n%s", got)
 		assert.Equal(t, testRenderedHeader(), strings.SplitN(got, "\n", 2)[0])
 
-		reloaded := newStore(dir, testHeader).Read()
-		assert.Equal(t, "demo", reloaded.Name)
-		assert.Equal(t, 2, reloaded.Version)
+		reloaded := newStore(dir, testHeader)
+		assert.Equal(t, "demo", mustGet[string](t, reloaded, "name"))
+		assert.Equal(t, 2, mustGet[int](t, reloaded, "version"))
 	})
 
 	t.Run("preserves user comments", func(t *testing.T) {
@@ -517,7 +557,7 @@ func TestStore_Header(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("name: original # keep me\n"), 0o644))
 
 		s := newStore(dir, testHeader)
-		require.NoError(t, s.Set("version", 7))
+		require.NoError(t, s.Set([]string{"version"}, 7))
 		require.NoError(t, s.Write())
 
 		got := mustReadFile(t, path)
@@ -530,7 +570,7 @@ func TestStore_Header(t *testing.T) {
 	t.Run("absent when no header", func(t *testing.T) {
 		dir := t.TempDir()
 		s := newStore(dir, "")
-		require.NoError(t, s.Set("name", "demo"))
+		require.NoError(t, s.Set([]string{"name"}, "demo"))
 		require.NoError(t, s.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
@@ -544,12 +584,12 @@ func TestStore_Header(t *testing.T) {
 		header := testHeader + "\n" + noteLine
 
 		s := newStore(dir, header)
-		require.NoError(t, s.Set("name", "demo"))
+		require.NoError(t, s.Set([]string{"name"}, "demo"))
 		require.NoError(t, s.Write())
 
 		// Fresh store re-reads the stamped file and writes again.
 		s2 := newStore(dir, header)
-		require.NoError(t, s2.Set("version", 2))
+		require.NoError(t, s2.Set([]string{"version"}, 2))
 		require.NoError(t, s2.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
@@ -565,14 +605,14 @@ func TestStore_Header(t *testing.T) {
 	t.Run("replaces stale directive value from another writer", func(t *testing.T) {
 		dir := t.TempDir()
 		stale := newStore(dir, "yaml-language-server: $schema=https://example.test/old.json")
-		require.NoError(t, stale.Set("name", "demo"))
+		require.NoError(t, stale.Set([]string{"name"}, "demo"))
 		require.NoError(t, stale.Write())
 
 		// A store configured with a different URL (e.g. a newer release
 		// pinning its own tag) must replace the directive, not stack a
 		// second copy.
 		s := newStore(dir, testHeader)
-		require.NoError(t, s.Set("version", 2))
+		require.NoError(t, s.Set([]string{"version"}, 2))
 		require.NoError(t, s.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
@@ -613,7 +653,7 @@ build:
 	localBefore := mustReadFile(t, localPath)
 
 	// hiDir is higher priority than loDir.
-	store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(hiDir, loDir))
+	store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(hiDir, loDir))
 	require.NoError(t, err)
 
 	// Sanity: version is owned by the base (low) file.
@@ -622,7 +662,7 @@ build:
 	require.Equal(t, basePath, prov.Path, "version must be provenance-owned by the base file")
 
 	// Change a value owned by B, then write. Provenance routes it to B.
-	require.NoError(t, store.Set("version", 2))
+	require.NoError(t, store.Set([]string{"version"}, 2))
 	require.NoError(t, store.Write())
 
 	got := mustReadFile(t, basePath)
@@ -663,13 +703,13 @@ version: 1
 
 	baseBefore := mustReadFile(t, basePath)
 
-	store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(hiDir, loDir))
+	store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(hiDir, loDir))
 	require.NoError(t, err)
 
 	// build.target is unset in both files; build.image is owned by the local
 	// (high) file, so a new build.target routes to the local file (walk-up to
 	// the owning layer of build.*).
-	require.NoError(t, store.Set("build.target", "prod"))
+	require.NoError(t, store.Set([]string{"build", "target"}, "prod"))
 	require.NoError(t, store.Write())
 
 	got := mustReadFile(t, localPath)
@@ -696,45 +736,21 @@ func TestStore_WriteProvenance(t *testing.T) {
 	err = os.WriteFile(localPath, []byte(testOverrideData()), 0o644)
 	require.NoError(t, err)
 
-	globalData, err := loadNode(globalPath)
-	require.NoError(t, err)
-	localData, err := loadNode(localPath)
-	require.NoError(t, err)
-
-	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
-	}
-
-	tags := buildTagRegistry[testConfig]()
-	basePath := filepath.Join(dir, "base.yaml")
-	require.NoError(t, os.WriteFile(basePath, []byte(testPartialData()), 0o644))
-	base, err := loadNode(basePath)
+	// local.yaml is listed first, so it is the higher-priority layer.
+	store, err := NewFromString[testConfig](testPartialData(),
+		WithFilenames("local.yaml", "global.yaml"),
+		WithPaths(dir),
+	)
 	require.NoError(t, err)
 
-	tree, prov := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true, walkUp: false}), tags)
-
-	// Deserialize for Set.
-	value, err := decodeNode[testConfig](tree)
-	require.NoError(t, err)
-
-	store := &Store[testConfig]{
-		tree:   tree,
-		layers: layers,
-		prov:   prov,
-		tags:   tags,
-		opts:   makeOptions(WithFilenames("global.yaml", "local.yaml")),
-	}
-	store.value.Store(value)
-
-	require.NoError(t, store.Set("name", "provenance-test"))
+	require.NoError(t, store.Set([]string{"name"}, "provenance-test"))
 	require.NoError(t, store.Write())
 
 	// name came from local layer (highest priority) — verify it was written there.
 	localResult := mustReadConfig(t, localPath)
 	assert.Equal(t, "provenance-test", localResult.Name)
 
-	// global layer should also be written (it owns fields routed to it).
+	// The layer that owns no dirty field keeps its own content.
 	globalResult := mustReadConfig(t, globalPath)
 	assert.NotEmpty(t, globalResult.Build.Target) // target came from defaults/global
 }
@@ -757,33 +773,11 @@ version: 2
 	require.NoError(t, os.WriteFile(globalPath, []byte(globalYAML), 0o644))
 	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
 
-	globalData, err := loadNode(globalPath)
-	require.NoError(t, err)
-	localData, err := loadNode(localPath)
+	store, err := New[testConfig](WithFilenames("local.yaml", "global.yaml"), WithPaths(dir))
 	require.NoError(t, err)
 
-	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
-	}
-
-	tags := buildTagRegistry[testConfig]()
-	tree, prov := merge(layers, tags)
-
-	value, err := decodeNode[testConfig](tree)
-	require.NoError(t, err)
-
-	store := &Store[testConfig]{
-		tree:   tree,
-		layers: layers,
-		prov:   prov,
-		tags:   tags,
-		opts:   makeOptions(WithFilenames("global.yaml", "local.yaml")),
-	}
-	store.value.Store(value)
-
-	require.NoError(t, store.Set("name", "local-updated"))
-	require.NoError(t, store.Set("tags", []string{"global-updated"}))
+	require.NoError(t, store.Set([]string{"name"}, "local-updated"))
+	require.NoError(t, store.Set([]string{"tags"}, []string{"global-updated"}))
 	require.NoError(t, store.Write())
 
 	localResult := mustReadConfig(t, localPath)
@@ -822,33 +816,11 @@ build:
 	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
 	require.NoError(t, os.WriteFile(globalPath, []byte(globalYAML), 0o644))
 
-	localData, err := loadNode(localPath)
+	store, err := New[testConfig](WithFilenames("local.yaml", "global.yaml"), WithPaths(dir))
 	require.NoError(t, err)
-	globalData, err := loadNode(globalPath)
-	require.NoError(t, err)
-
-	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
-	}
-
-	tags := buildTagRegistry[testConfig]()
-	tree, prov := merge(layers, tags)
-
-	value, err := decodeNode[testConfig](tree)
-	require.NoError(t, err)
-
-	store := &Store[testConfig]{
-		tree:   tree,
-		layers: layers,
-		prov:   prov,
-		tags:   tags,
-		opts:   makeOptions(WithFilenames("local.yaml", "global.yaml")),
-	}
-	store.value.Store(value)
 
 	// Add a NEW map entry — FOO has no provenance because it's not in any layer file.
-	require.NoError(t, store.Set("env.FOO", "2"))
+	require.NoError(t, store.Set([]string{"env", "FOO"}, "2"))
 	require.NoError(t, store.Write())
 
 	// FOO should be written to the local layer (which owns env), not the global layer.
@@ -874,29 +846,13 @@ func TestStore_WriteFilename(t *testing.T) {
 	err := os.WriteFile(configPath, []byte(testFullData()), 0o644)
 	require.NoError(t, err)
 
-	configData, err := loadNode(configPath)
+	store, err := New[testConfig](
+		WithFilenames("config.yaml", "config.local.yaml"),
+		WithPaths(dir),
+	)
 	require.NoError(t, err)
 
-	tags := buildTagRegistry[testConfig]()
-	tree, prov := merge([]layer{
-		{path: configPath, filename: "config.yaml", node: configData, virtual: false, walkUp: false},
-	}, tags)
-
-	value, err := decodeNode[testConfig](tree)
-	require.NoError(t, err)
-
-	store := &Store[testConfig]{
-		tree: tree,
-		layers: []layer{
-			{path: configPath, filename: "config.yaml", node: configData, virtual: false, walkUp: false},
-		},
-		prov: prov,
-		tags: tags,
-		opts: makeOptions(WithFilenames("config.yaml", "config.local.yaml"), WithPaths(dir)),
-	}
-	store.value.Store(value)
-
-	require.NoError(t, store.Set("name", "targeted-write"))
+	require.NoError(t, store.Set([]string{"name"}, "targeted-write"))
 
 	// Write to explicit path — should create config.local.yaml.
 	require.NoError(t, store.WriteTo(localPath))
@@ -1037,7 +993,7 @@ func TestStore_Dirs(t *testing.T) {
 				// no file
 			}
 
-			store, err := New[testConfig]("",
+			store, err := New[testConfig](
 				WithFilenames("config.yaml"),
 				WithDirs(projectDir),
 			)
@@ -1047,7 +1003,7 @@ func TestStore_Dirs(t *testing.T) {
 			assert.Len(t, layers, tt.wantLayers)
 
 			if tt.wantName != "" {
-				assert.Equal(t, tt.wantName, store.Read().Name)
+				assert.Equal(t, tt.wantName, mustGet[string](t, store, "name"))
 			}
 		})
 	}
@@ -1115,7 +1071,7 @@ func TestStore_MixedPlacementDiscovery(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 			}
 
-			store, err := New[testConfig]("",
+			store, err := New[testConfig](
 				WithFilenames("config.local.yaml", "config.yaml"),
 				WithDefaultFilename("config.yaml"),
 				WithDirs(dir),
@@ -1129,7 +1085,7 @@ func TestStore_MixedPlacementDiscovery(t *testing.T) {
 				got = append(got, filepath.ToSlash(rel))
 			}
 			assert.Equal(t, tt.wantPaths, got)
-			assert.Equal(t, tt.wantName, store.Read().Name)
+			assert.Equal(t, tt.wantName, mustGet[string](t, store, "name"))
 		})
 	}
 }
@@ -1155,16 +1111,16 @@ func TestWalkType_RecordsFieldKinds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			meta, ok := reg[tt.path]
+			meta, ok := reg[schemaKey(tt.path)]
 			require.True(t, ok, "path %q should be in registry", tt.path)
 			assert.Equal(t, tt.kind, meta.kind, "path %q kind mismatch", tt.path)
 		})
 	}
 
 	// Verify merge tags are still recorded alongside kinds.
-	assert.Equal(t, "union", reg["packages"].mergeTag)
-	assert.Equal(t, "overwrite", reg["plugins"].mergeTag)
-	assert.Empty(t, reg["name"].mergeTag, "untagged field should have empty merge tag")
+	assert.Equal(t, "union", reg[schemaKey("packages")].mergeTag)
+	assert.Equal(t, "overwrite", reg[schemaKey("plugins")].mergeTag)
+	assert.Empty(t, reg[schemaKey("name")].mergeTag, "untagged field should have empty merge tag")
 }
 
 func TestStore_Dirs_MergePrecedence(t *testing.T) {
@@ -1186,7 +1142,7 @@ func TestStore_Dirs_MergePrecedence(t *testing.T) {
 		0o644,
 	))
 
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDirs(highDir, lowDir),
 	)
@@ -1195,11 +1151,11 @@ func TestStore_Dirs_MergePrecedence(t *testing.T) {
 	assert.Len(t, store.Layers(), 2)
 
 	// High-priority dir wins for scalar fields.
-	assert.Equal(t, "override", store.Read().Name)
-	assert.Equal(t, 99, store.Read().Version)
+	assert.Equal(t, "override", mustGet[string](t, store, "name"))
+	assert.Equal(t, 99, mustGet[int](t, store, "version"))
 
 	// Low-priority dir provides fields not set in high-priority.
-	assert.Equal(t, "node:20", store.Read().Build.Image)
+	assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
 }
 
 func TestBuildTagRegistry_PointerToStruct(t *testing.T) {
@@ -1485,7 +1441,7 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	// and holds no project-registry knowledge. Anchor at the project root.
 	t.Chdir(levels[len(levels)-1]) // CWD = deepest level
 
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
 		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
@@ -1494,7 +1450,7 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 
 	// --- Print layers table using LayerInfo.Data (no re-reading from disk) ---
 	layers := store.Layers()
-	cfg := store.Read()
+	cfg := mergedConfig(t, store)
 	provMap := store.ProvenanceMap()
 
 	// Table helpers.
@@ -1731,11 +1687,14 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 
 	// --- Invariant: Provenance() returns correct layer for known fields ---
-	for field, sourcePath := range provMap {
-		li, ok := store.Provenance(field)
-		assert.True(t, ok, "Provenance(%q) should return true", field)
-		assert.Equal(t, sourcePath, li.Path,
-			"Provenance(%q) path mismatch", field)
+	// ProvenanceMap keys are display-form and never reparsed, so the segments
+	// come from the store's own key registry.
+	for joined, idx := range store.prov {
+		key := splitKey(joined)
+		li, ok := store.Provenance(key...)
+		assert.True(t, ok, "Provenance(%q) should return true", key)
+		assert.Equal(t, store.Layers()[idx].Path, li.Path,
+			"Provenance(%q) path mismatch", key)
 	}
 
 	// --- Invariant: ProvenanceMap is non-empty for stores with layers ---
@@ -2035,13 +1994,13 @@ func TestStore_WalkUpGolden(t *testing.T) {
 
 	t.Chdir(levels[len(levels)-1])
 
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
 		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
 	)
 	require.NoError(t, err)
-	cfg := store.Read()
+	cfg := mergedConfig(t, store)
 
 	// --- Bless mode: print current values for manual review ---
 	if os.Getenv("STORAGE_GOLDEN_BLESS") != "" {
@@ -2167,7 +2126,7 @@ func TestStore_WalkUpAnchorGuard(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := New[testConfig]("",
+			store, err := New[testConfig](
 				WithFilenames("config.yaml"),
 				WithWalkUp(tc.anchor),
 			)
@@ -2198,7 +2157,7 @@ func TestStore_Dirs_DedupWithPaths(t *testing.T) {
 		0o644,
 	))
 
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDirs(dir),
 		WithPaths(dir),
@@ -2208,112 +2167,48 @@ func TestStore_Dirs_DedupWithPaths(t *testing.T) {
 	// Only one layer — the dotfile discovered by WithDirs.
 	// WithPaths probes dir/config.yaml (plain form) which doesn't exist.
 	assert.Len(t, store.Layers(), 1)
-	assert.Equal(t, "from-dotfile", store.Read().Name)
-}
-
-func TestStore_MutationWithoutSet(t *testing.T) {
-	// Two callers Read() the snapshot, mutate it directly (bypassing Set),
-	// then call Write(). Because Set() was never called, no new dirty paths
-	// are added — Write() does not persist the direct mutations.
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(testFullData()), 0o644))
-
-	store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
-	require.NoError(t, err)
-
-	// Writer A reads snapshot, mutates directly.
-	snapA := store.Read()
-	snapA.Name = "writer-A"
-	snapA.Version = 100
-	err = store.Write()
-	require.NoError(t, err)
-
-	// Writer B reads snapshot (same pointer), mutates directly.
-	snapB := store.Read()
-	snapB.Name = "writer-B"
-	snapB.Build.Image = "alpine:latest"
-	err = store.Write()
-	require.NoError(t, err)
-
-	// The canonical tree is completely untouched — direct mutations
-	// bypass Set and are never recorded as dirty.
-	tree, treeErr := decodeNode[testConfig](store.tree)
-	require.NoError(t, treeErr)
-	assert.Equal(t, "myproject", tree.Name, "tree retains original name")
-	assert.Equal(t, 1, tree.Version, "tree retains original version")
-	assert.Equal(t, "node:20", tree.Build.Image, "tree retains original image")
-
-	t.Log("Direct mutation: snapshot dirty in-memory but tree + disk untouched.")
+	assert.Equal(t, "from-dotfile", mustGet[string](t, store, "name"))
 }
 
 func TestStore_MutationWithSet(t *testing.T) {
 	t.Run("two Sets on different fields — both survive", func(t *testing.T) {
 		dir := t.TempDir()
-		store, err := New[testConfig](testFullData(), WithFilenames("config.yaml"), WithPaths(dir))
+		store, err := NewFromString[testConfig](testFullData(), WithFilenames("config.yaml"), WithPaths(dir))
 		require.NoError(t, err)
 
 		// Caller A sets name.
-		require.NoError(t, store.Set("name", "set-by-A"))
+		require.NoError(t, store.Set([]string{"name"}, "set-by-A"))
 
 		// Caller B sets version.
-		require.NoError(t, store.Set("version", 999))
+		require.NoError(t, store.Set([]string{"version"}, 999))
 
-		cfg := store.Read()
-		assert.Equal(t, "set-by-A", cfg.Name, "name from caller A")
-		assert.Equal(t, 999, cfg.Version, "version from caller B")
-		assert.Equal(t, "node:20", cfg.Build.Image, "untouched field preserved")
+		assert.Equal(t, "set-by-A", mustGet[string](t, store, "name"), "name from caller A")
+		assert.Equal(t, 999, mustGet[int](t, store, "version"), "version from caller B")
+		assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"), "untouched field preserved")
 
 		// Write and verify on disk.
 		require.NoError(t, store.Write())
 		disk := mustReadConfig(t, filepath.Join(dir, "config.yaml"))
 		assert.Equal(t, "set-by-A", disk.Name)
 		assert.Equal(t, 999, disk.Version)
-
-		t.Logf("Both mutations survived: Name=%q Version=%d", cfg.Name, cfg.Version)
 	})
 
 	t.Run("two Sets on same field — second wins", func(t *testing.T) {
 		dir := t.TempDir()
-		store, err := New[testConfig](testFullData(), WithFilenames("config.yaml"), WithPaths(dir))
+		store, err := NewFromString[testConfig](testFullData(), WithFilenames("config.yaml"), WithPaths(dir))
 		require.NoError(t, err)
 
-		require.NoError(t, store.Set("name", "writer-A"))
-		require.NoError(t, store.Set("name", "writer-B"))
+		require.NoError(t, store.Set([]string{"name"}, "writer-A"))
+		require.NoError(t, store.Set([]string{"name"}, "writer-B"))
 
-		cfg := store.Read()
-		assert.Equal(t, "writer-B", cfg.Name, "second Set wins")
-		assert.Equal(t, 1, cfg.Version)
-		assert.Equal(t, "node:20", cfg.Build.Image)
+		assert.Equal(t, "writer-B", mustGet[string](t, store, "name"), "second Set wins")
+		assert.Equal(t, 1, mustGet[int](t, store, "version"))
+		assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
 
 		// Verify disk round-trip.
 		require.NoError(t, store.Write())
 		disk := mustReadConfig(t, filepath.Join(dir, "config.yaml"))
 		assert.Equal(t, "writer-B", disk.Name, "disk matches second Set")
-
-		t.Logf("Same-field result: winner=%q (second Set wins deterministically)", cfg.Name)
-	})
-
-	t.Run("snapshot isolation — held Read unaffected by Set", func(t *testing.T) {
-		store, err := New[testConfig](testFullData())
-		require.NoError(t, err)
-
-		before := store.Read()
-		assert.Equal(t, "myproject", before.Name)
-
-		require.NoError(t, store.Set("name", "mutated"))
-		require.NoError(t, store.Set("version", 42))
-
-		// Held snapshot is still the old value.
-		assert.Equal(t, "myproject", before.Name, "held snapshot is immutable")
-		assert.Equal(t, 1, before.Version, "held snapshot is immutable")
-
-		// Fresh Read() sees the new value.
-		after := store.Read()
-		assert.Equal(t, "mutated", after.Name)
-		assert.Equal(t, 42, after.Version)
-
-		t.Log("Snapshot isolation: old Read() unaffected by Set()")
 	})
 }
 
@@ -2324,14 +2219,14 @@ func TestStore_Set_ClearMapPersistsEmpty(t *testing.T) {
 	// Write full config to file first so the store has a real layer.
 	require.NoError(t, os.WriteFile(cfgPath, []byte(testFullData()), 0o644))
 
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithPaths(dir),
 	)
 	require.NoError(t, err)
-	require.NotEmpty(t, store.Read().Env, "precondition: env should have values")
+	require.NotEmpty(t, mustGet[map[string]string](t, store, "env"), "precondition: env should have values")
 
-	require.NoError(t, store.Set("env", map[string]string{}))
+	require.NoError(t, store.Set([]string{"env"}, map[string]string{}))
 	require.NoError(t, store.Write())
 
 	onDisk := mustReadConfig(t, cfgPath)
@@ -2347,7 +2242,7 @@ func TestStore_Set_EmptyStringsNotWritten(t *testing.T) {
 	dir := t.TempDir()
 
 	// Start with a store seeded from defaults (only name has a value).
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDefaults(`name: default-app`),
 		WithPaths(dir),
@@ -2355,7 +2250,7 @@ func TestStore_Set_EmptyStringsNotWritten(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set only the name field — build.image and build.target remain "".
-	require.NoError(t, store.Set("name", "my-project"))
+	require.NoError(t, store.Set([]string{"name"}, "my-project"))
 	require.NoError(t, store.Write())
 
 	// Read raw YAML from disk — empty string fields must be absent.
@@ -2396,7 +2291,7 @@ build:
 
 	// Create a project-level store that writes to projectDir.
 	// This simulates init: defaults + Set for a few fields + WriteTo.
-	projectStore, err := New[testConfig]("",
+	projectStore, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDefaults(`name: default-name`),
 		WithPaths(projectDir),
@@ -2404,23 +2299,22 @@ build:
 	require.NoError(t, err)
 
 	// Set only name — build.image and build.target are untouched (empty).
-	require.NoError(t, projectStore.Set("name", "project-override"))
+	require.NoError(t, projectStore.Set([]string{"name"}, "project-override"))
 	require.NoError(t, projectStore.WriteTo(filepath.Join(projectDir, "config.yaml")))
 
 	// Now load a layered store: projectDir (high priority) + userDir (low priority).
-	mergedStore, err := New[testConfig]("",
+	mergedStore, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDefaults(`name: default-name`),
 		WithPaths(projectDir, userDir),
 	)
 	require.NoError(t, err)
 
-	snap := mergedStore.Read()
-	assert.Equal(t, "project-override", snap.Name,
+	assert.Equal(t, "project-override", mustGet[string](t, mergedStore, "name"),
 		"project layer should win for explicitly set fields")
-	assert.Equal(t, "node:20", snap.Build.Image,
+	assert.Equal(t, "node:20", mustGet[string](t, mergedStore, "build", "image"),
 		"user layer value should survive — not overridden by empty string from project layer")
-	assert.Equal(t, "production", snap.Build.Target,
+	assert.Equal(t, "production", mustGet[string](t, mergedStore, "build", "target"),
 		"user layer value should survive — not overridden by empty string from project layer")
 }
 
@@ -2429,16 +2323,16 @@ build:
 // slices or maps where "" is valid data (e.g. env vars, list entries).
 func TestStore_Set_EmptyStringsPreservedInSlicesAndMaps(t *testing.T) {
 	dir := t.TempDir()
-	store, err := New[testConfig]("",
+	store, err := New[testConfig](
 		WithFilenames("config.yaml"),
 		WithDefaults(`name: test`),
 		WithPaths(dir),
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, store.Set("name", "test"))
-	require.NoError(t, store.Set("tags", []string{"a", "", "b"})) // empty string in slice
-	require.NoError(t, store.Set("env", map[string]string{        // empty string in map value
+	require.NoError(t, store.Set([]string{"name"}, "test"))
+	require.NoError(t, store.Set([]string{"tags"}, []string{"a", "", "b"})) // empty string in slice
+	require.NoError(t, store.Set([]string{"env"}, map[string]string{        // empty string in map value
 		"SET_VAR":   "value",
 		"EMPTY_VAR": "",
 	}))
@@ -2465,39 +2359,33 @@ func TestStore_Set_EmptyStringsPreservedInSlicesAndMaps(t *testing.T) {
 }
 
 func TestStore_Delete(t *testing.T) {
-	t.Run("deletes leaf key and updates snapshot", func(t *testing.T) {
-		store, err := New[testConfig](testFullData())
+	t.Run("deletes leaf key", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
 		require.NoError(t, err)
 
-		assert.Equal(t, "myproject", store.Read().Name)
+		assert.Equal(t, "myproject", mustGet[string](t, store, "name"))
 
-		deleted, err := store.Remove("name")
-		require.NoError(t, err)
-		assert.True(t, deleted)
-		assert.Empty(t, store.Read().Name, "snapshot should reflect deletion")
+		require.NoError(t, store.Remove("name"))
+		requireAbsent(t, store, "name")
 	})
 
 	t.Run("deletes nested key", func(t *testing.T) {
-		store, err := New[testConfig](testFullData())
+		store, err := NewFromString[testConfig](testFullData())
 		require.NoError(t, err)
 
-		assert.Equal(t, "node:20", store.Read().Build.Image)
+		assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
 
-		deleted, err := store.Remove("build.image")
-		require.NoError(t, err)
-		assert.True(t, deleted)
-		assert.Empty(t, store.Read().Build.Image)
+		require.NoError(t, store.Remove("build", "image"))
+		requireAbsent(t, store, "build", "image")
 		// Sibling key should survive.
-		assert.Equal(t, "production", store.Read().Build.Target)
+		assert.Equal(t, "production", mustGet[string](t, store, "build", "target"))
 	})
 
-	t.Run("returns false for missing key", func(t *testing.T) {
-		store, err := New[testConfig](testFullData())
+	t.Run("missing key returns ErrKeyNotFound", func(t *testing.T) {
+		store, err := NewFromString[testConfig](testFullData())
 		require.NoError(t, err)
 
-		deleted, err := store.Remove("nonexistent.path")
-		require.NoError(t, err)
-		assert.False(t, deleted)
+		assert.ErrorIs(t, store.Remove("nonexistent", "path"), ErrKeyNotFound)
 	})
 
 	t.Run("delete + write + reload shows lower layer", func(t *testing.T) {
@@ -2514,34 +2402,32 @@ func TestStore_Delete(t *testing.T) {
 			filepath.Join(projectDir, "config.yaml"),
 			[]byte("name: my-project\nbuild:\n  image: project-image\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(projectDir, userDir),
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "project-image", store.Read().Build.Image)
+		assert.Equal(t, "project-image", mustGet[string](t, store, "build", "image"))
 
 		// Delete build.image from the project file via the tree.
-		deleted, err := store.Remove("build.image")
-		require.NoError(t, err)
-		assert.True(t, deleted)
+		require.NoError(t, store.Remove("build", "image"))
 
 		// Write only the project layer.
 		require.NoError(t, store.Write())
 
 		// Reload — user layer's value should now win.
-		fresh, err := New[testConfig]("",
+		fresh, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(projectDir, userDir),
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "user-image", fresh.Read().Build.Image,
+		assert.Equal(t, "user-image", mustGet[string](t, fresh, "build", "image"),
 			"after deleting from project layer, user layer value should show through")
 	})
 }
 
-func TestStore_Refresh_RemergesLayers(t *testing.T) {
-	t.Run("snapshot reflects true merged state after per-layer write", func(t *testing.T) {
+func TestStore_Write_RemergesLayers(t *testing.T) {
+	t.Run("merged view reflects true merged state after per-layer write", func(t *testing.T) {
 		highDir := t.TempDir() // highest priority
 		lowDir := t.TempDir()  // lowest priority
 
@@ -2555,32 +2441,27 @@ func TestStore_Refresh_RemergesLayers(t *testing.T) {
 			filepath.Join(lowDir, "config.yaml"),
 			[]byte("build:\n  image: low-image\nname: from-low\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(highDir, lowDir),
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "high-image", store.Read().Build.Image)
+		assert.Equal(t, "high-image", mustGet[string](t, store, "build", "image"))
 
 		// Set + Write to the LOW-priority layer — simulates storeui per-layer save.
-		require.NoError(t, store.Set("build.image", "user-wrote-this"))
+		require.NoError(t, store.Set([]string{"build", "image"}, "user-wrote-this"))
 		require.NoError(t, store.WriteTo(filepath.Join(lowDir, "config.yaml")))
 
-		// Write remerges: snapshot immediately reflects the true merge —
+		// Write remerges: the merged view immediately reflects the true merge —
 		// high-priority layer wins even though we wrote to the low layer.
-		assert.Equal(t, "high-image", store.Read().Build.Image,
+		assert.Equal(t, "high-image", mustGet[string](t, store, "build", "image"),
 			"after Write, high-priority layer wins (remerge)")
 
 		// Fields only in the low layer survive.
-		assert.Equal(t, "from-low", store.Read().Name)
-
-		// Refresh is idempotent — no change from the already-correct state.
-		require.NoError(t, store.Refresh())
-		assert.Equal(t, "high-image", store.Read().Build.Image,
-			"Refresh is idempotent after remerge")
+		assert.Equal(t, "from-low", mustGet[string](t, store, "name"))
 	})
 
-	t.Run("provenance updated after Refresh", func(t *testing.T) {
+	t.Run("provenance updated after write to lower layer", func(t *testing.T) {
 		highDir := t.TempDir()
 		lowDir := t.TempDir()
 
@@ -2591,7 +2472,7 @@ func TestStore_Refresh_RemergesLayers(t *testing.T) {
 			filepath.Join(lowDir, "config.yaml"),
 			[]byte("name: low\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(highDir, lowDir),
 		)
@@ -2601,117 +2482,14 @@ func TestStore_Refresh_RemergesLayers(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, filepath.Join(highDir, "config.yaml"), prov.Path)
 
-		// Mutate and write to low layer, then refresh.
-		require.NoError(t, store.Set("name", "changed"))
+		// Mutate and write to the low layer.
+		require.NoError(t, store.Set([]string{"name"}, "changed"))
 		require.NoError(t, store.WriteTo(filepath.Join(lowDir, "config.yaml")))
-		require.NoError(t, store.Refresh())
 
 		// Provenance should point back to high layer (it still wins).
 		prov, ok = store.Provenance("name")
 		require.True(t, ok)
 		assert.Equal(t, filepath.Join(highDir, "config.yaml"), prov.Path)
-	})
-
-	t.Run("discovers newly created layer file", func(t *testing.T) {
-		existingDir := t.TempDir()
-		newDir := t.TempDir()
-
-		require.NoError(t, os.WriteFile(
-			filepath.Join(existingDir, "config.yaml"),
-			[]byte("name: existing\n"), 0o644))
-
-		// newDir has no config.yaml yet — store starts with one layer.
-		store, err := New[testConfig]("",
-			WithFilenames("config.yaml"),
-			WithPaths(newDir, existingDir),
-		)
-		require.NoError(t, err)
-		require.Len(t, store.Layers(), 1, "only the existing file is discovered")
-
-		// Write to the new path (simulates first "Local" save in storeui).
-		require.NoError(t, store.Set("build.image", "new-local"))
-		newFile := filepath.Join(newDir, "config.yaml")
-		require.NoError(t, store.WriteTo(newFile))
-
-		// Write injects the new file into the layer stack immediately.
-		layers := store.Layers()
-		require.Len(t, layers, 2, "new file should be injected by Write")
-
-		// Find the new file in layers (position depends on injection point).
-		var found bool
-		for _, l := range layers {
-			if l.Path == newFile {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "new file should be in Layers()")
-
-		// Refresh is idempotent — re-discovery finds the same file.
-		require.NoError(t, store.Refresh())
-		assert.Len(t, store.Layers(), 2, "Refresh is idempotent")
-	})
-}
-
-func TestStore_MarkForWrite(t *testing.T) {
-	t.Run("unchanged value written to lower layer", func(t *testing.T) {
-		highDir := t.TempDir()
-		lowDir := t.TempDir()
-
-		require.NoError(t, os.WriteFile(
-			filepath.Join(highDir, "config.yaml"),
-			[]byte("build:\n  image: alpine\n"), 0o644))
-		require.NoError(t, os.WriteFile(
-			filepath.Join(lowDir, "config.yaml"),
-			[]byte("name: low-only\n"), 0o644))
-
-		store, err := New[testConfig]("",
-			WithFilenames("config.yaml"),
-			WithPaths(highDir, lowDir),
-		)
-		require.NoError(t, err)
-		assert.Equal(t, "alpine", store.Read().Build.Image)
-
-		// No Set call — nothing is dirty, so Write is a no-op even to a lower layer.
-		lowFile := filepath.Join(lowDir, "config.yaml")
-		require.NoError(t, store.WriteTo(lowFile))
-
-		raw, _ := os.ReadFile(lowFile)
-		assert.NotContains(t, string(raw), "alpine",
-			"Write with nothing dirty should not write the value")
-
-		// MarkForWrite forces the (unchanged) current value into the write set, so
-		// it can be persisted down to a lower layer without a Set.
-		store.MarkForWrite("build.image")
-		require.NoError(t, store.WriteTo(lowFile))
-
-		raw, _ = os.ReadFile(lowFile)
-		assert.Contains(t, string(raw), "alpine",
-			"Write after MarkForWrite should persist the value")
-	})
-
-	t.Run("no-op when path already dirty from Set", func(t *testing.T) {
-		dir := t.TempDir()
-
-		require.NoError(t, os.WriteFile(
-			filepath.Join(dir, "config.yaml"),
-			[]byte("name: original\n"), 0o644))
-
-		store, err := New[testConfig]("",
-			WithFilenames("config.yaml"),
-			WithPaths(dir),
-		)
-		require.NoError(t, err)
-
-		// Set with a different value — path is already dirty.
-		require.NoError(t, store.Set("name", "changed"))
-
-		// MarkForWrite is idempotent — doesn't break anything.
-		store.MarkForWrite("name")
-		require.NoError(t, store.WriteTo(filepath.Join(dir, "config.yaml")))
-
-		raw, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
-		assert.Contains(t, string(raw), "changed")
 	})
 }
 
@@ -2723,7 +2501,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 			filepath.Join(dir, "config.yaml"),
 			[]byte("name: original\nbuild:\n  image: alpine\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(dir),
 		)
@@ -2737,7 +2515,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		assert.Equal(t, "alpine", buildMap["image"])
 
 		// Mutate and write.
-		require.NoError(t, store.Set("build.image", "ubuntu:22.04"))
+		require.NoError(t, store.Set([]string{"build", "image"}, "ubuntu:22.04"))
 		require.NoError(t, store.Write())
 
 		// Layer data should now reflect the written file.
@@ -2755,13 +2533,13 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		require.NoError(t, os.WriteFile(cfgPath,
 			[]byte("name: original\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(dir),
 		)
 		require.NoError(t, err)
 
-		require.NoError(t, store.Set("name", "updated-via-topath"))
+		require.NoError(t, store.Set([]string{"name"}, "updated-via-topath"))
 		require.NoError(t, store.WriteTo(cfgPath))
 
 		layers := store.Layers()
@@ -2780,7 +2558,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		require.NoError(t, os.WriteFile(localPath, []byte("name: from-local\n"), 0o644))
 		require.NoError(t, os.WriteFile(mainPath, []byte("build:\n  image: alpine\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("local.yaml", "main.yaml"),
 			WithPaths(dir),
 		)
@@ -2793,7 +2571,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		require.Equal(t, mainPath, pm["build"], "build should come from main initially")
 
 		// Write build.image to the local layer (promoting it to highest priority).
-		require.NoError(t, store.Set("build.image", "ubuntu"))
+		require.NoError(t, store.Set([]string{"build", "image"}, "ubuntu"))
 		require.NoError(t, store.WriteTo(localPath))
 
 		// After Write, provenance should reflect the new state:
@@ -2802,9 +2580,9 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		assert.Equal(t, localPath, freshPM["build"],
 			"provenance for 'build' should update to local after Write")
 
-		// The snapshot value should also be consistent.
-		assert.Equal(t, "ubuntu", store.Read().Build.Image,
-			"Read() snapshot should reflect post-Write state")
+		// The merged value should also be consistent.
+		assert.Equal(t, "ubuntu", mustGet[string](t, store, "build", "image"),
+			"the merged view should reflect post-Write state")
 	})
 
 	t.Run("new file injected into layers after Write", func(t *testing.T) {
@@ -2814,7 +2592,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 		require.NoError(t, os.WriteFile(existingPath, []byte("name: original\n"), 0o644))
 
 		// local.yaml listed first (highest priority) but doesn't exist on disk yet.
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("local.yaml", "main.yaml"),
 			WithPaths(dir),
 		)
@@ -2825,7 +2603,7 @@ func TestStore_Write_RefreshesLayers(t *testing.T) {
 
 		// Write to a new file that wasn't in the layer stack.
 		newPath := filepath.Join(dir, "local.yaml")
-		require.NoError(t, store.Set("build.image", "ubuntu"))
+		require.NoError(t, store.Set([]string{"build", "image"}, "ubuntu"))
 		require.NoError(t, store.WriteTo(newPath))
 
 		// The new file should now appear in Layers().
@@ -2917,16 +2695,11 @@ type testPortRuleCfg struct {
 
 func (t testPortRuleCfg) Fields() FieldSet { return NormalizeFields(t) }
 
-// TestStore_Set_TypedScalarDriftDoesNotFalselyDirtyOpaqueSlice reproduces a
-// store-routing regression: editing one unrelated scalar funneled an untouched
-// opaque struct-slice into the targeted layer file.
-//
-// Root cause: on-disk `port: 22` parses as a yaml !!int into the raw merged
-// tree, but coerces into the Go `string` Port field and re-serializes as the
-// quoted string `"22"`. Set() diffed the raw parsed tree against the
-// struct-serialized form, so the int-vs-string representation mismatch flagged
-// the whole rules slice as changed even though the caller never touched it.
-// Set() must diff serialized-before vs serialized-after so the coercion cancels.
+// TestStore_Set_TypedScalarDriftDoesNotFalselyDirtyOpaqueSlice pins the
+// store-routing invariant that editing one unrelated scalar never funnels an
+// untouched opaque struct-slice into the targeted layer file — even when the
+// slice's on-disk representation drifts from its Go type (`port: 22` parses as
+// a yaml !!int but the schema field is a Go string).
 func TestStore_Set_TypedScalarDriftDoesNotFalselyDirtyOpaqueSlice(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "base.yaml")
@@ -2947,33 +2720,13 @@ name: base
 	require.NoError(t, os.WriteFile(basePath, []byte(baseYAML), 0o644))
 	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
 
-	baseData, err := loadNode(basePath)
+	// local.yaml is listed first, so it is the higher-priority layer.
+	store, err := New[testPortRuleCfg](WithFilenames("local.yaml", "base.yaml"), WithPaths(dir))
 	require.NoError(t, err)
-	localData, err := loadNode(localPath)
-	require.NoError(t, err)
-
-	// local.yaml is the higher-priority layer (index 0).
-	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
-		{path: basePath, filename: "base.yaml", node: baseData, virtual: false, walkUp: false},
-	}
-	tags := buildTagRegistry[testPortRuleCfg]()
-	tree, prov := merge(layers, tags)
-	value, err := decodeNode[testPortRuleCfg](tree)
-	require.NoError(t, err)
-
-	store := &Store[testPortRuleCfg]{
-		tree:   tree,
-		layers: layers,
-		prov:   prov,
-		tags:   tags,
-		opts:   makeOptions(WithFilenames("base.yaml", "local.yaml")),
-	}
-	store.value.Store(value)
 
 	// Edit only the top-level scalar, routed explicitly to the local layer
 	// (mirrors storeui's per-field save: Set + WriteTo(target)).
-	require.NoError(t, store.Set("name", "local-updated"))
+	require.NoError(t, store.Set([]string{"name"}, "local-updated"))
 	require.NoError(t, store.WriteTo(localPath))
 
 	var localMap map[string]any
@@ -2986,12 +2739,11 @@ name: base
 		"untouched opaque rules slice must not be routed into the local layer file")
 }
 
-// TestStore_Set_ClearScalarRoutesDeleteToOwningLayer pins the behavior the
-// symmetric serialized diff newly enables: clearing a scalar to its zero value
-// is recorded as a delete and routed to the layer that owns the field, rather
-// than being silently ignored (the old raw-tree-vs-merged-tree diff never saw
-// the clear because mergeIntoTree does not remove keys).
-func TestStore_Set_ClearScalarRoutesDeleteToOwningLayer(t *testing.T) {
+// TestStore_Remove_RoutesDeleteToOwningLayer pins the unset path: Remove is
+// recorded as a delete and routed to the layer that owns the field, so the key
+// leaves that file entirely (never a stale value nor an empty string) and the
+// merged value falls through to the lower layer.
+func TestStore_Remove_RoutesDeleteToOwningLayer(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "base.yaml")
 	localPath := filepath.Join(dir, "local.yaml")
@@ -3008,32 +2760,11 @@ version: 2
 	require.NoError(t, os.WriteFile(basePath, []byte(baseYAML), 0o644))
 	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
 
-	baseData, err := loadNode(basePath)
-	require.NoError(t, err)
-	localData, err := loadNode(localPath)
+	store, err := New[testConfig](WithFilenames("local.yaml", "base.yaml"), WithPaths(dir))
 	require.NoError(t, err)
 
-	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
-		{path: basePath, filename: "base.yaml", node: baseData, virtual: false, walkUp: false},
-	}
-	tags := buildTagRegistry[testConfig]()
-	tree, prov := merge(layers, tags)
-	value, err := decodeNode[testConfig](tree)
-	require.NoError(t, err)
-
-	store := &Store[testConfig]{
-		tree:   tree,
-		layers: layers,
-		prov:   prov,
-		tags:   tags,
-		opts:   makeOptions(WithFilenames("base.yaml", "local.yaml")),
-	}
-	store.value.Store(value)
-
-	// Clear the scalar via Remove; route via provenance (no explicit ToPath).
-	_, err = store.Remove("name")
-	require.NoError(t, err)
+	// Clear the scalar via Remove; route via provenance (no explicit target).
+	require.NoError(t, store.Remove("name"))
 	require.NoError(t, store.Write())
 
 	// The owning layer must lose the key entirely (not retain a stale value
@@ -3046,34 +2777,38 @@ version: 2
 	assert.Equal(t, 2, localMap["version"], "untouched sibling must remain")
 
 	// The merged value must now fall through to the lower layer.
-	assert.Equal(t, "base-name", store.Read().Name)
+	assert.Equal(t, "base-name", mustGet[string](t, store, "name"))
 }
 
 // TestStore_Set_RejectsSchemaBreakingValue proves the normal Set path validates
-// the decode before committing. validateKind only guards leaf schema paths, so a
-// scalar grafted over a non-leaf struct path ("build") would otherwise produce a
-// tree that no longer decodes — and the old best-effort refreshSnapshot kept the
-// stale snapshot while leaving the path dirty, so the next Write persisted the
-// bad scalar and the next process start failed the strict load.
+// the whole candidate tree before committing. validateKind only guards declared
+// leaf keys, so a value grafted at a dynamic map-entry key would otherwise
+// produce a tree that no longer decodes, and the next Write would persist it —
+// failing the strict load on the next process start.
 func TestStore_Set_RejectsSchemaBreakingValue(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(testFullData()), 0o644))
 
-	store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
+	store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
 	require.NoError(t, err)
-	require.Equal(t, "node:20", store.Read().Build.Image)
+	require.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
 
-	err = store.Set("build", "oops")
+	// env is map[string]string; a struct value at a dynamic entry breaks it.
+	err = store.Set([]string{"env", "FOO"}, map[string]string{"nested": "map"})
 	require.ErrorIs(t, err, ErrSchemaDecode)
 
-	// Snapshot is untouched by the rejected Set.
-	assert.Equal(t, "node:20", store.Read().Build.Image)
+	// A non-leaf key is not a settable field at all.
+	require.ErrorIs(t, store.Set([]string{"build"}, "oops"), ErrUnknownKey)
+
+	// The merged tree is untouched by the rejected Sets.
+	assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
+	requireAbsent(t, store, "env", "FOO")
 
 	// Nothing was marked dirty: Write is a clean no-op and the file is intact.
 	require.NoError(t, store.Write())
-	reloaded, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
+	reloaded, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
 	require.NoError(t, err)
-	assert.Equal(t, "node:20", reloaded.Read().Build.Image)
+	assert.Equal(t, "node:20", mustGet[string](t, reloaded, "build", "image"))
 }
 
 // TestStore_Set_KindValidation covers the validateKind/kindAccepts guard: a value
@@ -3082,66 +2817,72 @@ func TestStore_Set_RejectsSchemaBreakingValue(t *testing.T) {
 func TestStore_Set_KindValidation(t *testing.T) {
 	cases := []struct {
 		name    string
-		path    string
+		key     []string
 		value   any
-		wantErr bool
+		wantErr error
 	}{
-		{"text accepts string", "name", "ok", false},
-		{"text rejects int", "name", 5, true},
-		{"int accepts int", "version", 7, false},
-		{"int rejects string", "version", "seven", true},
-		{"slice accepts []string", "packages", []string{"a"}, false},
-		{"slice rejects string", "packages", "a", true},
-		{"map accepts map", "env", map[string]string{"A": "1"}, false},
-		{"map rejects string", "env", "A=1", true},
-		{"nil clears any field", "name", nil, false},
-		{"non-schema path passes through", "legacy_field", "anything", false},
+		{"text accepts string", []string{"name"}, "ok", nil},
+		{"text rejects int", []string{"name"}, 5, errKindMismatch},
+		{"int accepts int", []string{"version"}, 7, nil},
+		{"int rejects string", []string{"version"}, "seven", errKindMismatch},
+		{"slice accepts []string", []string{"packages"}, []string{"a"}, nil},
+		{"slice rejects string", []string{"packages"}, "a", errKindMismatch},
+		{"map accepts map", []string{"env"}, map[string]string{"A": "1"}, nil},
+		{"map rejects string", []string{"env"}, "A=1", errKindMismatch},
+		{"nil is a caller infraction", []string{"name"}, nil, ErrNilValue},
+		{"typed nil is a caller infraction", []string{"packages"}, ([]string)(nil), ErrNilValue},
+		{"key outside the schema is rejected", []string{"legacy_field"}, "anything", ErrUnknownKey},
+		{"dynamic entry under a map field is allowed", []string{"env", "FOO"}, "1", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := New[testConfig](testFullData())
+			store, err := NewFromString[testConfig](testFullData())
 			require.NoError(t, err)
-			err = store.Set(tc.path, tc.value)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+			err = store.Set(tc.key, tc.value)
+			switch {
+			case tc.wantErr == nil:
+				require.NoError(t, err)
+			case errors.Is(tc.wantErr, errKindMismatch):
+				// The kind check has no sentinel — it is a plain caller error.
+				require.Error(t, err)
+			default:
+				require.ErrorIs(t, err, tc.wantErr)
 			}
 		})
 	}
 }
 
-// TestStore_GetAndHas covers the path-based read API directly (it is otherwise
+// errKindMismatch marks a table row expecting the (sentinel-less) kind-check
+// rejection rather than a specific storage sentinel.
+var errKindMismatch = errors.New("kind mismatch")
+
+// TestStore_Get covers the key-addressed read API directly (it is otherwise
 // only exercised indirectly through migrations).
-func TestStore_GetAndHas(t *testing.T) {
-	store, err := New[testConfig](testFullData())
+func TestStore_Get(t *testing.T) {
+	store, err := NewFromString[testConfig](testFullData())
 	require.NoError(t, err)
 
-	var image string
-	found, err := store.Get("build.image", &image)
-	require.NoError(t, err)
-	assert.True(t, found)
-	assert.Equal(t, "node:20", image)
+	assert.Equal(t, "node:20", mustGet[string](t, store, "build", "image"))
 
-	// Absent path → found=false, no error, destination untouched.
-	var missing string
-	found, err = store.Get("build.nonexistent", &missing)
-	require.NoError(t, err)
-	assert.False(t, found)
-	assert.Empty(t, missing)
+	// Absent key → ErrKeyNotFound.
+	_, err = Get[string](store, "build", "nonexistent")
+	require.ErrorIs(t, err, ErrKeyNotFound)
 
-	// nil out → presence check without decoding.
-	found, err = store.Get("name", nil)
-	require.NoError(t, err)
-	assert.True(t, found)
+	// A value that cannot decode into V surfaces the decode error.
+	_, err = Get[int](store, "name")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrKeyNotFound)
 
-	// Decode into a mismatched destination surfaces an error.
-	var wrong int
-	_, err = store.Get("name", &wrong)
+	// At least one segment is required — there is no whole-tree read.
+	_, err = Get[testConfig](store)
 	require.Error(t, err)
 
-	assert.True(t, store.Has("version"))
-	assert.False(t, store.Has("does.not.exist"))
+	// Keys is the non-error existence check.
+	assert.Contains(t, store.Keys(), "version")
+	assert.NotContains(t, store.Keys(), "does_not_exist")
+	assert.ElementsMatch(t, []string{"image", "target"}, store.Keys("build"))
+	assert.Empty(t, store.Keys("does", "not", "exist"))
+	assert.Empty(t, store.Keys("name"), "a scalar has no child keys")
 }
 
 // TestStore_Migrations_RunOnStore covers the storage-level migration runner:
@@ -3150,10 +2891,13 @@ func TestStore_GetAndHas(t *testing.T) {
 // type does not match T aborts construction instead of being silently skipped.
 func TestStore_Migrations_RunOnStore(t *testing.T) {
 	dropLegacy := func(s *Store[testConfig]) (bool, error) {
-		if s.Has("legacy_field") {
-			return s.Remove("legacy_field")
+		if !slices.Contains(s.Keys(), "legacy_field") {
+			return false, nil
 		}
-		return false, nil
+		if err := s.Remove("legacy_field"); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	t.Run("runs per layer and rewrites each owning file", func(t *testing.T) {
@@ -3164,14 +2908,14 @@ func TestStore_Migrations_RunOnStore(t *testing.T) {
 		require.NoError(t, os.WriteFile(hi, []byte("name: hi\nlegacy_field: gone\n"), 0o644))
 		require.NoError(t, os.WriteFile(lo, []byte("name: lo\nversion: 3\nlegacy_field: gone\n"), 0o644))
 
-		store, err := New[testConfig]("",
+		store, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(hiDir, loDir),
 			WithMigrations(dropLegacy),
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "hi", store.Read().Name)
-		assert.Equal(t, 3, store.Read().Version)
+		assert.Equal(t, "hi", mustGet[string](t, store, "name"))
+		assert.Equal(t, 3, mustGet[int](t, store, "version"))
 
 		hiBytes, err := os.ReadFile(hi)
 		require.NoError(t, err)
@@ -3188,56 +2932,13 @@ func TestStore_Migrations_RunOnStore(t *testing.T) {
 		// WithMigrations[testUnionMapCfg] does not match Store[testConfig]; the
 		// type-erased assertion in migrateLayer must surface an error, not skip.
 		bad := func(_ *Store[testUnionMapCfg]) (bool, error) { return false, nil }
-		_, err := New[testConfig]("",
+		_, err := New[testConfig](
 			WithFilenames("config.yaml"),
 			WithPaths(dir),
 			WithMigrations(bad),
 		)
 		require.ErrorIs(t, err, ErrMigrationType)
 	})
-}
-
-// txnAppendTag reads the tags slice, appends one entry, and writes — all inside a
-// single store transaction, so concurrent callers cannot lose an update.
-func txnAppendTag(store *Store[testConfig], tag string) error {
-	return store.Txn(func(tx *Tx[testConfig]) error {
-		tags := make([]string, 0, 1)
-		if _, e := tx.Get("tags", &tags); e != nil {
-			return e
-		}
-		tags = append(tags, tag)
-		if e := tx.Set("tags", tags); e != nil {
-			return e
-		}
-		return tx.Write()
-	})
-}
-
-// TestStore_Txn_SerializesReadModifyWrite proves Txn makes a compound
-// Get→Set→Write atomic against concurrent callers — every append lands, with no
-// lost update. Run under -race it also exercises the Layers/Provenance locking.
-func TestStore_Txn_SerializesReadModifyWrite(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("tags: []\n"), 0o644))
-	store, err := New[testConfig]("", WithFilenames("config.yaml"), WithPaths(dir))
-	require.NoError(t, err)
-
-	const goroutines = 8
-	const perG = 5
-	var wg sync.WaitGroup
-	for g := range goroutines {
-		wg.Add(1)
-		go func(g int) {
-			defer wg.Done()
-			for i := range perG {
-				assert.NoError(t, txnAppendTag(store, fmt.Sprintf("g%d-%d", g, i)))
-			}
-		}(g)
-	}
-	wg.Wait()
-
-	require.NoError(t, store.Refresh())
-	assert.Len(t, store.Read().Tags, goroutines*perG)
 }
 
 func TestRootMapping_RejectsNonMappingRoot(t *testing.T) {
@@ -3272,35 +2973,35 @@ func TestRootMapping_RejectsNonMappingRoot(t *testing.T) {
 	}
 }
 
-func TestValidatePath(t *testing.T) {
-	for _, ok := range []string{"name", "build.image", "a.b.c"} {
-		require.NoError(t, validatePath(ok), "path %q must be accepted", ok)
+func TestValidateKey(t *testing.T) {
+	for _, ok := range [][]string{{"name"}, {"build", "image"}, {"a", "b", "c"}, {"aliases", "a.b"}} {
+		require.NoError(t, validateKey(ok), "key %q must be accepted", ok)
 	}
-	for _, bad := range []string{"", ".", "build.", ".build", "a..b"} {
-		require.Error(t, validatePath(bad), "path %q must be rejected", bad)
+	for _, bad := range [][]string{nil, {}, {""}, {"build", ""}, {"", "build"}} {
+		require.Error(t, validateKey(bad), "key %q must be rejected", bad)
 	}
 }
 
-func TestStore_SetRemove_RejectMalformedPath(t *testing.T) {
-	store, err := New[testConfig](testFullData())
+func TestStore_SetRemove_RejectMalformedKey(t *testing.T) {
+	store, err := NewFromString[testConfig](testFullData())
 	require.NoError(t, err)
 
-	for _, bad := range []string{"", "build.", "a..b"} {
+	for _, bad := range [][]string{{}, {""}, {"build", ""}} {
 		require.Error(t, store.Set(bad, "x"), "Set(%q) must be rejected", bad)
-		_, rerr := store.Remove(bad)
-		require.Error(t, rerr, "Remove(%q) must be rejected", bad)
+		require.Error(t, store.Remove(bad...), "Remove(%q) must be rejected", bad)
 	}
 
-	// A well-formed path still works — the guard rejects only malformed input.
-	require.NoError(t, store.Set("name", "ok"))
+	// A well-formed key still works — the guard rejects only malformed input.
+	require.NoError(t, store.Set([]string{"name"}, "ok"))
 }
 
 // --- Hardening regression tests ---
 //
 // Each test below pins one hardening fix: defaults never leak into user files,
-// writes merge into current on-disk state (under the flock), Refresh is loud on
-// corruption, migrations are persisted from the engine's own dirty tracking,
-// multi-document YAML is rejected, and cloneNode yields self-contained trees.
+// writes merge into current on-disk state (under the flock), construction is
+// loud on corruption, migrations are persisted from the engine's own dirty
+// tracking, multi-document YAML is rejected, unset keys round-trip, and
+// cloneNode yields self-contained trees.
 
 // hardSchema is the schema for hardening regression tests: one plain field and
 // two defaulted fields so virtual-layer (defaults) behavior is exercised.
@@ -3331,7 +3032,7 @@ func writeHardFile(t *testing.T, dir, name, content string) string {
 func newHardStore(t *testing.T, dir string, opts ...Option) *Store[hardSchema] {
 	t.Helper()
 	base := []Option{WithFilenames("cfg.yaml"), WithPaths(dir)}
-	s, err := New[hardSchema]("", append(base, opts...)...)
+	s, err := New[hardSchema](append(base, opts...)...)
 	require.NoError(t, err)
 	return s
 }
@@ -3344,7 +3045,7 @@ func TestWrite_DoesNotFlushDefaultsToFile(t *testing.T) {
 	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\n")
 
 	s := newHardStore(t, dir, WithDefaultsFromStruct[hardSchema]())
-	require.NoError(t, s.Set("name", "bob"))
+	require.NoError(t, s.Set([]string{"name"}, "bob"))
 	require.NoError(t, s.Write())
 
 	data, err := os.ReadFile(file)
@@ -3355,9 +3056,8 @@ func TestWrite_DoesNotFlushDefaultsToFile(t *testing.T) {
 
 	// Defaults still apply through the merged view on a fresh load.
 	s2 := newHardStore(t, dir, WithDefaultsFromStruct[hardSchema]())
-	snap := s2.Read()
-	assert.Equal(t, "bind", snap.Mode, "defaults lost on reload")
-	assert.Equal(t, 7, snap.Count, "defaults lost on reload")
+	assert.Equal(t, "bind", mustGet[string](t, s2, "mode"), "defaults lost on reload")
+	assert.Equal(t, 7, mustGet[int](t, s2, "count"), "defaults lost on reload")
 }
 
 // A targeted WriteTo (storeui saving one field to a chosen layer file) must not
@@ -3367,7 +3067,7 @@ func TestWriteTargeted_DoesNotFlushDefaults(t *testing.T) {
 	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\n")
 
 	s := newHardStore(t, dir, WithDefaultsFromStruct[hardSchema]())
-	require.NoError(t, s.Set("name", "bob"))
+	require.NoError(t, s.Set([]string{"name"}, "bob"))
 	require.NoError(t, s.WriteTo(file))
 
 	data, err := os.ReadFile(file)
@@ -3381,7 +3081,7 @@ func TestMarkSeedForWrite_FlushesSeedAndDefaults(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "new.yaml")
 
-	s, err := New[hardSchema]("name: alice", WithDefaultsFromStruct[hardSchema]())
+	s, err := NewFromString[hardSchema]("name: alice", WithDefaultsFromStruct[hardSchema]())
 	require.NoError(t, err)
 	s.MarkSeedForWrite()
 	require.NoError(t, s.WriteTo(dest))
@@ -3400,7 +3100,7 @@ func TestWrite_SeedOnlyStoreIsClean(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "new.yaml")
 
-	s, err := New[hardSchema]("name: alice", WithDefaultsFromStruct[hardSchema]())
+	s, err := NewFromString[hardSchema]("name: alice", WithDefaultsFromStruct[hardSchema]())
 	require.NoError(t, err)
 	require.NoError(t, s.WriteTo(dest))
 
@@ -3414,7 +3114,7 @@ func TestWriteTo_MergesIntoExistingExternalFile(t *testing.T) {
 	dir := t.TempDir()
 	ext := writeHardFile(t, dir, "ext.yaml", "# precious comment\nmode: snapshot\n")
 
-	s, err := New[hardSchema]("name: alice")
+	s, err := NewFromString[hardSchema]("name: alice")
 	require.NoError(t, err)
 	s.MarkSeedForWrite()
 	require.NoError(t, s.WriteTo(ext))
@@ -3437,9 +3137,9 @@ func TestWrite_CrossStoreNoLostUpdate(t *testing.T) {
 	s1 := newHardStore(t, dir, WithLock())
 	s2 := newHardStore(t, dir, WithLock())
 
-	require.NoError(t, s1.Set("name", "ONE-UPDATED"))
+	require.NoError(t, s1.Set([]string{"name"}, "ONE-UPDATED"))
 	require.NoError(t, s1.Write())
-	require.NoError(t, s2.Set("mode", "TWO-UPDATED"))
+	require.NoError(t, s2.Set([]string{"mode"}, "TWO-UPDATED"))
 	require.NoError(t, s2.Write())
 
 	data, err := os.ReadFile(file)
@@ -3449,19 +3149,15 @@ func TestWrite_CrossStoreNoLostUpdate(t *testing.T) {
 	assert.Contains(t, got, "mode: TWO-UPDATED", "s2's own write missing")
 }
 
-// Refresh must surface a layer that no longer parses — silently dropping it
-// would revert every field it owned to defaults (the exact failure rootMapping
-// rejects loudly at construction).
-func TestRefresh_CorruptLayerErrors(t *testing.T) {
+// Construction must surface a layer that no longer parses — silently dropping
+// it would revert every field it owned to defaults.
+func TestNew_CorruptLayerErrors(t *testing.T) {
 	dir := t.TempDir()
-	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\n")
+	// Sequence root is not a mapping.
+	writeHardFile(t, dir, "cfg.yaml", "- not\n- a\n- mapping\n")
 
-	s := newHardStore(t, dir)
-	// Corrupt the file: sequence root is not a mapping.
-	require.NoError(t, os.WriteFile(file, []byte("- not\n- a\n- mapping\n"), 0o644))
-
-	err := s.Refresh()
-	require.Error(t, err, "Refresh silently accepted a corrupt layer")
+	_, err := New[hardSchema](WithFilenames("cfg.yaml"), WithPaths(dir))
+	require.Error(t, err, "construction silently accepted a corrupt layer")
 	assert.ErrorIs(t, err, ErrNonMappingRoot)
 }
 
@@ -3472,18 +3168,18 @@ func TestMigrations_SelfReportFalseStillPersists(t *testing.T) {
 	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nlegacy: gone\n")
 
 	lyingMigration := func(s *Store[hardSchema]) (bool, error) {
-		if _, err := s.Remove("legacy"); err != nil {
+		if err := s.Remove("legacy"); err != nil {
 			return false, err
 		}
 		return false, nil // lies: it changed the layer
 	}
-	s, err := New[hardSchema]("",
+	s, err := New[hardSchema](
 		WithFilenames("cfg.yaml"),
 		WithPaths(dir),
 		WithMigrations(lyingMigration),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "alice", s.Read().Name, "snapshot corrupted by migration")
+	assert.Equal(t, "alice", mustGet[string](t, s, "name"), "merged tree corrupted by migration")
 
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
@@ -3495,7 +3191,7 @@ func TestMigrations_SelfReportFalseStillPersists(t *testing.T) {
 // layers exist — the programming error must not hide until a file appears.
 func TestNew_MigrationTypeMismatchWithoutFileLayers(t *testing.T) {
 	wrongType := func(s *Store[altSchema]) (bool, error) { return false, nil }
-	_, err := New[hardSchema]("", WithMigrations(wrongType))
+	_, err := New[hardSchema](WithMigrations(wrongType))
 	require.Error(t, err, "mismatched migration accepted on in-memory store")
 	assert.ErrorIs(t, err, ErrMigrationType)
 }
@@ -3506,7 +3202,7 @@ func TestNew_MultiDocumentRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeHardFile(t, dir, "cfg.yaml", "name: alice\n---\nname: bob\n")
 
-	_, err := New[hardSchema]("", WithFilenames("cfg.yaml"), WithPaths(dir))
+	_, err := New[hardSchema](WithFilenames("cfg.yaml"), WithPaths(dir))
 	require.Error(t, err, "multi-document yaml accepted")
 	assert.ErrorIs(t, err, ErrMultiDocument)
 }
@@ -3539,7 +3235,7 @@ func TestCloneNode_RemapsAliasPointers(t *testing.T) {
 // whatever CWD the process happens to have.
 func TestWriteTo_RelativePathRejected(t *testing.T) {
 	t.Chdir(t.TempDir()) // a regressed guard writes here, not into the package dir
-	s, err := New[hardSchema]("name: alice")
+	s, err := NewFromString[hardSchema]("name: alice")
 	require.NoError(t, err)
 	assert.Error(t, s.WriteTo("relative/cfg.yaml"), "WriteTo accepted a relative path")
 }
@@ -3553,7 +3249,7 @@ func TestWriteFieldTo_FlushesOnlyThatField(t *testing.T) {
 	userFile := filepath.Join(dir, "user.yaml")
 	projFile := filepath.Join(dir, "proj.yaml")
 
-	s, err := New[hardSchema]("name: alice\nmode: snapshot")
+	s, err := NewFromString[hardSchema]("name: alice\nmode: snapshot")
 	require.NoError(t, err)
 	s.MarkSeedForWrite()
 
@@ -3581,11 +3277,11 @@ func TestWriteFieldTo_StagedSetSurvives(t *testing.T) {
 	other := filepath.Join(dir, "other.yaml")
 
 	s := newHardStore(t, dir)
-	require.NoError(t, s.Set("name", "staged-value"))
-	require.NoError(t, s.Set("mode", "bind"))
+	require.NoError(t, s.Set([]string{"name"}, "staged-value"))
+	require.NoError(t, s.Set([]string{"mode"}, "bind"))
 
 	require.NoError(t, s.WriteFieldTo(other, "mode"))
-	assert.Equal(t, "staged-value", s.Read().Name, "staged Set reverted by remerge")
+	assert.Equal(t, "staged-value", mustGet[string](t, s, "name"), "staged Set reverted by remerge")
 
 	require.NoError(t, s.Write())
 	data, err := os.ReadFile(file)
@@ -3593,21 +3289,19 @@ func TestWriteFieldTo_StagedSetSurvives(t *testing.T) {
 	assert.Contains(t, string(data), "name: staged-value", "staged Set not persisted after partial flush")
 }
 
-// A staged Remove on another field must also survive the remerge: Read()
-// keeps showing the field as gone and the next Write still deletes it.
+// A staged Remove on another field must also survive the remerge: the merged
+// view keeps showing the field as gone and the next Write still deletes it.
 func TestWriteFieldTo_StagedRemoveSurvives(t *testing.T) {
 	dir := t.TempDir()
 	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode: snapshot\n")
 	other := filepath.Join(dir, "other.yaml")
 
 	s := newHardStore(t, dir)
-	removed, err := s.Remove("name")
-	require.NoError(t, err)
-	require.True(t, removed)
-	require.NoError(t, s.Set("mode", "bind"))
+	require.NoError(t, s.Remove("name"))
+	require.NoError(t, s.Set([]string{"mode"}, "bind"))
 
 	require.NoError(t, s.WriteFieldTo(other, "mode"))
-	assert.Empty(t, s.Read().Name, "staged Remove resurrected by remerge")
+	requireAbsent(t, s, "name")
 
 	require.NoError(t, s.Write())
 	data, err := os.ReadFile(file)
@@ -3622,9 +3316,7 @@ func TestWriteFieldTo_Delete(t *testing.T) {
 	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode: snapshot\n")
 
 	s := newHardStore(t, dir)
-	removed, err := s.Remove("mode")
-	require.NoError(t, err)
-	require.True(t, removed)
+	require.NoError(t, s.Remove("mode"))
 
 	require.NoError(t, s.WriteFieldTo(file, "mode"))
 	data, err := os.ReadFile(file)
@@ -3647,19 +3339,10 @@ func TestWriteFieldTo_CleanFieldNoOp(t *testing.T) {
 
 func TestWriteFieldTo_RelativePathRejected(t *testing.T) {
 	t.Chdir(t.TempDir()) // a regressed guard writes here, not into the package dir
-	s, err := New[hardSchema]("name: alice")
+	s, err := NewFromString[hardSchema]("name: alice")
 	require.NoError(t, err)
 	s.MarkSeedForWrite()
 	assert.Error(t, s.WriteFieldTo("relative/cfg.yaml", "name"), "WriteFieldTo accepted a relative path")
-}
-
-// MarkForWrite validates the path like every other mutator.
-func TestMarkForWrite_InvalidPathRejected(t *testing.T) {
-	dir := t.TempDir()
-	writeHardFile(t, dir, "cfg.yaml", "name: alice\n")
-	s := newHardStore(t, dir)
-	require.Error(t, s.MarkForWrite("a..b"), "accepted path with empty segment")
-	require.Error(t, s.MarkForWrite(""), "accepted empty path")
 }
 
 // A file using YAML anchors/aliases survives an unrelated field write: the
@@ -3672,7 +3355,7 @@ func TestWrite_PreservesAnchorsAndAliases(t *testing.T) {
 		"shared: &d\n  x: 1\nother: *d\nname: alice\n")
 
 	s := newHardStore(t, dir)
-	require.NoError(t, s.Set("name", "bob"))
+	require.NoError(t, s.Set([]string{"name"}, "bob"))
 	require.NoError(t, s.Write())
 
 	data, err := os.ReadFile(file)
@@ -3691,12 +3374,118 @@ func TestWrite_PreservesAnchorsAndAliases(t *testing.T) {
 	assert.Equal(t, "bob", decoded.Name)
 }
 
-// makeOptions builds an Options through the public functional options,
-// for tests that construct Store values directly.
-func makeOptions(opts ...Option) Options {
-	var o Options
-	for _, opt := range opts {
-		opt(&o)
+// --- Unset vs set-empty ---
+
+// A bare `key:` (YAML null) is UNSET: the merge skips it in every case, so the
+// lower layer — and failing that the schema default — shows through. An
+// explicit empty (`key: ""`, `key: []`) is a real value that WINS the merge.
+func TestStore_UnsetVsSetEmpty(t *testing.T) {
+	cases := []struct {
+		name     string
+		highYAML string
+		wantName string
+		wantTags []string
+	}{
+		{
+			name:     "bare key is ignored by the merge",
+			highYAML: "name:\ntags:\n",
+			wantName: "from-low",
+			wantTags: []string{"low"},
+		},
+		{
+			name:     "explicit null is ignored by the merge",
+			highYAML: "name: null\ntags: ~\n",
+			wantName: "from-low",
+			wantTags: []string{"low"},
+		},
+		{
+			name:     "explicit empty wins the merge",
+			highYAML: `name: ""` + "\ntags: []\n",
+			wantName: "",
+			wantTags: []string{},
+		},
 	}
-	return o
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			highDir := t.TempDir()
+			lowDir := t.TempDir()
+			require.NoError(t, os.WriteFile(
+				filepath.Join(highDir, "config.yaml"), []byte(tc.highYAML), 0o644))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(lowDir, "config.yaml"), []byte("name: from-low\ntags:\n  - low\n"), 0o644))
+
+			store, err := New[testConfig](WithFilenames("config.yaml"), WithPaths(highDir, lowDir))
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantName, mustGet[string](t, store, "name"))
+			assert.Equal(t, tc.wantTags, mustGet[[]string](t, store, "tags"))
+		})
+	}
+}
+
+// A bare key in the only layer leaves the field unset entirely: the schema
+// default shows through, Get reports ErrKeyNotFound when there is none, and
+// Keys never lists it.
+func TestStore_UnsetFallsThroughToDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode:\n")
+
+	s := newHardStore(t, dir, WithDefaultsFromStruct[hardSchema]())
+	assert.Equal(t, "bind", mustGet[string](t, s, "mode"), "bare key must not mask the default")
+
+	// Without defaults the key is simply absent — never an empty string.
+	bare := newHardStore(t, dir)
+	requireAbsent(t, bare, "mode")
+	assert.NotContains(t, bare.Keys(), "mode", "Keys must not list an unset key")
+}
+
+// A bare key survives on disk: only the merge ignores it, so a write that
+// touches a different field leaves the user's `key:` line intact.
+func TestWrite_PreservesBareKeys(t *testing.T) {
+	dir := t.TempDir()
+	file := writeHardFile(t, dir, "cfg.yaml", "name: alice\nmode:\n")
+
+	s := newHardStore(t, dir)
+	require.NoError(t, s.Set([]string{"name"}, "bob"))
+	require.NoError(t, s.Write())
+
+	assert.Equal(t, "name: bob\nmode:\n", mustReadFile(t, file),
+		"the bare key must round-trip untouched")
+}
+
+// --- Dotted key names ---
+
+// aliasSchema mirrors an aliases-style config: a dynamic string map whose entry
+// names routinely contain literal dots.
+type aliasSchema struct {
+	Aliases map[string]string `yaml:"aliases" label:"Aliases" desc:"a"`
+}
+
+//nolint:ireturn // storage.Schema mandates returning the FieldSet interface.
+func (s aliasSchema) Fields() FieldSet { return NormalizeFields(s) }
+
+// A map entry whose name contains a literal dot is addressed exactly: it
+// round-trips through Set/Get/Keys without being reparsed as nesting, and it
+// persists as one key line rather than a nested mapping.
+func TestStore_DottedKeyName(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "cfg.yaml")
+
+	s, err := New[aliasSchema](WithFilenames("cfg.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+
+	require.NoError(t, s.Set([]string{"aliases", "a.b"}, "x"))
+	assert.Equal(t, "x", mustGet[string](t, s, "aliases", "a.b"))
+	assert.Equal(t, []string{"a.b"}, s.Keys("aliases"), "the dot must not have become nesting")
+	requireAbsent(t, s, "aliases", "a")
+
+	require.NoError(t, s.Write())
+	assert.Equal(t, "aliases:\n  a.b: x\n", mustReadFile(t, file),
+		"dotted key must persist as one key, never as nesting")
+
+	// The written file reloads as the same single entry.
+	reloaded, err := New[aliasSchema](WithFilenames("cfg.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a.b": "x"}, mustGet[map[string]string](t, reloaded, "aliases"))
 }

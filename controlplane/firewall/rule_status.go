@@ -2,16 +2,17 @@ package firewall
 
 import adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 
-// addStatus is the package-internal per-rule outcome of addRulesToStore.
-// Maps 1:1 to adminv1.AddRuleStatus via toProtoAddStatus so handler logic
-// stays free of generated proto enum types.
-type addStatus uint8
+// AddStatus is the per-rule outcome of EgressRulesStore.AddRules. Exported
+// because it appears in that interface's method set — the enum itself stays a
+// firewall-domain type, mapped 1:1 onto adminv1.AddRuleStatus by
+// toProtoAddStatus so handler logic stays free of generated proto enum types.
+type AddStatus uint8
 
 const (
-	addStatusUnspecified addStatus = iota
-	addStatusAdded
-	addStatusModified
-	addStatusUnchanged
+	AddStatusUnspecified AddStatus = iota
+	AddStatusAdded
+	AddStatusModified
+	AddStatusUnchanged
 )
 
 // removeStatus is the package-internal outcome of FirewallRemoveRule.
@@ -24,20 +25,20 @@ const (
 	removeStatusNotFound
 )
 
-func toProtoAddStatus(s addStatus) adminv1.AddRuleStatus {
+func toProtoAddStatus(s AddStatus) adminv1.AddRuleStatus {
 	switch s {
-	case addStatusAdded:
+	case AddStatusAdded:
 		return adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED
-	case addStatusModified:
+	case AddStatusModified:
 		return adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED
-	case addStatusUnchanged:
+	case AddStatusUnchanged:
 		return adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED
 	default:
 		return adminv1.AddRuleStatus_ADD_RULE_STATUS_UNSPECIFIED
 	}
 }
 
-func toProtoAddStatuses(in []addStatus) []adminv1.AddRuleStatus {
+func toProtoAddStatuses(in []AddStatus) []adminv1.AddRuleStatus {
 	out := make([]adminv1.AddRuleStatus, len(in))
 	for i, s := range in {
 		out[i] = toProtoAddStatus(s)
@@ -58,12 +59,12 @@ func toProtoRemoveStatus(s removeStatus) adminv1.RemoveRuleStatus {
 	}
 }
 
-// anyAddChange reports whether any per-rule addStatus represents a store
-// mutation (Added or Modified). Pure Unchanged batches skip both
-// store.Write and the stack reconcile.
-func anyAddChange(statuses []addStatus) bool {
+// anyAddChange reports whether any per-rule AddStatus represents a store
+// mutation (Added or Modified). Pure Unchanged batches skip both the store
+// write and the stack reconcile.
+func anyAddChange(statuses []AddStatus) bool {
 	for _, s := range statuses {
-		if s == addStatusAdded || s == addStatusModified {
+		if s == AddStatusAdded || s == AddStatusModified {
 			return true
 		}
 	}

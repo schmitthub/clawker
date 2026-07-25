@@ -220,12 +220,12 @@ func savedObjectClaims(relPath string, content []byte) ([]ClusterObject, error) 
 // highest config layer that sets `monitor.extensions` wins wholesale (the
 // virtual defaults layer ships the claude-code extension; an explicit empty
 // list opts out of all monitoring), so this reads the
-// merged selection off the project view. Each selected name resolves through the internal/bundle
+// merged selection through the config accessor. Each selected name resolves through the internal/bundle
 // three-tier resolver; a name that resolves nowhere, or a unit that fails its
 // front-door validation, is a hard error — a selected extension that cannot load
 // must never be silently dropped.
 func ResolveUnits(cfg config.Config) ([]ResolvedUnit, error) {
-	selected := cfg.Project().Monitor.Extensions
+	selected := cfg.MonitorExtensions()
 	resolver := bundle.NewResolver(cfg)
 	projectRoot := cfg.ProjectRoot()
 

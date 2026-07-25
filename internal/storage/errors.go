@@ -30,6 +30,25 @@ var ErrSchemaDecode = errors.New("value no longer decodes into schema")
 // Construction aborts rather than silently skipping the legacy-key cleanup.
 var ErrMigrationType = errors.New("migration has wrong type for Store[T]")
 
+// ErrKeyNotFound reports a Get or Remove on a key that is absent from the
+// merged tree — including a key that is unset (`key:` bare) in every layer,
+// since unset keys are transparent and never enter the merge. Callers for
+// whom absence is an expected case branch with [errors.Is]; Keys is the
+// non-error existence check.
+var ErrKeyNotFound = errors.New("key not found")
+
+// ErrNilValue reports a nil (or typed-nil) value passed to Set. No caller
+// legitimately sets nil — unsetting a key is Remove's job — so this is a
+// caller infraction surfaced as a sentinel; callers translating user input
+// skip the Set when the input carries no value.
+var ErrNilValue = errors.New("nil value passed to Set (use Remove to unset)")
+
+// ErrUnknownKey reports a Set on a key that is neither a declared schema
+// field nor a dynamic entry under a declared map-like field. Set is the
+// schema front-door: rejecting unknown keys here is what keeps a typo from
+// ever reaching disk.
+var ErrUnknownKey = errors.New("key is not declared in the schema")
+
 // ErrNonMappingRoot reports a YAML document whose root node is not a mapping.
 // Every layer must be a mapping so paths resolve against keyed fields.
 var ErrNonMappingRoot = errors.New("expected a mapping at the document root")

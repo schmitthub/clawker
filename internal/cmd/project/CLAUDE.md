@@ -133,13 +133,13 @@ Raw user input (positional arg, `--name` flag, dirname fallback) is normalized t
 Checks whether a project config file exists in the given directory. Two-phase:
 
 1. **Fast path**: Checks the factory-constructed config's discovered layers (covers registered projects via walk-up).
-2. **Fallback**: Constructs a temporary `storage.New[config.Project]` with `storage.WithDirs(dir)` to probe the directory using dual-placement discovery — works for unregistered projects where walk-up can't find the directory.
+2. **Fallback**: Calls `config.ProjectConfigExistsIn(dir)` — config probes the directory itself (both filenames, dual placement, migrations wired), which works for unregistered projects where walk-up can't find the directory. A probe error is reported as "no local config" (a file the loader cannot read is not one the caller can carry forward).
 
-Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` variant). Used by both `init` and `register` to detect existing config before proceeding.
+Used by both `init` and `register` to detect existing config before proceeding.
 
 ## Config Access Pattern
 
-`project init` creates an isolated store from preset YAML via `config.NewProjectStoreFromPreset(preset.YAML)` (no file discovery, no walk-up, no user-level config merging). VCS settings are applied via `store.Set(applyVCSToProject)`. The store is written to the CWD dotfile via `store.WriteTo(configPath)`. Uses `project.ProjectManager` for registry registration.
+`project init` creates an isolated store from preset YAML via `config.NewProjectStoreFromPreset(preset.YAML)` (no file discovery, no walk-up, no user-level config merging). VCS settings are applied via `applyVCSToProject`, which stages each key with `store.Set(key, value)` (segment keys) and skips a Set that would carry nothing. The store is written to the CWD dotfile via `store.WriteTo(configPath)`. Uses `project.ProjectManager` for registry registration.
 
 ## Testing
 

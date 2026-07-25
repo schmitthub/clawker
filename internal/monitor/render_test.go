@@ -33,7 +33,7 @@ func TestRenderStack_OtelChangeDetection(t *testing.T) {
 	dir := t.TempDir()
 
 	data, err := monitor.NewMonitorTemplateData(
-		configmocks.NewFromString("", renderSettings).SettingsStore().Read(), nil)
+		configmocks.NewFromString("", renderSettings).MonitoringConfig(), nil)
 	require.NoError(t, err)
 
 	// First render: no prior otel-config → not "changed".
@@ -61,7 +61,7 @@ monitoring:
   opensearch_port: 9200
   opensearch_dashboards_port: 5601
   opensearch_heap_mb: 512
-`).SettingsStore().Read(), nil)
+`).MonitoringConfig(), nil)
 	require.NoError(t, err)
 	r3, err := monitor.RenderStack(dir, changed, nil, true)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ monitoring:
 func TestRenderStack_SkipIfExists(t *testing.T) {
 	dir := t.TempDir()
 	data, err := monitor.NewMonitorTemplateData(
-		configmocks.NewFromString("", renderSettings).SettingsStore().Read(), nil)
+		configmocks.NewFromString("", renderSettings).MonitoringConfig(), nil)
 	require.NoError(t, err)
 
 	_, err = monitor.RenderStack(dir, data, nil, true)

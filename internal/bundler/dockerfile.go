@@ -373,7 +373,7 @@ func (g *ProjectGenerator) GenerateBase() ([]byte, error) {
 	// Project-declared stacks render in the base, before the project's own
 	// instructions. Resolution is the one algorithm — loose > floor for bare
 	// names, installed bundles for qualified ones.
-	root, user, prov, err := resolveProjectStacks(g.resolver(), g.cfg.Project().Build.Stacks)
+	root, user, prov, err := resolveProjectStacks(g.resolver(), g.cfg.BuildConfig().Stacks)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +430,7 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 	// The per-harness build overlay (build.harnesses.<name>) is scoped to this
 	// one harness's image, keyed by the harness's exact selection spelling
 	// (bare or qualified) the bundle carries as its Name.
-	overlay := g.cfg.Project().Build.Harnesses[hb.Name]
+	overlay := g.cfg.BuildConfig().Harnesses[hb.Name]
 
 	// Harness-declared stacks ALWAYS render here with their resolved
 	// definition — no cross-stratum dedup against project-declared base
@@ -637,7 +637,7 @@ func filterBasePackages(packages []string) []string {
 
 // buildContext creates the template context from config.
 func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
-	p := g.cfg.Project()
+	build := g.cfg.BuildConfig()
 
 	// OTEL telemetry from monitoring config
 	mon := g.cfg.MonitoringConfig()
@@ -660,7 +660,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 
 	tctx := &DockerfileContext{
 		BaseImage:                SubstrateImage,
-		Packages:                 filterBasePackages(p.Build.Packages),
+		Packages:                 filterBasePackages(build.Packages),
 		Username:                 DefaultUsername,
 		UID:                      g.cfg.ContainerUID(),
 		GID:                      g.cfg.ContainerGID(),
@@ -683,8 +683,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	}
 
 	// Populate Instructions if present (structural only — Copy, Args, RUN)
-	if p.Build.Instructions != nil {
-		inst := p.Build.Instructions
+	if build.Instructions != nil {
+		inst := build.Instructions
 		tctx.Instructions = &DockerfileInstructions{
 			Copy:    convertCopyInstructions(inst.Copy),
 			Args:    convertArgInstructions(inst.Args),
@@ -694,8 +694,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	}
 
 	// Populate Inject if present
-	if p.Build.Inject != nil {
-		inj := p.Build.Inject
+	if build.Inject != nil {
+		inj := build.Inject
 		tctx.Inject = &DockerfileInject{
 			AfterFrom:       inj.AfterFrom,
 			AfterPackages:   inj.AfterPackages,

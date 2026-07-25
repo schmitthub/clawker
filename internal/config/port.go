@@ -8,14 +8,14 @@ import (
 
 // Port is a TCP/UDP port number constrained to the valid 1–65535 range.
 // UnmarshalYAML rejects out-of-range values at parse time, so callers
-// reading a Port from a storage.Store snapshot can rely on the invariant
+// decoding a Port out of a storage.Store can rely on the invariant
 // without defensive `<= 0` guards. Stores wired with
 // WithDefaultsFromStruct[T]() backfill missing fields with the schema's
 // `default` tag value, never zero.
 //
 // Programmatic mutation via Store.Set bypasses UnmarshalYAML — callers
 // writing a Port directly are responsible for staying in range.
-// Validation re-engages on the next file load or Refresh.
+// Validation re-engages on the next file load.
 type Port int
 
 func (p *Port) UnmarshalYAML(node *yaml.Node) error {

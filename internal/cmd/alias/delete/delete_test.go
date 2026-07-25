@@ -43,7 +43,7 @@ func loadAliases(t *testing.T) map[string]string {
 	t.Helper()
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
-	return cfg.Project().Aliases
+	return cfg.Aliases()
 }
 
 func TestDeleteRun(t *testing.T) {
@@ -57,6 +57,19 @@ func TestDeleteRun(t *testing.T) {
 
 		_, exists := loadAliases(t)["v"]
 		assert.False(t, exists, "user alias should be gone after delete")
+	})
+
+	t.Run("dotted alias name is removed from the file", func(t *testing.T) {
+		env := testenv.New(t)
+		path := seedUserAliases(t, env, "aliases:\n  a.b: version\n")
+
+		stdout, err := executeDelete(t, "a.b")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Wrote "+path)
+
+		// The deletion lands on the entry itself, not on a phantom nested key.
+		_, exists := loadAliases(t)["a.b"]
+		assert.False(t, exists, "dotted alias should be gone after delete")
 	})
 
 	t.Run("unknown alias errors", func(t *testing.T) {

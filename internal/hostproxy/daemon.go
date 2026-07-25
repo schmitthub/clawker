@@ -113,7 +113,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	// global firewall is enabled. When disabled, keep rulesFilePath empty so
 	// /open/url preserves its documented "skip check" behavior.
 	var rulesFilePath string
-	if cfg.Settings().Firewall.FirewallEnabled() {
+	if cfg.FirewallEnabled() {
 		var dataDir string
 		dataDir, err = cfg.FirewallDataSubdir()
 		if err != nil {

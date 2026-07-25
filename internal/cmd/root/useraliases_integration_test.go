@@ -31,7 +31,7 @@ func newCLIFactory(t *testing.T) *cmdutil.Factory {
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	f.TUI = tui.NewTUI(f.IOStreams)
-	f.ProjectRegistry = func() (*project.Registry, error) { return project.NewRegistry() }
+	f.ProjectRegistry = project.NewRegistry
 	f.Config = func() (config.Config, error) {
 		reg, err := f.ProjectRegistry()
 		if err != nil {
@@ -52,7 +52,7 @@ func newCLIFactory(t *testing.T) *cmdutil.Factory {
 		if err != nil {
 			return nil, err
 		}
-		return project.NewProjectManager(logger.Nop(), nil, cfg.Project().Name, reg)
+		return project.NewProjectManager(logger.Nop(), nil, cfg.ProjectName(), reg)
 	}
 	return f
 }

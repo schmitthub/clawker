@@ -243,20 +243,11 @@ func TestCmdExec_ArgsParsing(t *testing.T) {
 // testConfig returns a config with host proxy disabled and no git credentials
 // to avoid nil pointer issues when HostProxy/SocketBridge functions aren't set.
 func testConfig() config.Config {
-	cfg := configmocks.NewFromString(`
+	return configmocks.NewFromString(`
 security:
   enable_host_proxy: false
 `, "")
-	cfg.ProjectFunc = func() *config.Project {
-		p := &config.Project{}
-		p.Security.EnableHostProxy = ptrBool(false)
-		p.Security.GitCredentials = nil
-		return p
-	}
-	return cfg
 }
-
-func ptrBool(b bool) *bool { return &b }
 
 func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()

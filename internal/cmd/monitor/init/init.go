@@ -86,8 +86,8 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	// init scaffolds the floor: the base stack only, zero extensions. Extension
 	// projection (monitor.extensions → seeded units) is 'monitor up' / 'monitor
 	// reload' territory — a scaffold never carries seeds.
-	settings := cfg.SettingsStore().Read()
-	data, err := monitor.PrepareTemplateData(settings, nil)
+	mc := cfg.MonitoringConfig()
+	data, err := monitor.PrepareTemplateData(mc, nil)
 	if err != nil {
 		return fmt.Errorf("build monitor template data: %w", err)
 	}
@@ -110,7 +110,6 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
 	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
-	mc := settings.Monitoring
 	fmt.Fprintf(ios.ErrOut, "  2. Open OpenSearch Dashboards at http://localhost:%d\n", mc.OpenSearchDashboardsPort)
 	fmt.Fprintf(ios.ErrOut, "  3. Open Prometheus at http://localhost:%d\n", mc.PrometheusPort)
 

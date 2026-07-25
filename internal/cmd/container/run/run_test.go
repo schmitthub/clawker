@@ -522,7 +522,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -589,13 +589,11 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Image:   "alpine",
 		Publish: shared.NewPortOpts(),
 	}
-	projectCfg := &config.Project{
-		Security: config.SecurityConfig{
-			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
-		},
-	}
+	security := configmocks.SecurityConfig(func(s *config.SecurityConfig) {
+		s.CapAdd = []string{"NET_ADMIN", "SYS_PTRACE"}
+	})
 
-	_, hostCfg, _, err := opts.BuildConfigs(nil, nil, projectCfg)
+	_, hostCfg, _, err := opts.BuildConfigs(nil, nil, security)
 	require.NoError(t, err)
 	require.Len(t, hostCfg.CapAdd, 2)
 	require.Contains(t, hostCfg.CapAdd, "NET_ADMIN")
@@ -765,7 +763,7 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 		TUI:       tui.NewTUI(tio),
 		// Isolated data dir (testenv.New above) → empty registry →
 		// not-in-project cwd fallback.
-		ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
+		ProjectRegistry: project.NewRegistry,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},

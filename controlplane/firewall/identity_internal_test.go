@@ -1,7 +1,6 @@
 package firewall
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/storage"
 )
 
 func newTestAllocator(t *testing.T) *IdentityAllocator {
@@ -162,37 +160,29 @@ func TestIdentityAllocator_NoReuseAcrossRestart(t *testing.T) {
 	assert.NotEqual(t, releasedID, fresh, "identity released before restart reissued after it")
 }
 
-// failingOnceStore fails the first Txn it sees, then delegates — the minimal
-// persist-failure shape (transient disk error between two syncs).
-type failingOnceStore struct {
-	inner identityStore
-	fail  bool
-}
-
-var errInjectedWrite = errors.New("injected write failure")
-
-func (s *failingOnceStore) Txn(fn func(tx *storage.Tx[IdentityTableFile]) error) error {
-	if s.fail {
-		s.fail = false
-		return errInjectedWrite
-	}
-	return s.inner.Txn(fn)
-}
-
 // A failed persist must not be masked by the in-memory maps already holding
 // the new table: the next sync — even a no-change one — retries the write, so
 // the table reaches disk and a restart cannot renumber live identities.
+//
+// The failure is real, not injected: the allocator runs against a real store
+// whose data directory is momentarily unwritable, so the atomic temp+rename
+// write fails the way a transient disk error would.
 func TestIdentityAllocator_PersistFailureRetriedOnNextSync(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory write permissions; the persist failure cannot be staged")
+	}
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	store, err := NewIdentityStore(cfg)
+	dataDir, err := cfg.FirewallDataSubdir()
 	require.NoError(t, err)
-	a, err := NewIdentityAllocator(store)
-	require.NoError(t, err)
-	a.store = &failingOnceStore{inner: store, fail: true}
+	a := newTestAllocatorWithCfg(t, cfg)
+
+	require.NoError(t, os.Chmod(dataDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
 
 	dsts := []string{"github.com", "gitlab.com"}
-	require.ErrorIs(t, a.SyncDsts(dsts), errInjectedWrite)
+	require.Error(t, a.SyncDsts(dsts), "unwritable data dir must fail the persist")
 
+	require.NoError(t, os.Chmod(dataDir, 0o755))
 	// Same dst set: no in-memory change, but the owed persist must retry.
 	require.NoError(t, a.SyncDsts(dsts))
 
@@ -306,6 +296,14 @@ func TestIdentityAllocator_StoreReadFailure(t *testing.T) {
 func TestIdentityAllocator_ZeroValueErrors(t *testing.T) {
 	var a IdentityAllocator
 	require.ErrorContains(t, a.SyncDsts([]string{"github.com"}), "not constructed")
+}
+
+// A missing store is a wiring fault, so construction fails instead of handing
+// back an allocator that nil-derefs on the first persist — CP must never panic
+// (it would strand pinned eBPF programs with no supervisor).
+func TestNewIdentityAllocator_NilStoreErrors(t *testing.T) {
+	_, err := NewIdentityAllocator(nil)
+	require.ErrorIs(t, err, ErrNilIdentityStore)
 }
 
 // Acceptance bar from the initiative: thousands of dsts, all unique.

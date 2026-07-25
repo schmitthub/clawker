@@ -48,7 +48,21 @@ func TestApplyOverrides_OrderReorder(t *testing.T) {
 
 func TestApplyOverrides_NilPointerNoClobber(t *testing.T) {
 	fields := []Field{
-		{Path: "build.image", Label: "original", Description: "original desc", Kind: KindText, Required: true, ReadOnly: false, Order: 5},
+		{
+			Path:        "build.image",
+			Label:       "original",
+			Description: "original desc",
+			Kind:        KindText,
+			Value:       "",
+			EditValue:   "",
+			Default:     "",
+			Options:     nil,
+			Validator:   nil,
+			Required:    true,
+			ReadOnly:    false,
+			Order:       5,
+			Editor:      nil,
+		},
 	}
 	// Override with only Label set — all other pointer fields are nil and should not clobber.
 	overrides := []Override{

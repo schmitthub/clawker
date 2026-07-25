@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/git/gittest"
@@ -14,13 +17,13 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // newTestRegistry constructs a registry over the isolated data dir that
 // NewIsolatedTestConfig points the CLAWKER_*_DIR env vars at.
-func newTestRegistry(t *testing.T) *project.Registry {
+//
+//nolint:ireturn // returns the project.Registry domain interface by design — its impl stays package-private
+func newTestRegistry(t *testing.T) project.Registry {
 	t.Helper()
 	reg, err := project.NewRegistry()
 	require.NoError(t, err)
@@ -39,7 +42,7 @@ func TestResolveProjectRoot_RegistryErrors(t *testing.T) {
 	})
 
 	t.Run("registry load failure surfaces", func(t *testing.T) {
-		closure := func() (*project.Registry, error) {
+		closure := func() (project.Registry, error) {
 			return nil, fmt.Errorf("corrupt registry yaml")
 		}
 		_, err := resolveProjectRoot(closure, logger.Nop())
@@ -47,23 +50,9 @@ func TestResolveProjectRoot_RegistryErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "corrupt registry yaml")
 	})
 
-	t.Run("non-benign resolution failure surfaces", func(t *testing.T) {
-		// A zero-value Registry has no store; CurrentRoot fails with a real
-		// (non-ErrNotInProject) error that must propagate, not degrade to "".
-		closure := func() (*project.Registry, error) {
-			return &project.Registry{}, nil
-		}
-		_, err := resolveProjectRoot(closure, logger.Nop())
-		require.Error(t, err)
-		assert.NotErrorIs(t, err, project.ErrNotInProject)
-	})
-
 	t.Run("not-in-project degrades to empty root", func(t *testing.T) {
 		testenv.New(t) // isolated data dir, no registry on disk
-		closure := func() (*project.Registry, error) {
-			return project.NewRegistry()
-		}
-		root, err := resolveProjectRoot(closure, logger.Nop())
+		root, err := resolveProjectRoot(project.NewRegistry, logger.Nop())
 		require.NoError(t, err)
 		assert.Empty(t, root)
 	})
@@ -130,7 +119,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 				return inMemGit.GitManager, nil
 			}
 
-			mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, cfg.Project().Name, newTestRegistry(t))
+			mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, cfg.ProjectName(), newTestRegistry(t))
 			require.NoError(t, err)
 			ctx := context.Background()
 

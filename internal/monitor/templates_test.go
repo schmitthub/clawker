@@ -12,17 +12,18 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// testSettings creates a config.Config from the given settings YAML and
-// returns a pointer to its Settings. The yaml string represents the
-// full settings (overrides all defaults), not a partial merge.
-func testSettings(t *testing.T, yaml string) *config.Settings {
+// testMonitoring creates a config.Config from the given settings YAML and
+// returns its monitoring block — the only settings group the template data
+// consumes. The yaml string represents the full settings (overrides all
+// defaults), not a partial merge.
+func testMonitoring(t *testing.T, yaml string) config.MonitoringConfig {
 	t.Helper()
 	cfg := configmocks.NewFromString("", yaml)
-	return cfg.SettingsStore().Read()
+	return cfg.MonitoringConfig()
 }
 
 func TestNewMonitorTemplateData(t *testing.T) {
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   otel_collector_port: 4318
   otel_collector_host: "localhost"
@@ -77,7 +78,7 @@ monitoring:
 
 func TestNewMonitorTemplateData_CustomGRPCPort(t *testing.T) {
 	// gRPC port is independent — not derived from HTTP port
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -104,7 +105,7 @@ monitoring:
 // `{{.OtelCollectorPort}}`) shows up as a missing-port failure rather
 // than a false pass.
 func TestRenderTemplate_Compose(t *testing.T) {
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -191,7 +192,7 @@ docker:
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -272,7 +273,7 @@ monitoring:
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   prometheus_metrics_port: 9889
 `)
@@ -293,7 +294,7 @@ monitoring:
 }
 
 func TestNewMonitorTemplateData_OpenSearchImages(t *testing.T) {
-	mon := testSettings(t, `
+	mon := testMonitoring(t, `
 monitoring:
   otel_collector_port: 4318
 `)
@@ -339,7 +340,7 @@ func TestWriteOpenSearchBootstrap_PrunesStaleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := NewMonitorTemplateData(testSettings(t, `
+	data, err := NewMonitorTemplateData(testMonitoring(t, `
 monitoring:
   otel_collector_port: 4318
   otel_grpc_port: 4317

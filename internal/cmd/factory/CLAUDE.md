@@ -43,7 +43,7 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `ioStreams()` -- creates IOStreams via `iostreams.System()` (eager, no Config dependency)
 - `tuiFunc(f)` -- creates TUI struct bound to IOStreams (eager, separate helper in `default.go`)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
-- `projectRegistryFunc()` -- returns lazy `*project.Registry` constructor (`project.NewRegistry()`); the sole production constructor of registry storage, shared by Config, GitManager, ProjectManager, and commands via `f.ProjectRegistry`
+- `projectRegistryFunc()` -- returns lazy `project.Registry` constructor (`project.NewRegistry()`); the sole production constructor of registry storage, shared by Config, GitManager, ProjectManager, and commands via `f.ProjectRegistry`
 - `configFunc(f)` -- returns lazy `config.Config` gateway constructor (lazy-loads project + settings stores; the registry is touched only through `f.ProjectRegistry().CurrentRoot()` for the walk-up anchor). Resolves the project root at the call site and passes it to `config.NewConfig(config.WithProjectRoot(root))` to bound project-config walk-up (empty root → walk-up disabled)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses the project root from `f.ProjectRegistry().CurrentRoot()`
 - `hostProxyFunc(f)` -- returns lazy host proxy manager constructor
@@ -64,7 +64,7 @@ All closures use `sync.Once` for lazy single-initialization within the `config.C
 ## Logger Initialization
 
 Logger initialization happens inside `loggerLazy(f)` (separate from `ioStreams()`):
-1. Reads `cfg.SettingsStore().Read().Logging` for file/OTEL config
+1. Reads `cfg.LoggingConfig()` for file/OTEL config
 2. Calls `logger.New(opts)` with file config (rotation, compression) and optional OTEL config
 3. Returns `logger.Nop()` if file logging is explicitly disabled via settings
 4. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams

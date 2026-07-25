@@ -10,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -29,7 +30,8 @@ bundles:
 `, "")
 	require.NoError(t, err)
 
-	bundles := cfg.Project().Bundles
+	bundles, err := storage.Get[[]config.BundleSource](cfg.ProjectStore(), "bundles")
+	require.NoError(t, err)
 	require.Len(t, bundles, 1)
 	assert.Equal(t, config.BundleSource{
 		URL:        "git@github.com:acme/mono.git",
@@ -47,7 +49,7 @@ bundles:
 func TestProjectDefaults_MonitorExtensions(t *testing.T) {
 	cfg, err := config.NewBlankConfig()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"claude-code"}, cfg.Project().Monitor.Extensions)
+	assert.Equal(t, []string{"claude-code"}, cfg.MonitorExtensions())
 }
 
 // TestMonitorExtensions_OverrideMergeNotUnion proves monitor.extensions is a
@@ -71,7 +73,7 @@ func TestMonitorExtensions_OverrideMergeNotUnion(t *testing.T) {
 	t.Chdir(projDir)
 	cfg, err := config.NewConfig(config.WithProjectRoot(projDir))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prometheus"}, cfg.Project().Monitor.Extensions,
+	assert.Equal(t, []string{"prometheus"}, cfg.MonitorExtensions(),
 		"the highest layer that sets the selection wins wholesale")
 }
 

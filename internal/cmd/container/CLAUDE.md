@@ -98,7 +98,7 @@ Errors at any phase abort immediately. See `shared/CLAUDE.md` section "Container
 
 `ContainerCreateOptions` — all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
-Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
+Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, security)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(security)`.
 
 **Types**: `ContainerCreateOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
 

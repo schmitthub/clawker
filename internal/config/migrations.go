@@ -1,13 +1,20 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
+
+// Keys inside a migration are segment slices — a legacy key is addressed
+// exactly, never reparsed from a dotted string. displayKey renders one for the
+// user-facing notices, which have always spelled keys dotted.
+func displayKey(key []string) string { return strings.Join(key, ".") }
 
 // ProjectMigrations returns migrations for the project config store.
 // Migrations run on the store during construction and auto-save if they return
@@ -54,7 +61,9 @@ var legacyMonitoringKeys = []string{
 // print once per upgrade because the migration framework auto-saves
 // the file when this returns true.
 func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error) {
-	if !s.Has("monitoring") {
+	// Existence via the parent's child-key names — non-error, and correct
+	// even when the key holds a scalar or bare null.
+	if !slices.Contains(s.Keys(), keyMonitoring) {
 		return false, nil
 	}
 	changed := false
@@ -67,16 +76,15 @@ func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error)
 
 	var removed []string
 	for _, key := range legacyMonitoringKeys {
-		var v any
-		exists, gErr := s.Get("monitoring."+key, &v)
+		v, gErr := storage.Get[any](s, keyMonitoring, key)
 		if gErr != nil {
+			if errors.Is(gErr, storage.ErrKeyNotFound) {
+				continue
+			}
 			return false, fmt.Errorf("reading monitoring.%s: %w", key, gErr)
 		}
-		if !exists {
-			continue
-		}
 		removed = append(removed, fmt.Sprintf("  monitoring.%s = %v", key, v))
-		if _, rErr := s.Remove("monitoring." + key); rErr != nil {
+		if rErr := s.Remove(keyMonitoring, key); rErr != nil {
 			return false, fmt.Errorf("removing monitoring.%s: %w", key, rErr)
 		}
 	}
@@ -107,18 +115,17 @@ func legacyMonitoringNoticeText(path string, removed []string) string {
 // monitoring.otel_infra_port, carrying the value forward when only the legacy
 // key is set and warning + dropping on collision.
 func migrateOtelCPPort(s *storage.Store[Settings]) (bool, error) {
-	var old any
-	had, err := s.Get("monitoring.otel_cp_port", &old)
+	old, err := storage.Get[any](s, keyMonitoring, "otel_cp_port")
 	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return false, nil
+		}
 		return false, fmt.Errorf("reading monitoring.otel_cp_port: %w", err)
 	}
-	if !had {
-		return false, nil
-	}
-	if _, rErr := s.Remove("monitoring.otel_cp_port"); rErr != nil {
+	if rErr := s.Remove(keyMonitoring, "otel_cp_port"); rErr != nil {
 		return false, fmt.Errorf("removing monitoring.otel_cp_port: %w", rErr)
 	}
-	if s.Has("monitoring.otel_infra_port") {
+	if slices.Contains(s.Keys(keyMonitoring), "otel_infra_port") {
 		s.Noticef(
 			"warning: %s: both monitoring.otel_cp_port (%v) and monitoring.otel_infra_port present; keeping otel_infra_port, dropping otel_cp_port",
 			s.MigratingLayerPath(),
@@ -126,7 +133,7 @@ func migrateOtelCPPort(s *storage.Store[Settings]) (bool, error) {
 		)
 		return true, nil
 	}
-	if sErr := s.Set("monitoring.otel_infra_port", old); sErr != nil {
+	if sErr := s.Set([]string{keyMonitoring, "otel_infra_port"}, old); sErr != nil {
 		return false, fmt.Errorf("setting monitoring.otel_infra_port: %w", sErr)
 	}
 	s.Noticef(
@@ -139,7 +146,18 @@ func migrateOtelCPPort(s *storage.Store[Settings]) (bool, error) {
 // legacyUseHostAuthKey is the deleted host-credential-copy toggle: host
 // credentials are no longer copied into containers at all, so the key's
 // removal doubles as the user's notice that the auth model changed.
-const legacyUseHostAuthKey = "agent.claude_code.use_host_auth"
+func legacyUseHostAuthKey() []string { return []string{keyAgent, keyClaudeCode, "use_host_auth"} }
+
+// legacyBuildKeys are the build keys deleted in the multi-harness refactor:
+// images now build from the pinned clawker substrate, so a user-selected base
+// image and the custom-Dockerfile path no longer apply.
+func legacyBuildKeys() [][]string {
+	return [][]string{
+		{keyBuild, "image"},
+		{keyBuild, "dockerfile"},
+		{keyBuild, "context"},
+	}
+}
 
 // migrateRemoveLegacyBuildKeys strips project keys deleted in the
 // multi-harness refactor — build.image/build.dockerfile/build.context (images
@@ -154,15 +172,11 @@ const legacyUseHostAuthKey = "agent.claude_code.use_host_auth"
 // duplicated in clawker.local.yaml or the user config-dir clawker.yaml is
 // cleaned in each owning file).
 func migrateRemoveLegacyBuildKeys(s *storage.Store[Project]) (bool, error) {
-	buildRemoved, removed, err := stripLegacyKeys(s, []string{
-		"build.image",
-		"build.dockerfile",
-		"build.context",
-	})
+	buildRemoved, removed, err := stripLegacyKeys(s, legacyBuildKeys())
 	if err != nil {
 		return false, err
 	}
-	hostAuthRemoved, hostAuthLines, err := stripLegacyKeys(s, []string{legacyUseHostAuthKey})
+	hostAuthRemoved, hostAuthLines, err := stripLegacyKeys(s, [][]string{legacyUseHostAuthKey()})
 	if err != nil {
 		return false, err
 	}
@@ -179,20 +193,19 @@ func migrateRemoveLegacyBuildKeys(s *storage.Store[Project]) (bool, error) {
 
 // stripLegacyKeys removes each present key, returning whether anything was
 // removed plus a "  key = value" notice line per removal.
-func stripLegacyKeys(s *storage.Store[Project], keys []string) (bool, []string, error) {
+func stripLegacyKeys(s *storage.Store[Project], keys [][]string) (bool, []string, error) {
 	var removed []string
 	for _, key := range keys {
-		var v any
-		exists, gErr := s.Get(key, &v)
+		v, gErr := storage.Get[any](s, key...)
 		if gErr != nil {
-			return false, nil, fmt.Errorf("reading %s: %w", key, gErr)
+			if errors.Is(gErr, storage.ErrKeyNotFound) {
+				continue
+			}
+			return false, nil, fmt.Errorf("reading %s: %w", displayKey(key), gErr)
 		}
-		if !exists {
-			continue
-		}
-		removed = append(removed, fmt.Sprintf("  %s = %v", key, v))
-		if _, rErr := s.Remove(key); rErr != nil {
-			return false, nil, fmt.Errorf("removing %s: %w", key, rErr)
+		removed = append(removed, fmt.Sprintf("  %s = %v", displayKey(key), v))
+		if rErr := s.Remove(key...); rErr != nil {
+			return false, nil, fmt.Errorf("removing %s: %w", displayKey(key), rErr)
 		}
 	}
 	return len(removed) > 0, removed, nil
@@ -203,15 +216,15 @@ func stripLegacyKeys(s *storage.Store[Project], keys []string) (bool, []string, 
 // block that only set use_host_auth), so `build: {}` noise never lands on
 // disk. Only parents actually stripped from are considered.
 func pruneStrippedParents(s *storage.Store[Project], buildRemoved, hostAuthRemoved bool) error {
-	var parents []string
+	var parents [][]string
 	if buildRemoved {
-		parents = append(parents, "build")
+		parents = append(parents, []string{keyBuild})
 	}
 	if hostAuthRemoved {
-		parents = append(parents, "agent.claude_code", "agent")
+		parents = append(parents, []string{keyAgent, keyClaudeCode}, []string{keyAgent})
 	}
 	for _, parent := range parents {
-		if err := removeEmptyMapping(s, parent); err != nil {
+		if err := removeEmptyMapping(s, parent...); err != nil {
 			return err
 		}
 	}
@@ -254,9 +267,9 @@ func legacyKeyNoticeText(path string, removed []string, buildRemoved, hostAuthRe
 // shape the same load then rejects — and every later load with it, since no
 // migration would ever remove the key again. Stripped keys are surfaced by
 // name and value instead of silently discarded. When a harnesses.claude entry
-// already exists, it out-ranks the legacy block (Project.HarnessConfigFor
+// already exists, it out-ranks the legacy block (Config.HarnessConfigFor
 // consults the map before the shim), so the legacy key is dropped with a
-// notice instead of moved. The read shim in schema.go stays as a safety net
+// notice instead of moved. The read shim in config.go stays as a safety net
 // for layers loaded without migrations (read-only contexts).
 //
 // Migrations run per file layer, and layers merge the harnesses map
@@ -264,16 +277,17 @@ func legacyKeyNoticeText(path string, removed []string, buildRemoved, hostAuthRe
 // by a higher layer's harnesses map, the same clobber semantics any two
 // layered harnesses maps already have.
 func migrateClaudeCodeToHarnesses(s *storage.Store[Project]) (bool, error) {
-	const legacyKey = "agent.claude_code"
-	newKey := "harnesses." + consts.DefaultHarnessName
+	legacyKeySegments := []string{keyAgent, keyClaudeCode}
+	newKeySegments := []string{keyHarnesses, consts.DefaultHarnessName}
+	legacyKey := displayKey(legacyKeySegments)
+	newKey := displayKey(newKeySegments)
 
-	var v any
-	exists, err := s.Get(legacyKey, &v)
+	v, err := storage.Get[any](s, legacyKeySegments...)
 	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return false, nil
+		}
 		return false, fmt.Errorf("reading %s: %w", legacyKey, err)
-	}
-	if !exists {
-		return false, nil
 	}
 	if v == nil {
 		// A bare `claude_code:` key (e.g. its only field commented out)
@@ -299,19 +313,19 @@ func migrateClaudeCodeToHarnesses(s *storage.Store[Project]) (bool, error) {
 		s.Noticef(
 			"notice: removed empty deprecated %s block from %s (its replacement is the %s map entry)",
 			legacyKey, path, newKey)
-	case s.Has(newKey):
+	case slices.Contains(s.Keys(keyHarnesses), consts.DefaultHarnessName):
 		s.Noticef(
 			"warning: dropped deprecated %s from %s — the existing %s entry already overrides it",
 			legacyKey, path, newKey)
 	default:
-		if mvErr := moveClaudeCodeBlock(s, block, legacyKey, newKey, path); mvErr != nil {
+		if mvErr := moveClaudeCodeBlock(s, block, legacyKey, newKeySegments, path); mvErr != nil {
 			return false, mvErr
 		}
 	}
-	if _, rErr := s.Remove(legacyKey); rErr != nil {
+	if rErr := s.Remove(legacyKeySegments...); rErr != nil {
 		return false, fmt.Errorf("removing %s: %w", legacyKey, rErr)
 	}
-	if pruneErr := removeEmptyMapping(s, "agent"); pruneErr != nil {
+	if pruneErr := removeEmptyMapping(s, keyAgent); pruneErr != nil {
 		return false, pruneErr
 	}
 	return true, nil
@@ -321,7 +335,14 @@ func migrateClaudeCodeToHarnesses(s *storage.Store[Project]) (bool, error) {
 // after stripping every key the strict harnesses front door would reject,
 // surfacing each stripped key with its value. A block with nothing valid left
 // is removed without spawning an entry.
-func moveClaudeCodeBlock(s *storage.Store[Project], block map[string]any, legacyKey, newKey, path string) error {
+func moveClaudeCodeBlock(
+	s *storage.Store[Project],
+	block map[string]any,
+	legacyKey string,
+	newKeySegments []string,
+	path string,
+) error {
+	newKey := displayKey(newKeySegments)
 	dropped := filterHarnessBlockForMove(block, legacyKey)
 	if len(dropped) > 0 {
 		s.Noticef("%s", droppedHarnessKeysNoticeText(path, legacyKey, newKey, dropped))
@@ -332,7 +353,7 @@ func moveClaudeCodeBlock(s *storage.Store[Project], block map[string]any, legacy
 			legacyKey, path, newKey)
 		return nil
 	}
-	if sErr := s.Set(newKey, block); sErr != nil {
+	if sErr := s.Set(newKeySegments, block); sErr != nil {
 		return fmt.Errorf("setting %s: %w", newKey, sErr)
 	}
 	s.Noticef(
@@ -371,7 +392,7 @@ func filterHarnessBlockForMove(block map[string]any, sourceKey string) []string 
 // checks). A config hollowed out by the strip is pruned rather than moved as
 // a `config: {}` stub.
 func filterHarnessConfigForMove(block map[string]any, sourceKey string) []string {
-	raw, has := block["config"]
+	raw, has := block[keyConfig]
 	if !has || raw == nil {
 		return nil
 	}
@@ -436,21 +457,20 @@ func droppedHarnessKeysNoticeText(path, legacyKey, newKey string, dropped []stri
 // removeEmptyMapping deletes path when it currently holds an empty mapping —
 // the residue a legacy-key strip leaves behind. Absent keys, non-mapping
 // values, and non-empty mappings are left untouched.
-func removeEmptyMapping(s *storage.Store[Project], path string) error {
-	var v any
-	exists, err := s.Get(path, &v)
+func removeEmptyMapping(s *storage.Store[Project], key ...string) error {
+	v, err := storage.Get[any](s, key...)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
-	}
-	if !exists {
-		return nil
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", displayKey(key), err)
 	}
 	m, isMap := v.(map[string]any)
 	if !isMap || len(m) != 0 {
 		return nil
 	}
-	if _, rErr := s.Remove(path); rErr != nil {
-		return fmt.Errorf("removing emptied %s: %w", path, rErr)
+	if rErr := s.Remove(key...); rErr != nil {
+		return fmt.Errorf("removing emptied %s: %w", displayKey(key), rErr)
 	}
 	return nil
 }
@@ -465,7 +485,7 @@ func removeEmptyMapping(s *storage.Store[Project], path string) error {
 func migrateRunInstructionsToStrings(s *storage.Store[Project]) (bool, error) {
 	changed := false
 	for _, key := range []string{"user_run", "root_run"} {
-		c, err := migrateRunList(s, "build.instructions."+key)
+		c, err := migrateRunList(s, keyBuild, keyInstructions, key)
 		if err != nil {
 			return false, err
 		}
@@ -482,13 +502,16 @@ func migrateRunInstructionsToStrings(s *storage.Store[Project]) (bool, error) {
 // rather than being left in map form (which would fail the strict typed decode
 // with an opaque error). A non-map element in an otherwise-legacy list is a
 // hand-mangled config and returns an error instead of being silently discarded.
-func migrateRunList(s *storage.Store[Project], path string) (bool, error) {
-	var items []any
-	found, err := s.Get(path, &items)
+func migrateRunList(s *storage.Store[Project], key ...string) (bool, error) {
+	path := displayKey(key)
+	items, err := storage.Get[[]any](s, key...)
 	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return false, nil
+		}
 		return false, fmt.Errorf("reading %s: %w", path, err)
 	}
-	if !found || len(items) == 0 {
+	if len(items) == 0 {
 		return false, nil
 	}
 	// Already migrated (first element is a string).
@@ -511,7 +534,7 @@ func migrateRunList(s *storage.Store[Project], path string) (bool, error) {
 	// The list was in legacy map form (first element was not a string), so it
 	// must be rewritten — even to an empty list when every entry dropped, so the
 	// un-decodable map-shaped value never survives to the strict typed decode.
-	if err = s.Set(path, migrated); err != nil {
+	if err = s.Set(key, migrated); err != nil {
 		return false, fmt.Errorf("setting %s: %w", path, err)
 	}
 	return true, nil

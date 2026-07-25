@@ -35,7 +35,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/storage"
 )
 
 type StatusCode = int
@@ -479,7 +478,7 @@ func startHealthz(
 // event=firewall_bringup_failed line is the operator's only triage surface (the
 // exit itself lands on stderr/docker logs).
 func firewallBringupGate(cfg config.Config, log *logger.Logger, handler *fwhandler.Handler) error {
-	if !cfg.Settings().Firewall.FirewallEnabled() {
+	if !cfg.FirewallEnabled() {
 		return nil
 	}
 	log.Info().Str("component", "firewall-bringup").
@@ -560,7 +559,7 @@ func buildEnforcement(
 ) (
 	dockerCli *docker.Client,
 	containerResolver fwhandler.ContainerResolver,
-	rulesStore *storage.Store[fwhandler.EgressRulesFile],
+	rulesStore fwhandler.EgressRulesStore,
 	stack *fwhandler.Stack,
 	ebpfMgr *ebpf.Manager,
 	identityAlloc *fwhandler.IdentityAllocator,
@@ -647,7 +646,7 @@ type grpcStackDeps struct {
 	cfg               config.Config
 	ebpfMgr           *ebpf.Manager
 	stack             *fwhandler.Stack
-	rulesStore        *storage.Store[fwhandler.EgressRulesFile]
+	rulesStore        fwhandler.EgressRulesStore
 	identityAlloc     *fwhandler.IdentityAllocator
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
@@ -719,8 +718,13 @@ func buildGRPCStack(d grpcStackDeps) (
 
 	// Buffered(4) so gRPC admin/agent, healthz, or the feeder can deposit a
 	// failure without blocking before the serve select is reached.
+	//
+	// Only the AGENT listener serves here — clawkerd dial-back and agent
+	// registration are boot-time flows. The admin listener serves after the
+	// startup gates and SetReady (run() calls ServeAdmin), so no admin RPC
+	// can land while the CP is still booting.
 	serveFailed = make(chan error, 4)
-	grpcStack.Serve(serveFailed)
+	grpcStack.ServeAgent(serveFailed)
 	return actionQueue, handler, grpcStack, serveFailed, cleanup, nil
 }
 
@@ -1006,7 +1010,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	cp := cfg.Settings().ControlPlane
+	cp := cfg.ControlPlaneSettings()
 
 	subMgr := subprocess.NewSubprocessManager(log)
 	orchestrator := NewControlPlane()
@@ -1114,6 +1118,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 
 	orchestrator.SetReady()
+
+	// Admin surface opens only now — after the startup gates and the ready
+	// flip — so mutating RPCs cannot be accepted mid-boot. The agent
+	// listener has been serving since buildGRPCStack (boot-time clawkerd
+	// flows need it).
+	grpcStack.ServeAdmin(serveFailed)
 
 	// /healthz server (see startHealthz). Returns the server so the
 	// shutdown sequence can GracefulStop it.

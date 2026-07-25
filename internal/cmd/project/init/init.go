@@ -3,6 +3,7 @@ package init
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,22 +79,32 @@ func defaultVCSSettings() vcsSettings {
 	return vcsSettings{Provider: vcsGitHub, Protocol: protoHTTPS, ForwardGPG: true}
 }
 
-// VCS-derived store paths and the SSH egress rule's fixed proto/port.
+// The SSH egress rule's fixed port.
+const vcsSSHPort = "22"
+
+// Project-config key segments the VCS wiring addresses.
 const (
-	pathFirewallAddDomains = "security.firewall.add_domains"
-	pathFirewallRules      = "security.firewall.rules"
-	pathForwardGPG         = "security.git_credentials.forward_gpg"
-	vcsSSHPort             = "22"
+	keySecurity       = "security"
+	keyFirewall       = "firewall"
+	keyAddDomains     = "add_domains"
+	keyRules          = "rules"
+	keyGitCredentials = "git_credentials"
+	keyForwardGPG     = "forward_gpg"
 )
 
+// The VCS-derived store keys, as the segment slices every store verb takes.
+func firewallAddDomainsKey() []string { return []string{keySecurity, keyFirewall, keyAddDomains} }
+func firewallRulesKey() []string      { return []string{keySecurity, keyFirewall, keyRules} }
+func forwardGPGKey() []string         { return []string{keySecurity, keyGitCredentials, keyForwardGPG} }
+
 // applyVCSToProject writes the VCS provider's configuration into the project
-// store by path, the canonical Set(path, value) way — never a whole-struct
+// store by key, the canonical Set(key, value) way — never a whole-struct
 // read-mutate-write:
 //   - merges the provider's domains into security.firewall.add_domains
 //   - if SSH: appends a port-22 EgressRule to security.firewall.rules
 //   - if GPG disabled: sets security.git_credentials.forward_gpg = false
 //
-// Each Set marks only its path dirty; the later store.WriteTo persists them.
+// Each Set marks only its key dirty; the later store.WriteTo persists them.
 func applyVCSToProject(store *storage.Store[config.Project], s vcsSettings) error {
 	if err := mergeVCSDomains(store, s.Provider); err != nil {
 		return err
@@ -105,7 +116,7 @@ func applyVCSToProject(store *storage.Store[config.Project], s vcsSettings) erro
 	}
 	// GPG: disable forwarding when requested (the schema default is true).
 	if !s.ForwardGPG {
-		if err := store.Set(pathForwardGPG, false); err != nil {
+		if err := store.Set(forwardGPGKey(), false); err != nil {
 			return fmt.Errorf("disabling forward_gpg: %w", err)
 		}
 	}
@@ -116,20 +127,31 @@ func applyVCSToProject(store *storage.Store[config.Project], s vcsSettings) erro
 // security.firewall.add_domains, preserving (and deduping against) any the
 // preset already declared.
 func mergeVCSDomains(store *storage.Store[config.Project], provider string) error {
-	var domains []string
-	if _, err := store.Get(pathFirewallAddDomains, &domains); err != nil {
+	// A preset that declares no add_domains leaves the key unset — nothing to
+	// merge against, not a failure.
+	domains, err := storage.Get[[]string](store, firewallAddDomainsKey()...)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
 		return fmt.Errorf("reading add_domains: %w", err)
 	}
 	existing := make(map[string]bool, len(domains))
 	for _, d := range domains {
 		existing[d] = true
 	}
+	merged := false
 	for _, d := range vcsProviderDomains[provider] {
 		if !existing[d] {
 			domains = append(domains, d)
+			merged = true
 		}
 	}
-	if err := store.Set(pathFirewallAddDomains, domains); err != nil {
+	if !merged {
+		// The preset already declares every domain this provider needs (or
+		// the provider contributes none) — nothing to stage. Setting the
+		// unchanged value back would be a no-op write at best, and a nil
+		// value on an unset key at worst.
+		return nil
+	}
+	if err = store.Set(firewallAddDomainsKey(), domains); err != nil {
 		return fmt.Errorf("setting add_domains: %w", err)
 	}
 	return nil
@@ -138,8 +160,10 @@ func mergeVCSDomains(store *storage.Store[config.Project], provider string) erro
 // appendVCSSSHRule appends a port-22 allow rule for the provider's SSH host to
 // the project's security.firewall.rules.
 func appendVCSSSHRule(store *storage.Store[config.Project], provider string) error {
-	rules := make([]config.EgressRule, 0, 1)
-	if _, err := store.Get(pathFirewallRules, &rules); err != nil {
+	// A preset that declares no explicit rules leaves the key unset — this
+	// rule is then the first, not a failure.
+	rules, err := storage.Get[[]config.EgressRule](store, firewallRulesKey()...)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
 		return fmt.Errorf("reading firewall rules: %w", err)
 	}
 	rules = append(rules, config.EgressRule{
@@ -151,7 +175,7 @@ func appendVCSSSHRule(store *storage.Store[config.Project], provider string) err
 		PathDefault:           "",
 		InsecureSkipTLSVerify: false,
 	})
-	if err := store.Set(pathFirewallRules, rules); err != nil {
+	if err = store.Set(firewallRulesKey(), rules); err != nil {
 		return fmt.Errorf("setting firewall rules: %w", err)
 	}
 	return nil
