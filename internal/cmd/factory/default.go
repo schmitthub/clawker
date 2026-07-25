@@ -445,28 +445,36 @@ func projectRegistryFunc() func() (project.Registry, error) {
 // walk-up. config never reaches back to the project manager, so the
 // dependency is one-way.
 func configFunc(f *cmdutil.Factory) func() (config.Config, error) {
-	var cachedConfig config.Config
-	var configError error
+	var (
+		once   sync.Once
+		cfg    config.Config
+		cfgErr error
+	)
 	return func() (config.Config, error) {
-		if cachedConfig != nil || configError != nil {
-			return cachedConfig, configError
-		}
-		reg, err := f.ProjectRegistry()
-		if err != nil {
-			configError = fmt.Errorf("loading project registry for config walk-up: %w", err)
-			return nil, configError
-		}
-		// CurrentRoot returns ErrNotInProject when CWD is not within a
-		// registered project — a normal condition (global-scope agents have no
-		// project). That degrades to an empty anchor, which disables walk-up.
-		// Any other error is unexpected and is surfaced rather than swallowed.
-		root, err := reg.CurrentRoot()
-		if err != nil && !errors.Is(err, project.ErrNotInProject) {
-			configError = fmt.Errorf("resolving project root for config walk-up: %w", err)
-			return nil, configError
-		}
-		cachedConfig, configError = config.NewConfig(config.WithProjectRoot(root))
-		return cachedConfig, configError
+		once.Do(func() {
+			reg, err := f.ProjectRegistry()
+			if err != nil {
+				cfgErr = fmt.Errorf("loading project registry for config walk-up: %w", err)
+				return
+			}
+			// CurrentRoot returns ErrNotInProject when CWD is not within a
+			// registered project — a normal condition (global-scope agents have
+			// no project). That degrades to an empty anchor, which disables
+			// walk-up. Any other error is unexpected and is surfaced rather than
+			// swallowed.
+			root, err := reg.CurrentRoot()
+			if err != nil && !errors.Is(err, project.ErrNotInProject) {
+				cfgErr = fmt.Errorf("resolving project root for config walk-up: %w", err)
+				return
+			}
+			loaded, err := config.NewConfig(config.WithProjectRoot(root))
+			if err != nil {
+				cfgErr = fmt.Errorf("loading config: %w", err)
+				return
+			}
+			cfg = loaded
+		})
+		return cfg, cfgErr
 	}
 }
 

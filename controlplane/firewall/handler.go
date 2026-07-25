@@ -41,6 +41,13 @@ import (
 // Callers map this onto the wire field `stack_restarted`.
 type StackReloadResult struct {
 	Restarted bool
+	// RoutesApplied counts the BPF routes this closure projected from the
+	// store and pushed through ebpf.SyncRoutes. It is produced INSIDE the
+	// queued closure so FirewallSyncRoutes reports the set it actually
+	// synced — a count read afterwards would describe whatever a concurrent
+	// rule mutation left behind. Zero whenever nothing was synced (stack
+	// down, no store wired, or the sync itself failed).
+	RoutesApplied int
 }
 
 // InitResult captures the network topology EnsureRunning settled on.
@@ -752,6 +759,13 @@ func (h *Handler) FirewallAddRules(
 	ctx context.Context,
 	req *adminv1.FirewallAddRulesRequest,
 ) (*adminv1.FirewallAddRulesResult, error) {
+	if h.store == nil {
+		// Same fail-loud-not-crash contract as FirewallListRules: without a
+		// store there is nothing to write to, and a nil-deref inside the queued
+		// closure would surface as a panic trace instead of a named wiring
+		// fault.
+		return nil, toStatus(errors.New("firewall add rules: rules store not wired"))
+	}
 	rules := adminv1.EgressRulesFromProto(req.GetRules())
 	// Validate every rule up front and report ALL problems at once. A bad rule
 	// from clawker.yaml (malformed port, inverted action, junk destination)
@@ -768,6 +782,10 @@ func (h *Handler) FirewallAddRules(
 		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleInvalid, errors.Join(invalid...)))
 	}
 	val, err := h.submit(ActionRuleMutate, func(_ context.Context) (any, error) {
+		// Deferred so the stored set's normalization warnings reach the
+		// operator whichever way the mutation goes — they describe what is on
+		// disk, which exists either way.
+		defer h.logRuleWarnings()
 		return h.store.AddRules(rules)
 	})
 	if err != nil {
@@ -783,11 +801,11 @@ func (h *Handler) FirewallAddRules(
 
 	val, err = h.submit(ActionReconcile, h.reconcileStackClosure)
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, toStatus(errRuleMutationPersisted(err))
 	}
 	rr, err := resultAs[StackReloadResult](val)
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, toStatus(errRuleMutationPersisted(err))
 	}
 	return &adminv1.FirewallAddRulesResult{
 		Statuses:       toProtoAddStatuses(statuses),
@@ -810,6 +828,13 @@ func (h *Handler) FirewallRemoveRule(
 	ctx context.Context,
 	req *adminv1.FirewallRemoveRuleRequest,
 ) (*adminv1.FirewallRemoveRuleResult, error) {
+	if h.store == nil {
+		// Same fail-loud-not-crash contract as FirewallListRules: without a
+		// store there is nothing to remove from, and a nil-deref inside the
+		// queued closure would surface as a panic trace instead of a named
+		// wiring fault.
+		return nil, toStatus(errors.New("firewall remove rule: rules store not wired"))
+	}
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
 		Proto: req.GetProto(),
@@ -817,6 +842,10 @@ func (h *Handler) FirewallRemoveRule(
 	}
 	pathMode := req.GetPath() != ""
 	val, err := h.submit(ActionRuleMutate, func(_ context.Context) (any, error) {
+		// Deferred so the stored set's normalization warnings reach the
+		// operator whichever way the mutation goes — they describe what is on
+		// disk, which exists either way.
+		defer h.logRuleWarnings()
 		if pathMode {
 			return h.store.RemovePathRule(rule, req.GetPath())
 		}
@@ -837,11 +866,11 @@ func (h *Handler) FirewallRemoveRule(
 
 	val, err = h.submit(ActionReconcile, h.reconcileStackClosure)
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, toStatus(errRuleMutationPersisted(err))
 	}
 	rr, err := resultAs[StackReloadResult](val)
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, toStatus(errRuleMutationPersisted(err))
 	}
 	status := removeStatusRemoved
 	if pathMode {
@@ -986,6 +1015,12 @@ func (h *Handler) FirewallRotateCA(
 // so routing through ActionReconcile gives SyncRoutes the stronger
 // "stack and route_map are consistent with the store" guarantee at a
 // cost of one extra container restart.
+//
+// The applied count comes off the closure's own result rather than a
+// second store read: a rule mutation queued behind this reconcile would
+// land between the two, so a post-hoc read would report a set this sync
+// never pushed — and a read failure there would fail an already-committed
+// reconcile.
 func (h *Handler) FirewallSyncRoutes(
 	ctx context.Context,
 	_ *adminv1.FirewallSyncRoutesRequest,
@@ -994,17 +1029,14 @@ func (h *Handler) FirewallSyncRoutes(
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	if _, err := resultAs[StackReloadResult](val); err != nil {
-		return nil, toStatus(err)
-	}
-	routes, err := h.routesFromStore()
+	rr, err := resultAs[StackReloadResult](val)
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	// Applied is a uint32 on the wire. The reconcile has already committed by
 	// this point, so a count too large to represent must not turn a successful
 	// sync into an RPC error — clamp it and say so in the log.
-	applied := len(routes)
+	applied := rr.RoutesApplied
 	if applied > math.MaxUint32 {
 		h.log.Warn().Int("routes", applied).
 			Msg("firewall sync routes: applied count exceeds the result field width; reporting the clamped value")
@@ -1056,25 +1088,29 @@ func (h *Handler) FirewallResolveHostname(
 // wrapped sentinels; RouteSync wraps its own ErrRouteSync, and the two
 // are joined via errors.Join so the RPC wrapper can emit one
 // errdetails.ErrorInfo per step.
+//
+// The identity sync runs BEFORE any stack-state branch: the sticky table
+// and the normalization warnings that read surfaces describe the RULE
+// SET, not the stack. A mutation applied while Envoy is down must still
+// reconcile the table and must still tell the operator what the canonical
+// pass dropped or cannot enforce — otherwise a path rule silently
+// unenforced on an opaque proto reaches the user only if the stack
+// happened to be up.
 func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
+	if syncErr := h.syncIdentities(); syncErr != nil {
+		return nil, syncErr
+	}
 	if h.stack == nil {
 		// Handler wired without a Stack (common in tests): nothing to
 		// reconcile, pre-Submit work already committed.
-		return StackReloadResult{Restarted: false}, nil
+		return StackReloadResult{Restarted: false, RoutesApplied: 0}, nil
 	}
 	st, err := h.stack.Status(qctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrStackProbe, err)
 	}
 	if !st.Running {
-		return StackReloadResult{Restarted: false}, nil
-	}
-
-	// Identity sync precedes Reload: ensureConfigs regenerates the
-	// Corefile from the resolver this sync feeds.
-	//nolint:contextcheck // the identity table write goes through internal/storage, whose lock/write API carries no context
-	if syncErr := h.syncIdentities(); syncErr != nil {
-		return nil, syncErr
+		return StackReloadResult{Restarted: false, RoutesApplied: 0}, nil
 	}
 
 	var errs []error
@@ -1084,17 +1120,21 @@ func (h *Handler) reconcileStackClosure(qctx context.Context) (any, error) {
 	// Route sync only runs when a store is wired. Test harnesses that
 	// omit Store skip this branch; production wiring in cmd/clawkercp
 	// always provides one.
+	applied := 0
 	if h.store != nil {
-		if routes, rErr := h.routesFromStore(); rErr != nil {
+		routes, rErr := h.routesFromStore()
+		if rErr != nil {
 			errs = append(errs, fmt.Errorf("%w: %w", ErrRouteSync, rErr))
 		} else if sErr := h.ebpf.SyncRoutes(routes); sErr != nil {
 			errs = append(errs, fmt.Errorf("%w: %w", ErrRouteSync, sErr))
+		} else {
+			applied = len(routes)
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	return StackReloadResult{Restarted: true}, nil
+	return StackReloadResult{Restarted: true, RoutesApplied: applied}, nil
 }
 
 // routesFromStore asks the rules store to project its canonical rule set into
@@ -1134,6 +1174,46 @@ func (h *Handler) logNormalizeWarnings(warnings []string) {
 	}
 }
 
+// logRuleWarnings re-reads the canonical rule set for the sole purpose of
+// surfacing its normalization warnings: the store applies NormalizeAndDedup on
+// every mutating path but owns no logger, so those warnings would otherwise die
+// inside it — including the one saying a path rule cannot be enforced on an
+// opaque proto, which is a silently-unenforced security rule.
+//
+// A read failure is logged and goes no further. This runs on the queue worker
+// AFTER a committed mutation, where escalating a read hiccup would report a
+// durable write as failed.
+//
+// One line per canonical read is the rule, so a mutation followed by a
+// reconcile — two queued actions, two reads — logs its warnings twice.
+// Suppressing the second would mean an action hiding what it genuinely
+// observed.
+func (h *Handler) logRuleWarnings() {
+	if h.store == nil {
+		return
+	}
+	_, warnings, err := h.store.Rules()
+	if err != nil {
+		h.log.Warn().Str("event", "rule_warnings_unavailable").Err(err).
+			Msg("firewall: cannot re-read rules to surface normalization warnings")
+		return
+	}
+	h.logNormalizeWarnings(warnings)
+}
+
+// errRuleMutationPersisted wraps a reconcile failure that happened AFTER the
+// rule mutation committed. Without it the RPC reports a bare failure for a
+// durable write, and a user who removed a deny rule would believe the block
+// still stands. The reconcile error is wrapped so its sentinels still reach
+// toStatus's errdetails mapping.
+func errRuleMutationPersisted(err error) error {
+	return fmt.Errorf(
+		"rule change was saved and takes effect on the next `clawker firewall up` or `clawker firewall reload`; "+
+			"reconciling the running stack failed: %w",
+		err,
+	)
+}
+
 // identityFor is the Handler's IdentityResolver. With no allocator wired it
 // answers ok=false for everything — no routes, no dnsbpf directives, fail
 // closed (see HandlerDeps.Identity).
@@ -1154,11 +1234,6 @@ func (h *Handler) identityFor(dst string) (ebpf.RouteIdentity, bool) {
 // normalization warnings for that pass are logged; the later route projection
 // reads the same canonical set and would only duplicate them.
 func (h *Handler) syncIdentities() error {
-	if h.identity == nil {
-		h.log.Warn().Str("event", "identity_allocator_unset").
-			Msg("firewall: no identity allocator wired; routes and dnsbpf directives will be empty (fail closed)")
-		return nil
-	}
 	var rules []config.EgressRule
 	if h.store != nil {
 		stored, warnings, err := h.store.Rules()
@@ -1167,6 +1242,13 @@ func (h *Handler) syncIdentities() error {
 		}
 		h.logNormalizeWarnings(warnings)
 		rules = stored
+	}
+	// The read above is unconditional so the warnings always reach the
+	// operator; only the allocation half degrades when no allocator is wired.
+	if h.identity == nil {
+		h.log.Warn().Str("event", "identity_allocator_unset").
+			Msg("firewall: no identity allocator wired; routes and dnsbpf directives will be empty (fail closed)")
+		return nil
 	}
 	dsts := make([]string, 0, len(rules)+len(consts.MonitoringServiceHostnames)+1)
 	for _, r := range rules {

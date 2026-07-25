@@ -66,8 +66,26 @@ func (k ActionKind) String() string {
 // run individually; RuleMutate carries a distinct rule payload per call
 // (coalescing would silently drop the collapsed submitter's mutation);
 // Bringup, Teardown, and Read likewise execute one-by-one.
+//
+// Every ActionKind is enumerated and there is no default arm, so a kind
+// added later cannot inherit a coalescing semantic by omission — the
+// exhaustive check makes the author state it. Inheriting the wrong one
+// silently drops a submitter's work.
 func (k ActionKind) Coalesces() bool {
-	return k == ActionReconcile
+	switch k {
+	case ActionReconcile:
+		return true
+	case ActionUnknown,
+		ActionBringup,
+		ActionTeardown,
+		ActionRuleMutate,
+		ActionRead,
+		ActionEnable,
+		ActionDisable,
+		ActionBypass:
+		return false
+	}
+	return false
 }
 
 // ActionResult is produced by a queued closure and delivered to every

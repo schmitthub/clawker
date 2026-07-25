@@ -21,8 +21,8 @@ var ErrAnchorNotAncestor = errors.New("walk-up anchor is not the current working
 
 // ErrSchemaDecode reports that grafting a value at a path produced a merged tree
 // that no longer decodes into the schema type T. Set rejects the mutation and
-// leaves the tree and snapshot untouched rather than persisting a tree that
-// would poison the file on the next Write.
+// leaves the tree and the dirty set untouched rather than persisting a tree
+// that would poison the file on the next Write.
 var ErrSchemaDecode = errors.New("value no longer decodes into schema")
 
 // ErrMigrationType reports a migration whose store type does not match the

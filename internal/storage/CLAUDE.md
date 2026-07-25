@@ -257,11 +257,15 @@ migration's self-reported `changed`.
   decode. `Get` decodes one subtree.
 - **Compound read-modify-write isn't atomic** — Get → mutate → Set → Write
   take the per-op lock independently; the store cannot span the caller's
-  compute between calls. Serialize concurrent writers architecturally (CP's
-  ActionQueue single-writer funnel; the CLI is single-threaded) — never with
-  locks in a domain impl. Same-path writes that still overlap (e.g. another
-  process) resolve to last-writer-wins by design; each write itself is atomic
-  and grafts onto a fresh read of the destination file inside the flock.
+  compute between calls. The invariant a caller must hold is **one writer per
+  file at a time**, established architecturally — never with locks in a domain
+  impl. CP funnels its writers through the ActionQueue; the CLI runs its
+  background checks sequentially on a single goroutine (`internal/clawker.Main`
+  runs the update check and then the changelog check, both against the one
+  `f.CLIState()` store), so no two Set→Write cycles interleave. Same-path
+  writes that still overlap (e.g. another process) resolve to last-writer-wins
+  by design; each write itself is atomic and grafts onto a fresh read of the
+  destination file inside the flock.
 - **`omitempty` is irrelevant** — the value handed to `Set` is what lands.
 - **Unknown FILE keys survive** — load/merge/re-save preserve keys outside the
   schema (hand-edit tolerance). `Set` cannot create them (`ErrUnknownKey`).

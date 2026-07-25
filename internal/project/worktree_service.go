@@ -17,9 +17,8 @@ import (
 )
 
 var (
-	ErrNotInProjectPath     = errors.New("not in a registered project path")
-	ErrProjectNotRegistered = errors.New("project root is not registered")
-	ErrWorktreeExists       = errors.New("worktree already exists for branch")
+	ErrNotInProjectPath = errors.New("not in a registered project path")
+	ErrWorktreeExists   = errors.New("worktree already exists for branch")
 )
 
 type PruneStaleResult struct {

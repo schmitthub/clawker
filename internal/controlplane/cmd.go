@@ -56,6 +56,13 @@ type ControlPlane struct {
 	tlsCfg  *tls.Config
 	timeout time.Duration
 
+	// adminServingCheck is the grpc-admin probe's serving predicate,
+	// installed by SetAdminServingCheck once the gRPC stack exists. Nil
+	// until then and read as not-serving: /healthz answers 503 before
+	// SetReady regardless, and the predicate is installed before the ready
+	// gate flips.
+	adminServingCheck atomic.Pointer[func() bool]
+
 	// Cached health state
 	healthMu     sync.RWMutex
 	healthOK     bool
@@ -63,11 +70,14 @@ type ControlPlane struct {
 	healthAt     time.Time
 }
 
-// serviceProbe defines a TCP or HTTPS endpoint to check.
+// serviceProbe defines a TCP or HTTPS endpoint to check. A non-nil check is
+// a precondition the endpoint must satisfy before its transport is dialed —
+// see probe.
 type serviceProbe struct {
-	name string
-	addr string
-	tls  bool
+	name  string
+	addr  string
+	tls   bool
+	check func() bool
 }
 
 // NewControlPlane creates a new startup orchestrator. The probes
@@ -82,7 +92,9 @@ func NewControlPlane() *ControlPlane {
 // SetServiceProbes configures the aggregate health probes from the
 // ControlPlaneSettings. Called during CP startup after TLS config is built.
 // All Ory services use HTTPS; the gRPC admin port is probed via raw TCP
-// (gRPC health check would require a client).
+// (gRPC health check would require a client) gated on the serving predicate
+// SetAdminServingCheck installs — its socket is bound long before anything
+// serves on it, so the dial alone cannot answer whether the surface is live.
 func (o *ControlPlane) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *tls.Config) {
 	o.tlsCfg = tlsCfg
 	o.probes = []serviceProbe{
@@ -92,8 +104,36 @@ func (o *ControlPlane) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *
 		{name: "kratos-admin", addr: fmt.Sprintf(consts.Localhost+":%d", cp.KratosAdminPort), tls: true},
 		{name: "oathkeeper-proxy", addr: fmt.Sprintf(consts.Localhost+":%d", cp.OathkeeperPort), tls: true},
 		{name: "oathkeeper-api", addr: fmt.Sprintf(consts.Localhost+":%d", cp.OathkeeperAPIPort), tls: true},
-		{name: "grpc-admin", addr: fmt.Sprintf(consts.Localhost+":%d", cp.AdminPort), tls: false},
+		{
+			name:  "grpc-admin",
+			addr:  fmt.Sprintf(consts.Localhost+":%d", cp.AdminPort),
+			tls:   false,
+			check: o.adminServing,
+		},
 	}
+}
+
+// SetAdminServingCheck installs the predicate the grpc-admin probe consults
+// before dialing. The admin listener socket is bound at gRPC stack
+// construction and only starts serving after the startup gates and SetReady,
+// so a bare dial completes from the accept backlog even when no goroutine is
+// in Serve — /healthz would report healthy while every admin RPC hangs.
+// A nil predicate is ignored, leaving the probe fail-closed.
+func (o *ControlPlane) SetAdminServingCheck(check func() bool) {
+	if check == nil {
+		return
+	}
+	o.adminServingCheck.Store(&check)
+}
+
+// adminServing answers the grpc-admin probe's precondition. It fails closed
+// until SetAdminServingCheck has run.
+func (o *ControlPlane) adminServing() bool {
+	check := o.adminServingCheck.Load()
+	if check == nil {
+		return false
+	}
+	return (*check)()
 }
 
 // IsReady returns whether the CP has completed all startup steps.
@@ -166,8 +206,15 @@ func (o *ControlPlane) cachedHealth() (bool, string) {
 	return o.healthOK, o.healthFailed
 }
 
-// probe checks if a single service endpoint is responding.
+// probe checks if a single service endpoint is responding. A probe carrying
+// a check predicate must satisfy it before the transport is dialed: a bound
+// listener completes a TCP handshake out of its accept backlog whether or
+// not anything is serving, so for such endpoints the dial proves reachability
+// and the predicate proves liveness.
 func (o *ControlPlane) probe(p serviceProbe) bool {
+	if p.check != nil && !p.check() {
+		return false
+	}
 	if p.tls {
 		if o.tlsCfg == nil {
 			return false // fail-closed: TLS required but no config
@@ -416,6 +463,7 @@ func startOryStack(
 // and the agent worldview Repository. It wires the Repository's two
 // subscriptions (agent topic per-container view + dockerevents evict-on-rm) —
 // the load-bearing projection; the heartbeat only reads its Len().
+//
 //nolint:ireturn // returns the agent.Registry interface by design — the sqlite-backed impl stays package-private
 func buildAgentInfra(
 	log *logger.Logger,
@@ -550,6 +598,7 @@ func buildIdentityAllocator(cfg config.Config) (*fwhandler.IdentityAllocator, er
 // The returned cleanup closes the Docker client and the eBPF manager; run()
 // joins its error into retErr so the on-failure restart policy investigates a
 // partial teardown rather than silently blessing it.
+//
 //nolint:nonamedreturns // 8-value return with per-arm partial results — the names document which handles are live on each failure arm
 func buildEnforcement(
 	ctx context.Context,
@@ -745,6 +794,34 @@ func newDrainCallback(deps drainDeps) func(context.Context) error {
 	}
 }
 
+// drainOnShutdown runs the teardown for the post-SetReady failure arms of
+// run()'s serve select (subprocess crash, serve failure). Those arms report
+// the failure to Main as an error, and a bare return would skip the drain
+// entirely: PID 1 would exit with the eBPF programs still pinned, filtering
+// agent egress against a frozen rule set with no supervisor — the security
+// incident the CP resilience contract exists to prevent. drain is
+// [sync.Once]-guarded, so converging here with the AgentWatcher's own
+// drain-to-zero trigger runs the teardown exactly once.
+//
+// The watcher is cancelled but deliberately not joined: unlike the signal
+// arm, these arms are already handling a broken CP, and blocking the drain
+// on a watcher that is slow to honor cancellation is exactly how eBPF ends
+// up stranded.
+func drainOnShutdown(
+	log *logger.Logger,
+	drain func(context.Context) error,
+	watcherCancel context.CancelFunc,
+) {
+	watcherCancel()
+	teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
+	defer teardownCancel()
+	if err := drain(teardownCtx); err != nil {
+		log.Error().Err(err).
+			Str("event", "cp_shutdown_teardown_failed").
+			Msg("shutdown teardown failed")
+	}
+}
+
 // bootLogging stands up the trusted-lane OTel cert provisioner and the
 // process logger, returning the concrete *otelcerts.Service (for the post-logger
 // SetLogger + netlogger wiring), the fwhandler.OtelCertProvisioner interface (for
@@ -758,6 +835,7 @@ func newDrainCallback(deps drainDeps) func(context.Context) error {
 // plaintext-falls-back to the untrusted lane. The structured otelcerts/logger
 // degraded-event lines are emitted here (after the logger exists) so they land on
 // the structured surface, not stderr.
+//
 //nolint:ireturn // returns the OtelCertProvisioner interface by design — nil-tolerant degrade contract
 func bootLogging(
 	logDir string,
@@ -1111,6 +1189,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	defer grpcCleanup()
 
+	// The admin listener socket is already bound, so the /healthz grpc-admin
+	// probe's dial would succeed from here on regardless of whether anything
+	// serves. Gate it on the stack's own serving signal instead.
+	orchestrator.SetAdminServingCheck(grpcStack.AdminServing)
+
 	// settings-driven firewall bringup — startup GATE, pre-SetReady
 	// (see firewallBringupGate). A failure exits 1 without an eBPF flush.
 	if err := firewallBringupGate(cfg, log, handler); err != nil {
@@ -1274,10 +1357,18 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():
-		log.Error().Err(err).Msg("subprocess crashed — shutting down")
+		log.Error().Err(err).
+			Str("component", "subprocess-manager").
+			Str("event", "cp_subprocess_crashed").
+			Msg("Ory subprocess crashed; CP shutting down — auth surface is gone, draining so eBPF is flushed rather than left pinned and unsupervised")
+		drainOnShutdown(log, drainCallback, watcherCancel)
 		return err
 	case err := <-serveFailed:
-		log.Error().Err(err).Msg("server failed — shutting down")
+		log.Error().Err(err).
+			Str("component", "cp-serve").
+			Str("event", "cp_serve_failed").
+			Msg("a CP serve goroutine failed (gRPC admin/agent, healthz, or feeder); CP shutting down — that surface is gone, draining so eBPF is flushed rather than left pinned and unsupervised")
+		drainOnShutdown(log, drainCallback, watcherCancel)
 		return err
 	}
 	watcherCancel()

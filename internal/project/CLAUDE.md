@@ -26,6 +26,7 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 | `registry.go` | `Registry` interface + `registryImpl` (embeds `*storage.Store[ProjectRegistry]`) — `NewRegistry`/`NewRegistryFromString` are the sole constructors of registry storage |
 | `resolve.go` | `ResolveRoot`/`CurrentRoot` project-root resolution on `registryImpl` + `resolveRootPath` normalization |
 | `registry_schema.go` | `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types + `Fields()` (`storage.Schema`) |
+| `migrations.go` | `RegistryMigrations()` — additive registry migration list, wired into `NewRegistry` via `storage.WithMigrations` |
 | `worktree_service.go` | Internal git + registry orchestration for worktrees, `flatWorktreeDirProvider` |
 | `project_test.go` | Full lifecycle tests: registration, worktree add/remove/prune, duplicate rejection |
 
@@ -64,7 +65,7 @@ type ProjectManager interface {
 - `List` sorts by root then name. Every registry read decodes a fresh value out of the merged tree, so the returned entries (and their `Worktrees` maps) never alias live store state; mutations reach the store only through the registry's own write path.
 - `ResolvePath` normalizes both sides with the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths), so symlinked and real paths match interchangeably.
 - `CurrentProject` tries the injected registry's `CurrentRoot()`, then falls back to `os.Getwd()` only on the benign `ErrNotInProject`; real registry/storage failures propagate wrapped.
-- `ListProjects` returns enriched `ProjectState` views with runtime health checks (directory status, worktree state).
+- `ListProjects` returns enriched `ProjectState` views with runtime health checks (directory status, worktree state). Worktree enrichment failures do not change `Status` (the root is present and registered) — they land on `StatusErr`, so a degraded worktree list is reportable rather than silently empty.
 - `ListWorktrees` aggregates across all registered projects.
 
 ### `Project`
@@ -119,7 +120,7 @@ type ProjectState struct {
     Root      string
     Worktrees []WorktreeState
     Status    ProjectStatus
-    StatusErr error          // non-nil when Status is ProjectInaccessible
+    StatusErr error          // non-nil when Status is ProjectInaccessible, or when worktree enrichment of an OK project failed
 }
 
 type ProjectStatus string
@@ -129,6 +130,10 @@ type ProjectStatus string
 ## Error Sentinels
 
 `ErrProjectNotFound`, `ErrProjectExists`, `ErrWorktreeNotFound`, `ErrWorktreeExists`, `ErrProjectHandleNotInitialized`, `ErrNotInProjectPath`, `ErrProjectNotRegistered`, `ErrNotInProject`. Use `errors.Is` at command boundaries.
+
+`ErrProjectNotFound` is the package-wide umbrella for "no registry entry for this project"; `ErrProjectNotRegistered` wraps it and is the single sentinel every registry verb returns for a root-keyed lookup miss (`RemoveByRoot`, `Update`, `RegisterWorktree`, `UnregisterWorktree`, plus `worktreeService.findProjectByRoot`), always wrapped with the verb's own context. `errors.Is(err, ErrProjectNotFound)` therefore matches every not-registered condition in the package, and `errors.Is(err, ErrProjectNotRegistered)` narrows to the registry lookups. `ProjectManager.Get`/`ResolvePath` return the bare umbrella.
+
+Validation failures on registry writes are package-private static errors prefixed `project:` (empty root, display name, worktree branch, worktree path) — they carry no format verbs and are not part of the matchable surface.
 
 ## Project-Root Resolution (`resolve.go`)
 
@@ -159,6 +164,24 @@ type Registry interface {
     UnregisterWorktree(projectRoot, branch string) error
 }
 ```
+
+### Write Front Door
+
+Every write verb validates before it persists, so an unusable entry never reaches the file:
+
+| Verb | Guards | Normalization |
+|---|---|---|
+| `Register` | empty `rootDir`, empty `displayName`, duplicate root (`ErrProjectExists`) | root stored `filepath.Abs` |
+| `Update` | empty `Root`, unknown root (`ErrProjectNotRegistered`) | root stored `filepath.Abs`; each `Worktrees` value's `Branch` set from its map key |
+| `RegisterWorktree` | empty `projectRoot`/`branch`/`path`, unknown root | — |
+| `UnregisterWorktree` | empty `projectRoot`/`branch`, unknown root | — |
+| `RemoveByRoot` | unknown root | — |
+
+`Update`'s `Worktrees` field discriminates nil from empty: a **nil** map carries the recorded worktrees forward (the caller is updating other fields); a **non-nil empty** map wipes them. The branch normalization means `Worktrees["main"] = {Branch: "feature"}` cannot persist — the key is the worktree's identity and the value mirrors it. The caller's map is never mutated (normalization copies).
+
+### Migrations
+
+`RegistryMigrations()` (`migrations.go`) is the additive migration list wired into `NewRegistry` through `storage.WithMigrations`. It is currently empty; append a precondition-guarded, idempotent migration when the registry schema evolves, never edit a shipped one. `NewRegistryFromString` deliberately omits migrations — a seed is not migrated. A `TestRegistryMigrations` legacy-chain table is added the moment the first migration exists (one row per historical on-disk shape).
 
 The verbs are exported domain methods, so `Registry` is moq-mockable like every other store-backed facade (`//go:generate moq` → `mocks/registry_mock.go`). `registryImpl` embeds the store — the engine verbs stay reachable in-package as the escape hatch — but the impl type is unexported and only ever handed out as `Registry`, so the interface (not the struct) gates what escapes. Project mutations from the command layer still go through `ProjectManager`; the registry verbs are the manager's own surface.
 

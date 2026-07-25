@@ -37,7 +37,11 @@ func tlsSNIChainLayer(exactDomains map[string]bool) layer {
 		ctx.cfg.EnsureListener(egressListenerName, defaultBindAddress, ctx.ports.EgressPort)
 		match, needInspector, needOriginalDst := downstreamCryptoMatch(ctx.rule, exactDomains, true)
 		if needInspector {
-			if err := ctx.cfg.SetListenerField(egressListenerName, "listener_filters", tlsInspectorListenerFilters()); err != nil {
+			if err := ctx.cfg.SetListenerField(
+				egressListenerName,
+				"listener_filters",
+				tlsInspectorListenerFilters(),
+			); err != nil {
 				return err
 			}
 		}
@@ -71,7 +75,7 @@ func tlsInspectorListenerFilters() []any {
 	return []any{
 		map[string]any{
 			"name": "envoy.filters.listener.tls_inspector",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type": "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector",
 			},
 		},
@@ -83,7 +87,7 @@ func tlsInspectorListenerFilters() []any {
 func downstreamMITMSocket(domain string) map[string]any {
 	return map[string]any{
 		"name": "envoy.transport_sockets.tls",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
 			"common_tls_context": map[string]any{
 				"alpn_protocols": []string{"h2", "http/1.1"},
@@ -137,22 +141,27 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 //     original dst the chain simply never matches and the connection falls to the
 //     deny floor (fail-closed), never fail-open.
 //
-// Returns the match plus whether the listener needs tls_inspector and/or
-// use_original_dst set. The caller (transport block) owns setting those listener
-// fields — they are idempotent, so a listener mixing FQDN and IP chains gets both.
-func downstreamCryptoMatch(rule config.EgressRule, exactDomains map[string]bool, tcpChain bool) (match map[string]any, needInspector, needOriginalDst bool) {
+// Returns, in order: the filter_chain_match; whether the listener needs
+// tls_inspector; whether it needs use_original_dst. The caller (transport block)
+// owns setting those listener fields — they are idempotent, so a listener mixing
+// FQDN and IP chains gets both.
+func downstreamCryptoMatch(
+	rule config.EgressRule,
+	exactDomains map[string]bool,
+	tcpChain bool,
+) (map[string]any, bool, bool) {
 	if isIPOrCIDR(rule.Dst) {
 		return map[string]any{
 			"prefix_ranges":    []any{ipPrefixRange(rule.Dst)},
 			"destination_port": httpsPort(rule),
 		}, false, true
 	}
-	match = map[string]any{"server_names": serverNames(rule.Dst, exactDomains)}
+	match := map[string]any{"server_names": serverNames(rule.Dst, exactDomains)}
 	if tcpChain {
 		match["transport_protocol"] = "tls"
-		needInspector = true
+		return match, true, false
 	}
-	return match, needInspector, false
+	return match, false, false
 }
 
 // ipPrefixRange renders a core.v3.CidrRange for an IP-literal or CIDR dst: a bare

@@ -133,6 +133,12 @@ On save, an emptied scalar or list is staged as that explicit empty; an editor
 that produced nothing at all (a cleared map/struct blob → a nil value that
 `storage.Set` rejects) is routed to `store.Remove` instead — the one unset verb.
 
+A third state exists for completeness: a field whose value decodes into neither
+its declared kind nor `any` renders as `<unreadable>` with the read error
+appended to its description, and the row is forced `ReadOnly`. The read error is
+never folded onto "unset" — a blank row invites the operator to save over data
+the editor never showed them. Deleting the key (`d`) still works.
+
 ## Key Design Decisions
 
 1. `KindTriState` deprecated and mapped to `KindBool` — retained for backward compatibility

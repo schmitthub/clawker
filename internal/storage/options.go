@@ -7,9 +7,12 @@ type Option func(*Options)
 // store's fields via its Get/Set/Remove member functions. It returns true if it
 // changed anything (the store then re-saves the touched fields) and an error if
 // the transform could not be applied — a non-nil error aborts construction
-// rather than silently skipping the migration. Because it edits fields on the
-// store's own node tree, comments on untouched fields are carried along by the
-// tree — they survive the re-save without any extra work.
+// rather than silently skipping the migration. The engine also re-saves when
+// its own dirty tracking shows the layer was mutated, so a migration that
+// staged a change but reported false cannot leave the in-memory layer diverged
+// from its file. Because it edits fields on the store's own node tree, comments
+// on untouched fields are carried along by the tree — they survive the re-save
+// without any extra work.
 //
 // User-visible messages go through Store.Noticef (naming the owning file via
 // Store.MigratingLayerPath), never straight to stderr: notices are flushed
@@ -18,8 +21,21 @@ type Option func(*Options)
 // degrades (in-memory migration + retry next load) instead of failing
 // construction.
 //
-//	func dropLegacyKey(s *storage.Store[Settings]) (bool, error) {
-//	    return s.Remove("monitoring.legacy_port")
+// Keys are segment slices, never dotted strings — "monitoring", "legacy_port"
+// addresses the child of a mapping; "monitoring.legacy_port" would address one
+// literal key of that name. Absence is the precondition guard, folded via
+// ErrKeyNotFound so the migration is idempotent:
+//
+//	func dropLegacyPort(s *storage.Store[Settings]) (bool, error) {
+//	    err := s.Remove("monitoring", "legacy_port")
+//	    switch {
+//	    case err == nil:
+//	        return true, nil
+//	    case errors.Is(err, storage.ErrKeyNotFound):
+//	        return false, nil // already clean — no re-save
+//	    default:
+//	        return false, fmt.Errorf("removing monitoring.legacy_port: %w", err)
+//	    }
 //	}
 type Migration[T Schema] = func(*Store[T]) (bool, error)
 
@@ -175,7 +191,13 @@ func WithPaths(dirs ...string) Option {
 
 // WithMigrations registers precondition-based migration functions.
 // Each migration runs independently against every discovered file layer's own
-// node tree. Migrations that return true trigger an atomic re-save of that file.
+// node tree. A migration triggers an atomic re-save of that file when it
+// returns true, and also when the engine's dirty tracking shows it mutated the
+// layer regardless of what it reported.
+//
+// T is not tied to the store's schema type at compile time (the options are
+// type-erased), so passing another store's migrations is caught at
+// construction: New fails with ErrMigrationType rather than skipping them.
 func WithMigrations[T Schema](fns ...Migration[T]) Option {
 	return func(o *Options) {
 		for _, fn := range fns {

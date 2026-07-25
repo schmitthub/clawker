@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // newTestRegistry constructs a registry over the isolated data dir that the
@@ -808,45 +809,190 @@ func TestUpdate(t *testing.T) {
 			Root: "/nonexistent",
 		})
 		assert.ErrorIs(t, err, project.ErrProjectNotFound)
+		assert.ErrorIs(t, err, project.ErrProjectNotRegistered)
+	})
+
+	t.Run("rename carries worktrees forward across a registry reopen", func(t *testing.T) {
+		env := testenv.New(t)
+		reg := env.Registry(t)
+		root := t.TempDir()
+		worktreePath := filepath.Join(root, "wt-feature")
+
+		_, err := reg.Register("old-name", root)
+		require.NoError(t, err)
+		require.NoError(t, reg.RegisterWorktree(root, "feature", worktreePath))
+
+		// A nil worktree map is the carry-forward contract.
+		_, err = reg.Update(project.ProjectEntry{Name: "new-name", Root: root, Worktrees: nil})
+		require.NoError(t, err)
+
+		entry, ok, err := env.Registry(t).ProjectByRoot(root)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, "new-name", entry.Name)
+		require.Contains(t, entry.Worktrees, "feature")
+		assert.Equal(t, worktreePath, entry.Worktrees["feature"].Path)
+	})
+
+	t.Run("empty worktree map wipes recorded worktrees", func(t *testing.T) {
+		env := testenv.New(t)
+		reg := env.Registry(t)
+		root := t.TempDir()
+
+		_, err := reg.Register("app", root)
+		require.NoError(t, err)
+		require.NoError(t, reg.RegisterWorktree(root, "feature", filepath.Join(root, "wt-feature")))
+
+		_, err = reg.Update(project.ProjectEntry{
+			Name:      "app",
+			Root:      root,
+			Worktrees: map[string]project.WorktreeEntry{},
+		})
+		require.NoError(t, err)
+
+		entry, ok, err := env.Registry(t).ProjectByRoot(root)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Empty(t, entry.Worktrees)
+	})
+
+	t.Run("relative root is persisted absolute", func(t *testing.T) {
+		env := testenv.New(t)
+		reg := env.Registry(t)
+		root := filepath.Join(env.Dirs.Base, "repo")
+		require.NoError(t, os.MkdirAll(root, 0o755))
+
+		_, err := reg.Register("app", root)
+		require.NoError(t, err)
+
+		t.Chdir(env.Dirs.Base)
+		_, err = reg.Update(project.ProjectEntry{Name: "renamed", Root: "repo", Worktrees: nil})
+		require.NoError(t, err)
+
+		entries, err := env.Registry(t).Projects()
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		assert.Equal(t, "renamed", entries[0].Name)
+		assert.Equal(t, root, entries[0].Root)
+	})
+
+	t.Run("worktree branch is normalized to its map key", func(t *testing.T) {
+		env := testenv.New(t)
+		reg := env.Registry(t)
+		root := t.TempDir()
+
+		_, err := reg.Register("app", root)
+		require.NoError(t, err)
+
+		_, err = reg.Update(project.ProjectEntry{
+			Name: "app",
+			Root: root,
+			Worktrees: map[string]project.WorktreeEntry{
+				"main": {Path: filepath.Join(root, "wt-main"), Branch: "feature"},
+			},
+		})
+		require.NoError(t, err)
+
+		entry, ok, err := env.Registry(t).ProjectByRoot(root)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Contains(t, entry.Worktrees, "main")
+		assert.Equal(t, "main", entry.Worktrees["main"].Branch)
 	})
 }
 
-func TestResolvePath(t *testing.T) {
-	t.Run("resolves registered root", func(t *testing.T) {
-		mgr := projectmocks.NewTestProjectManager(t, nil)
-		ctx := context.Background()
-		root := t.TempDir()
+// TestRegistryWriteGuards asserts every registry write verb rejects the values
+// it cannot persist meaningfully, and that a rejected write leaves the
+// persisted registry untouched.
+func TestRegistryWriteGuards(t *testing.T) {
+	cases := []struct {
+		name   string
+		call   func(reg project.Registry, registeredRoot string) error
+		wantIs error
+	}{
+		{
+			name: "register rejects empty root",
+			call: func(reg project.Registry, _ string) error {
+				_, err := reg.Register("ghost", "")
+				return err
+			},
+			wantIs: nil,
+		},
+		{
+			name: "register rejects empty display name",
+			call: func(reg project.Registry, _ string) error {
+				_, err := reg.Register("", "/unregistered/root")
+				return err
+			},
+			wantIs: nil,
+		},
+		{
+			name: "register worktree rejects empty path",
+			call: func(reg project.Registry, registeredRoot string) error {
+				return reg.RegisterWorktree(registeredRoot, "feature", "")
+			},
+			wantIs: nil,
+		},
+		{
+			name: "register worktree rejects empty branch",
+			call: func(reg project.Registry, registeredRoot string) error {
+				return reg.RegisterWorktree(registeredRoot, "", "/wt/feature")
+			},
+			wantIs: nil,
+		},
+		{
+			name: "register worktree reports an unregistered root",
+			call: func(reg project.Registry, _ string) error {
+				return reg.RegisterWorktree("/unregistered/root", "feature", "/wt/feature")
+			},
+			wantIs: project.ErrProjectNotRegistered,
+		},
+		{
+			name: "unregister worktree reports an unregistered root",
+			call: func(reg project.Registry, _ string) error {
+				return reg.UnregisterWorktree("/unregistered/root", "feature")
+			},
+			wantIs: project.ErrProjectNotRegistered,
+		},
+		{
+			name: "remove reports an unregistered root",
+			call: func(reg project.Registry, _ string) error {
+				return reg.RemoveByRoot("/unregistered/root")
+			},
+			wantIs: project.ErrProjectNotRegistered,
+		},
+		{
+			name: "update rejects empty root",
+			call: func(reg project.Registry, _ string) error {
+				_, err := reg.Update(project.ProjectEntry{Name: "ghost", Root: "", Worktrees: nil})
+				return err
+			},
+			wantIs: nil,
+		},
+	}
 
-		_, err := mgr.Register(ctx, "my-app", root)
-		require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := testenv.New(t)
+			reg := env.Registry(t)
+			registeredRoot := t.TempDir()
+			_, err := reg.Register("app", registeredRoot)
+			require.NoError(t, err)
 
-		proj, err := mgr.ResolvePath(ctx, root)
-		require.NoError(t, err)
-		assert.Equal(t, "my-app", proj.Name())
-	})
+			err = tc.call(reg, registeredRoot)
+			require.Error(t, err)
+			if tc.wantIs != nil {
+				require.ErrorIs(t, err, tc.wantIs)
+				// Every not-registered condition also satisfies the umbrella.
+				require.ErrorIs(t, err, project.ErrProjectNotFound)
+			}
 
-	t.Run("error for unregistered path", func(t *testing.T) {
-		mgr := projectmocks.NewTestProjectManager(t, nil)
-		ctx := context.Background()
-
-		_, err := mgr.ResolvePath(ctx, "/some/random/path")
-		assert.ErrorIs(t, err, project.ErrProjectNotFound)
-	})
-}
-
-func TestRecord(t *testing.T) {
-	t.Run("returns record with empty worktrees", func(t *testing.T) {
-		mgr := projectmocks.NewTestProjectManager(t, nil)
-		ctx := context.Background()
-		root := t.TempDir()
-
-		proj, err := mgr.Register(ctx, "my-app", root)
-		require.NoError(t, err)
-
-		record, err := proj.Record()
-		require.NoError(t, err)
-		assert.Equal(t, "my-app", record.Name)
-		assert.Equal(t, root, record.Root)
-		assert.Empty(t, record.Worktrees)
-	})
+			entries, err := env.Registry(t).Projects()
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.Equal(t, "app", entries[0].Name)
+			assert.Equal(t, registeredRoot, entries[0].Root)
+			assert.Empty(t, entries[0].Worktrees)
+		})
+	}
 }

@@ -48,92 +48,59 @@ func Main() int {
 	// never surfaced.
 
 	// Single root context for the process. The SIGINT/SIGTERM signal context
-	// (below) and the two background-notification contexts all derive from it as
-	// siblings. The background contexts are cancelled explicitly right after the
-	// command returns (gh CLI pattern — see below the ExecuteC call), so they need
-	// not be children of the signal context to abort their I/O on Ctrl+C.
+	// (below) and the background-notification context all derive from it as
+	// siblings. The notification context is cancelled explicitly right after the
+	// command returns (gh CLI pattern — see below the ExecuteC call), so it need
+	// not be a child of the signal context to abort its I/O on Ctrl+C.
 	ctx := context.Background()
 
 	// notificationsSuppressed is the single gate for BOTH background notifications
-	// (update notifier + changelog teaser). When it is true we launch NEITHER
-	// goroutine, so a suppressed run does ZERO network I/O and no cursor persist —
-	// a conscious, accepted behavior change. The env/CI opt-out now lives here in
-	// the caller: internal/update and internal/changelog no longer enforce it.
+	// (update notifier + changelog teaser). When it is true the background
+	// goroutine is not launched at all, so a suppressed run does ZERO network I/O
+	// and no cursor persist. The env/CI opt-out lives here in the caller;
+	// internal/update and internal/changelog do not enforce it.
 	suppressed := notificationsSuppressed(f.IOStreams)
 
 	// Background update check + changelog teaser, both gated by `suppressed`.
 	// Pattern from gh CLI: goroutine + buffered channel + blocking read. Context
 	// cancellation aborts in-flight I/O when the command finishes first. The
-	// buffered(1) channels let each goroutine send and exit even if Main() returns
-	// early (e.g. root command creation fails) without reading from the channel.
-	updateCtx, updateCancel := context.WithCancel(ctx)
-	defer updateCancel()
-	changelogCtx, changelogCancel := context.WithCancel(ctx)
-	defer changelogCancel()
+	// buffered(1) channel lets the goroutine send and exit even if Main() returns
+	// early (e.g. root command creation fails) without reading from it.
+	//
+	// ONE goroutine runs BOTH checks, in sequence. They share the one
+	// f.CLIState() facade, and each check's persist is a Set+Set+Write cycle the
+	// store cannot make atomic across calls (see internal/storage/CLAUDE.md).
+	// Serializing them onto a single goroutine is what makes the CLI a single
+	// writer of the state file, so a Write can never flush another check's
+	// half-staged fields. The cost is latency: the changelog fetch starts only
+	// after the update fetch finishes. Both are background work whose result is
+	// drained after the command returns, and both are abandoned on cancel, so
+	// the serial path costs the user nothing.
+	notifyCtx, notifyCancel := context.WithCancel(ctx)
+	defer notifyCancel()
 
-	updateMessageChan := make(chan *update.ReleaseInfo, 1)
-	changelogChan := make(chan []changelog.Entry, 1)
+	notifyChan := make(chan notifications, 1)
 
 	if !suppressed {
 		go func() {
 			// Guarantee exactly one send on the buffered(1) channel on every path,
 			// including a panic: the deferred func always runs, runs once, and is
-			// the sole sender. A panic in this teaser goroutine must not crash the
-			// user's command — recover, log, and report no update.
-			var rel *update.ReleaseInfo
+			// the sole sender. Each check also carries its own recover (see
+			// runUpdateCheck / runChangelogCheck), so this one is the backstop for
+			// a panic outside them.
+			var n notifications
 			defer func() {
 				if r := recover(); r != nil {
 					if log, logErr := f.Logger(); logErr == nil {
 						// TODO: CLAWKER_DEBUG env → stderr ConsoleWriter sink so devs
 						// see logs live.
-						log.Warn().Interface("panic", r).Msg("update check goroutine panicked")
+						log.Warn().Interface("panic", r).Msg("notification goroutine panicked")
 					}
-					rel = nil
 				}
-				updateMessageChan <- rel
+				notifyChan <- n
 			}()
-			var err error
-			// CheckForUpdate validates buildVersion as semver (a non-release "DEV" build is not
-			// parseable semver and returns an error before any fetch), reads the freshness gate from cliState, and persists the
-			// result there itself (RecordUpdateCheck). It returns (nil, nil) when not
-			// newer or TTL-fresh; a non-nil rel only when a newer release exists. A
-			// non-nil err may accompany a nil rel — log it, report nothing.
-			rel, err = checkForUpdate(updateCtx, f, buildVersion, consts.GitHubRepo)
-			if err != nil {
-				if log, logErr := f.Logger(); logErr == nil {
-					log.Debug().Err(err).Msg("update check failed")
-				}
-			}
-		}()
-
-		go func() {
-			// Guarantee exactly one send on the buffered(1) channel on every path,
-			// including a panic: the deferred func always runs, runs once, and is the
-			// sole sender. A panic in this teaser goroutine must not crash the user's
-			// command — recover, log, and show nothing.
-			var g []changelog.Entry
-			defer func() {
-				if r := recover(); r != nil {
-					if log, logErr := f.Logger(); logErr == nil {
-						// TODO: CLAWKER_DEBUG env → stderr ConsoleWriter sink so devs
-						// see logs live.
-						log.Warn().Interface("panic", r).Msg("changelog goroutine panicked")
-					}
-					g = nil
-				}
-				changelogChan <- g
-			}()
-
-			entries, err := checkForChanges(changelogCtx, f, buildVersion)
-			// CheckForChanges returns gained entries even when only the cursor
-			// persist fails, so capture them before bailing on the error.
-			g = entries
-			if err != nil {
-				if log, logErr := f.Logger(); logErr == nil {
-					log.Debug().Err(err).Msg("checking changelog for teaser")
-				}
-				return
-			}
+			n.release = runUpdateCheck(notifyCtx, f, buildVersion)
+			n.gained = runChangelogCheck(notifyCtx, f, buildVersion)
 		}()
 	}
 
@@ -172,33 +139,30 @@ func Main() int {
 	cmd, err := rootCmd.ExecuteC()
 
 	// gh CLI pattern: cancel the background checks now, before draining their
-	// channels. Cancelling aborts any in-flight HTTP so the drain returns promptly
+	// channel. Cancelling aborts any in-flight HTTP so the drain returns promptly
 	// instead of blocking up to the 30s HTTP client timeout — most importantly
 	// after a Ctrl+C, where the command was already interrupted and the user wants
-	// out. A check that had not finished sends its zero value and is simply retried
-	// next run; its update cache / changelog cursor only advances on a completed
-	// check. The deferred cancels above remain for the early-return paths that
-	// never reach here (e.g. root command creation failing).
-	updateCancel()
-	changelogCancel()
+	// out. A check that had not finished contributes its zero value and is simply
+	// retried next run; its update cache / changelog cursor only advances on a
+	// completed check. The deferred cancel above remains for the early-return
+	// paths that never reach here (e.g. root command creation failing).
+	notifyCancel()
 	// Cancel the logger context now that the command has returned, so the
 	// deferred Close above unwinds its OTEL shutdown immediately instead of
 	// blocking exit on a final export.
 	loggerCancel()
 
-	// drainNotifications blocks on both channels (only when goroutines were
+	// drainNotifications blocks on the channel (only when the goroutine was
 	// launched) and renders both notifications. printUpdateNotification and
 	// printChangelogTeaser each self-guard on nil/empty, so calling them
 	// unconditionally on a suppressed run is a safe no-op.
 	drainNotifications := func() {
-		var updateInfo *update.ReleaseInfo
-		var gained []changelog.Entry
+		var n notifications
 		if !suppressed {
-			updateInfo = <-updateMessageChan
-			gained = <-changelogChan
+			n = <-notifyChan
 		}
-		printUpdateNotification(f.IOStreams, updateInfo)
-		printChangelogTeaser(f.IOStreams, gained)
+		printUpdateNotification(f.IOStreams, n.release)
+		printChangelogTeaser(f.IOStreams, n.gained)
 	}
 
 	if err != nil {
@@ -222,6 +186,69 @@ func Main() int {
 	drainNotifications()
 
 	return 0
+}
+
+// notifications carries the results of the two background checks from the one
+// goroutine that runs them to the drain in Main. A zero value renders nothing:
+// both renderers self-guard, so an abandoned (cancelled) run needs no sentinel.
+type notifications struct {
+	release *update.ReleaseInfo
+	gained  []changelog.Entry
+}
+
+// runUpdateCheck runs the update check and reports the newer release, or nil
+// when there is nothing to report. It carries its own recover so a panic here
+// cannot skip the changelog check that follows it on the same goroutine, and
+// logs its own failures — a background check never surfaces an error to the
+// user.
+//
+// CheckForUpdate validates currentVersion as semver (a non-release "DEV" build
+// is not parseable semver and returns an error before any fetch), reads the
+// freshness gate from the state facade, and persists the result there itself
+// (RecordUpdateCheck). It returns (nil, nil) when not newer or TTL-fresh; a
+// non-nil release only when a newer release exists. A non-nil error may
+// accompany a nil release — log it, report nothing.
+func runUpdateCheck(ctx context.Context, f *cmdutil.Factory, currentVersion string) *update.ReleaseInfo {
+	// A recovered panic returns the zero value: the results are unnamed, so
+	// nothing was assigned to them when the stack unwound.
+	defer func() {
+		if r := recover(); r != nil {
+			if log, logErr := f.Logger(); logErr == nil {
+				log.Warn().Interface("panic", r).Msg("update check panicked")
+			}
+		}
+	}()
+	rel, err := checkForUpdate(ctx, f, currentVersion, consts.GitHubRepo)
+	if err != nil {
+		if log, logErr := f.Logger(); logErr == nil {
+			log.Debug().Err(err).Msg("update check failed")
+		}
+	}
+	return rel
+}
+
+// runChangelogCheck runs the changelog check and reports the entries gained
+// since the cursor. Like runUpdateCheck it recovers and logs on its own, so
+// neither check can take down the other or the user's command.
+func runChangelogCheck(ctx context.Context, f *cmdutil.Factory, currentVersion string) []changelog.Entry {
+	// A recovered panic returns the zero value: the results are unnamed, so
+	// nothing was assigned to them when the stack unwound.
+	defer func() {
+		if r := recover(); r != nil {
+			if log, logErr := f.Logger(); logErr == nil {
+				log.Warn().Interface("panic", r).Msg("changelog check panicked")
+			}
+		}
+	}()
+	// CheckForChanges returns gained entries even when only the cursor persist
+	// fails, so the entries are kept regardless of the error.
+	gained, err := checkForChanges(ctx, f, currentVersion)
+	if err != nil {
+		if log, logErr := f.Logger(); logErr == nil {
+			log.Debug().Err(err).Msg("checking changelog for teaser")
+		}
+	}
+	return gained
 }
 
 // checkForChanges resolves the HttpClient and CLIState nouns from the Factory and
@@ -258,8 +285,9 @@ func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, rep
 
 // notificationsSuppressed is the single gate for ALL clawker background
 // notifications (the update notifier and the show-once changelog teaser). It is
-// computed once in Main, up front: when true, neither background goroutine is
-// launched, so the run does zero network I/O and no state writes.
+// computed once in Main, up front: when true, the background goroutine that
+// runs both checks is not launched, so the run does zero network I/O and no
+// state writes.
 func notificationsSuppressed(ios *iostreams.IOStreams) bool {
 	// "CI" is the canonical cross-tool CI-detection env var (kept literal).
 	return !ios.IsStderrTTY() || os.Getenv(consts.EnvNoNotifier) != "" || os.Getenv("CI") != ""

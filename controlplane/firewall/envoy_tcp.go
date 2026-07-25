@@ -92,7 +92,7 @@ func tcpProxyTerminalLayer(l7Proto string) layer {
 		host := normalizeDomain(ctx.rule.Dst)
 		ctx.filters = append(ctx.filters, map[string]any{
 			"name": "envoy.filters.network.tcp_proxy",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": ctx.upstreamCluster,
 				"cluster":     ctx.upstreamCluster,
@@ -118,7 +118,7 @@ func tcpDenyTerminalLayer(l7Proto string) layer {
 		ctx.clusters = append(ctx.clusters, buildDenyCluster())
 		ctx.filters = append(ctx.filters, map[string]any{
 			"name": "envoy.filters.network.tcp_proxy",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": denyClusterName,
 				"cluster":     denyClusterName,

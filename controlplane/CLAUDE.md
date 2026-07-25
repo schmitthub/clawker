@@ -134,7 +134,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 11. `startFeeder` — the `dockerevents` feeder, sole producer of `DockerEvent` onto its typed topic.
 12. `startWorkers` — the long-lived observability workers: the `pubsub.NewStatsHeartbeat`, the `netlogger.Service` (subscribes `enrolledTopic` to hydrate its label cache; degrades to `netloggerSvc=nil` with `event=netlogger_unavailable` on any chain failure), and the `dns_cache` GC goroutine (`event=dns_gc_*`, escalates `dns_gc_degraded` after `dnsGCDegradedThreshold` consecutive reclaim-failures). All run on `watcherCtx`.
 13. Agent watcher + `startAgentDialer` — `agent.NewAgentWatcher` (drain-to-zero trigger; its goroutine recovers panics into a terminal shutdown error, `event=agent_watcher_panic`) plus the executor, CP→clawkerd dialer, and agent-axis subscriptions (§3.4 degrade contract).
-14. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once), then tears the container down at exit code 0 (the `on-failure` restart policy does NOT retrigger).
+14. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once). EVERY arm drains — the subprocess-crash and serve-failure arms (`event=cp_subprocess_crashed` / `event=cp_serve_failed`) run the callback before returning their error, since a bare return would exit PID 1 with eBPF pinned and unsupervised. Drain-to-zero and signal exit 0 (the `on-failure` restart policy does NOT retrigger); a crash or serve failure exits 1 after draining.
 
 ## Aggregate Health (`internal/controlplane/cmd.go`)
 
@@ -145,8 +145,15 @@ The `ControlPlane` orchestrator type (`NewControlPlane`, `SetReady`, `HealthzHan
   - Hydra public (TLS), Hydra admin (TLS)
   - Kratos public (TLS), Kratos admin (TLS)
   - Oathkeeper proxy (TLS), Oathkeeper API (TLS)
-  - gRPC admin (raw TCP)
+  - gRPC admin (raw TCP **plus** a serving check — `GRPCStack.AdminServing`, installed via `SetAdminServingCheck`)
 - Returns 200 only when ALL probes succeed
+
+The admin listener socket is bound at gRPC stack construction and only starts
+serving after the startup gates and `SetReady`, so a bare TCP dial completes
+out of the accept backlog whether or not anything is in `Serve`. The
+grpc-admin probe therefore gates its dial on the stack's serving signal: the
+dial proves reachability, the signal proves liveness. The check fails closed
+until it is installed (right after `buildGRPCStack`, before the ready gate).
 
 ## Container Config (`controlplane/manager/cp_container.go`)
 

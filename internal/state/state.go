@@ -4,9 +4,16 @@
 //
 // It is backed by storage.Store[State] — the same engine config and the
 // project registry use — so every field mutation is a dirty-path merge with
-// atomic writes, never a whole-struct marshal+rename. That field merge is what
-// lets the background 24h update goroutine and the foreground changelog cursor
-// write the same file without clobbering each other.
+// atomic writes, never a whole-struct marshal+rename.
+//
+// Two things keep the update check and the changelog cursor out of each
+// other's way. They own disjoint keys — checked_at/latest_version versus
+// last_seen_changelog — so a field-merged write of one never carries a value
+// of the other. And the CLI runs both checks sequentially on one background
+// goroutine (internal/clawker.Main), so there is a single writer at a time and
+// a Write can never flush the other writer's half-staged fields. Neither
+// property may be dropped without the other: the store cannot make a
+// Set-then-Write cycle atomic across calls (see internal/storage/CLAUDE.md).
 //
 // The file lives in the state dir under consts.CLIStateFile, the same key the
 // update checker uses. An existing install's state file is read in place — its
@@ -45,7 +52,8 @@ type StateStore interface {
 	// version already shown to the user. Empty means "not yet seeded".
 	LastSeenChangelog() string
 
-	// RecordUpdateCheck persists checked_at + latest_version as one unit.
+	// RecordUpdateCheck persists the update-check pair: checked_at +
+	// latest_version, staged then written together.
 	RecordUpdateCheck(checkedAt time.Time, latestVersion string) error
 	// SetLastSeenChangelog persists the changelog cursor.
 	SetLastSeenChangelog(version string) error
@@ -128,10 +136,15 @@ func (s *stateStoreImpl) LastSeenChangelog() string {
 	return v
 }
 
-// RecordUpdateCheck persists the update-check fields (checked_at,
-// latest_version) as one unit. It owns only those two fields — the changelog
-// cursor belongs to SetLastSeenChangelog — so the two writers touch disjoint
-// paths and cannot clobber each other's values.
+// RecordUpdateCheck persists the update-check fields: it stages checked_at and
+// latest_version, then writes once. The two Sets and the Write are separate
+// operations, each taking the store's lock on its own — the pair is not atomic
+// against a concurrent Write, which is why the CLI runs its background checks
+// sequentially on one goroutine (see the package doc).
+//
+// It owns only those two fields — the changelog cursor belongs to
+// SetLastSeenChangelog — so the two writers touch disjoint paths and cannot
+// clobber each other's values.
 func (s *stateStoreImpl) RecordUpdateCheck(checkedAt time.Time, latestVersion string) error {
 	if err := s.Set([]string{"checked_at"}, checkedAt); err != nil {
 		return fmt.Errorf("state: recording update check: setting checked_at: %w", err)

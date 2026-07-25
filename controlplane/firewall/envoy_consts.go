@@ -52,6 +52,13 @@ const (
 	// block uses to disable DFP on non-wildcard vhosts.
 	dynamicForwardProxyFilterName = "envoy.filters.http.dynamic_forward_proxy"
 
+	// httpConnectionManagerFilterName is the fixed Envoy NETWORK filter name for
+	// the HTTP connection manager — the one L7 app block. Every app-block-bearing
+	// filter chain names it, and envoy_types.go matches on it to find the HCM
+	// inside an already-committed chain, so the spelling is load-bearing in both
+	// directions.
+	httpConnectionManagerFilterName = "envoy.filters.network.http_connection_manager"
+
 	// httpDFPClusterName / httpDFPCacheName name the single shared plaintext-HTTP
 	// dynamic-forward-proxy cluster and its DNS cache (the filter and the cluster
 	// must reference the same cache by name). One DFP cluster serves every
@@ -106,4 +113,9 @@ const (
 	// keyMatch is the Envoy route-config key whose value carries the route's
 	// match criteria (path + method matchers).
 	keyMatch = "match"
+
+	// keyTypedConfig is the Envoy extension-config key pairing a `name` with its
+	// concrete typed message. It appears on every filter, listener filter,
+	// transport socket, and per-filter override the generator emits.
+	keyTypedConfig = "typed_config"
 )

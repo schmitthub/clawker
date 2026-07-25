@@ -36,8 +36,8 @@ func schemaHeader(filename string) string {
 //
 // Reads are value-specific — a consumer asks for the one value (or the one
 // small group struct) it needs. There is deliberately NO whole-schema getter:
-// a Project()/Settings() snapshot hands every consumer every field and hides
-// which keys they actually depend on. Group accessors (BuildConfig,
+// it would hand every consumer every field and hide which keys they actually
+// depend on. Group accessors (BuildConfig,
 // AgentConfig, ControlPlaneSettings, …) return the nested block that genuinely
 // travels together, never the schema root.
 //
@@ -262,6 +262,10 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
 		storage.WithHeader(schemaHeader(consts.ProjectSchemaFile)),
+		// Concurrent processes write this file (project init, alias set/delete,
+		// bundle install, the store editor), so every write must take the flock
+		// around its read-modify-write cycle.
+		storage.WithLock(),
 	)
 	projectStore, err := storage.New[Project](projectOpts...)
 	if err != nil {
@@ -273,6 +277,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 
 	settingsOpts := []storage.Option{
 		storage.WithFilenames(consts.SettingsFile),
+		storage.WithDefaultFilename(consts.SettingsFile),
 	}
 	if options.settingsYAML != "" {
 		settingsOpts = append(settingsOpts, storage.WithDefaults(options.settingsYAML))
@@ -283,6 +288,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
 		storage.WithHeader(schemaHeader(consts.SettingsSchemaFile)),
+		// Same cross-process exposure as the project store: the CLI, the store
+		// editor, and the daemons all load and write settings.yaml.
+		storage.WithLock(),
 	)
 	settingsStore, err := storage.New[Settings](settingsOpts...)
 	if err != nil {

@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -564,14 +565,16 @@ func matchSignature(match any) (string, error) {
 // duplicate-match error). This is the generic structural reconciliation behind
 // the plaintext-HTTP shared chain — no protocol-routing logic.
 func mergeHCMVHosts(existing, incoming map[string]any) error {
-	ev, err := hcmVHosts(existing)
+	erc, err := hcmRouteConfig(existing)
 	if err != nil {
 		return err
 	}
-	iv, err := hcmVHosts(incoming)
+	irc, err := hcmRouteConfig(incoming)
 	if err != nil {
 		return err
 	}
+	ev := hcmVirtualHosts(erc)
+	iv := hcmVirtualHosts(irc)
 	seen := make(map[string]bool, len(ev)+len(iv))
 	merged := make([]any, 0, len(ev)+len(iv))
 	for _, v := range append(append([]any{}, ev...), iv...) {
@@ -582,28 +585,41 @@ func mergeHCMVHosts(existing, incoming map[string]any) error {
 		seen[name] = true
 		merged = append(merged, v)
 	}
-	setHCMVHosts(existing, merged)
+	erc["virtual_hosts"] = merged
 	return nil
 }
 
-// hcmVHosts returns a single-HCM chain's virtual_hosts, or an error if the chain
-// is not a single http_connection_manager filter.
-func hcmVHosts(chain map[string]any) ([]any, error) {
+// hcmRouteConfig returns a single-HCM chain's route_config mapping, or an
+// error if the chain is not a single http_connection_manager filter carrying
+// one. Both the vhost read and the merged write go through this one checked
+// extraction, so a merge can never validate one shape and mutate another.
+func hcmRouteConfig(chain map[string]any) (map[string]any, error) {
 	filters, _ := chain["filters"].([]any)
 	if len(filters) != 1 {
 		return nil, fmt.Errorf("chain has %d network filters, expected a single HCM", len(filters))
 	}
 	f, _ := filters[0].(map[string]any)
-	if f == nil || f["name"] != "envoy.filters.network.http_connection_manager" {
+	if f == nil || f["name"] != httpConnectionManagerFilterName {
 		return nil, fmt.Errorf("chain terminal is not an HCM")
 	}
-	tc, _ := f["typed_config"].(map[string]any)
-	rc, _ := tc["route_config"].(map[string]any)
-	vh, _ := rc["virtual_hosts"].([]any)
-	return vh, nil
+	tc, ok := f[keyTypedConfig].(map[string]any)
+	if !ok {
+		return nil, errors.New("HCM filter carries no typed_config mapping")
+	}
+	rc, ok := tc["route_config"].(map[string]any)
+	if !ok {
+		return nil, errors.New("HCM typed_config carries no route_config mapping")
+	}
+	return rc, nil
 }
 
-func setHCMVHosts(chain map[string]any, vhosts []any) {
-	rc := chain["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)["route_config"].(map[string]any)
-	rc["virtual_hosts"] = vhosts
+// hcmVirtualHosts reads a route_config's virtual_hosts list; an absent or
+// non-list value merges as empty rather than failing — a fresh HCM may not
+// carry one yet.
+func hcmVirtualHosts(rc map[string]any) []any {
+	vh, ok := rc["virtual_hosts"].([]any)
+	if !ok {
+		return nil
+	}
+	return vh
 }

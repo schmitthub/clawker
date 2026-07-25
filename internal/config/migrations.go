@@ -13,7 +13,7 @@ import (
 
 // Keys inside a migration are segment slices — a legacy key is addressed
 // exactly, never reparsed from a dotted string. displayKey renders one for the
-// user-facing notices, which have always spelled keys dotted.
+// user-facing notices, which spell keys dotted.
 func displayKey(key []string) string { return strings.Join(key, ".") }
 
 // ProjectMigrations returns migrations for the project config store.
@@ -61,8 +61,12 @@ var legacyMonitoringKeys = []string{
 // print once per upgrade because the migration framework auto-saves
 // the file when this returns true.
 func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error) {
-	// Existence via the parent's child-key names — non-error, and correct
-	// even when the key holds a scalar or bare null.
+	// Existence via the root's child-key names — non-error, and correct even
+	// when the key holds a scalar or bare null. During a migration pass the
+	// verbs read the layer's own parsed node rather than the merged tree, so a
+	// bare `monitoring:` is still listed here (the merge would skip it as
+	// unset); either way it has no children to strip and the loop below is a
+	// no-op.
 	if !slices.Contains(s.Keys(), keyMonitoring) {
 		return false, nil
 	}

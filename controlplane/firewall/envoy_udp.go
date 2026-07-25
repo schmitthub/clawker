@@ -90,14 +90,14 @@ func udpProxyTerminalLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
 	udpProxy := map[string]any{
 		"name": "envoy.filters.udp_listener.udp_proxy",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type":       "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig",
 			"stat_prefix": ctx.upstreamCluster,
 			"matcher": map[string]any{
 				"on_no_match": map[string]any{
 					"action": map[string]any{
 						"name": "route",
-						"typed_config": map[string]any{
+						keyTypedConfig: map[string]any{
 							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
 							"cluster": ctx.upstreamCluster,
 						},
@@ -121,14 +121,14 @@ func udpDenyTerminalLayer(ctx *genCtx) error {
 	ctx.clusters = append(ctx.clusters, buildDenyCluster())
 	udpProxy := map[string]any{
 		"name": "envoy.filters.udp_listener.udp_proxy",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type":       "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig",
 			"stat_prefix": denyClusterName,
 			"matcher": map[string]any{
 				"on_no_match": map[string]any{
 					"action": map[string]any{
 						"name": "route",
-						"typed_config": map[string]any{
+						keyTypedConfig: map[string]any{
 							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
 							"cluster": denyClusterName,
 						},
@@ -157,7 +157,7 @@ func udpDefaultPort(r config.EgressRule) int {
 func quicDownstreamSocket(domain string) map[string]any {
 	return map[string]any{
 		"name": "envoy.transport_sockets.quic",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport",
 			"downstream_tls_context": map[string]any{
 				"common_tls_context": map[string]any{

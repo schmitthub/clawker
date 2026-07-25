@@ -15,7 +15,7 @@ import (
 // trees, and writes graft values into a single layer's own node tree — so a
 // write to file B preserves B's comments and never leaks comments from any
 // other layer. map[string]any survives only as a transient decode view for the
-// public API (LayerInfo.Data); the typed snapshot is decoded straight from the
+// public API (LayerInfo.Data); every typed decode reads straight from the
 // merged node, never through a map.
 
 // nullTag is the YAML tag of a null scalar — the parse-tree form of a bare

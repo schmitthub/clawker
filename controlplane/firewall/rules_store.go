@@ -18,9 +18,11 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// rulesField is the dotted store path of EgressRulesFile.Rules — the key every
-// Get/Set on the rules store addresses. Kept in one place so a typo can't
-// silently address an empty set (the path is stringly-typed in the store API).
+// rulesField is the single key segment addressing EgressRulesFile.Rules — the
+// key every Get/Set on the rules store passes. Kept in one place because the
+// key is stringly-typed in the store API and the two verbs fail differently: a
+// typo'd Set is rejected loudly (storage.ErrUnknownKey), but a typo'd Get folds
+// absent-to-empty and would silently report no rules at all.
 const rulesField = "rules"
 
 // EgressRulesFile is the top-level document type for storage.Store[T].
@@ -45,9 +47,11 @@ func (f EgressRulesFile) Fields() storage.FieldSet {
 //
 // Each write owns one mutation semantic (merge-add, key removal, path removal,
 // canonical rewrite). They are NOT field-disjoint the way the store-backed
-// rules file describes — the schema carries a single `rules` field, so every
-// write targets it — which is exactly why the implementation serializes them
-// itself instead of relying on field ownership (see egressRulesStoreImpl.mu).
+// package layout assumes — the schema carries a single `rules` field, so every
+// write rewrites the whole list from its own earlier read. Serialization is the
+// CP ActionQueue's job, not the store's: every mutation executes inside a
+// non-coalescing ActionRuleMutate closure on the queue's single worker, so no
+// writer ever computes from a read another writer is about to outdate.
 //
 //go:generate moq -rm -pkg mocks -out mocks/egress_rules_store_mock.go . EgressRulesStore
 type EgressRulesStore interface {
@@ -329,20 +333,21 @@ func mergeIntoRuleSet(existing, incoming []config.EgressRule) ([]config.EgressRu
 }
 
 // needsCanonicalRewrite reports whether the canonical form of the stored rules
-// differs from what is on disk — a dropped duplicate, or a defaulted
-// proto/action/port filled in by NormalizeRule. Only then is the rewrite worth
-// taking.
+// differs from what is on disk — a dropped duplicate, a defaulted
+// proto/action/port, a method set that uppercase/dedup/sort moved, or a carved
+// opaque port span. The comparison is the WHOLE canonical shape, not a field
+// subset: any field the canonical pass touches has to count, or a file
+// differing only in an uncompared field reports "already canonical" forever and
+// never converges. It runs once per bringup/reconcile, so a deep compare costs
+// nothing next to the rewrite it gates.
 func needsCanonicalRewrite(stored, canonical []config.EgressRule) bool {
-	if len(canonical) != len(stored) {
-		return true
+	if len(stored) == 0 && len(canonical) == 0 {
+		// A fresh or empty file is already canonical. Only the nil-vs-empty
+		// slice distinction separates the two here, and rewriting on that would
+		// create and re-save the file on every single bringup.
+		return false
 	}
-	for i, r := range stored {
-		c := canonical[i]
-		if r.Proto != c.Proto || r.Action != c.Action || r.Port != c.Port {
-			return true
-		}
-	}
-	return false
+	return !reflect.DeepEqual(stored, canonical)
 }
 
 // ValidateDst checks that a destination is a valid lowercase domain name,

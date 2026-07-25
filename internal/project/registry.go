@@ -9,6 +9,27 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// ErrProjectNotRegistered is the single sentinel every registry verb returns
+// when no entry identifies the given root, wrapped with the verb's own
+// context. It wraps ErrProjectNotFound, the package-wide umbrella for "no
+// registry entry", so callers may branch on either: [errors.Is] against
+// ErrProjectNotFound matches every not-registered condition in the package,
+// while [errors.Is] against ErrProjectNotRegistered narrows to the root-keyed
+// lookups.
+var ErrProjectNotRegistered = fmt.Errorf("project root is not registered: %w", ErrProjectNotFound)
+
+// Registry-level validation sentinels. Every write verb rejects the empty
+// value for a field it persists, so no unusable entry reaches the file: an
+// empty root would be anchored at the process working directory by
+// [filepath.Abs], and an empty branch or path would produce a worktree entry
+// that can never be looked up again.
+var (
+	errEmptyProjectRoot    = errors.New("project: project root cannot be empty")
+	errEmptyDisplayName    = errors.New("project: project display name cannot be empty")
+	errEmptyWorktreeBranch = errors.New("project: worktree branch cannot be empty")
+	errEmptyWorktreePath   = errors.New("project: worktree path cannot be empty")
+)
+
 // Registry is the project registry domain facade — the single owner of registry
 // persistence (consts.RegistryFile in the data dir) and project-root
 // resolution. Construct one per process via NewRegistry and inject it; the CLI
@@ -42,15 +63,28 @@ type Registry interface {
 	// ProjectByRoot returns the entry whose root identifies the same directory
 	// as root, and whether one was found.
 	ProjectByRoot(root string) (ProjectEntry, bool, error)
-	// Register adds a project by root path and persists the registry.
+	// Register adds a project by root path and persists the registry. The root
+	// is stored absolute. It rejects an empty displayName or rootDir and
+	// returns ErrProjectExists when the root is already registered.
 	Register(displayName, rootDir string) (ProjectEntry, error)
-	// Update replaces an existing entry by root identity and persists.
+	// Update replaces an existing entry by root identity and persists. The
+	// root is stored absolute, and each worktree's Branch is normalized to its
+	// map key, so the key and the entry can never disagree on disk.
+	//
+	// Worktrees discriminates nil from empty: a nil map carries the recorded
+	// worktrees forward (the caller is updating other fields), while a non-nil
+	// empty map wipes them.
 	Update(entry ProjectEntry) (ProjectEntry, error)
-	// RemoveByRoot drops the entry identifying root and persists.
+	// RemoveByRoot drops the entry identifying root and persists. It returns
+	// ErrProjectNotRegistered when no entry identifies root.
 	RemoveByRoot(root string) error
 	// RegisterWorktree records a worktree on its project entry and persists.
+	// It rejects empty projectRoot, branch, or path, and returns
+	// ErrProjectNotRegistered when no entry identifies projectRoot.
 	RegisterWorktree(projectRoot, branch, path string) error
 	// UnregisterWorktree drops a worktree from its project entry and persists.
+	// It rejects empty projectRoot or branch, and returns
+	// ErrProjectNotRegistered when no entry identifies projectRoot.
 	UnregisterWorktree(projectRoot, branch string) error
 }
 
@@ -75,6 +109,7 @@ func NewRegistry() (Registry, error) {
 		storage.WithFilenames(consts.RegistryFile),
 		storage.WithDefaultFilename(consts.RegistryFile),
 		storage.WithDataDir(),
+		storage.WithMigrations(RegistryMigrations()...),
 		storage.WithLock(),
 	)
 	if err != nil {
@@ -147,7 +182,7 @@ func (r *registryImpl) RemoveByRoot(root string) error {
 	}
 	index := indexOfRoot(entries, root)
 	if index < 0 {
-		return ErrProjectNotFound
+		return fmt.Errorf("project: removing registry entry %q: %w", root, ErrProjectNotRegistered)
 	}
 
 	if err = r.Set([]string{keyProjects}, append(entries[:index], entries[index+1:]...)); err != nil {
@@ -161,10 +196,15 @@ func (r *registryImpl) RemoveByRoot(root string) error {
 
 func (r *registryImpl) RegisterWorktree(projectRoot, branch, path string) error {
 	if projectRoot == "" {
-		return fmt.Errorf("project root cannot be empty")
+		return errEmptyProjectRoot
 	}
 	if branch == "" {
-		return fmt.Errorf("worktree branch cannot be empty")
+		return errEmptyWorktreeBranch
+	}
+	// Path is the worktree lookup source of truth; an entry without one is
+	// unresolvable once persisted.
+	if path == "" {
+		return errEmptyWorktreePath
 	}
 
 	entries, err := r.Projects()
@@ -173,7 +213,7 @@ func (r *registryImpl) RegisterWorktree(projectRoot, branch, path string) error 
 	}
 	index := indexOfRoot(entries, projectRoot)
 	if index < 0 {
-		return fmt.Errorf("project %q not found in registry", projectRoot)
+		return fmt.Errorf("project: registering worktree %q under %q: %w", branch, projectRoot, ErrProjectNotRegistered)
 	}
 
 	if entries[index].Worktrees == nil {
@@ -192,10 +232,10 @@ func (r *registryImpl) RegisterWorktree(projectRoot, branch, path string) error 
 
 func (r *registryImpl) UnregisterWorktree(projectRoot, branch string) error {
 	if projectRoot == "" {
-		return fmt.Errorf("project root cannot be empty")
+		return errEmptyProjectRoot
 	}
 	if branch == "" {
-		return fmt.Errorf("worktree branch cannot be empty")
+		return errEmptyWorktreeBranch
 	}
 
 	entries, err := r.Projects()
@@ -204,7 +244,12 @@ func (r *registryImpl) UnregisterWorktree(projectRoot, branch string) error {
 	}
 	index := indexOfRoot(entries, projectRoot)
 	if index < 0 {
-		return fmt.Errorf("project %q not found in registry", projectRoot)
+		return fmt.Errorf(
+			"project: unregistering worktree %q under %q: %w",
+			branch,
+			projectRoot,
+			ErrProjectNotRegistered,
+		)
 	}
 	if len(entries[index].Worktrees) == 0 {
 		return nil
@@ -223,6 +268,15 @@ func (r *registryImpl) UnregisterWorktree(projectRoot, branch string) error {
 
 // Register adds a project by root path.
 func (r *registryImpl) Register(displayName, rootDir string) (ProjectEntry, error) {
+	// filepath.Abs("") resolves to the process working directory, which would
+	// register that directory under whatever name the caller passed.
+	if rootDir == "" {
+		return ProjectEntry{}, errEmptyProjectRoot
+	}
+	if displayName == "" {
+		return ProjectEntry{}, errEmptyDisplayName
+	}
+
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		return ProjectEntry{}, fmt.Errorf("project: resolving absolute path for %q: %w", rootDir, err)
@@ -249,8 +303,15 @@ func (r *registryImpl) Register(displayName, rootDir string) (ProjectEntry, erro
 
 func (r *registryImpl) Update(entry ProjectEntry) (ProjectEntry, error) {
 	if entry.Root == "" {
-		return ProjectEntry{}, fmt.Errorf("project root cannot be empty")
+		return ProjectEntry{}, errEmptyProjectRoot
 	}
+	// Roots are persisted absolute — a relative root written here would make
+	// the stored entry depend on the writer's working directory.
+	absRoot, err := filepath.Abs(entry.Root)
+	if err != nil {
+		return ProjectEntry{}, fmt.Errorf("project: resolving absolute path for %q: %w", entry.Root, err)
+	}
+	entry.Root = absRoot
 
 	entries, err := r.Projects()
 	if err != nil {
@@ -258,13 +319,25 @@ func (r *registryImpl) Update(entry ProjectEntry) (ProjectEntry, error) {
 	}
 	index := indexOfRoot(entries, entry.Root)
 	if index < 0 {
-		return ProjectEntry{}, ErrProjectNotFound
+		return ProjectEntry{}, fmt.Errorf("project: updating project %q: %w", entry.Root, ErrProjectNotRegistered)
 	}
 
 	// A caller that supplies no worktree map is updating the other fields;
-	// carry the recorded worktrees forward rather than dropping them.
+	// carry the recorded worktrees forward rather than dropping them. A
+	// non-nil empty map is an explicit wipe.
 	if entry.Worktrees == nil {
 		entry.Worktrees = entries[index].Worktrees
+	}
+	// The map key is the worktree's identity; Branch mirrors it, so a caller
+	// map keyed on one branch with another recorded on the value cannot
+	// persist. The copy keeps the caller's map untouched.
+	if len(entry.Worktrees) > 0 {
+		normalized := make(map[string]WorktreeEntry, len(entry.Worktrees))
+		for branch, worktree := range entry.Worktrees {
+			worktree.Branch = branch
+			normalized[branch] = worktree
+		}
+		entry.Worktrees = normalized
 	}
 
 	entries[index] = entry

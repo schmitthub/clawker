@@ -48,7 +48,7 @@ Pass `nil` for `gitFactory` if worktree operations are not needed.
 | `ProjectConfig` | `.clawker.yaml` in caller-provided project dir |
 | `ProjectConfigLocal` | `.clawker.local.yaml` in caller-provided project dir |
 | `Settings` | `settings.yaml` in config dir |
-| `EgressRules` | `egress-rules.yaml` in state dir |
+| `EgressRules` | `egress-rules.yaml` in the firewall subdir of the data dir (`consts.FirewallDataSubdir()`, where the rules store discovers it) |
 | `ProjectRegistry` | `registry.yaml` in data dir |
 
 ## Accessors

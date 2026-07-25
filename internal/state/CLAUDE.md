@@ -6,9 +6,19 @@ version shown to the user).
 
 Backed by `storage.Store[State]` — the same engine `internal/config` and
 `internal/project` use. Every field mutation is a dirty-path merge with atomic
-writes, never a whole-struct marshal+rename. That field merge is the whole
-point: the background 24h update goroutine and the foreground changelog cursor
-write the same file without clobbering each other.
+writes, never a whole-struct marshal+rename.
+
+Two properties keep the update check and the changelog cursor out of each
+other's way, and neither may be dropped without the other:
+
+1. **Disjoint keys** — the update checker owns `checked_at`/`latest_version`,
+   the changelog teaser owns `last_seen_changelog`, so a field-merged write of
+   one never carries a value of the other.
+2. **A single writer at a time** — the CLI runs both checks sequentially on one
+   background goroutine (`internal/clawker.Main`), so no `Set`→`Write` cycle
+   interleaves with another's. The store cannot make a compound
+   Set-then-Write atomic across calls (see `internal/storage/CLAUDE.md`);
+   serialization is architectural, never a lock in this package.
 
 This package is the **reference implementation** of
 `.claude/rules/store-backed-package.md` — read that rule before changing its
@@ -37,8 +47,7 @@ RFC3339Nano scalar instead of recursing into the unexported fields.
 The update-check fields (`checked_at` / `latest_version`) and the changelog
 cursor (`last_seen_changelog`) are **disjoint by ownership**: the update checker
 writes the former, the changelog teaser writes the latter. They never read each
-other's fields, which is what eliminates the clobber race without any snapshot
-plumbing.
+other's fields, which is what removes the need for any snapshot plumbing.
 
 ## File
 
@@ -85,10 +94,12 @@ leaves.
 
 `RecordUpdateCheck` writes only the update-check fields (`checked_at`,
 `latest_version`); `SetLastSeenChangelog` writes only the cursor. Each `Set`s
-its own keys then `Write`s. Because the two writers own **disjoint** keys and
-`Write` routes each dirty field into the destination file's own re-read node
-tree, neither can clobber the other's value — covered by
-`TestState_WritersDoNotClobber`.
+its own keys then `Write`s — two `Set`s and a `Write` are three separately
+locked operations, not one atomic unit. Because the two writers own **disjoint**
+keys and `Write` routes each dirty field into the destination file's own re-read
+node tree, neither can clobber the other's value — covered by
+`TestState_WritersDoNotClobber`. The staging window itself is closed by running
+the two checks sequentially on one goroutine (see the top of this file).
 
 The impl embeds `*storage.Store[State]`, so the engine verbs (`Keys`,
 `storage.Get`, `Set`, `Remove`, `Write`) stay reachable as the escape hatch;

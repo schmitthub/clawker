@@ -287,8 +287,8 @@ const (
 	// RouteIdentitiesFile persists the firewall's sticky dst→identity
 	// allocation table. CP-owned state, never user-edited.
 	RouteIdentitiesFile = "route-identities.yaml"
-	EnvoyConfigFile = "envoy.yaml"
-	Corefile        = "Corefile"
+	EnvoyConfigFile     = "envoy.yaml"
+	Corefile            = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
@@ -564,7 +564,7 @@ const (
 
 // Control plane port defaults. These are flag defaults for the CP binary
 // and test constants. Production callers should read from
-// cfg.Settings().ControlPlane.<field> which gets defaults from struct tags
+// cfg.ControlPlaneSettings().<field>, which gets defaults from struct tags
 // via the storage layer.
 const (
 	DefaultCPAdminPort       = 7443

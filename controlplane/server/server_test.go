@@ -5,17 +5,24 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // TestAdminServer_NewAdminServer_NilAgentsErrors pins that the
@@ -125,4 +132,139 @@ func TestAdminServer_ListAgents_SnapshotError_ReturnsCodesInternal(t *testing.T)
 	st, ok := status.FromError(err)
 	require.True(t, ok, "must be a gRPC status error")
 	assert.Equal(t, codes.Internal, st.Code())
+}
+
+// newAdminOnlyStack hand-builds a GRPCStack with only the admin half wired,
+// over an ephemeral loopback listener. It mirrors the shape NewGRPCStack
+// produces for the serve-lifecycle assertions below without needing cert
+// material, a firewall handler, or fixed ports.
+func newAdminOnlyStack(t *testing.T) *GRPCStack {
+	t.Helper()
+	lis, err := net.Listen("tcp", consts.Localhost+":0")
+	require.NoError(t, err)
+	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- loopback test server for serve-lifecycle assertions; deliberately credential-free
+	t.Cleanup(srv.Stop)
+	tcpAddr, ok := lis.Addr().(*net.TCPAddr)
+	require.True(t, ok, "loopback listener address is TCP")
+	return &GRPCStack{
+		adminServer:    srv,
+		adminLis:       lis,
+		agentServer:    nil,
+		agentLis:       nil,
+		adminPort:      tcpAddr.Port,
+		agentPort:      0,
+		serveAdminOnce: sync.Once{},
+		serveAgentOnce: sync.Once{},
+		adminServing:   atomic.Bool{},
+		log:            logger.Nop(),
+	}
+}
+
+// TestGRPCStack_ServeAgent_NoAgentListener pins the degrade path: when the
+// IdentityInterceptor was unavailable the agent server and listener are nil,
+// and ServeAgent must be an inert no-op. A regression that dereferenced the
+// nil server would panic on a goroutine, killing PID 1 and stranding pinned
+// eBPF; one that deposited a spurious error on the serve channel would trip
+// the orchestrator's serve select and tear a healthy CP down.
+func TestGRPCStack_ServeAgent_NoAgentListener(t *testing.T) {
+	stack := &GRPCStack{
+		adminServer:    nil,
+		adminLis:       nil,
+		agentServer:    nil,
+		agentLis:       nil,
+		adminPort:      0,
+		agentPort:      0,
+		serveAdminOnce: sync.Once{},
+		serveAgentOnce: sync.Once{},
+		adminServing:   atomic.Bool{},
+		log:            logger.Nop(),
+	}
+	failed := make(chan error, 1)
+
+	stack.ServeAgent(failed)
+
+	select {
+	case err := <-failed:
+		t.Fatalf("ServeAgent deposited a failure with no agent listener: %v", err)
+	default:
+	}
+}
+
+// TestGRPCStack_AdminListenerBoundBeforeServe pins the accept-backlog
+// semantics the /healthz grpc-admin probe has to work around: the admin
+// socket is bound at construction, so a TCP dial succeeds while nothing is
+// serving. AdminServing is the signal that distinguishes the two — if a
+// change ever made the bare dial sufficient, this test's dial would fail and
+// say so.
+func TestGRPCStack_AdminListenerBoundBeforeServe(t *testing.T) {
+	stack := newAdminOnlyStack(t)
+
+	assert.False(t, stack.AdminServing(), "nothing has called ServeAdmin yet")
+
+	conn, err := net.DialTimeout("tcp", stack.adminLis.Addr().String(), 2*time.Second)
+	require.NoError(t, err, "bound listener must accept a connection before Serve")
+	require.NoError(t, conn.Close())
+}
+
+// rpcReachesServer reports whether a gRPC request reaches the server on addr
+// — the discriminator a bare TCP dial cannot provide, since the bound
+// listener accepts either way. An unregistered method answering
+// codes.Unimplemented proves the accept loop and HTTP/2 stack are live.
+func rpcReachesServer(t *testing.T, addr string) bool {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			t.Logf("close probe client: %v", cerr)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = conn.Invoke(
+		ctx,
+		"/clawker.probe.v1.Probe/Ping",
+		&adminv1.GetSystemTimeRequest{},
+		&adminv1.GetSystemTimeResult{UnixNanos: 0},
+	)
+	return status.Code(err) == codes.Unimplemented
+}
+
+// TestGRPCStack_ServeAdmin_SingleShot pins the [sync.Once] guard: the first
+// call starts serving, later calls start nothing. grpc.Server.Serve on an
+// already-serving listener is a race the orchestrator must not be able to
+// trigger through wiring order, and a second goroutine would also report a
+// second terminal failure on the serve channel — tearing the CP down twice
+// over one event.
+func TestGRPCStack_ServeAdmin_SingleShot(t *testing.T) {
+	stack := newAdminOnlyStack(t)
+	failed := make(chan error, 2)
+
+	stack.ServeAdmin(failed)
+	require.True(t, stack.AdminServing(), "serving flag is set before the goroutine is scheduled")
+
+	// Repeat while the first goroutine is live — the regression shape.
+	stack.ServeAdmin(failed)
+	require.True(t, stack.AdminServing())
+
+	require.Eventually(t, func() bool { return rpcReachesServer(t, stack.adminLis.Addr().String()) },
+		5*time.Second, 20*time.Millisecond, "admin surface must answer RPCs once serving")
+
+	// Serve was entered, so Stop unwinds it with a nil error: a single serve
+	// goroutine reports nothing and clears the flag. Any extra goroutine
+	// would have been started before Serve was live and would deposit
+	// ErrServerStopped here.
+	stack.adminServer.Stop()
+	require.Eventually(t, func() bool { return !stack.AdminServing() },
+		5*time.Second, 10*time.Millisecond, "serving flag must clear when Serve returns")
+
+	stack.ServeAdmin(failed)
+	assert.False(t, stack.AdminServing(), "a repeat ServeAdmin must not start a second serve goroutine")
+
+	select {
+	case err := <-failed:
+		t.Fatalf("unexpected serve failure: %v", err)
+	default:
+	}
 }

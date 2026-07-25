@@ -40,6 +40,12 @@ const (
 	LabelLocal   = "Local"   // domain-applied: discovered local override file
 )
 
+// unreadableValue is the browse-list marker for a field whose stored value
+// could not be decoded in any shape. It is deliberately not blank: blank is
+// what an unset field renders, and conflating the two would let an operator
+// save over data the editor never showed them.
+const unreadableValue = "<unreadable>"
+
 // BuildLayerTargets builds save destinations from the store's own write
 // targets (storage.Store.WriteTargets), so the editor only ever offers
 // locations the store can rediscover on reload — a store without walk-up
@@ -296,9 +302,22 @@ func schemaFields[T storage.Schema](store *storage.Store[T]) []Field {
 	all := zero.Fields().All()
 	fields := make([]Field, 0, len(all))
 	for i, sf := range all {
-		value, editValue, set := fieldValue(store, sf.Kind(), fieldKey(sf.Path()))
+		read := fieldValue(store, sf.Kind(), fieldKey(sf.Path()))
+		value, editValue := read.value, read.editValue
+		desc := sf.Description()
 		def := sf.Default()
-		if set && value == "" {
+		readOnly := false
+		switch {
+		case read.err != nil:
+			// The field holds something the store cannot decode in any shape.
+			// Render it as unreadable — visibly distinct from the blank an unset
+			// field shows — and lock the row: an operator must not overwrite a
+			// value they were never shown. Clearing the key with "d" still works.
+			value, editValue = unreadableValue, ""
+			desc = fmt.Sprintf("%s (%s: %v)", desc, unreadableValue, read.err)
+			def = ""
+			readOnly = true
+		case read.set && value == "":
 			// Explicitly set to empty (`key: ""`, `key: []`) is a real value that
 			// masks lower layers — the default is NOT in effect, so the row must
 			// not render "<default> (default)". An unset key keeps it.
@@ -307,29 +326,27 @@ func schemaFields[T storage.Schema](store *storage.Store[T]) []Field {
 		fields = append(fields, Field{
 			Path:        sf.Path(),
 			Label:       sf.Label(),
-			Description: sf.Description(),
+			Description: desc,
 			Kind:        sf.Kind(),
 			Value:       value,
 			EditValue:   editValue,
 			Default:     def,
 			Required:    sf.Required(),
 			Order:       i,
+			ReadOnly:    readOnly,
 			// Presentation-only concerns the schema does not describe; domain
 			// adapters supply them through ApplyOverrides.
 			Options:   nil,
 			Validator: nil,
-			ReadOnly:  false,
 			Editor:    nil,
 		})
 	}
 	return fields
 }
 
-// fieldValue reads one field from the store and renders it for display,
-// returning (browse value, editor value, set). The FieldKind picks the Go shape
-// the merged YAML is decoded into; set reports whether the key carries a value
-// at all (false = unset, so the schema default shows through).
-func fieldValue[T storage.Schema](store *storage.Store[T], kind FieldKind, key []string) (string, string, bool) {
+// fieldValue reads one field from the store and renders it for display. The
+// FieldKind picks the Go shape the merged YAML is decoded into.
+func fieldValue[T storage.Schema](store *storage.Store[T], kind FieldKind, key []string) fieldRead {
 	switch kind {
 	case KindText, KindSelect:
 		return readField(store, key, func(v string) (string, string) { return v, "" })
@@ -360,20 +377,30 @@ func fieldValue[T storage.Schema](store *storage.Store[T], kind FieldKind, key [
 	}
 }
 
+// fieldRead is one field's read result: how it renders in the browse list, what
+// pre-populates its editor, whether the key carries a value at all (false =
+// unset, so the schema default shows through), and the read error when the
+// field could not be decoded in any shape.
+type fieldRead struct {
+	value     string
+	editValue string
+	set       bool
+	err       error
+}
+
 // readField decodes the field at key into V and renders it with format,
-// falling back to rawFieldValue when the decode does not produce V. It returns
-// the same (browse value, editor value, set) tuple as fieldValue.
+// falling back to rawFieldValue when the decode does not produce V.
 func readField[V any, T storage.Schema](
 	store *storage.Store[T],
 	key []string,
 	format func(V) (string, string),
-) (string, string, bool) {
+) fieldRead {
 	v, err := storage.Get[V](store, key...)
 	if err != nil {
 		return rawFieldValue(store, key, err)
 	}
 	value, editValue := format(v)
-	return value, editValue, true
+	return fieldRead{value: value, editValue: editValue, set: true, err: nil}
 }
 
 // formatTime renders an RFC3339Nano scalar; the zero time is the schema's
@@ -403,16 +430,21 @@ func summarizeValue(v any) string {
 // contradicts its declared kind — structurally impossible after the
 // construction-time strict decode, but display it untyped rather than lying
 // about it being unset.
-func rawFieldValue[T storage.Schema](store *storage.Store[T], key []string, err error) (string, string, bool) {
+//
+// When even the untyped read fails the field is unreadable: it holds something,
+// but nothing this process can render. That error is returned, never folded —
+// rendering an unreadable field as unset would invite the operator to save over
+// data they never saw.
+func rawFieldValue[T storage.Schema](store *storage.Store[T], key []string, err error) fieldRead {
 	if errors.Is(err, storage.ErrKeyNotFound) {
-		return "", "", false
+		return fieldRead{}
 	}
 	v, gerr := storage.Get[any](store, key...)
 	if gerr != nil {
-		return "", "", false
+		return fieldRead{value: "", editValue: "", set: false, err: gerr}
 	}
 	y := marshalYAMLValue(reflect.ValueOf(v))
-	return y, y, true
+	return fieldRead{value: y, editValue: y, set: true, err: nil}
 }
 
 // countSummary renders the compact browse summary for container fields

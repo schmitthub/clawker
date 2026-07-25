@@ -28,18 +28,18 @@ const MinIdentity ebpf.RouteIdentity = 256
 // the schema (the storage field set has no unsigned kind) but always hold
 // uint32 values; the constructor range-checks on load.
 type IdentityEntry struct {
-	Dst string `yaml:"dst"`
-	ID  int64  `yaml:"id"`
+	Dst string `yaml:"dst" label:"Destination"    desc:"Normalized rule destination holding the identity"`
+	ID  int64  `yaml:"id"  label:"Route Identity" desc:"Allocated route identity, at or above the reserved band"`
 }
 
 // IdentityTableFile is the on-disk schema for the sticky identity table.
 type IdentityTableFile struct {
 	// Entries holds the live allocations, sorted by dst for stable diffs.
-	Entries []IdentityEntry `yaml:"entries"`
+	Entries []IdentityEntry `yaml:"entries" label:"Entries" desc:"Live destination-to-identity allocations"`
 	// Next is the round-robin allocation cursor. Persisting it keeps
 	// freed identities out of circulation until the space wraps, so a
 	// stale pinned dns_cache entry cannot alias a newly added dst.
-	Next int64 `yaml:"next"`
+	Next int64 `yaml:"next" label:"Next Identity" desc:"Round-robin allocation cursor keeping released identities out of circulation"`
 }
 
 // Fields implements [storage.Schema] for IdentityTableFile.
@@ -151,6 +151,13 @@ func (s *routeIdentityStoreImpl) Cursor() (int64, error) {
 
 // SetTable implements RouteIdentityStore.
 func (s *routeIdentityStoreImpl) SetTable(entries []IdentityEntry, cursor int64) error {
+	// The load path refuses an out-of-range or ambiguous table as a startup
+	// gate, so persisting one here would defer a write fault into a CP boot
+	// failure — where the operator has no context for it and every enrolled
+	// agent is already fail-closed. Reject at the write front door instead.
+	if _, _, err := indexIdentityEntries(entries); err != nil {
+		return fmt.Errorf("firewall: updating identity entries: %w", err)
+	}
 	if err := s.Set([]string{identityEntriesField}, entries); err != nil {
 		return fmt.Errorf("firewall: updating identity entries: %w", err)
 	}
@@ -222,8 +229,6 @@ func NewIdentityAllocator(store RouteIdentityStore) (*IdentityAllocator, error) 
 	}
 	var a IdentityAllocator
 	a.store = store
-	a.byDst = make(map[string]ebpf.RouteIdentity)
-	a.byID = make(map[ebpf.RouteIdentity]string)
 	a.next = MinIdentity
 
 	// An unset table is the fresh-file shape, not a failure: it yields no
@@ -236,11 +241,11 @@ func NewIdentityAllocator(store RouteIdentityStore) (*IdentityAllocator, error) 
 	if err != nil {
 		return nil, fmt.Errorf("identity allocator: %w", err)
 	}
-	for _, e := range entries {
-		if adoptErr := a.adoptEntry(e); adoptErr != nil {
-			return nil, adoptErr
-		}
+	byDst, byID, err := indexIdentityEntries(entries)
+	if err != nil {
+		return nil, err
 	}
+	a.byDst, a.byID = byDst, byID
 	switch {
 	case next >= int64(MinIdentity) && next <= math.MaxUint32:
 		a.next = ebpf.RouteIdentity(next)
@@ -257,21 +262,38 @@ func NewIdentityAllocator(store RouteIdentityStore) (*IdentityAllocator, error) 
 	return &a, nil
 }
 
-// adoptEntry validates one persisted entry and installs it in both indexes.
-func (a *IdentityAllocator) adoptEntry(e IdentityEntry) error {
-	if e.ID < int64(MinIdentity) || e.ID > math.MaxUint32 {
-		return fmt.Errorf("identity table corrupt: %q has out-of-range identity %d", e.Dst, e.ID)
+// indexIdentityEntries validates a whole table and returns the two indexes the
+// allocator runs on. It rejects what the allocator cannot adopt: an identity
+// outside the allocatable band, two dsts sharing one identity, or one dst
+// listed twice.
+//
+// Both the load path (NewIdentityAllocator) and the write path
+// (RouteIdentityStore.SetTable) run it, so the two can never disagree about
+// what a legal table is — a shape the writer accepts but the loader refuses is
+// a CP that starts fine today and refuses to boot tomorrow, with every enrolled
+// agent already fail-closed and no supervisor to explain why. The load path
+// installs the returned indexes rather than rebuilding them, so what is
+// validated is exactly what is adopted.
+func indexIdentityEntries(
+	entries []IdentityEntry,
+) (map[string]ebpf.RouteIdentity, map[ebpf.RouteIdentity]string, error) {
+	byDst := make(map[string]ebpf.RouteIdentity, len(entries))
+	byID := make(map[ebpf.RouteIdentity]string, len(entries))
+	for _, e := range entries {
+		if e.ID < int64(MinIdentity) || e.ID > math.MaxUint32 {
+			return nil, nil, fmt.Errorf("identity table corrupt: %q has out-of-range identity %d", e.Dst, e.ID)
+		}
+		id := ebpf.RouteIdentity(e.ID)
+		if prev, dup := byID[id]; dup {
+			return nil, nil, fmt.Errorf("identity table corrupt: identity %d held by both %q and %q", id, prev, e.Dst)
+		}
+		if _, dup := byDst[e.Dst]; dup {
+			return nil, nil, fmt.Errorf("identity table corrupt: %q listed twice", e.Dst)
+		}
+		byDst[e.Dst] = id
+		byID[id] = e.Dst
 	}
-	id := ebpf.RouteIdentity(e.ID)
-	if prev, dup := a.byID[id]; dup {
-		return fmt.Errorf("identity table corrupt: identity %d held by both %q and %q", id, prev, e.Dst)
-	}
-	if _, dup := a.byDst[e.Dst]; dup {
-		return fmt.Errorf("identity table corrupt: %q listed twice", e.Dst)
-	}
-	a.byDst[e.Dst] = id
-	a.byID[id] = e.Dst
-	return nil
+	return byDst, byID, nil
 }
 
 // SyncDsts reconciles the table against the full desired dst set (rule dsts

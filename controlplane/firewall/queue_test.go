@@ -143,6 +143,19 @@ func TestActionQueue_CoalescingMatrix(t *testing.T) {
 			[]ActionKind{ActionReconcile, ActionTeardown, ActionReconcile},
 			[]ActionKind{ActionReconcile, ActionTeardown, ActionReconcile},
 		},
+		// RuleMutate carries a distinct rule payload per submission, so
+		// collapsing two of them would silently drop one user's mutation —
+		// a removed deny rule the user believes still stands.
+		{
+			"M_M",
+			[]ActionKind{ActionRuleMutate, ActionRuleMutate},
+			[]ActionKind{ActionRuleMutate, ActionRuleMutate},
+		},
+		{
+			"R_M_R",
+			[]ActionKind{ActionReconcile, ActionRuleMutate, ActionReconcile},
+			[]ActionKind{ActionReconcile, ActionRuleMutate, ActionReconcile},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

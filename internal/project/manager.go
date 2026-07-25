@@ -15,6 +15,9 @@ import (
 )
 
 var (
+	// ErrProjectNotFound is the package-wide umbrella for "no registry entry
+	// for this project". ErrProjectNotRegistered wraps it, so a caller
+	// branching on ErrProjectNotFound catches every not-registered condition.
 	ErrProjectNotFound             = errors.New("project not found")
 	ErrProjectExists               = errors.New("project already exists")
 	ErrWorktreeNotFound            = errors.New("worktree not found")
@@ -37,7 +40,10 @@ type ProjectState struct {
 	Root      string
 	Worktrees []WorktreeState
 	Status    ProjectStatus
-	StatusErr error // non-nil when Status is ProjectInaccessible
+	// StatusErr is non-nil when Status is ProjectInaccessible, and also when an
+	// otherwise-OK project's worktree enrichment failed — in that case Status
+	// stays ProjectOK and Worktrees is degraded rather than authoritative.
+	StatusErr error
 }
 
 // ProjectManager provides the only external project-domain API:
@@ -222,11 +228,20 @@ func (s *projectManager) ListProjects(ctx context.Context) ([]ProjectState, erro
 			state.StatusErr = statErr
 		}
 
-		// Enrich worktree state if project root is accessible.
+		// Enrich worktree state if project root is accessible. The root's own
+		// status stands — the project is registered and present — so an
+		// enrichment failure surfaces on StatusErr instead of a silently empty
+		// worktree list.
 		if state.Status == ProjectOK {
 			proj, getErr := s.Get(ctx, e.Root)
-			if getErr == nil {
-				state.Worktrees, _ = proj.ListWorktrees(ctx)
+			if getErr != nil {
+				state.StatusErr = fmt.Errorf("loading project %q: %w", e.Root, getErr)
+			} else {
+				worktrees, listErr := proj.ListWorktrees(ctx)
+				if listErr != nil {
+					state.StatusErr = fmt.Errorf("listing worktrees for %q: %w", e.Root, listErr)
+				}
+				state.Worktrees = worktrees
 			}
 		}
 

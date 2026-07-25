@@ -176,14 +176,17 @@ const (
 
 // configFileInfo maps a ConfigFile to its filename and directory resolution.
 type configFileInfo struct {
-	filename func() string       // canonical filename
-	dir      func(e *Env) string // target directory (nil = use caller-provided dir)
-	dotfile  bool                // prepend "." to filename
+	filename func() string                // canonical filename
+	dir      func(e *Env) (string, error) // target directory (nil = use caller-provided dir)
+	dotfile  bool                         // prepend "." to filename
 }
 
 // Every entry states all three attributes: a nil dir means "the caller supplies
 // the directory" and dotfile records the leading-dot placement, so the table
-// reads as a complete description of each file's canonical location.
+// reads as a complete description of each file's canonical location. A dir
+// resolved through a consts accessor rather than an Env field is one the
+// production store discovers through that same accessor — seeding anywhere else
+// writes a file the store under test never reads.
 var configFiles = map[ConfigFile]configFileInfo{
 	ProjectConfig: {
 		filename: func() string { return consts.ProjectConfigFile },
@@ -197,17 +200,21 @@ var configFiles = map[ConfigFile]configFileInfo{
 	},
 	Settings: {
 		filename: func() string { return consts.SettingsFile },
-		dir:      func(e *Env) string { return e.Dirs.Config },
+		dir:      func(e *Env) (string, error) { return e.Dirs.Config, nil },
 		dotfile:  false,
 	},
 	EgressRules: {
 		filename: func() string { return consts.EgressRulesFile },
-		dir:      func(e *Env) string { return e.Dirs.State },
-		dotfile:  false,
+		// The rules store discovers this file under the firewall subdir of the
+		// data dir (cfg.FirewallDataSubdir()), not the state dir. Resolved
+		// through the same accessor, which honors the CLAWKER_DATA_DIR this env
+		// sets and creates the subdir.
+		dir:     func(_ *Env) (string, error) { return consts.FirewallDataSubdir() },
+		dotfile: false,
 	},
 	ProjectRegistry: {
 		filename: func() string { return consts.RegistryFile },
-		dir:      func(e *Env) string { return e.Dirs.Data },
+		dir:      func(e *Env) (string, error) { return e.Dirs.Data, nil },
 		dotfile:  false,
 	},
 }
@@ -230,7 +237,11 @@ func (e *Env) WriteYAML(t *testing.T, file ConfigFile, dir string, content strin
 
 	targetDir := dir
 	if info.dir != nil {
-		targetDir = info.dir(e)
+		resolved, err := info.dir(e)
+		if err != nil {
+			t.Fatalf("testenv: resolving target dir for %s: %v", info.filename(), err)
+		}
+		targetDir = resolved
 	}
 	if targetDir == "" {
 		t.Fatalf("testenv: WriteYAML(%d) requires a dir argument for project config files", file)
