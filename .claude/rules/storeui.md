@@ -67,7 +67,6 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 | `store.WriteFieldTo(path, key...)` | Persist ONE dirty field to the chosen layer file (per-field save primitive) |
 | `store.Layers()` | Discovered layer files (for the per-layer breakdown display) |
 | `store.WriteTargets()` | Candidate save locations derived from the store's options (for `LayerTargets`) |
-| `store.Options()` | Copy of the resolved construction options (introspection) |
-| `store.Provenance(key...)` | Which layer won a specific field (for the breakdown display) |
+| `store.ProvenanceMap()` | Display-form field keys → source file paths (drives the per-field source column) |
 
 Everything else — full type→kind→editor table, SetFieldValue semantics, TUI component APIs, test recipes, gotchas — is in `.claude/docs/STOREUI-REFERENCE.md`.

@@ -29,6 +29,8 @@ Commands load config via `config.NewConfig()`. `serve` collects changed flags in
 
 `status` and `stop` read PID file path from `cfg.HostProxyPIDFilePath()` directly.
 
+`serve` builds its own logger over `cfg.LogsSubdir()` writing `consts.HostProxyLogFile` — daemon output stays out of the shared clawker log — and falls back to `logger.Nop()` when that logger cannot be created.
+
 ## Integration
 
 Registered hidden in `internal/cmd/root/root.go`. Runtime lifecycle managed by `internal/hostproxy.Manager.EnsureRunning()`.

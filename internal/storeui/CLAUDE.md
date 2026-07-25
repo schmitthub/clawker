@@ -87,7 +87,7 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 | `config/storeui/settings` | `config.Settings` | host_proxy read-only |
 | `config/storeui/project` | `config.Project` | workspace mode as Select; maps use KV editor |
 
-Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and `Edit(ios, store) (storeui.Result, error)`. Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
+Each adapter exports `Overrides()`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and an `Edit(...) (storeui.Result, error)` entry point. The project adapter additionally takes `config.Config` on both (`Overrides(cfg)`, `Edit(ios, cfg, store)`) because its overrides are config-derived; settings takes neither (`Overrides()`, `Edit(ios, store)`). Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
 
 ## Data Flow
 
@@ -95,7 +95,7 @@ Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]s
 Edit[T](ios, store, opts...) = BuildBrowser[T](store, opts...) + tui.RunProgram:
   1. Validate layer targets (absolute paths)
   2. schemaFields(store): T.Fields() metadata + one storage.Get[V] per declared leaf
-     (there is NO whole-struct read — Store.Read() does not exist)
+     (there is NO whole-struct read — Get requires at least one key segment)
   3. Filter skip/only paths, ApplyOverrides (domain overrides — TUI-specific only)
   4. fieldsToBrowserFields() → []tui.BrowserField (kind → widget mapping)
   5. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)

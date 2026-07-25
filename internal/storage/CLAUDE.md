@@ -246,8 +246,8 @@ migration's self-reported `changed`.
 
 ### Oracle + Golden Merge Tests
 
-- **Oracle (randomized)**: `TestStore_Oracle_*` computes expected merge from spec rules, fresh seed each run.
-- **Golden (fixed seed)**: hardcoded struct literal blessed from a known-correct run. `make storage-golden` + `STORAGE_GOLDEN_BLESS=1`.
+- **Oracle (randomized)**: `TestStore_WalkUpLayerMerge` computes expected merge from spec rules, fresh seed each run.
+- **Golden (fixed seed)**: `TestStore_WalkUpGolden` — hardcoded struct literal blessed from a known-correct run. `make storage-golden` + `STORAGE_GOLDEN_BLESS=1`.
 
 ## Gotchas
 

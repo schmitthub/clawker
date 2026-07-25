@@ -74,12 +74,14 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/docker` | `mocks/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
-| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
+| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)`, `RegistryMock` (moq) |
+| `internal/state` | `mocks/` | `NewBlankState()`, `NewFromString(yaml)`, `StateStoreMock` (moq) |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
 | `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq) |
 | `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq) |
-| `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq) |
-| `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
+| `controlplane/manager` | `mocks/` | `ManagerMock` (moq) |
+| `controlplane/firewall` | `mocks/` | `EgressRulesStoreMock`, `RouteIdentityStoreMock` (moq) |
+| `controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
@@ -150,7 +152,7 @@ Resolves all four XDG dirs and checks for path collisions (e.g., config and data
 
 ## Config Package Testing Guide (`internal/config`)
 
-The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString(projectYAML, settingsYAML)` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. Mutation methods (`SetProject`, `SetSettings`, `WriteProject`, `WriteSettings`) are NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString(projectYAML, settingsYAML)` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. Mutation goes through `ProjectStore()`/`SettingsStore()`, and those hand back the seam's real stores — which have no path options, so a `Write()` through them fails by design. Tests that mutate config use `NewIsolatedTestConfig` instead.
 
 Import as:
 ```go
@@ -161,14 +163,14 @@ configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
 - `configmocks.NewFromString(projectYAML, settingsYAML)` — test double with specific YAML values, NO defaults. Pass empty strings for schemas you don't care about. Returns `*ConfigMock`.
-- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need `SetProject`/`SetSettings`/`WriteProject`/`WriteSettings` or env var overrides. Returns `Config`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need a working `ProjectStore()`/`SettingsStore()` `Set`+`Write` round-trip or env var overrides. Returns `Config`.
 
 ### Typical test mapping
 
 - Defaults and typed getter behavior → `NewBlankConfig()`
 - Specific YAML values for schema/parsing tests → `NewFromString(projectYAML, settingsYAML)`
-- Typed mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
-- YAML strict validation errors → `config.ValidateProjectYAML(data)` directly
+- Mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
+- Schema and node-validation errors → assert the error from `config.NewFromString(projectYAML, settingsYAML)`; validation runs inside the constructor
 
 ### Focused commands
 
@@ -551,7 +553,9 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
 | `UseRealAdminClient` | `bool` | `false` (wires no-op `AdminServiceClientMock`) |
-| `ControlPlane` | `func(cfg, log) cpboot.Manager` | nil (wires no-op `ManagerMock`) |
+| `ControlPlane` | `func(cfg, log) manager.Manager` | nil (wires no-op `ManagerMock`) |
+
+`CLIState` and `HttpClient` have no `FactoryOptions` field — the harness mirrors the real factory: `state.New()` resolves under the test's isolated XDG dirs, and `HttpClient` is the stdlib client.
 
 ### Per-package testFactory Pattern
 
@@ -718,7 +722,7 @@ gitMgr := gittest.NewInMemoryGitManager()
 |------|-----|
 | Default config for command tests | `configmocks.NewBlankConfig()` |
 | Config with specific YAML values | `configmocks.NewFromString(projectYAML, settingsYAML)` |
-| Config needing SetProject/WriteProject | `configmocks.NewIsolatedTestConfig(t)` |
+| Config needing a real store `Set`+`Write` round-trip | `configmocks.NewIsolatedTestConfig(t)` |
 | Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 
 ---

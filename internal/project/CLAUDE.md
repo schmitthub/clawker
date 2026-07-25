@@ -8,14 +8,14 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 
 ## Boundary
 
-- `internal/config` owns config/path primitives (`Write`, env/path resolution, `ConfigDir`/`DataDir`/`StateDir`) and config-derived projections such as `cfg.EgressRules()`. The dependency runs one way: this package never imports `internal/config`; the caller (CLI factory) resolves the walk-up anchor via `Registry.CurrentRoot` and passes it to config, and config-owned values (e.g. the clawker.yaml `name:` override) are passed in as primitives by the caller.
+- `internal/config` owns config/path primitives (`Write`, env/path resolution, `ConfigDir`/`DataDir`/`StateDir`) and config-derived projections such as `cfg.ProjectEgressRules()`. The dependency runs one way: this package never imports `internal/config`; the caller (CLI factory) resolves the walk-up anchor via `Registry.CurrentRoot` and passes it to config, and config-owned values (e.g. the clawker.yaml `name:` override) are passed in as primitives by the caller.
 - `internal/project` owns project CRUD semantics, project-root resolution (`Registry.ResolveRoot`/`CurrentRoot`), worktree lifecycle orchestration, and runtime health enrichment (`ProjectState`, `ProjectStatus`). Project-root resolution reads the registry (`ProjectRegistry` schema), so it is project-domain — not a storage-leaf or config-path concern.
 - Callers should consume `ProjectManager`/`Project` interfaces instead of mutating registry data directly.
 
 ## Visibility Rules
 
-- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels), plus the `Registry` interface (`NewRegistry`, `NewRegistryFromString`, `ResolveRoot`, `CurrentRoot`).
-- `Registry`'s read/write verbs (`projects`, `projectByRoot`, `register`, `update`, `removeByRoot`, worktree ops) are declared on the interface as **unexported** methods — the interface is sealed, so only this package can implement or call them and callers outside it mutate registry state through `ProjectManager` only.
+- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels), plus the `Registry` interface (`NewRegistry`, `NewRegistryFromString`, `ResolveRoot`, `CurrentRoot`, and the registry CRUD verbs).
+- `Registry`'s read/write verbs (`Projects`, `ProjectByRoot`, `Register`, `Update`, `RemoveByRoot`, worktree ops) are exported domain verbs on the interface — the store-backed facade shape. Callers still route project mutations through `ProjectManager`; the raw verbs exist for the manager and for tests.
 - Private implementation: `registryImpl`, `projectManager`, `projectHandle`, `worktreeService`, `flatWorktreeDirProvider`.
 
 ## Key Files
@@ -150,17 +150,17 @@ type Registry interface {
     ResolveRoot(cwd string) (string, error)
     CurrentRoot() (string, error)
 
-    projects() ([]ProjectEntry, error)                            // absent key = empty registry
-    projectByRoot(root string) (ProjectEntry, bool, error)
-    register(displayName, rootDir string) (ProjectEntry, error)
-    update(entry ProjectEntry) (ProjectEntry, error)
-    removeByRoot(root string) error
-    registerWorktree(projectRoot, branch, path string) error
-    unregisterWorktree(projectRoot, branch string) error
+    Projects() ([]ProjectEntry, error)                            // absent key = empty registry
+    ProjectByRoot(root string) (ProjectEntry, bool, error)
+    Register(displayName, rootDir string) (ProjectEntry, error)
+    Update(entry ProjectEntry) (ProjectEntry, error)
+    RemoveByRoot(root string) error
+    RegisterWorktree(projectRoot, branch, path string) error
+    UnregisterWorktree(projectRoot, branch string) error
 }
 ```
 
-**The interface is sealed.** The registry's read/write verbs are declared as unexported interface methods, so only `internal/project` can implement `Registry` or call them: consumers get exactly `ResolveRoot`/`CurrentRoot` and mutate registry state through `ProjectManager` only. `registryImpl` embeds the store — the engine verbs stay reachable in-package as the escape hatch — but because the impl type is unexported and only ever handed out as `Registry`, the interface (not the struct) gates what escapes. A consequence of sealing: `Registry` cannot be moq-mocked from `mocks/` (a mock in another package cannot implement unexported methods), which is why consumers use the real registry over an isolated data dir (`testenv.Env.Registry(t)`) rather than a double.
+The verbs are exported domain methods, so `Registry` is moq-mockable like every other store-backed facade (`//go:generate moq` → `mocks/registry_mock.go`). `registryImpl` embeds the store — the engine verbs stay reachable in-package as the escape hatch — but the impl type is unexported and only ever handed out as `Registry`, so the interface (not the struct) gates what escapes. Project mutations from the command layer still go through `ProjectManager`; the registry verbs are the manager's own surface.
 
 Every write verb owns the single schema key `projects` and both stages **and** persists in one call — `store.Set([]string{"projects"}, entries)` then `store.Write()`, each wrapped `project: …` — so no caller ever holds a staged-but-unwritten registry and there is no separate `save()` step. Reads go through `storage.Get[[]ProjectEntry](store, "projects")` with `ErrKeyNotFound` folded to the empty registry. There is no whole-struct read.
 
@@ -195,8 +195,7 @@ Import as `projectmocks "github.com/schmitthub/clawker/internal/project/mocks"`.
 - `NewMockProjectManager()` — panic-safe `*ProjectManagerMock` with no-op defaults.
 - `NewMockProject(name, repoPath)` — `*ProjectMock` with read accessors and no-op mutations.
 - `NewTestProjectManager(t, gitFactory)` — real `ProjectManager` backed by `testenv.New(t, testenv.WithProjectManager(gitFactory))`.
-
-There is **no `Registry` mock**: the interface is sealed by its unexported verbs, so no other package can implement it. Consumers that need a registry use the real one — `testenv.Env.Registry(t)` (file-backed over the isolated data dir) or `project.NewRegistryFromString(seed)` (in-memory, no disk).
+- `RegistryMock` — moq-generated double for the `Registry` interface. Prefer a real registry when the test exercises registry behavior: `testenv.Env.Registry(t)` (file-backed over the isolated data dir) or `project.NewRegistryFromString(seed)` (in-memory, no disk).
 
 ## Dependencies
 

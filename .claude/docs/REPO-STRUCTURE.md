@@ -44,7 +44,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   │   ├── plugin/            # Plugin (skill collection) management
 │   │   └── project/edit/      # Project edit subcommand
 │   ├── cmdutil/               # Factory struct, error types, arg validators
-│   ├── config/                # Store[T] config engine (see internal/config/CLAUDE.md)
+│   ├── config/                # Config domain facade over Store[Project] + Store[Settings] (see internal/config/CLAUDE.md)
 │   │   └── storeui/           # Domain adapters for storeui
 │   ├── consts/                # Cross-package constants
 │   ├── containerfs/           # Host Claude config preparation
@@ -60,11 +60,12 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── keyring/               # Credential storage
 │   ├── logger/                # Struct-based zerolog; Factory noun
 │   ├── monitor/               # Monitoring stack templates
-│   ├── project/               # Project registration
+│   ├── project/               # Registry facade over Store[ProjectRegistry] + project identity, CRUD, worktree lifecycle
 │   ├── prompter/              # Interactive prompts
 │   ├── signals/               # OS signal utilities (leaf)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc
-│   ├── storage/               # Multi-file YAML store
+│   ├── state/                 # StateStore facade over Store[State]: update-check cache + changelog cursor
+│   ├── storage/               # Multi-file YAML store engine (Store[T])
 │   ├── storeui/               # Generic TUI for Store[T] editing
 │   ├── term/                  # Terminal capabilities (sole x/term gateway)
 │   ├── testenv/               # Unified test environment (test-only)

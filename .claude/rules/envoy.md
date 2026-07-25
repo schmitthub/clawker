@@ -1,6 +1,6 @@
 ---
 description: Envoy egress config generation — transport-first, proto-token building blocks (NOT an HTTP/TLS proxy)
-paths: ["internal/controlplane/firewall/envoy_*.go"]
+paths: ["controlplane/firewall/envoy_*.go"]
 ---
 
 # Envoy Egress Generation Rules
@@ -182,5 +182,5 @@ Everything else — every new proto token, dst-type, path-rule shape, websocket/
 
 ## See also
 
-- `internal/controlplane/firewall/CLAUDE.md` — firewall domain (Stack, handler, rules store).
+- `controlplane/firewall/CLAUDE.md` — firewall domain (Stack, handler, rules store).
 - Memories: `transport-first-not-tls-centric`, `defense-in-depth-no-vacuum-excuse`, `dont-fabricate-patterns`.

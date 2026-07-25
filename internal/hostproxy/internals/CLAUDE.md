@@ -27,7 +27,7 @@ var SocketForwarderSource string    // cmd/clawker-socket-server/main.go
 
 This is a **leaf package** (stdlib + embed only). It exports embedded content as string vars consumed by the `internal/bundler` package during Docker build context assembly.
 
-The Go binaries under `cmd/` are standalone `package main` programs compiled inside the Docker image during multi-stage builds. They use only stdlib — no imports from the clawker module.
+The Go binaries under `cmd/` are standalone `package main` programs compiled inside the Docker image during multi-stage builds. They use only stdlib — no imports from the clawker module (there is no `go.mod` in that build stage, so importing `internal/consts` or any other module package breaks the image build). Their inline literals are therefore intentional and exempt from the no-hardcoded-strings policy; each file carries a TRIPWIRE header comment stating this.
 
 ## Callback Forwarder (`cmd/callback-forwarder/main.go`)
 

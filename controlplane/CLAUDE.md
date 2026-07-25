@@ -154,7 +154,7 @@ The `ControlPlane` orchestrator type (`NewControlPlane`, `SetReady`, `HealthzHan
 func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContainerConfig, error)
 ```
 
-All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
+All ports from `cfg.ControlPlaneSettings()` (defaults via struct tags). Published to `127.0.0.1` only:
 
 | Published Port | Purpose |
 |----------------|---------|

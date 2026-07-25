@@ -33,7 +33,7 @@ func NewCmdSettingsEdit(f *cmdutil.Factory, runF func(context.Context, *EditOpti
 editRun(ctx, opts)
   → opts.Config()                              # load config.Config
   → cfg.SettingsStore()                        # Store[Settings]
-  → settingsui.Edit(ios, store, cfg)           # domain adapter + generic storeui
+  → settingsui.Edit(ios, store)                # domain adapter + generic storeui
   → if result.Saved: print success to stdout   # "Settings saved (N fields modified)"
 ```
 

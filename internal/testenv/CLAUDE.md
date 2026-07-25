@@ -39,6 +39,8 @@ func New(t *testing.T, opts ...Option) *Env
 
 Pass `nil` for `gitFactory` if worktree operations are not needed.
 
+`WithConfig` anchors project-config walk-up at the root resolved from the isolated registry (`env.Registry(t).CurrentRoot()`); `project.ErrNotInProject` degrades to an empty anchor, any other registry error fails the test. Seed registry YAML before applying the option if the test needs a project anchor.
+
 ## ConfigFile Constants
 
 | Constant | Target |
@@ -67,8 +69,8 @@ env := testenv.New(t)
 // Config mutation tests
 env := testenv.New(t, testenv.WithConfig())
 cfg := env.Config()
-cfg.SetProject(func(p *config.Project) { p.Build.Image = "alpine" })
-cfg.WriteProject()
+cfg.ProjectStore().Set([]string{"agent", "editor"}, "emacs")
+cfg.ProjectStore().Write()
 
 // Project registration round-trips
 env := testenv.New(t, testenv.WithProjectManager(nil))

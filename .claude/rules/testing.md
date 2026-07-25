@@ -31,12 +31,13 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/testenv` | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager |
 | `internal/docker` | `mocks/` | `FakeClient`, fixtures, assertions, moby mock transport |
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `SecurityConfig(mutators...)`, `ConfigMock` |
-| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
+| `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)`, `RegistryMock` |
+| `internal/state` | `mocks/` | `NewBlankState()`, `NewFromString(yaml)`, `StateStoreMock` (moq-generated) |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
 | `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq-generated) |
 | `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq-generated) |
-| `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq-generated) |
+| `controlplane/manager` | `mocks/` | `ManagerMock` (moq-generated) |
 | `controlplane/firewall` | `mocks/` | `EgressRulesStoreMock`, `RouteIdentityStoreMock` (moq-generated; the package's own tests use real stores) |
 | `controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq-generated) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
@@ -55,10 +56,10 @@ Use the lightest helper that fits the assertion:
 
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
 - `configmocks.NewFromString(projectYAML, settingsYAML)` — test double with specific YAML values, NO defaults. Pass empty strings for schemas you don't care about. Returns `*ConfigMock`.
-- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need `SetProject`/`SetSettings`/`WriteProject`/`WriteSettings` or env var overrides. Returns `Config`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config (real `storage.Store`) for tests that need a working `ProjectStore()`/`SettingsStore()` `Set`+`Write` round-trip or env var overrides. Returns `Config`.
 - `configmocks.SecurityConfig(mutators...)` — a `config.SecurityConfig` **value**, for code under test that takes the group struct directly instead of a whole `Config` (e.g. `shared.BuildConfigs`). Bare `SecurityConfig()` is the "no `security:` block" baseline; pass one mutator per field the test asserts on. Use it instead of writing a bare `config.SecurityConfig{}` literal at the call site, so the omitted-field decision lives in one place.
 
-`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Mutation methods (`SetProject`, `SetSettings`, `WriteProject`, `WriteSettings`) are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Mutation goes through `ProjectStore()`/`SettingsStore()`, which hand back the seam's real stores — those have no path options, so `Write()` fails by design. Use `NewIsolatedTestConfig` for mutation tests.
 
 Project test doubles live in `internal/project/mocks/`. Import as:
 
@@ -70,7 +71,7 @@ Typical mapping:
 
 - Defaults and typed getter behavior → `NewBlankConfig()`
 - Specific YAML values for schema/parsing tests → `NewFromString(projectYAML, settingsYAML)`
-- Typed mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
+- Mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
 
 ```bash
 go test ./internal/config -v
@@ -103,7 +104,7 @@ func TestFeature_E2E(t *testing.T)            // E2E
 Golden files are managed per-package — there is no shared golden utility package. Each package handles its own approach:
 
 - **Whail build scenarios**: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v` (JSON testdata)
-- **Firewall corefile**: `internal/controlplane/firewall/testdata/corefile_basic.golden` (hand-edit to update)
+- **Firewall corefile**: `controlplane/firewall/testdata/corefile_basic.golden` (hand-edit to update)
 - **Storage merge engine**: struct literals in test code, not files — use `make storage-golden` for interactive update
 
 ## Command Test Pattern (Cobra+Factory)

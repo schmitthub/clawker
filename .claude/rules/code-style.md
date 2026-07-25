@@ -91,5 +91,6 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - Use only the `config.Config` interface in consumers; never reach into `internal/config` internals.
 - Do not hardcode config file paths or constants in callers (`.clawker.yaml`, subdirs, label domains) when an interface method exists.
 - Read paths/constants through methods (`ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.).
-- Typed mutation: `ProjectStore().Set(path, value)` / `SettingsStore().Set(path, value)` (and `Remove(path)`) mutate in-memory; `ProjectStore().Write()` / `SettingsStore().Write()` persists to disk.
+- Reads are value-specific accessors (`BuildConfig()`, `LoggingConfig()`, …) — there is no whole-schema getter.
+- Mutation: `ProjectStore().Set([]string{"build", "image"}, value)` / `SettingsStore().Set(key, value)` (and `Remove(key...)`) stage in-memory; `ProjectStore().Write()` / `SettingsStore().Write()` persists to disk. Keys are explicit segments, never dotted strings.
 - In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(projectYAML, settingsYAML)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

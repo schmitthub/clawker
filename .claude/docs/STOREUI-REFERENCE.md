@@ -23,7 +23,9 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 Create a package under `internal/config/storeui/<domain>/` that exports:
 
 ```go
-// Overrides customizes reflected fields for interactive editing.
+// Overrides customizes reflected fields for interactive editing. Takes a
+// config.Config only when the override set is config-derived (the project
+// adapter needs it; the settings adapter does not).
 func Overrides() []storeui.Override
 
 // LayerTargets builds save destinations from the store's own write targets.
@@ -97,7 +99,7 @@ decoded individually from the merged tree.
 When a user edits a field and picks a save target:
 
 1. Coerce the TUI string into the field's typed value via a fresh `T`: `SetFieldValue(&fresh, fieldPath, value)` then `GetFieldValue(&fresh, fieldPath)`
-2. Stage it: `store.Set(fieldKey(fieldPath), typed)` — `fieldKey` splits the dotted schema path into segments. `Set` is unconditionally dirty, so saving to a non-provenance-winner layer needs no force-dirty step (the old `MarkForWrite` workaround is gone). An editor that produced no value (cleared map/struct) routes to `Remove` instead — `Set(key, nil)` is `ErrNilValue` by design.
+2. Stage it: `store.Set(fieldKey(fieldPath), typed)` — `fieldKey` splits the dotted schema path into segments. `Set` is unconditionally dirty, so saving to a non-provenance-winner layer needs no force-dirty step. An editor that produced no value (cleared map/struct) routes to `Remove` instead — `Set(key, nil)` is `ErrNilValue` by design.
 3. `store.WriteFieldTo(target.Path, fieldKey(fieldPath)...)` — persist exactly this field to the chosen layer file; other staged fields stay staged.
 
 `WriteFieldTo` internally remerges layers, so re-read values reflect the true merged state after each save. Deletes go through `store.Remove(key...)`, tolerating `ErrKeyNotFound` on an already-unset row.
@@ -182,8 +184,8 @@ Multiline text editor wrapping `bubbles/textarea`.
 | `store.Remove(key...)` | Delete a key (the unset verb) |
 | `store.WriteFieldTo(path, key...)` | Persist one dirty field to an explicit layer file |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
-| `store.Provenance(key...)` | Which layer won a specific field |
-| `store.ProvenanceMap()` | Display-form field keys → source file paths (display-only) |
+| `store.WriteTargets()` | Candidate save locations derived from options + layers (for `LayerTargets`) |
+| `store.ProvenanceMap()` | Display-form field keys → source file paths; drives the per-field source column (exact match, then parent path walk-up) |
 
 ## Testing Patterns
 
@@ -225,8 +227,8 @@ func TestRoundTrip(t *testing.T) {
     require.NoError(t, store.Write())
 
     // Reload from disk — independent verification
-    fresh := reloadStore[myStruct](t, dir)
-    got, err := storage.Get[string](fresh, "field", "path")
+    reloaded := reloadStore[myStruct](t, dir)
+    got, err := storage.Get[string](reloaded, "field", "path")
     require.NoError(t, err)
     assert.Equal(t, "new-value", got)
 }
@@ -284,5 +286,5 @@ func TestListEditor_AddItem(t *testing.T) {
 - `time.Duration` uses `time.ParseDuration` — accepts `5m30s`, `1h`, `300ms` (standard Go duration)
 - `*bool` fields: nil is treated as `false` for display; `SetFieldValue` allocates a non-nil pointer
 - Unrecognized `FieldKind` values (consumer-defined kinds) are enforced as read-only in the browser — no editor exists for them
-- `store.Write(storage.ToPath(...))` persists dirty fields to the target layer file; type coercion happens during `SetFieldValue`
+- `store.WriteFieldTo(path, key...)` persists exactly one dirty field to the target layer file (`WriteTo(path)` sends all of them); type coercion happens during `SetFieldValue`
 - Provenance display uses exact field match + parent path walk-up for nested fields
