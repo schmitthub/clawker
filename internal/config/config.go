@@ -31,21 +31,30 @@ func schemaHeader(filename string) string {
 	return schemaHeaderPrefix + consts.SchemaURL(filename, consts.SchemaRef(build.Version, build.Revision))
 }
 
-// Config is the public configuration contract.
-// Add methods here as the config contract grows.
+// Config is the public configuration contract: the domain facade over the
+// project (clawker.yaml) and settings (settings.yaml) stores.
+//
+// Reads are value-specific — a consumer asks for the one value (or the one
+// small group struct) it needs. There is deliberately NO whole-schema getter:
+// it would hand every consumer every field and hide which keys they actually
+// depend on. Group accessors (BuildConfig,
+// AgentConfig, ControlPlaneSettings, …) return the nested block that genuinely
+// travels together, never the schema root.
+//
+// Mutation goes through the raw store verbs via ProjectStore()/SettingsStore()
+// (Set/Remove + Write) — the escape hatch for edge cases the typed accessors
+// don't cover.
 //
 //go:generate moq -rm -pkg mocks -out mocks/config_mock.go . Config
 type Config interface {
 	ClawkerIgnoreName() string
-	Project() *Project
-	Settings() *Settings
 
 	// ProjectStore returns the underlying project config store.
-	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
+	// Use Store.Set(key, value)/Store.Remove(key...) to mutate and Store.Write() to persist.
 	ProjectStore() *storage.Store[Project]
 
 	// SettingsStore returns the underlying settings store.
-	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
+	// Use Store.Set(key, value)/Store.Remove(key...) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
 	// ProjectRoot returns the resolved project root the config was loaded
@@ -55,20 +64,81 @@ type Config interface {
 	// path entries) resolve against.
 	ProjectRoot() string
 
-	// Deprecated: Use SettingsStore().Read().Logging instead.
-	LoggingConfig() LoggingConfig
+	// --- project (clawker.yaml) accessors ---
 
-	// Deprecated: Use SettingsStore().Read().Monitoring instead.
-	MonitoringConfig() MonitoringConfig
+	// ProjectName returns the `name` override for the directory-derived
+	// project slug; empty when unset.
+	ProjectName() string
 
-	// Deprecated: Use SettingsStore().Read().HostProxy instead.
-	HostProxyConfig() HostProxyConfig
+	// Aliases returns the union-merged command aliases (alias name → clawker
+	// argument string); nil when none are declared.
+	Aliases() map[string]string
+
+	// BuildConfig returns the `build:` block — the image-build inputs
+	// (harness selection, stacks, packages, instructions, inject, per-harness
+	// overlays) that are consumed as one unit by the Dockerfile generator.
+	BuildConfig() BuildConfig
+
+	// AgentConfig returns the `agent:` block — the harness-agnostic runtime
+	// settings (env sources, editor, hooks) resolved together per container.
+	AgentConfig() AgentConfig
+
+	// WorkspaceDefaultMode returns `workspace.default_mode` (bind/snapshot);
+	// empty when unset (no defaults layer). The value is enum-gated at decode
+	// (Mode.UnmarshalYAML), so a loaded config can only ever hold a valid mode.
+	WorkspaceDefaultMode() Mode
+
+	// SecurityConfig returns the `security:` block — the container security
+	// posture (firewall rules, docker socket, capabilities, host proxy, git
+	// credential forwarding) applied as one unit at container create.
+	SecurityConfig() SecurityConfig
+
+	// HarnessConfigFor returns the effective per-harness initialization config
+	// for the named harness: the `harnesses:` map entry when present, else the
+	// deprecated agent.claude_code block for the built-in default harness,
+	// else nil. Every HarnessConfig accessor is nil-tolerant.
+	HarnessConfigFor(name string) *HarnessConfig
+
+	// PostInitFor returns the composed post-init script for the named
+	// harness: agent.post_init followed by the harness entry's post_init.
+	PostInitFor(name string) string
+
+	// PreRunFor returns the composed pre-run script for the named harness:
+	// agent.pre_run followed by the harness entry's pre_run.
+	PreRunFor(name string) string
+
+	// MonitorExtensions returns `monitor.extensions` — the monitoring
+	// extensions this project contributes to the host monitoring stack.
+	MonitorExtensions() []string
 
 	ProjectEgressRules() []EgressRule
 
+	// --- settings (settings.yaml) accessors ---
+
+	// LoggingConfig returns the `logging:` block (file logging + the OTEL
+	// bridge), consumed as one unit when the file logger is constructed.
+	LoggingConfig() LoggingConfig
+
+	// MonitoringConfig returns the `monitoring:` block — the monitoring
+	// stack's ports and telemetry knobs, rendered together into the compose
+	// stack and the container's OTEL env.
+	MonitoringConfig() MonitoringConfig
+
+	// HostProxyConfig returns the `host_proxy:` block (manager + daemon
+	// settings), consumed as one unit by the host proxy.
+	HostProxyConfig() HostProxyConfig
+
+	// ControlPlaneSettings returns the `control_plane:` block — the CP port
+	// map, wired together into the CP container and the agent's endpoints.
+	ControlPlaneSettings() ControlPlaneSettings
+
+	// FirewallEnabled reports the global firewall master switch
+	// (`firewall.enable`), defaulting to true when unset.
+	FirewallEnabled() bool
+
 	// BundleDeclarations returns every declared bundle source paired with the
 	// clawker.yaml layer that declared it, highest-priority layer first. The
-	// union-merged Project().Bundles slice loses per-entry provenance; the
+	// union-merged bundles: list loses per-entry provenance; the
 	// bundle resolver needs the declaring file so an identity-collision error
 	// (two sources resolving to the same namespace.name) can name both
 	// offending files.
@@ -143,6 +213,11 @@ type Config interface {
 	SettingsFileName() string
 }
 
+// configImpl composes the two stores the config domain owns. It is the one
+// store-backed package that cannot embed *storage.Store[T]: two schemas means
+// two stores, and their promoted verb sets would collide. ProjectStore() /
+// SettingsStore() are the named escape hatches that embedding would otherwise
+// provide.
 type configImpl struct {
 	project     *storage.Store[Project]
 	settings    *storage.Store[Settings]
@@ -188,8 +263,12 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
 		storage.WithHeader(schemaHeader(consts.ProjectSchemaFile)),
+		// Concurrent processes write this file (project init, alias set/delete,
+		// bundle install, the store editor), so every write must take the flock
+		// around its read-modify-write cycle.
+		storage.WithLock(),
 	)
-	projectStore, err := storage.New[Project]("", projectOpts...)
+	projectStore, err := storage.New[Project](projectOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
@@ -199,6 +278,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 
 	settingsOpts := []storage.Option{
 		storage.WithFilenames(consts.SettingsFile),
+		storage.WithDefaultFilename(consts.SettingsFile),
 	}
 	if options.settingsYAML != "" {
 		settingsOpts = append(settingsOpts, storage.WithDefaults(options.settingsYAML))
@@ -209,8 +289,11 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
 		storage.WithHeader(schemaHeader(consts.SettingsSchemaFile)),
+		// Same cross-process exposure as the project store: the CLI, the store
+		// editor, and the daemons all load and write settings.yaml.
+		storage.WithLock(),
 	)
-	settingsStore, err := storage.New[Settings]("", settingsOpts...)
+	settingsStore, err := storage.New[Settings](settingsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)
 	}
@@ -259,7 +342,10 @@ func WithProjectRoot(root string) NewConfigOption {
 // The schema URL is wired so the file WriteTo writes carries the
 // yaml-language-server header for editor validation.
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
-	store, err := storage.New[Project](presetYAML, storage.WithHeader(schemaHeader(consts.ProjectSchemaFile)))
+	store, err := storage.NewFromString[Project](
+		presetYAML,
+		storage.WithHeader(schemaHeader(consts.ProjectSchemaFile)),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -274,14 +360,14 @@ func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], erro
 // Useful as the default test double for consumers that don't care about
 // specific config values.
 func NewBlankConfig() (Config, error) {
-	projectStore, err := storage.New[Project](storage.GenerateDefaultsYAML[Project]())
+	projectStore, err := storage.New[Project](storage.WithDefaultsFromStruct[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
 	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
-	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
+	settingsStore, err := storage.New[Settings](storage.WithDefaultsFromStruct[Settings]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}
@@ -295,14 +381,14 @@ func NewBlankConfig() (Config, error) {
 // Empty strings produce empty structs. Useful for test fixtures that need
 // precise control over values without defaults being merged.
 func NewFromString(projectYAML, settingsYAML string) (Config, error) {
-	projectStore, err := storage.New[Project](projectYAML)
+	projectStore, err := storage.NewFromString[Project](projectYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
 	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
-	settingsStore, err := storage.New[Settings](settingsYAML)
+	settingsStore, err := storage.NewFromString[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
 	}
@@ -318,24 +404,30 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 // selected harness's required egress floor is composed in by
 // bundler.EgressRules, which is what firewall sync paths must call.
 func (c *configImpl) ProjectEgressRules() []EgressRule {
-	var rules []EgressRule
-	projectFw := c.Project().Security.Firewall
-	if projectFw != nil {
-		rules = append(rules, projectFw.Rules...)
-		for _, d := range projectFw.AddDomains {
-			rules = append(
-				rules,
-				EgressRule{
-					Dst:                   d,
-					Proto:                 EgressProtoHTTPS,
-					Port:                  EgressPortHTTPS,
-					Action:                EgressActionAllow,
-					PathRules:             nil,
-					PathDefault:           "",
-					InsecureSkipTLSVerify: false,
-				},
-			)
-		}
+	// Both keys are independently optional: a project may declare only rules,
+	// only the add_domains shorthand, or neither (ErrKeyNotFound → nothing to
+	// contribute).
+	rules, err := storage.Get[[]EgressRule](c.project, keySecurity, keyFirewall, keyRules)
+	if err != nil {
+		rules = nil
+	}
+	domains, err := storage.Get[[]string](c.project, keySecurity, keyFirewall, keyAddDomains)
+	if err != nil {
+		domains = nil
+	}
+	for _, d := range domains {
+		rules = append(
+			rules,
+			EgressRule{
+				Dst:                   d,
+				Proto:                 EgressProtoHTTPS,
+				Port:                  EgressPortHTTPS,
+				Action:                EgressActionAllow,
+				PathRules:             nil,
+				PathDefault:           "",
+				InsecureSkipTLSVerify: false,
+			},
+		)
 	}
 	return rules
 }
@@ -346,7 +438,7 @@ func (c *configImpl) ProjectEgressRules() []EgressRule {
 // decoded map view — a total projection over BundleSource's scalar fields,
 // valid because validateBundlesNode already rejected any malformed source at
 // load, so no per-layer decode can fail here. The union-merged
-// Project().Bundles snapshot cannot carry this per-entry file provenance.
+// merged bundles: list cannot carry this per-entry file provenance.
 func (c *configImpl) BundleDeclarations() []BundleDeclaration {
 	return declarationsFromLayers(c.project.Layers())
 }
@@ -356,7 +448,7 @@ func (c *configImpl) BundleDeclarations() []BundleDeclaration {
 func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
 	var decls []BundleDeclaration
 	for _, layer := range layers {
-		raw, ok := layer.Data["bundles"]
+		raw, ok := layer.Data[keyBundles]
 		if !ok || raw == nil {
 			continue
 		}
@@ -376,6 +468,32 @@ func declarationsFromLayers(layers []storage.LayerInfo) []BundleDeclaration {
 		}
 	}
 	return decls
+}
+
+// ProjectConfigExistsIn reports whether a project config file for dir itself
+// exists: the project file or its local override variant, in either the flat
+// dotted form or the .clawker/ directory form, with either extension. It
+// probes with the storage engine's own discovery — the same dual placement a
+// real load uses — so the answer cannot drift from what a later NewConfig
+// would find, and it answers for dir alone (no walk-up, no config dir), which
+// is the question `clawker init` / `clawker project register` ask about the
+// directory they are about to claim.
+//
+// Migrations are wired because a load without them fails the strict decode on
+// a legacy-shaped file — reporting "no config here" for a file that plainly
+// exists is the one answer this predicate must never give. dir is the user's
+// own working directory, so the rewrite a migration may commit is the same
+// one the next real load would.
+func ProjectConfigExistsIn(dir string) (bool, error) {
+	store, err := storage.New[Project](
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
+		storage.WithDirs(dir),
+		storage.WithMigrations(ProjectMigrations()...),
+	)
+	if err != nil {
+		return false, fmt.Errorf("config: probing project config in %s: %w", dir, err)
+	}
+	return len(store.Layers()) > 0, nil
 }
 
 // BundleDeclarationsAt loads the bundle declarations of one project root
@@ -417,7 +535,7 @@ func BundleDeclarationsAt(root string) ([]BundleDeclaration, []string, error) {
 	if len(dirs) == 0 {
 		return nil, skipped, nil
 	}
-	store, err := storage.New[Project]("",
+	store, err := storage.New[Project](
 		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
 		storage.WithDirs(dirs...),
 	)
@@ -535,24 +653,158 @@ func (c *configImpl) SettingsStore() *storage.Store[Settings] {
 	return c.settings
 }
 
-// --- Schema accessors ---
+// --- Value accessors ---
+//
+// Every accessor below reads exactly the key it names via storage.Get and
+// folds an absent key onto the zero value. Two facts make that fold correct
+// and complete, and they hold for all of them:
+//
+//   - ErrKeyNotFound means the key is unset in EVERY layer. The zero value is
+//     the right answer because schema defaults reach these accessors through
+//     the store's own defaults layer (WithDefaultsFromStruct in NewConfig /
+//     NewBlankConfig) — inventing a second default here would diverge from the
+//     defaults-less constructors (NewFromString) on purpose-built test input.
+//   - No other error is reachable: each key is a declared schema field, so a
+//     value that could not decode into its type already failed the strict
+//     decode inside the constructor.
+//
+// FirewallEnabled is the one exception — its domain default is true, not the
+// zero value — and says so at its own definition.
 
-func (c *configImpl) Project() *Project {
-	return c.project.Read()
+func (c *configImpl) ProjectName() string {
+	name, err := storage.Get[string](c.project, keyName)
+	if err != nil {
+		return ""
+	}
+	return name
 }
 
-func (c *configImpl) Settings() *Settings {
-	return c.settings.Read()
+func (c *configImpl) Aliases() map[string]string {
+	aliases, err := storage.Get[map[string]string](c.project, keyAliases)
+	if err != nil {
+		return nil
+	}
+	return aliases
+}
+
+func (c *configImpl) BuildConfig() BuildConfig {
+	buildCfg, err := storage.Get[BuildConfig](c.project, keyBuild)
+	if err != nil {
+		return BuildConfig{}
+	}
+	return buildCfg
+}
+
+func (c *configImpl) AgentConfig() AgentConfig {
+	agent, err := storage.Get[AgentConfig](c.project, keyAgent)
+	if err != nil {
+		return AgentConfig{}
+	}
+	return agent
+}
+
+func (c *configImpl) WorkspaceDefaultMode() Mode {
+	mode, err := storage.Get[Mode](c.project, keyWorkspace, keyDefaultMode)
+	if err != nil {
+		return "" // absent (ErrKeyNotFound) → unset; invalid values cannot survive the construction decode
+	}
+	return mode
+}
+
+func (c *configImpl) SecurityConfig() SecurityConfig {
+	security, err := storage.Get[SecurityConfig](c.project, keySecurity)
+	if err != nil {
+		return SecurityConfig{}
+	}
+	return security
+}
+
+func (c *configImpl) MonitorExtensions() []string {
+	extensions, err := storage.Get[[]string](c.project, keyMonitor, keyExtensions)
+	if err != nil {
+		return nil
+	}
+	return extensions
+}
+
+// HarnessConfigFor returns the effective per-harness initialization config for
+// the named harness: the harnesses map entry when present, else the legacy
+// agent.claude_code block for the built-in default harness (the deprecated
+// read shim, which still matters for layers loaded without migrations), else
+// nil. Every HarnessConfig accessor is nil-tolerant and yields defaults.
+func (c *configImpl) HarnessConfigFor(name string) *HarnessConfig {
+	if hc, err := storage.Get[HarnessConfig](c.project, keyHarnesses, name); err == nil {
+		return &hc
+	}
+	if name != consts.DefaultHarnessName {
+		return nil
+	}
+	if legacy, err := storage.Get[HarnessConfig](c.project, keyAgent, keyClaudeCode); err == nil {
+		return &legacy
+	}
+	return nil
+}
+
+// PostInitFor composes the harness-agnostic agent.post_init base with the
+// named harness's own post_init. Blank layers are skipped; both blank yields "".
+func (c *configImpl) PostInitFor(name string) string {
+	base, err := storage.Get[string](c.project, keyAgent, keyPostInit)
+	if err != nil {
+		base = ""
+	}
+	return composeHookScript(base, c.HarnessConfigFor(name).postInit())
+}
+
+// PreRunFor composes the harness-agnostic agent.pre_run base with the named
+// harness's own pre_run. Blank layers are skipped; both blank yields "".
+func (c *configImpl) PreRunFor(name string) string {
+	base, err := storage.Get[string](c.project, keyAgent, keyPreRun)
+	if err != nil {
+		base = ""
+	}
+	return composeHookScript(base, c.HarnessConfigFor(name).preRun())
 }
 
 func (c *configImpl) LoggingConfig() LoggingConfig {
-	return c.settings.Read().Logging
+	logging, err := storage.Get[LoggingConfig](c.settings, keyLogging)
+	if err != nil {
+		return LoggingConfig{}
+	}
+	return logging
 }
 
 func (c *configImpl) HostProxyConfig() HostProxyConfig {
-	return c.settings.Read().HostProxy
+	hostProxy, err := storage.Get[HostProxyConfig](c.settings, keyHostProxy)
+	if err != nil {
+		return HostProxyConfig{}
+	}
+	return hostProxy
 }
 
 func (c *configImpl) MonitoringConfig() MonitoringConfig {
-	return c.settings.Read().Monitoring
+	monitoring, err := storage.Get[MonitoringConfig](c.settings, keyMonitoring)
+	if err != nil {
+		return MonitoringConfig{}
+	}
+	return monitoring
+}
+
+func (c *configImpl) ControlPlaneSettings() ControlPlaneSettings {
+	controlPlane, err := storage.Get[ControlPlaneSettings](c.settings, keyControlPlane)
+	if err != nil {
+		return ControlPlaneSettings{}
+	}
+	return controlPlane
+}
+
+// FirewallEnabled reports the global firewall master switch. Its domain
+// default is true, not the zero value: an unset firewall.enable — including a
+// settings store with no defaults layer at all — means enabled, matching the
+// fail-closed posture the rest of the stack assumes.
+func (c *configImpl) FirewallEnabled() bool {
+	enabled, err := storage.Get[bool](c.settings, keyFirewall, keyEnable)
+	if err != nil {
+		return true
+	}
+	return enabled
 }

@@ -31,6 +31,7 @@ Files found closer to CWD have **higher priority** than files found further up t
 - **Scalars** (strings, numbers, booleans): closest-to-CWD wins.
 - **Maps** (objects): recursively merged -- keys from higher-priority files override, but unmentioned keys from lower-priority files are preserved.
 - **Slices** (arrays): replaced entirely by higher-priority files, unless the field is tagged for union merge (e.g., firewall `add_domains`).
+- **Unset vs. empty**: a key written with no value (`harness:`, or an explicit `null`/`~`) is *unset* -- the merge skips it and the layer below (or the built-in default) shows through. An explicit empty value (`packages: []`, `env: {}`, `post_init: ""`) is a real value and merges by the rules above.
 
 ### File Placement
 

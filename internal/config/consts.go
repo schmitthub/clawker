@@ -15,6 +15,10 @@
 package config
 
 import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -25,6 +29,55 @@ const (
 	ModeBind Mode = "bind"
 	// ModeSnapshot represents ephemeral volume copy (isolated).
 	ModeSnapshot Mode = "snapshot"
+)
+
+// UnmarshalYAML enforces the mode enum at the yaml layer: every decode of a
+// Mode-typed schema field — the constructor's strict load and Set's candidate
+// decode alike — rejects a value outside the enum, so an invalid mode can
+// neither load from disk nor be staged for write. Unknown KEYS stay tolerated
+// by the store; this gates only the VALUE of a declared mode field.
+func (m *Mode) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return fmt.Errorf("decoding workspace mode: %w", err)
+	}
+	parsed, err := ParseMode(s)
+	if err != nil {
+		return err
+	}
+	*m = parsed
+	return nil
+}
+
+// Schema key segments — the yaml tag of each node the store verbs address.
+// Keys are segment slices now (storage.Get/Set/Remove), so these names are the
+// addressing vocabulary shared by the typed accessors and the migrations; a
+// node renamed in schema.go is renamed here once, not in every call site.
+const (
+	keyName         = "name"
+	keyAliases      = "aliases"
+	keyAgent        = "agent"
+	keyClaudeCode   = "claude_code"
+	keyPostInit     = "post_init"
+	keyPreRun       = "pre_run"
+	keyBuild        = "build"
+	keyInstructions = "instructions"
+	keyHarnesses    = "harnesses"
+	keyConfig       = "config"
+	keySecurity     = "security"
+	keyFirewall     = "firewall"
+	keyEnable       = "enable"
+	keyRules        = "rules"
+	keyAddDomains   = "add_domains"
+	keyWorkspace    = "workspace"
+	keyDefaultMode  = "default_mode"
+	keyMonitor      = "monitor"
+	keyExtensions   = "extensions"
+	keyBundles      = "bundles"
+	keyLogging      = "logging"
+	keyMonitoring   = "monitoring"
+	keyHostProxy    = "host_proxy"
+	keyControlPlane = "control_plane"
 )
 
 // ---------------------------------------------------------------------------

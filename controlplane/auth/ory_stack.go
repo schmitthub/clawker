@@ -101,7 +101,7 @@ func (s *OryStack) CACertPool() *x509.CertPool { return s.caCertPool }
 // returns an error; the orchestrator treats this as a pre-SetReady startup
 // gate.
 func (s *OryStack) Start(ctx context.Context) error {
-	cp := s.cfg.Settings().ControlPlane
+	cp := s.cfg.ControlPlaneSettings()
 
 	hydraSecret, err := authmat.EnsureHydraSecret()
 	if err != nil {

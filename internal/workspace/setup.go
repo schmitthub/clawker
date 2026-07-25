@@ -27,13 +27,18 @@ var ErrWorktreeSnapshot = errors.New(
 // ResolveMode applies workspace-mode precedence: an explicit override (CLI
 // --mode flag) wins, otherwise the project's configured default mode. An empty
 // resulting value resolves to ModeBind (config.ParseMode's default); only an
-// unrecognized non-empty value returns an error.
-func ResolveMode(override, defaultMode string) (config.Mode, error) {
+// unrecognized non-empty override returns an error — the config side is
+// already enum-gated at decode, so only the flag value still needs parsing.
+func ResolveMode(override string, defaultMode config.Mode) (config.Mode, error) {
 	modeStr := override
 	if modeStr == "" {
-		modeStr = defaultMode
+		modeStr = string(defaultMode)
 	}
-	return config.ParseMode(modeStr)
+	mode, err := config.ParseMode(modeStr)
+	if err != nil {
+		return "", fmt.Errorf("resolving workspace mode: %w", err)
+	}
+	return mode, nil
 }
 
 // SetupMountsConfig holds configuration for workspace mount setup
@@ -126,8 +131,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Determine workspace mode (CLI flag overrides config default)
-	project := cfg.Cfg.Project()
-	mode, err := ResolveMode(cfg.ModeOverride, project.Workspace.DefaultMode)
+	mode, err := ResolveMode(cfg.ModeOverride, cfg.Cfg.WorkspaceDefaultMode())
 	if err != nil {
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
@@ -242,7 +246,8 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure and mount shared directory (if enabled)
-	if project.Agent.SharedDirEnabled() {
+	agentCfg := cfg.Cfg.AgentConfig()
+	if agentCfg.SharedDirEnabled() {
 		sharePath, err := cfg.Cfg.ShareSubdir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to ensure share directory: %w", err)
@@ -251,7 +256,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Add docker socket mount if enabled
-	if project.Security.DockerSocket {
+	if cfg.Cfg.SecurityConfig().DockerSocket {
 		mounts = append(mounts, GetDockerSocketMount())
 	}
 

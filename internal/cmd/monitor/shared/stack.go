@@ -48,7 +48,7 @@ func PrepareStack(
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("validate seeded monitoring units: %w", validateErr)
 	}
 
-	data, err := internalmonitor.PrepareTemplateData(cfg.SettingsStore().Read(), union)
+	data, err := internalmonitor.PrepareTemplateData(cfg.MonitoringConfig(), union)
 	if err != nil {
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("build monitor template data: %w", err)
 	}

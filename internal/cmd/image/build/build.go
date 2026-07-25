@@ -33,7 +33,7 @@ type BuildOptions struct {
 	Logger          func() (*logger.Logger, error)
 	Client          func(context.Context) (*docker.Client, error)
 	ProjectManager  func() (project.ProjectManager, error)
-	ProjectRegistry func() (*project.Registry, error)
+	ProjectRegistry func() (project.Registry, error)
 	HttpClient      func() (*http.Client, error)
 	BundleManager   func() (*bundlepkg.Manager, error)
 
@@ -138,7 +138,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	cfg := cfgGateway.Project()
+	buildCfg := cfgGateway.BuildConfig()
 
 	// Resolve project name from ProjectManager
 	var projectName string
@@ -210,7 +210,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return cmdutil.FlagErrorf("malformed --label %q — use format KEY=VALUE", invalidLabels[0])
 	}
 
-	builder := docker.NewBuilder(client, cfg, wd, projectName)
+	builder := docker.NewBuilder(client, buildCfg, wd, projectName)
 
 	// -t selects the harness: a bare NAME names a known harness; a full
 	// REF's tag part must equal one (strict tag=harness). No -t builds the

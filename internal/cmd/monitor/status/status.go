@@ -114,7 +114,7 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 
 	// Check which services are actually running and print relevant URLs
-	mc := cfg.SettingsStore().Read().Monitoring
+	mc := cfg.MonitoringConfig()
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchDashboards) {
 		fmt.Fprintf(

@@ -13,35 +13,140 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// projectEnv is an isolated config environment whose files sit exactly where
+// the production loader looks for them: the walk-up root (also CWD) holds the
+// project file and its local override, and the isolated config dir holds the
+// user-level file. Loads go through [NewConfig], so the tests below exercise
+// the wiring the CLI itself uses — dual-placement discovery, the schema
+// defaults layer, migrations, and front-door validation.
+//
+// The in-package tests spell the isolation out instead of using
+// internal/testenv: that package imports config, so importing it here would
+// cycle. The external test package's projectFixture is the same shape built on
+// testenv.
+type projectEnv struct {
+	configDir string // isolated config dir — the user-level project layer
+	root      string // walk-up anchor, also CWD
+}
+
+func newProjectEnv(t *testing.T) *projectEnv {
+	t.Helper()
+	// Resolve symlinks so the walk-up anchor matches os.Getwd() after the
+	// chdir below (macOS: /var → /private/var).
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	env := &projectEnv{
+		configDir: filepath.Join(base, "config"),
+		root:      filepath.Join(base, "proj"),
+	}
+	dataDir, stateDir := filepath.Join(base, "data"), filepath.Join(base, "state")
+	for _, dir := range []string{env.configDir, env.root, dataDir, stateDir} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	t.Setenv(consts.EnvConfigDir, env.configDir)
+	t.Setenv(consts.EnvDataDir, dataDir)
+	t.Setenv(consts.EnvStateDir, stateDir)
+	t.Chdir(env.root)
+	return env
+}
+
+// writeProject seeds the project file at the walk-up root and returns its path.
+func (e *projectEnv) writeProject(t *testing.T, content string) string {
+	t.Helper()
+	return writeFile(t, e.projectPath(), content)
+}
+
+// writeLocal seeds the local override at the walk-up root — the
+// higher-precedence layer of that same level — and returns its path.
+func (e *projectEnv) writeLocal(t *testing.T, content string) string {
+	t.Helper()
+	return writeFile(t, e.localPath(), content)
+}
+
+// writeUser seeds the user-level project file in the isolated config dir: the
+// lowest-priority project layer.
+func (e *projectEnv) writeUser(t *testing.T, content string) string {
+	t.Helper()
+	return writeFile(t, e.userPath(), content)
+}
+
+// projectPath / localPath mirror the flat dotfile placement walk-up discovery
+// probes; userPath is the plain config-dir spelling.
+func (e *projectEnv) projectPath() string {
+	return filepath.Join(e.root, "."+consts.ProjectConfigFile)
+}
+
+func (e *projectEnv) localPath() string {
+	return filepath.Join(e.root, "."+consts.ProjectLocalConfigFile)
+}
+
+func (e *projectEnv) userPath() string {
+	return filepath.Join(e.configDir, consts.ProjectConfigFile)
+}
+
+// load runs the production config load against the fixture.
+//
+//nolint:ireturn // config hands out only the Config interface; configImpl is package-private.
+func (e *projectEnv) load(t *testing.T) Config {
+	t.Helper()
+	cfg, err := NewConfig(WithProjectRoot(e.root))
+	require.NoError(t, err)
+	return cfg
+}
+
+// loadErr runs the production config load, requires it to fail, and returns the
+// error text — the surface front-door validation reports through.
+func (e *projectEnv) loadErr(t *testing.T) string {
+	t.Helper()
+	_, err := NewConfig(WithProjectRoot(e.root))
+	require.Error(t, err)
+	return err.Error()
+}
+
+func writeFile(t *testing.T, path, content string) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
 func TestNewBlankConfig(t *testing.T) {
 	cfg, err := NewBlankConfig()
 	require.NoError(t, err)
 
-	p := cfg.Project()
-	require.NotNil(t, p)
-
-	assert.Equal(t, []string{"ripgrep"}, p.Build.Packages)
-	assert.Equal(t, "bind", p.Workspace.DefaultMode)
-	assert.False(t, p.Security.DockerSocket)
+	build := cfg.BuildConfig()
+	assert.Equal(t, []string{"ripgrep"}, build.Packages)
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
+	assert.False(t, cfg.SecurityConfig().DockerSocket)
 
 	// Virtual-layer defaults: absent keys resolve to the shipped harness and
 	// its monitoring extension, so no config migration is needed for either
 	// existing or fresh installs.
-	assert.Equal(t, consts.DefaultHarnessName, p.Build.Harness)
-	assert.Equal(t, []string{"claude-code"}, p.Monitor.Extensions)
+	assert.Equal(t, consts.DefaultHarnessName, build.Harness)
+	assert.Equal(t, []string{"claude-code"}, cfg.MonitorExtensions())
 }
 
+// TestNewBlankConfig_settingsDefaults pins the settings values the schema's
+// `default` struct tags ship through the defaults layer — the values every
+// binary sees with no settings.yaml on disk.
 func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	cfg, err := NewBlankConfig()
 	require.NoError(t, err)
 
-	s := cfg.Settings()
-
 	// Logging defaults
-	require.NotNil(t, s.Logging.FileEnabled)
-	assert.True(t, *s.Logging.FileEnabled)
-	assert.Equal(t, 50, s.Logging.MaxSizeMB)
-	assert.Equal(t, 7, s.Logging.MaxAgeDays)
+	logging := cfg.LoggingConfig()
+	require.NotNil(t, logging.FileEnabled)
+	assert.True(t, *logging.FileEnabled)
+	assert.Equal(t, 50, logging.MaxSizeMB)
+	assert.Equal(t, 7, logging.MaxAgeDays)
+	assert.Equal(t, 3, logging.MaxBackups)
+
+	// OTEL — opt-in: defaults off so the CLI doesn't dial a missing collector
+	// on every invocation when the monitoring stack isn't up.
+	require.NotNil(t, logging.Otel.Enabled)
+	assert.False(t, *logging.Otel.Enabled)
+	assert.Equal(t, 5, logging.Otel.TimeoutSeconds)
+	assert.Equal(t, 2048, logging.Otel.MaxQueueSize)
 
 	// Monitoring defaults
 	mon := cfg.MonitoringConfig()
@@ -54,18 +159,27 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	// Host proxy defaults
 	hp := cfg.HostProxyConfig()
 	assert.Equal(t, 18374, hp.Manager.Port)
+	assert.Equal(t, 18374, hp.Daemon.Port)
+
+	// firewall.enable ships true. Read through the store rather than
+	// FirewallEnabled(): that accessor folds an absent key onto true, so it
+	// cannot tell a shipped default from a missing one.
+	firewallEnabled, err := storage.Get[bool](cfg.SettingsStore(), keyFirewall, keyEnable)
+	require.NoError(t, err)
+	assert.True(t, firewallEnabled)
 
 	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline).
 	// go/wt run the DEFAULT harness, so they carry no harness-specific flags;
 	// the per-harness aliases bake in that harness's own auto-approve flag.
-	assert.Equal(t, "run --rm -it --agent $1 @", cfg.Project().Aliases["go"])
-	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @", cfg.Project().Aliases["wt"])
+	aliases := cfg.Aliases()
+	assert.Equal(t, "run --rm -it --agent $1 @", aliases["go"])
+	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @", aliases["wt"])
 	assert.Equal(
 		t,
 		"run --rm -it --agent $1 @:claude --dangerously-skip-permissions",
-		cfg.Project().Aliases["claude"],
+		aliases["claude"],
 	)
-	assert.Equal(t, "run --rm -it --agent $1 @:codex --yolo", cfg.Project().Aliases["codex"])
+	assert.Equal(t, "run --rm -it --agent $1 @:codex --yolo", aliases["codex"])
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {
@@ -77,9 +191,39 @@ workspace:
 `, "")
 	require.NoError(t, err)
 
-	p := cfg.Project()
-	assert.Equal(t, []string{"cowsay"}, p.Build.Packages)
-	assert.Equal(t, "snapshot", p.Workspace.DefaultMode)
+	assert.Equal(t, []string{"cowsay"}, cfg.BuildConfig().Packages)
+	assert.Equal(t, ModeSnapshot, cfg.WorkspaceDefaultMode())
+}
+
+func TestWorkspaceDefaultMode_EnumEnforcedAtDecode(t *testing.T) {
+	t.Run("invalid value fails construction", func(t *testing.T) {
+		_, err := NewFromString("workspace:\n  default_mode: bogus\n", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid mode")
+	})
+
+	t.Run("invalid value rejected by Set", func(t *testing.T) {
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		err = cfg.ProjectStore().Set([]string{"workspace", "default_mode"}, "bogus")
+		require.Error(t, err)
+		// Nothing staged: the accessor still reports unset.
+		assert.Equal(t, Mode(""), cfg.WorkspaceDefaultMode())
+	})
+
+	t.Run("valid values load", func(t *testing.T) {
+		for _, mode := range []Mode{ModeBind, ModeSnapshot} {
+			cfg, err := NewFromString("workspace:\n  default_mode: "+string(mode)+"\n", "")
+			require.NoError(t, err)
+			assert.Equal(t, mode, cfg.WorkspaceDefaultMode())
+		}
+	})
+
+	t.Run("unset reads as empty mode", func(t *testing.T) {
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		assert.Equal(t, Mode(""), cfg.WorkspaceDefaultMode())
+	})
 }
 
 func TestNewFromString_settingsOnly(t *testing.T) {
@@ -100,13 +244,11 @@ func TestNewFromString_emptyStrings(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty project — all zero values
-	p := cfg.Project()
-	assert.Empty(t, p.Build.Packages)
-	assert.Empty(t, p.Agent.Env)
+	assert.Empty(t, cfg.BuildConfig().Packages)
+	assert.Empty(t, cfg.AgentConfig().Env)
 
 	// Empty settings — zero values
-	s := cfg.Settings()
-	assert.Equal(t, 0, s.Monitoring.OtelCollectorPort)
+	assert.Equal(t, 0, cfg.MonitoringConfig().OtelCollectorPort)
 }
 
 func TestNewFromString_invalidYAML(t *testing.T) {
@@ -127,10 +269,9 @@ func TestNewFromString_noDefaults(t *testing.T) {
   packages: ["cowsay"]`, "")
 	require.NoError(t, err)
 
-	p := cfg.Project()
-	assert.Equal(t, []string{"cowsay"}, p.Build.Packages)
+	assert.Equal(t, []string{"cowsay"}, cfg.BuildConfig().Packages)
 	// Workspace is empty because no defaults are applied
-	assert.Equal(t, "", p.Workspace.DefaultMode)
+	assert.Empty(t, cfg.WorkspaceDefaultMode())
 }
 
 func TestConstantAccessors(t *testing.T) {
@@ -240,9 +381,8 @@ func TestNewConfig_isolatedWithDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	// NewConfig loads defaults — verify critical values are present
-	p := cfg.Project()
-	assert.Equal(t, "bind", p.Workspace.DefaultMode)
-	assert.True(t, cfg.Settings().Firewall.FirewallEnabled())
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
+	assert.True(t, cfg.FirewallEnabled())
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
@@ -276,11 +416,10 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	// The file value should override the default
-	p := cfg.Project()
-	assert.Equal(t, "emacs", p.Agent.Editor)
+	assert.Equal(t, "emacs", cfg.AgentConfig().Editor)
 
 	// Defaults for unset values should still be present
-	assert.Equal(t, "bind", p.Workspace.DefaultMode)
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 }
 
 func TestNewConfig_monitorExtensionsFileOverridesDefault(t *testing.T) {
@@ -314,7 +453,7 @@ func TestNewConfig_monitorExtensionsFileOverridesDefault(t *testing.T) {
 
 			cfg, err := NewConfig()
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, cfg.Project().Monitor.Extensions)
+			assert.Equal(t, tc.want, cfg.MonitorExtensions())
 		})
 	}
 }
@@ -336,13 +475,13 @@ func TestSetProject_mutation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mutate agent editor
-	err = cfg.ProjectStore().Set("agent.editor", "emacs")
+	err = cfg.ProjectStore().Set([]string{"agent", "editor"}, "emacs")
 	require.NoError(t, err)
 
-	assert.Equal(t, "emacs", cfg.Project().Agent.Editor)
+	assert.Equal(t, "emacs", cfg.AgentConfig().Editor)
 
 	// Other values should be preserved
-	assert.Equal(t, "bind", cfg.Project().Workspace.DefaultMode)
+	assert.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
 }
 
 func TestSetSettings_mutation(t *testing.T) {
@@ -361,10 +500,10 @@ func TestSetSettings_mutation(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.SettingsStore().Set("logging.max_size_mb", 100)
+	err = cfg.SettingsStore().Set([]string{"logging", "max_size_mb"}, 100)
 	require.NoError(t, err)
 
-	assert.Equal(t, 100, cfg.Settings().Logging.MaxSizeMB)
+	assert.Equal(t, 100, cfg.LoggingConfig().MaxSizeMB)
 
 	// Monitoring defaults should survive the mutation
 	assert.Equal(t, 4318, cfg.MonitoringConfig().OtelCollectorPort)
@@ -387,7 +526,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.ProjectStore().Set("agent.editor", "persisted-editor")
+	err = cfg.ProjectStore().Set([]string{"agent", "editor"}, "persisted-editor")
 	require.NoError(t, err)
 
 	err = cfg.ProjectStore().Write()
@@ -396,7 +535,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	// Re-read and verify persistence
 	cfg2, err := NewConfig()
 	require.NoError(t, err)
-	assert.Equal(t, "persisted-editor", cfg2.Project().Agent.Editor)
+	assert.Equal(t, "persisted-editor", cfg2.AgentConfig().Editor)
 }
 
 func TestWriteSettings_persistsToFile(t *testing.T) {
@@ -416,7 +555,7 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.SettingsStore().Set("logging.max_size_mb", 200)
+	err = cfg.SettingsStore().Set([]string{"logging", "max_size_mb"}, 200)
 	require.NoError(t, err)
 
 	err = cfg.SettingsStore().Write()
@@ -425,7 +564,7 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	// Re-read and verify persistence
 	cfg2, err := NewConfig()
 	require.NoError(t, err)
-	assert.Equal(t, 200, cfg2.Settings().Logging.MaxSizeMB)
+	assert.Equal(t, 200, cfg2.LoggingConfig().MaxSizeMB)
 }
 
 func TestParseMode(t *testing.T) {
@@ -459,93 +598,56 @@ firewall:
   enable: false
 `)
 	require.NoError(t, err)
-	assert.False(t, cfg.Settings().Firewall.FirewallEnabled())
+	assert.False(t, cfg.FirewallEnabled())
 }
 
 func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 	// When firewall section is omitted entirely, FirewallEnabled returns true
 	cfg, err := NewFromString("", "")
 	require.NoError(t, err)
-	assert.True(t, cfg.Settings().Firewall.FirewallEnabled(),
-		"nil FirewallSettings should default to enabled")
+	assert.True(t, cfg.FirewallEnabled(),
+		"an unset firewall.enable should default to enabled")
 }
 
-// --- Generated defaults validation ---
-
-// TestSetProject_EmptyStringsDontOverrideUserConfig reproduces the bug where
-// project init writes empty string fields (agent.editor: "", agent.visual: "")
-// to the project config file, overriding values set in the user-level config
-// (e.g. agent.editor: vim, agent.visual: vim).
+// TestProjectInit_WritesOnlyWhatItSet reproduces the bug where the file project
+// init wrote carried empty string fields (agent.editor: "", agent.visual: "")
+// that then shadowed the real values in the user-level config (agent.editor:
+// vim, agent.visual: vim) — a set-and-empty value wins the merge, so writing one
+// is not a no-op.
 //
-// The fix: structToMap treats empty strings as "not set" (same as nil pointers),
-// so they are not written to disk and higher-priority layer values merge through.
-func TestSetProject_EmptyStringsDontOverrideUserConfig(t *testing.T) {
-	base := t.TempDir()
-	configDir := filepath.Join(base, "config")
-	projectDir := filepath.Join(base, "project")
-	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
-	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))
-	t.Setenv("CLAWKER_STATE_DIR", filepath.Join(base, "state"))
-	for _, dir := range []string{
-		configDir,
-		projectDir,
-		filepath.Join(base, "data"),
-		filepath.Join(base, "state"),
-	} {
-		require.NoError(t, os.MkdirAll(dir, 0o755))
-	}
+// It drives the constructors project init actually uses —
+// NewProjectStoreFromPreset for the seeded store, WriteTo for the project file —
+// then reads the result back through the production load.
+func TestProjectInit_WritesOnlyWhatItSet(t *testing.T) {
+	f := newProjectEnv(t)
+	f.writeUser(t, "agent:\n  editor: vim\n  visual: vim\n")
 
-	// User-level config: sets agent.editor and agent.visual.
-	userConfigFile := filepath.Join(configDir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(userConfigFile, []byte(`
-agent:
-  editor: vim
-  visual: vim
-`), 0o644))
-
-	// Simulate project init: create a store with defaults, set a few fields, write.
-	projectStore, err := storage.New[Project]("",
-		storage.WithFilenames("clawker.yaml"),
-		storage.WithDefaultsFromStruct[Project](),
-		storage.WithDirs(projectDir),
-	)
+	// Project init: a preset-seeded store, the fields the wizard sets, then the
+	// write to the project file.
+	store, err := NewProjectStoreFromPreset("build:\n  packages: [ripgrep]\n")
 	require.NoError(t, err)
+	require.NoError(t, store.Set([]string{keyAgent, keyPostInit}, "echo project-init"))
+	require.NoError(t, store.Set([]string{keyWorkspace, keyDefaultMode}, string(ModeBind)))
+	require.NoError(t, store.WriteTo(f.projectPath()))
 
-	require.NoError(t, projectStore.Set("agent.post_init", "echo project-init"))
-	require.NoError(t, projectStore.Set("workspace.default_mode", "bind"))
-	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
-	require.NoError(t, projectStore.WriteTo(projectConfigFile))
-
-	// Verify the project file does NOT contain empty agent strings.
-	raw, err := os.ReadFile(projectConfigFile)
+	// The written file carries the one agent field init set and nothing else —
+	// no empty strings to shadow the user-level values.
+	raw, err := os.ReadFile(f.projectPath())
 	require.NoError(t, err)
-	var projectMap map[string]any
-	require.NoError(t, yaml.Unmarshal(raw, &projectMap))
+	var written map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &written))
+	agentBlock, ok := written[keyAgent].(map[string]any)
+	require.True(t, ok, "init must write the agent block it set")
+	assert.Equal(t, map[string]any{keyPostInit: "echo project-init"}, agentBlock)
 
-	if agentMap, ok := projectMap["agent"].(map[string]any); ok {
-		assert.NotContains(t, agentMap, "editor",
-			"project file should not write empty agent.editor")
-		assert.NotContains(t, agentMap, "visual",
-			"project file should not write empty agent.visual")
-	}
-
-	// Now simulate production loading: project file (walk-up) + user config.
-	// Use explicit paths since we can't walk-up in a temp dir.
-	mergedStore, err := storage.New[Project]("",
-		storage.WithFilenames("clawker.yaml"),
-		storage.WithDefaultsFromStruct[Project](),
-		storage.WithDirs(projectDir),
-		storage.WithPaths(configDir),
-	)
-	require.NoError(t, err)
-
-	snap := mergedStore.Read()
-	assert.Equal(t, "echo project-init", snap.Agent.PostInit,
-		"project-level agent.post_init should win")
-	assert.Equal(t, "vim", snap.Agent.Editor,
-		"user-level agent.editor should survive — not overridden by empty string")
-	assert.Equal(t, "vim", snap.Agent.Visual,
-		"user-level agent.visual should survive — not overridden by empty string")
+	// Production load: the written project file (walk-up) over the user layer.
+	agent := f.load(t).AgentConfig()
+	assert.Equal(t, "echo project-init", agent.PostInit,
+		"the project layer's value wins")
+	assert.Equal(t, "vim", agent.Editor,
+		"the user-level value survives — not overridden by an empty string")
+	assert.Equal(t, "vim", agent.Visual,
+		"the user-level value survives — not overridden by an empty string")
 }
 
 func TestOtelCollectorURL(t *testing.T) {
@@ -564,39 +666,4 @@ monitoring:
 `)
 	require.NoError(t, err)
 	assert.Equal(t, "http://otel-collector:9999", cfg2.OtelCollectorURL())
-}
-
-func TestGeneratedDefaults_SettingsValues(t *testing.T) {
-	generated := storage.GenerateDefaultsYAML[Settings]()
-	store, err := storage.New[Settings](generated)
-	require.NoError(t, err)
-	s := store.Read()
-
-	// Logging
-	require.NotNil(t, s.Logging.FileEnabled)
-	assert.True(t, *s.Logging.FileEnabled)
-	assert.Equal(t, 50, s.Logging.MaxSizeMB)
-	assert.Equal(t, 7, s.Logging.MaxAgeDays)
-	assert.Equal(t, 3, s.Logging.MaxBackups)
-
-	// OTEL — opt-in: defaults off so CLI doesn't dial a missing
-	// collector on every invocation when monitoring stack isn't up.
-	require.NotNil(t, s.Logging.Otel.Enabled)
-	assert.False(t, *s.Logging.Otel.Enabled)
-	assert.Equal(t, 5, s.Logging.Otel.TimeoutSeconds)
-	assert.Equal(t, 2048, s.Logging.Otel.MaxQueueSize)
-
-	// Host Proxy
-	assert.Equal(t, 18374, s.HostProxy.Manager.Port)
-	assert.Equal(t, 18374, s.HostProxy.Daemon.Port)
-
-	// Firewall
-	assert.True(t, s.Firewall.FirewallEnabled())
-
-	// Monitoring
-	assert.Equal(t, 4318, s.Monitoring.OtelCollectorPort)
-	assert.Equal(t, "localhost", s.Monitoring.OtelCollectorHost)
-	assert.Equal(t, 9200, s.Monitoring.OpenSearchPort)
-	assert.Equal(t, 5601, s.Monitoring.OpenSearchDashboardsPort)
-	assert.Equal(t, 512, s.Monitoring.OpenSearchHeapMB)
 }

@@ -41,7 +41,7 @@ type Factory struct {
     Config          func() (config.Config, error)
     Logger          func() (*logger.Logger, error)
     CLIState        func() (state.StateStore, error)
-    ProjectRegistry func() (*project.Registry, error)
+    ProjectRegistry func() (project.Registry, error)
     ProjectManager  func() (project.ProjectManager, error)
     GitManager      func() (*git.GitManager, error)
     HostProxy       func() hostproxy.Service
@@ -60,7 +60,7 @@ type Factory struct {
 - `Config()` -- lazy config (loads project + settings; project-config walk-up is anchored by the project root resolved via `ProjectRegistry`)
 - `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
 - `CLIState()` -- lazy `state.StateStore` (CLI runtime-state, `internal/state`); used by Main's background update check and show-once teaser. Tests: `func() (state.StateStore, error) { return statemocks.NewBlankState(), nil }`
-- `ProjectRegistry()` -- lazy `*project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
+- `ProjectRegistry()` -- lazy `project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
 - `ProjectManager()` -- lazy project manager for registration, worktree lifecycle (built over `ProjectRegistry`)
 - `GitManager()` -- lazy git manager for worktree operations; anchors at the registry-resolved project root
 - `HostProxy()` -- returns `hostproxy.Service` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`

@@ -332,15 +332,12 @@ func TestPerformProjectSetup_PresetRoundTrip(t *testing.T) {
 			content, err := os.ReadFile(configPath)
 			require.NoError(t, err, "config file not created")
 
-			// Reload the written file into a store to verify it's valid.
-			reloaded, err := storage.New[config.Project](
-				string(content),
-				storage.WithDefaultsFromStruct[config.Project](),
-			)
+			// Reload the written file through the config facade to verify it
+			// is valid (parses and passes the project front-door validation).
+			reloaded, err := config.NewFromString(string(content), "")
 			require.NoError(t, err, "written config is invalid YAML")
 
-			snap := reloaded.Read()
-			assert.NotEmpty(t, snap.Build.Packages, "preset %s should set build.packages", preset.Name)
+			assert.NotEmpty(t, reloaded.BuildConfig().Packages, "preset %s should set build.packages", preset.Name)
 
 			// Verify ignore file was created.
 			ignorePath := filepath.Join(wd, cfg.ClawkerIgnoreName())
@@ -439,14 +436,10 @@ func TestRunNonInteractive_PresetFlag(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
-	reloaded, err := storage.New[config.Project](
-		string(content),
-		storage.WithDefaultsFromStruct[config.Project](),
-	)
+	reloaded, err := config.NewFromString(string(content), "")
 	require.NoError(t, err)
 
-	snap := reloaded.Read()
-	assert.Contains(t, snap.Build.Packages, "ripgrep")
+	assert.Contains(t, reloaded.BuildConfig().Packages, "ripgrep")
 	assert.Contains(t, out.String(), "Go")
 }
 
@@ -515,31 +508,38 @@ func TestApplyVCSToProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Exercise the real store path: path-based Set + decode round-trip.
+			// Exercise the real store path: key-based Set + decode round-trip.
 			store, err := config.NewProjectStoreFromPreset("")
 			require.NoError(t, err)
 			require.NoError(t, applyVCSToProject(store, tt.vcs))
 
-			p := store.Read()
+			domains, err := storage.Get[[]string](store, firewallAddDomainsKey()...)
+			require.NoError(t, err)
 			for _, d := range tt.wantDomains {
-				assert.Contains(t, p.Security.Firewall.AddDomains, d)
+				assert.Contains(t, domains, d)
 			}
 
+			rules, rulesErr := storage.Get[[]config.EgressRule](store, firewallRulesKey()...)
 			if tt.wantSSHRule {
-				require.NotEmpty(t, p.Security.Firewall.Rules)
-				rule := p.Security.Firewall.Rules[0]
+				require.NoError(t, rulesErr)
+				require.NotEmpty(t, rules)
+				rule := rules[0]
 				assert.Equal(t, tt.wantSSHHost, rule.Dst)
 				assert.Equal(t, "22", rule.Port)
 				assert.Equal(t, "ssh", rule.Proto)
 				assert.Equal(t, "allow", rule.Action)
 			} else {
-				assert.Empty(t, p.Security.Firewall.Rules)
+				// No rule written and none seeded: the key stays unset.
+				require.ErrorIs(t, rulesErr, storage.ErrKeyNotFound)
 			}
 
+			forwardGPG, gpgErr := storage.Get[bool](store, forwardGPGKey()...)
 			if tt.wantGPGFalse {
-				require.NotNil(t, p.Security.GitCredentials)
-				require.NotNil(t, p.Security.GitCredentials.ForwardGPG)
-				assert.False(t, *p.Security.GitCredentials.ForwardGPG)
+				require.NoError(t, gpgErr)
+				assert.False(t, forwardGPG)
+			} else {
+				// Untouched: the schema default applies at load, not here.
+				require.ErrorIs(t, gpgErr, storage.ErrKeyNotFound)
 			}
 		})
 	}
@@ -609,28 +609,26 @@ func TestRunNonInteractive_VCSFlags(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
-	reloaded, err := storage.New[config.Project](
-		string(content),
-		storage.WithDefaultsFromStruct[config.Project](),
-	)
+	reloaded, err := config.NewFromString(string(content), "")
 	require.NoError(t, err)
 
-	snap := reloaded.Read()
+	security := reloaded.SecurityConfig()
+	require.NotNil(t, security.Firewall)
 
 	// Verify GitLab domains present, GitHub absent.
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "gitlab.com")
-	assert.Contains(t, snap.Security.Firewall.AddDomains, "registry.gitlab.com")
-	assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com")
+	assert.Contains(t, security.Firewall.AddDomains, "gitlab.com")
+	assert.Contains(t, security.Firewall.AddDomains, "registry.gitlab.com")
+	assert.NotContains(t, security.Firewall.AddDomains, "github.com")
 
 	// Verify SSH rule.
-	require.NotEmpty(t, snap.Security.Firewall.Rules)
-	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
-	assert.Equal(t, "22", snap.Security.Firewall.Rules[0].Port)
+	require.NotEmpty(t, security.Firewall.Rules)
+	assert.Equal(t, "gitlab.com", security.Firewall.Rules[0].Dst)
+	assert.Equal(t, "22", security.Firewall.Rules[0].Port)
 
 	// Verify GPG disabled.
-	require.NotNil(t, snap.Security.GitCredentials)
-	require.NotNil(t, snap.Security.GitCredentials.ForwardGPG)
-	assert.False(t, *snap.Security.GitCredentials.ForwardGPG)
+	require.NotNil(t, security.GitCredentials)
+	require.NotNil(t, security.GitCredentials.ForwardGPG)
+	assert.False(t, *security.GitCredentials.ForwardGPG)
 }
 
 func TestPerformProjectSetup_SubdirSkipsRegistrationAndIgnore(t *testing.T) {

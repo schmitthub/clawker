@@ -12,21 +12,23 @@ internal/controlplane/adminServer  (embeds *firewall.Handler)
     │
     ▼
 firewall.Handler (13 RPCs)
-    │  every RPC does pre-Submit work (validate, store write,
-    │  cert regen) then Submit → wait on reply channel
+    │  pre-Submit work is PURE only (validate, proto convert);
+    │  every store write and stack op runs inside a queued
+    │  closure — Submit → wait on reply channel
     ▼
 ActionQueue (single-goroutine FIFO worker; queue.go)
-    │  coalesces consecutive ActionReconcile submissions;
-    │  Bringup / Teardown / Read / Enable / Disable / Bypass
-    │  never coalesce — they execute one-at-a-time.
+    │  the single-writer funnel: coalesces consecutive
+    │  ActionReconcile submissions; Bringup / Teardown /
+    │  RuleMutate / Read / Enable / Disable / Bypass never
+    │  coalesce — they execute one-at-a-time.
     ▼
 Closures (reconcileStackClosure + per-RPC bodies) call:
     ├── Stack         → Envoy + CoreDNS containers (on the clawker network)
     ├── ebpf.Manager  → pinned BPF maps + attached programs
-    ├── Store         → egress-rules.yaml (gofrs/flock, atomic rename)
+    ├── EgressRulesStore → egress-rules.yaml (gofrs/flock, atomic rename)
     ├── Resolver      → Docker-backed (cid, cgroupPath, exists, err)
     ├── Certs (lazy)  → on-disk CA + per-domain certs
-    └── overseer bus  → EBPFContainerEnrolled (drives netlogger LabelCache hydration)
+    └── EnrolledTopic → EBPFContainerEnrolled (drives netlogger LabelCache hydration)
 ```
 
 - **No host-side daemon**: `internal/firewall/` is gone. Lifecycle authority is the `clawker-controlplane` container (see `../CLAUDE.md` for startup sequencing). First CLI call triggers `controlplane.EnsureRunning` via `adminClientFunc`; when the `AgentWatcher` observes drain-to-zero + grace, the CP self-shuts-down (INV-B2-007).
@@ -37,7 +39,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 
 | File | Purpose |
 |------|---------|
-| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management, rules-store mutation helpers. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
+| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management. Rule mutation itself lives on `EgressRulesStore` (`rules_store.go`); the Handler calls it and owns only the logging + RPC mapping around it. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
 | `stack.go` | `Stack` — Envoy + CoreDNS container lifecycle via DooD; image build helpers (`drainPullStream`, `ensureEnvoyImage`, `ensureCorednsImage`); health probing; `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Sibling drift gate: `driftLabels()` stamps three labels on both containers — `infra_certs_ready` (mTLS bind/env shape), `otel_infra_port` (create-time OTLP port), and `stack_build_sha` (the CP's embedded-binary hash via `consts.CPBinarySHA`, injected by host bootstrap as container env). `ensureContainer`/`reloadContainer` compare them against the running container and recreate on any mismatch (`event=firewall_container_spec_drift`). The build SHA covers every compiled-in staleness vector — pinned Envoy image const, embedded CoreDNS binary, config templates, containerSpec shape — so a CLI upgrade that replaces the CP also replaces the siblings instead of adopting stale ones. |
 | `status.go` | `Status` struct returned by `Stack.Status` (per-container up state, IPs, rule count) |
 | `cgroup.go` | `DetectCgroupDriver(ctx, *docker.Client)`, `EBPFCgroupPath(driver, cid)`, `ResolveContainerID(ctx, *docker.Client, ref)`, `IsCanonicalContainerID` |
@@ -46,13 +48,13 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | Per-svc OTel mTLS material | Provided by `*otelcerts.Service` — see `internal/controlplane/otelcerts/CLAUDE.md`. `Stack` holds an `OtelCertProvisioner` reference and dispatches one `EnsureClient` call per sibling (envoy, coredns) inside `ensureConfigs` so `Reload` rotates with the config refresh. No-op when the provisioner is nil — stdout-only degraded mode: Envoy emits no OTel access logs (sink + cluster dropped); CoreDNS otel plugin installs noopEmitter. Atomic write, pair-check, and 0o755/0o644 perms are owned by the provisioner. Note: netlogger's mTLS material is NOT provisioned by `firewall.Stack` — `cmd/clawkercp/main.go` mints its per-handshake leaf directly via `otelcerts.Service.LoadTLSConfig("netlogger")` and hands the resulting `*tls.Config` to `controlplane.NewOtelLoggerProvider`. |
 | `coredns_config.go` | Corefile generation; wildcard rules → subtree-forward zones; exact-only rules → forward apex + NXDOMAIN-subdomain template (`fallthrough`); deny rules → dedicated NXDOMAIN zones (win via longest-zone match); `dnsbpf` plugin directive; catch-all NXDOMAIN |
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
-| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `config.Config.EgressRules()` — firewall doesn't compose project rules. `RoutesFromRules(rules, ports, idFor IdentityResolver) ([]ebpf.Route, []string)` projects eBPF routes; a resolver miss drops the route (fail closed) and is reported in the missed-dst return — `Handler.routesFromStore` logs partial misses as `event=identity_resolver_miss`. |
-| `identity.go` | `IdentityAllocator` — sticky persisted route identities (typed `ebpf.RouteIdentity`, a named u32; cilium pattern). `NewIdentityStore(cfg)` + `NewIdentityAllocator(store)`; `SyncDsts` (set-diff acquire/release), `IdentityFor`/`DomainFor`/`Snapshot`; allocatable band starts at `MinIdentity=256` (0 = none, 1–255 reserved), round-robin next-free so released IDs aren't reused prematurely; table persisted to `route-identities.yaml` in `FirewallDataSubdir`. Live dsts are never renumbered. `IdentityResolver` is the read-side func type consumed by `RoutesFromRules`/`GenerateCorefile`. |
+| `rules_store.go` | `EgressRulesFile` schema + the **`EgressRulesStore` interface** and its unexported impl (embeds `*storage.Store[EgressRulesFile]`) + the constructor pair `NewRulesStore(cfg)` (file-backed) / `NewRulesStoreFromString(yaml)` (in-memory seam), both returning the interface + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Every rule read/write in the package goes through the interface — no consumer holds a `storage.Store`. Rule composition lives in `internal/bundler` (`bundler.EgressRules`) — firewall doesn't compose harness or project rules. `RoutesFromRules(rules, ports, idFor IdentityResolver) ([]ebpf.Route, []string)` is the pure projection behind `EgressRulesStore.Routes`; a resolver miss drops the route (fail closed) and is reported in the missed-dst return — `Handler.routesFromStore` logs partial misses as `event=identity_resolver_miss`. |
+| `identity.go` | `IdentityAllocator` — sticky persisted route identities (typed `ebpf.RouteIdentity`, a named u32; cilium pattern). The **`RouteIdentityStore` interface** (`Entries`/`Cursor`/`SetTable`) and its unexported impl (embeds `*storage.Store[IdentityTableFile]`), the constructor pair `NewIdentityStore(cfg)` / `NewIdentityStoreFromString(yaml)` returning that interface, + `NewIdentityAllocator(store RouteIdentityStore)` (`ErrNilIdentityStore` on nil); `SyncDsts` (set-diff acquire/release), `IdentityFor`/`DomainFor`/`Snapshot`; allocatable band starts at `MinIdentity=256` (0 = none, 1–255 reserved), round-robin next-free so released IDs aren't reused prematurely; table persisted to `route-identities.yaml` in `FirewallDataSubdir`. `indexIdentityEntries` is the one table validator, run by both `NewIdentityAllocator` (load) and `SetTable` (write). Live dsts are never renumbered. `IdentityResolver` is the read-side func type consumed by `RoutesFromRules`/`GenerateCorefile`. |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
 | `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CoreDNSClawkerBinary` |
 | `errors.go` | Sentinels (`ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`) + `HealthTimeoutError` |
 | `ebpf/` | eBPF subsystem — see `ebpf/CLAUDE.md` |
-| `mocks/` | Moq-generated mocks for handler-local interfaces used by handler tests |
+| `mocks/` | Moq-generated mocks (`EgressRulesStoreMock`, `RouteIdentityStoreMock`) for the two store-backed domain interfaces — regenerate with `go generate ./...`, never hand-edit. Black-box test files (`package firewall_test`) can import it; internal test files (`package firewall`, `*_internal_test.go`) cannot (import cycle). This package's own store tests use REAL stores by design — the store is the subject — regardless of which test package they sit in (see Test Patterns). |
 | `testdata/` | Golden files (e.g., `corefile_basic.golden`) |
 | `assets/` | `coredns-clawker` Linux binary (gitignored; built by `make coredns-binary`) |
 
@@ -64,16 +66,16 @@ Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope di
 |-----|-------|---------|
 | `FirewallInit` | global | Idempotent stack-up: `ensureConfigs` → ensure Envoy/CoreDNS images → ensure containers attached to the clawker network at static IPs → `WaitForHealthy`. Returns Envoy/CoreDNS IPs + network ID. BPF attach happens at CP startup, not here. Besides the RPC callers (`firewall up`, `controlplane up`, container-start bootstrap), the CP daemon itself invokes the handler method in-process as a pre-`SetReady` startup gate when `firewall.enable` (settings.yaml) is true (the settings-driven startup gate in `cmd/clawkercp/main.go`; failure fails CP startup, exit code 1) — the ActionQueue serializes the two paths. |
 | `FirewallRemove` | global | Global teardown (queued, `ActionTeardown`): `CancelAllBypassTimers` → `Stack.Stop` → `ebpf.Manager.FlushAll` (wipe container_map + bypass_map + unpin links) → delete generated `envoy.yaml` + `Corefile`. **The egress rules store is preserved** so a subsequent `firewall remove <domain>` lands in the authoritative file and takes effect on next `firewall up` (trailing-mutation security invariant). |
-| `FirewallEnable(container_id)` | per-container | Idempotent enroll. `resolveForEnable` → Docker lookup → fresh `cgroup_id` via `EBPFCgroupPath`. BPF `container_config` is built CP-side from `Stack.NetworkInfo` (Envoy/CoreDNS/gateway/CIDR) + `cfg.EnvoyEgressPort()` + `resolveHostProxy` (resolves `host.docker.internal` when the project has host proxy enabled). Writes `container_map` + attaches links via `ebpf.Manager.Install` + clears any bypass flag. Drift guard logs stored-vs-fresh cgroup_id delta. Returns `FailedPrecondition` if Docker says the container is gone. Note: the bypass dead-man timer does NOT re-run `Install` — it calls the cheap `ebpf.Manager.Enable` path (clears bypass flag only). Full re-enroll happens only on the explicit `FirewallEnable` RPC. **Side effect**: after the `container_map` write succeeds, publishes `ebpf.EBPFContainerEnrolled{CgroupID, ContainerID, OccurredAt}` on the overseer bus (nil-bus tolerant — test wiring without overseer skips the publish). netlogger subscribes to this event to hydrate its label cache — but only for RPC-path `FirewallInit`/`FirewallEnable`: the settings-driven startup gate runs its `FirewallInit` before netlogger is constructed, so those enroll events are dropped and the LabelCache stays cold until the next RPC-path sweep (see the step-9 caveat in `internal/controlplane/CLAUDE.md`; telemetry enrichment only, enforcement unaffected). |
+| `FirewallEnable(container_id)` | per-container | Idempotent enroll. `resolveForEnable` → Docker lookup → fresh `cgroup_id` via `EBPFCgroupPath`. BPF `container_config` is built CP-side from `Stack.NetworkInfo` (Envoy/CoreDNS/gateway/CIDR) + `cfg.EnvoyEgressPort()` + `resolveHostProxy` (resolves `host.docker.internal` when the project has host proxy enabled). Writes `container_map` + attaches links via `ebpf.Manager.Install` + clears any bypass flag. Drift guard logs stored-vs-fresh cgroup_id delta. Returns `FailedPrecondition` if Docker says the container is gone. Note: the bypass dead-man timer does NOT re-run `Install` — it calls the cheap `ebpf.Manager.Enable` path (clears bypass flag only). Full re-enroll happens only on the explicit `FirewallEnable` RPC. **Side effect**: after the `container_map` write succeeds, publishes `ebpf.EBPFContainerEnrolled{CgroupID, ContainerID, OccurredAt}` on the typed `EnrolledTopic` (nil-tolerant — test wiring without a topic skips the publish). netlogger subscribes to this event to hydrate its label cache — but only for RPC-path `FirewallInit`/`FirewallEnable`: the settings-driven startup gate runs its `FirewallInit` before netlogger is constructed, so those enroll events are dropped and the LabelCache stays cold until the next RPC-path sweep (see the step-9 caveat in `internal/controlplane/CLAUDE.md`; telemetry enrichment only, enforcement unaffected). |
 | `FirewallDisable(container_id)` | per-container | Set BPF bypass for the container. Falls back to stored `cgroup_id` when Docker reports the container gone; no-op for unknown containers (both paths reach `ebpf.Manager.Disable`). |
 | `FirewallBypass(container_id, timeout)` | per-container | `FirewallDisable` + `time.AfterFunc` that calls drift-guarded `Enable` on expiry (`bypassTimerFired` → `resolveBypassCgroupID` → `ebpf.Manager.Enable`). Caps at `maxBypassTimeout = 1h`. Stores `storedCgroupID[cid]` so mid-bypass Disable on a now-gone container can still clear the orphan bypass_map entry. |
-| `FirewallAddRules` | global | Pre-Submit (synchronous): `ValidateDst`, `NormalizeAndDedup`, `addRulesToStore` (additive merge: caller wins on `Action`; caller wins on `PathDefault` only when non-empty (empty incoming preserves the stored value so a bare CLI add doesn't clobber a yaml-set default); `PathRules` union by `Path` with caller winning on path collision — see `MergeRule` in `rules_store.go`) + `store.Write`. Per-rule outcome reported on `FirewallAddRulesResult.statuses` (`statuses[i] ↔ req.rules[i]`, input order preserved): `ADDED` / `MODIFIED` / `UNCHANGED`. The `reflect.DeepEqual` gate makes identical re-seeds a true no-op — every entry comes back `UNCHANGED`, `store.Write` is skipped, no reconcile fires. When at least one rule is `ADDED` or `MODIFIED`, Submit `reconcileStackClosure` (`ActionReconcile`) — inside the closure, if the stack is running call `Stack.Reload` + `ebpf.Manager.SyncRoutes`; if down, no-op. Response carries `stack_restarted=false` for the stack-down path so the CLI can emit the "takes effect on next `firewall up`" note. |
-| `FirewallRemoveRule` | global | Removal keyed by `(dst, proto, port)`; optional `path` field narrows the operation to a single `PathRule` entry (`removePathRuleFromStore`) while leaving the rule itself in place. Pre-Submit lookup by `RuleKey` (and by `Path` when set). Outcome on `FirewallRemoveRuleResult.status`: `REMOVED` (whole rule deleted), `PATH_REMOVED` (single PathRule entry deleted, rule remains), `NOT_FOUND` (key miss or — when `path` set — path miss). NOT_FOUND travels as a response status, NOT as a gRPC `codes.NotFound` error — genuine store-I/O failures still return as gRPC errors. On match: store write + shared `reconcileStackClosure`. No `ValidateDst` on this path — anything unmatched collapses into the same NOT_FOUND outcome. The CLI exits non-zero on NOT_FOUND so a typo, wrong proto/port, or unknown path never silently succeeds. |
+| `FirewallAddRules` | global | Pre-Submit: validation only (`ValidateRule` per rule — pure, no store). The mutation runs as a queued `ActionRuleMutate` closure: `EgressRulesStore.AddRules` (additive merge: caller wins on `Action`; caller wins on `PathDefault` only when non-empty (empty incoming preserves the stored value so a bare CLI add doesn't clobber a yaml-set default); `PathRules` union by `Path` with caller winning on path collision — see `MergeRule` in `rules_store.go`) + `store.Write`. Per-rule outcome reported on `FirewallAddRulesResult.statuses` (`statuses[i] ↔ req.rules[i]`, input order preserved): `ADDED` / `MODIFIED` / `UNCHANGED`. The `reflect.DeepEqual` gate makes identical re-seeds a true no-op — every entry comes back `UNCHANGED`, `store.Write` is skipped, no reconcile fires. When at least one rule is `ADDED` or `MODIFIED`, Submit `reconcileStackClosure` (`ActionReconcile`) — inside the closure, if the stack is running call `Stack.Reload` + `ebpf.Manager.SyncRoutes`; if down, no-op. Response carries `stack_restarted=false` for the stack-down path so the CLI can emit the "takes effect on next `firewall up`" note. |
+| `FirewallRemoveRule` | global | Removal keyed by `(dst, proto, port)`; optional `path` field narrows the operation to a single `PathRule` entry (`EgressRulesStore.RemovePathRule`) while leaving the rule itself in place. The lookup + removal run as a queued `ActionRuleMutate` closure, keyed by `RuleKey` (and by `Path` when set). Outcome on `FirewallRemoveRuleResult.status`: `REMOVED` (whole rule deleted), `PATH_REMOVED` (single PathRule entry deleted, rule remains), `NOT_FOUND` (key miss or — when `path` set — path miss). NOT_FOUND travels as a response status, NOT as a gRPC `codes.NotFound` error — genuine store-I/O failures still return as gRPC errors. On match: store write + shared `reconcileStackClosure`. No `ValidateDst` on this path — anything unmatched collapses into the same NOT_FOUND outcome. The CLI exits non-zero on NOT_FOUND so a typo, wrong proto/port, or unknown path never silently succeeds. |
 | `FirewallListRules` | global | Read-only normalized rule dump from the store. |
 | `FirewallStatus` | global | `Stack.Status` — per-container up state, Envoy/CoreDNS IPs, network ID, rule count. Network-discovery errors log at Warn and leave topology empty; per-container `isRunning` is authoritative for "stack down". |
 | `FirewallReload` | global | Regenerate configs and restart the stack without rule mutation. |
 | `FirewallRotateCA` | global | Regenerate MITM CA + per-domain certs and `Stack.Reload`. |
-| `FirewallSyncRoutes` | global | Break-glass route re-sync. Routed through `reconcileStackClosure`, which rebuilds routes from the **current rules store** (not the caller-supplied proto rules — those are ignored so two coalesced SyncRoutes calls can't smuggle different inputs past the head-wins coalescer). |
+| `FirewallSyncRoutes` | global | Break-glass route re-sync. Routed through `reconcileStackClosure`, which rebuilds routes from the **current rules store** (not the caller-supplied proto rules — those are ignored so two coalesced SyncRoutes calls can't smuggle different inputs past the head-wins coalescer). The reported `applied` count is carried out on `StackReloadResult.RoutesApplied` from inside that closure, never re-read afterwards: a rule mutation queued behind the reconcile would land between the two and make the count describe a set this call never pushed. Zero when the stack was down (nothing synced). |
 | `FirewallResolveHostname` | global | DNS lookup from CP netns (used by container enroll for `host.docker.internal` resolution). |
 
 ## Types
@@ -82,17 +84,17 @@ Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope di
 
 ```go
 type HandlerDeps struct {
-    EBPF       ebpf.EBPFManager       // required — every RPC hits it
-    Stack      StackLifecycle         // optional — stack-up/down RPCs no-op if nil
-    Store      *storage.Store[EgressRulesFile] // optional — rules RPCs no-op if nil
-    Cfg        config.Config          // optional — read for rule defaults, CPIPLastOctet, etc.
-    Resolver   ContainerResolver      // required — per-container RPCs
-    Log        *logger.Logger         // optional — defaults to Nop
-    Queue      *ActionQueue           // required — every RPC submits through it
-    Bus        *overseer.Overseer     // optional — nil-tolerant; FirewallEnable skips publish when nil
-    CertDirFn  func() (string, error) // optional — certs path for RotateCA
-    ListAgents func(ctx context.Context) ([]string, error) // optional — nil skips agent re-enrollment on FirewallInit
-    Identity   *IdentityAllocator     // optional — nil degrades fail-closed (no routes/dnsbpf directives; event=identity_allocator_unset)
+    EBPF          ebpf.EBPFManager    // required — every RPC hits it
+    Stack         StackLifecycle      // optional — stack-up/down RPCs no-op if nil
+    Store         EgressRulesStore    // optional — reconcile/route paths no-op if nil; ListRules/RotateCA/AddRules/RemoveRule fail loud instead of panicking
+    Cfg           config.Config       // optional — read for rule defaults, CPIPLastOctet, etc.
+    Resolver      ContainerResolver   // required — per-container RPCs
+    Log           *logger.Logger      // optional — defaults to Nop
+    Queue         *ActionQueue        // required — every RPC submits through it
+    EnrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled] // optional — nil-tolerant; FirewallEnable skips publish when nil
+    CertDirFn     func() (string, error) // optional — certs path for RotateCA
+    ListAgents    func(ctx context.Context) ([]string, error) // optional — nil skips agent re-enrollment on FirewallInit
+    Identity      *IdentityAllocator  // optional — nil degrades fail-closed (no routes/dnsbpf directives; event=identity_allocator_unset)
 }
 
 func NewHandler(deps HandlerDeps) (*Handler, error)  // ErrNilEBPFManager / ErrNilResolver / ErrNilQueue on missing required deps
@@ -109,12 +111,17 @@ post-`Close` submissions receive `ErrClosed` via a pre-closed reply
 channel, which the Handler translates to `ErrQueueClosed` +
 `codes.Unavailable` for CLI callers.
 
+`ActionKind.Coalesces` is an exhaustive switch over every kind with no
+default arm, so a kind added later cannot inherit a coalescing semantic by
+omission — the linter makes the author state it. Inheriting the wrong one
+silently drops a submitter's work.
+
 ### `Stack`
 
 ```go
-type Stack struct { /* docker.Client, config.Config, logger, Store */ }
+type Stack struct { /* docker.Client, config.Config, logger, EgressRulesStore */ }
 
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], otelCerts OtelCertProvisioner, idFor IdentityResolver) *Stack  // nil idFor = fail-closed stub (no dnsbpf directives; event=identity_resolver_unset)
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store EgressRulesStore, otelCerts OtelCertProvisioner, idFor IdentityResolver) *Stack  // nil idFor = fail-closed stub (no dnsbpf directives; event=identity_resolver_unset)
 func (s *Stack) EnsureRunning(ctx) error
 func (s *Stack) Stop(ctx) error
 func (s *Stack) Reload(ctx) error
@@ -138,16 +145,93 @@ type ContainerResolver func(ctx context.Context, ref string) (id, cgroupPath str
 - `exists=false` + `err=nil` is the "container gone" signal — drives `FirewallEnable`'s `FailedPrecondition` and `FirewallDisable`'s stored-cgroup fallback.
 - Production wiring: `cmd/clawkercp/main.go::containerResolverFromDocker` uses `*docker.Client` + `IsCanonicalContainerID` so short-ref NotFound doesn't silently drop enforcement state.
 
+### `EgressRulesStore` — the rules-file domain facade
+
+```go
+type EgressRulesStore interface {
+	Rules() ([]config.EgressRule, []string, error)                                  // canonical rules + normalization warnings
+	Routes(ports EnvoyPorts, idFor IdentityResolver) ([]ebpf.Route, []string, error) // BPF route projection + missed (identity-less) dsts
+
+	AddRules(incoming []config.EgressRule) ([]AddStatus, error)                     // merge-add; one status per input rule
+	RemoveRule(target config.EgressRule) (matched bool, err error)                  // delete by RuleKey
+	RemovePathRule(target config.EgressRule, path string) (matched bool, err error)  // delete one PathRule entry
+	Canonicalize() (healed bool, err error)                                         // rewrite when the on-disk shape differs from canonical
+}
+
+func NewRulesStore(cfg config.Config) (EgressRulesStore, error)      // file-backed (filenames + default-filename guard + FirewallDataSubdir + flock)
+func NewRulesStoreFromString(seed string) (EgressRulesStore, error)  // in-memory seam: no path options, no disk, writes error by design
+```
+
+**There is no whole-schema read.** Every read answers with the CANONICAL set
+(`NormalizeAndDedup` applied) because that is the only shape the generators, the
+cert pass, the route projection, and the rule count may act on. `Rules()`
+surfaces a read failure rather than folding it to "no rules" — an empty set
+wipes generated listeners and route_map entries, so an unreadable store must
+never masquerade as one.
+
+**Write serialization is the ActionQueue's job, not the store's.** The schema
+has a single `rules` field, so every writer rewrites the whole list from its
+own earlier read — two concurrent writers would be a lost-update race. The
+store carries no lock for this: ALL writers run on the queue's single worker.
+RPC mutations (`AddRules`/`RemoveRule`/`RemovePathRule`) execute inside queued
+`ActionRuleMutate` closures (non-coalescing — coalescing would drop the
+collapsed submitter's mutation) and the canonical heal (`Canonicalize`) runs
+inside the bringup/reconcile closures via `Stack.ensureConfigs`. The engine
+below provides per-operation thread safety, atomic temp+rename writes, and the
+cross-process flock; same-path writes from other processes resolve to
+last-writer-wins by design.
+
+**`Canonicalize` compares the WHOLE canonical shape.** The heal fires whenever
+the stored rules differ from `NormalizeAndDedup`'s output in any field it
+touches — defaulted proto/action/port, a dropped duplicate, a carved opaque port
+span, and a path rule's `methods` after uppercase/dedup/sort. A field-subset
+comparison leaves a file that differs only in an uncompared field reporting
+"already canonical" forever, so the on-disk shape never converges. It runs once
+per bringup/reconcile; an empty file is never rewritten.
+
+**Normalization warnings need a logger, and the store has none.** Every
+canonical read returns them; the Handler is the layer that surfaces them
+(`logNormalizeWarnings`). The mutating RPCs log them from inside their
+`ActionRuleMutate` closure, and `reconcileStackClosure` logs them BEFORE it
+branches on stack state — a path rule silently unenforced on an opaque proto
+must reach the operator whether or not Envoy happens to be up.
+
+### `RouteIdentityStore` — the identity-table domain facade
+
+```go
+type RouteIdentityStore interface {
+	Entries() ([]IdentityEntry, error)                        // persisted allocations; unset table → none
+	Cursor() (int64, error)                                   // round-robin cursor; unset → 0 (allocator applies MinIdentity)
+	SetTable(entries []IdentityEntry, cursor int64) error      // entries + cursor persisted as one unit
+}
+
+func NewIdentityStore(cfg config.Config) (RouteIdentityStore, error)
+func NewIdentityStoreFromString(seed string) (RouteIdentityStore, error)
+```
+
+Neither read folds a read FAILURE: an unreadable table presented as an empty one
+would renumber every live identity on the next sync — the exact `dns_cache`
+aliasing bug the sticky table exists to prevent. `SetTable` validates at the
+write front door with the SAME check the load path runs
+(`indexIdentityEntries`: every ID inside the allocatable band, dst and ID both
+unique) and returns a wrapped `firewall: ...` error on a violation — a shape the
+writer accepts but the loader refuses would surface as a CP that boots fine
+today and refuses to boot tomorrow, with every enrolled agent already
+fail-closed and no supervisor to explain why. `IdentityAllocator.mu`
+serializes the table's read-modify-write — the in-memory `byDst`/`byID` maps
+are the mutated state and the allocator is the table's only writer; the store
+itself carries no lock (engine per-operation safety + flock below it).
+
 ### `EgressRulesFile` + rule helpers
 
-`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `config.Config.EgressRules()` — the firewall package owns store/stack/certs, not rule composition. `BootstrapServicesPreStart` (`internal/cmd/container/shared/container_start.go`) calls `cfg.EgressRules()` and passes the result through `adminv1.EgressRulesToProto` to `FirewallAddRules`. The `clawker firewall refresh` CLI verb re-runs this exact `cfg.EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` sync on demand (no restart), so a `clawker.yaml` egress edit can be live-applied; it is add/update-only (no prune — removed domains are deleted via `firewall remove`).
+`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Rule composition lives outside this package — `bundler.EgressRules(cfg, harness)` layers the harness's required egress floor over the project's `config.Config.ProjectEgressRules()` contribution (`security.firewall.rules` + `add_domains`); the firewall package owns store/stack/certs, not rule composition. `BootstrapServicesPreStart` (`internal/cmd/container/shared/container_start.go`) calls `bundler.EgressRules(cfg, harnessName)` and passes the result through `adminv1.EgressRulesToProto` to `FirewallAddRules`. The `clawker firewall refresh` CLI verb re-runs this exact `bundler.EgressRules` → `EgressRulesToProto` → `FirewallAddRules` sync on demand (no restart), so a `clawker.yaml` egress edit can be live-applied; it is add/update-only (no prune — removed domains are deleted via `firewall remove`).
 
 Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E tests:
 
 - `ValidateDst(dst string) error` — domain syntax + wildcard rules + length
 - `NormalizeRule(r)` — lowercase dst, trim leading `*.`, etc.
 - `RuleKey(r) string` — dedup key (`dst:proto:port`)
-- `MergeRule(existing, incoming) EgressRule` — same-RuleKey merge for `addRulesToStore`. Caller wins on `Action`; caller wins on `PathDefault` only when non-empty (empty incoming preserves the stored value); `PathRules` union by `Path` (caller wins on same-`Path` collision). The single merge semantic used by both yaml-driven bootstrap reseeds and CLI `firewall add`.
+- `MergeRule(existing, incoming) EgressRule` — same-RuleKey merge used by `EgressRulesStore.AddRules`. Caller wins on `Action`; caller wins on `PathDefault` only when non-empty (empty incoming preserves the stored value); `PathRules` union by `Path` (caller wins on same-`Path` collision). The single merge semantic used by both yaml-driven bootstrap reseeds and CLI `firewall add`.
 - `NormalizeAndDedup(rules) ([]EgressRule, []string)` — canonical form + dropped-duplicate notes
 
 Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) is NOT here — it lives beside the generated bindings in `api/admin/v1/conversion.go` so the gRPC types stay confined to the transport edge and both server and CLI share one converter without importing this (embed-heavy) package.
@@ -165,11 +249,12 @@ Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) i
 
 - **Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/storage`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `pkg/whail` (labels only), `github.com/moby/moby/api/types/*`.
 - **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawkercp/main.go` (Handler ctor + container resolver).
-- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code. Wire↔config rule translation (`adminv1.EgressRulesToProto`/`EgressRulesFromProto`/`EffectivePathDefault`) lives in `api/admin/v1`, so the container-start path (`BootstrapServicesPreStart`) and `firewall refresh` convert `cfg.EgressRules()` without importing this package.
+- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code. Wire↔config rule translation (`adminv1.EgressRulesToProto`/`EgressRulesFromProto`/`EffectivePathDefault`) lives in `api/admin/v1`, so the container-start path (`BootstrapServicesPreStart`) and `firewall refresh` convert `bundler.EgressRules(cfg, harness)` output without importing this package.
 
 ## Test Patterns
 
 - **Unit tests (`handler_test.go`, `stack_test.go`, `cgroup_test.go`)** — use `docker/mocks.FakeClient` + `controlplane/firewall/ebpf/mocks.EBPFManagerMock`. Handler fakes satisfy `StackLifecycle`; test-only `ContainerResolver` closures drive drift + not-found branches.
+- **Store tests use REAL stores, never the mocks** — file-backed via `configmocks.NewIsolatedTestConfig(t)` + `NewRulesStore`/`NewIdentityStore` (isolated `FirewallDataSubdir`, real merge + atomic write), or in-memory via `NewRulesStoreFromString`/`NewIdentityStoreFromString` when a seeded rule set is all that's needed (`envoy_config_test.go`). `mocks/` exists for consumers of the interfaces — black-box `firewall_test` files can import it too; only internal test files (`package firewall`) can't (import cycle). The store tests avoid it by design, not by restriction: the store IS the subject.
 - **Sibling drift tests (`stack_drift_internal_test.go`)** — `ensureContainer` recreate-vs-adopt on `stack_build_sha` drift (different value AND legacy missing label), drift-label provenance, and the production spec constructors carrying the drift label set. Test seam: `overrideCPBinarySHAForTest` swap-and-restores the package-init'd `consts.CPBinarySHA` (same approach as `overrideHostPathsForTest` in `container_spec_test.go`).
 - **FakeClient managed-label jail**: `whail.ContainerInspect` re-invokes `ContainerInspectFn` inside `IsContainerManaged` — test fakes must return `Config.Labels[managedKey]=ManagedLabelValue` in inspect responses, otherwise real callers see `ErrContainerNotFound`.
 - **Stop/Reload no-op tests** need affirmative assertions (`NotContains(fake.Calls, "ContainerStop")`, `FileExists(envoy.yaml)`) or they pass trivially without exercising the short-circuit.
@@ -181,6 +266,8 @@ Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) i
 
 - `APIClient.ImagePull` / `ImageBuild` only return a top-level error on initial HTTP failure; auth/manifest/layer errors stream as JSON frames with an `error` field. Always drain via `drainPullStream`/`drainBuildStream` and surface `msg.Error`.
 - `cerrdefs.IsNotFound` does NOT match whail's `*DockerError{Op: "network_find"}` wrapping. Substring-match on `"not found"` false-positives (`"image not found"`, `"endpoint not found"`). In Status, log network-discovery errors at Warn and leave topology fields empty — per-container `isRunning` distinguishes "stack down" from "Docker unreachable".
+- `HandlerDeps.Store` being nil turns the reconcile/route paths into no-ops and makes `FirewallListRules` / `FirewallRotateCA` / `FirewallAddRules` / `FirewallRemoveRule` return a `codes.Internal` wiring-fault status naming the missing dep instead of nil-dereffing inside a queued closure (which comes back as a recovered-panic result that names nothing). Intentional for unit tests; `cmd/clawkercp` always wires a real store.
+- A reconcile that fails AFTER a rule mutation committed returns an error saying the change WAS saved and takes effect on the next `firewall up` / `firewall reload`, wrapping the reconcile error. Reporting a bare failure for a durable write is the dangerous direction: a user who removed a deny rule would believe the block still stands.
 - `HandlerDeps.Stack` being nil silently turns stack-up/down RPCs into no-ops. Intentional for unit tests, but a production wiring bug would hide here — `cmd/clawkercp/main.go` must always wire a real `*Stack`.
 
 ## See Also

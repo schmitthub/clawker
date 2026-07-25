@@ -19,9 +19,9 @@ cmd/settings/edit, cmd/project/edit
 | File | Purpose |
 |------|---------|
 | `field.go` | `FieldKind`, `Field`, `Override`, `ApplyOverrides` — core types |
-| `reflect.go` | `WalkFields(v)` — reflection-based struct walker |
-| `value.go` | `SetFieldValue(v, path, val)` — reverse reflection writer |
-| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, `LayerTarget`, `Result`, shared helpers |
+| `reflect.go` | `WalkFields(v)` — reflection-based struct walker (consumer-facing; the editor no longer uses it) |
+| `value.go` | `SetFieldValue(v, path, val)` / `GetFieldValue(v, path)` — string ↔ typed value coercion via a fresh `T` |
+| `edit.go` | `Edit[T](ios, store, opts...)` — orchestration entry point, field rendering (`schemaFields`), `LayerTarget`, `Result`, shared helpers |
 
 
 ## Public API
@@ -87,23 +87,57 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 | `config/storeui/settings` | `config.Settings` | host_proxy read-only |
 | `config/storeui/project` | `config.Project` | workspace mode as Select; maps use KV editor |
 
-Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and `Edit(ios, store) (storeui.Result, error)`. Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
+Each adapter exports `Overrides()`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and an `Edit(...) (storeui.Result, error)` entry point. The project adapter additionally takes `config.Config` on both (`Overrides(cfg)`, `Edit(ios, cfg, store)`) because its overrides are config-derived; settings takes neither (`Overrides()`, `Edit(ios, store)`). Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
 
 ## Data Flow
 
 ```
-Edit[T](ios, store, opts...):
+Edit[T](ios, store, opts...) = BuildBrowser[T](store, opts...) + tui.RunProgram:
   1. Validate layer targets (absolute paths)
-  2. store.Read() → *T snapshot
-  3. WalkFields(snapshot) → []Field (reflection + runtime values)
-  3b. enrichWithSchema(fields, snapshot.Fields()) — replace labels/descriptions/kinds with schema metadata
-  4. Filter skip paths, ApplyOverrides (domain overrides — TUI-specific only)
-  5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
-  6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
-  7. OnFieldSaved callback per field: store.Set(fieldPath, coercedValue) + store.WriteFieldTo(target.Path, fieldPath)
-  7b. OnFieldDeleted callback per field: store.Remove(path) + store.WriteFieldTo(target.Path, fieldPath)
+  2. schemaFields(store): T.Fields() metadata + one storage.Get[V] per declared leaf
+     (there is NO whole-struct read — Get requires at least one key segment)
+  3. Filter skip/only paths, ApplyOverrides (domain overrides — TUI-specific only)
+  4. fieldsToBrowserFields() → []tui.BrowserField (kind → widget mapping)
+  5. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
+  6. OnFieldSaved per field: stageFieldValue (Set, or Remove when the editor
+     produced nothing) + store.WriteFieldTo(target.Path, key...)
+  7. OnFieldDeleted per field: store.Remove(key...) + store.WriteFieldTo(target.Path, key...)
   8. Return Result (Saved, SavedCount)
 ```
+
+### FieldKind → decode shape
+
+`fieldValue` picks the Go type each field's merged YAML is decoded into; the
+browse summary and the editor blob both come off that decode.
+
+| FieldKind | `storage.Get[V]` | Browse value | EditValue |
+|-----------|------------------|--------------|-----------|
+| KindText, KindSelect | `string` | the value | — |
+| KindBool | `bool` | `true`/`false` | — |
+| KindInt | `int64` | decimal | — |
+| KindDuration | `time.Duration` | `5m0s` | — |
+| KindTime | `time.Time` | RFC3339Nano (zero → blank) | — |
+| KindStringSlice | `[]string` | `a, b` | — |
+| KindMap | `map[string]string` | `N entries` | sorted YAML |
+| KindStructSlice | `[]any` | `N items` | YAML |
+| KindStructMap, consumer kinds (`> KindLast`) | `any` | `N entries`/`N items` | YAML |
+
+### Unset vs set-empty
+
+The engine distinguishes an unset key (absent or bare `key:` → `ErrKeyNotFound`)
+from an explicit empty (`""`, `[]` → a real value that masks lower layers), and
+the browser reflects it: an unset field renders blank and keeps its schema
+`Default`, which the field browser shows as `<default> (default)`; a set-empty
+field renders blank with `Default` cleared, because no default is in effect.
+On save, an emptied scalar or list is staged as that explicit empty; an editor
+that produced nothing at all (a cleared map/struct blob → a nil value that
+`storage.Set` rejects) is routed to `store.Remove` instead — the one unset verb.
+
+A third state exists for completeness: a field whose value decodes into neither
+its declared kind nor `any` renders as `<unreadable>` with the read error
+appended to its description, and the row is forced `ReadOnly`. The read error is
+never folded onto "unset" — a blank row invites the operator to save over data
+the editor never showed them. Deleting the key (`d`) still works.
 
 ## Key Design Decisions
 
@@ -111,10 +145,11 @@ Edit[T](ios, store, opts...):
 2. Consumer-defined `FieldKind` values (`> KindLast`) map to `BrowserStructSlice` and are forced `ReadOnly = true` by `fieldsToBrowserFields`
 3. Nil `*struct` recursion in `WalkFields` — produces zero-value fields (domain adapters hide via overrides)
 4. `yamlTagName` re-implemented locally (5-line helper, conscious trade-off vs. storage API change)
+4b. Schema metadata (label, description, default, kind, required) comes straight from `T.Fields()`; `WalkFields`/`enrichWithSchema` are no longer on the edit path (`WalkFields` stays for consumers validating override paths)
 5. `LayerTarget.Path` is the destination for `store.WriteFieldTo` — only the saved field is flushed, so unrelated staged state (e.g. a preset store's seed marks) never lands in the chosen target file
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 7. `KindMap` → `BrowserMap` → `KVEditorModel` (interactive key-value pair editor); `KindStructSlice` → `BrowserStructSlice` → `TextareaEditorModel` (raw YAML)
-8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
+8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save. `Edit` is `BuildBrowser` + `tui.RunProgram` — one wiring, not two.
 9. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.Remove`. Lets lower-priority layer values show through.
 
 ## Gotchas

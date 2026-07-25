@@ -39,7 +39,7 @@ type BuildOptions struct {
     Logger          func() (*logger.Logger, error)
     Client          func(context.Context) (*docker.Client, error)
     ProjectManager  func() (project.ProjectManager, error)
-    ProjectRegistry func() (*project.Registry, error)
+    ProjectRegistry func() (project.Registry, error)
     HttpClient      func() (*http.Client, error)
     BundleManager   func() (*bundle.Manager, error)
 

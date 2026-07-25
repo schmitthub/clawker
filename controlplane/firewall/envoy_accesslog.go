@@ -108,7 +108,7 @@ func stdoutAccessLogEntry(transport, l7Proto, tlsEstablished, action string, ext
 	}
 	return map[string]any{
 		"name": "envoy.access_loggers.stdout",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type":      "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
 			"log_format": map[string]any{"json_format": jf},
 		},
@@ -134,7 +134,7 @@ func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra
 	}
 	return map[string]any{
 		"name": "envoy.access_loggers.open_telemetry",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig",
 			"grpc_service": map[string]any{
 				"envoy_grpc": map[string]any{"cluster_name": otelCollectorALSClusterName},

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"os"
@@ -46,6 +47,12 @@ const (
 	seccompProfileDefault = "builtin"
 	// seccompProfileUnconfined is a special profile name for an "unconfined" seccomp profile.
 	seccompProfileUnconfined = "unconfined"
+
+	// The --attach vocabulary: the three standard streams a container may be
+	// attached to. Shared by the flag validator and the attach-mode resolver.
+	attachStdinStream  = "stdin"
+	attachStdoutStream = "stdout"
+	attachStderrStream = "stderr"
 )
 
 // deviceCgroupRuleRegexp validates device cgroup rule format: 'type major:minor mode'
@@ -358,48 +365,24 @@ func (opts *ContainerCreateOptions) GetAgentName() string {
 // This consolidates the duplicated buildConfigs logic from run.go and create.go.
 // The flags parameter is used to detect whether certain flags were explicitly set
 // (e.g., --entrypoint="" to reset entrypoint, --stop-timeout, --init).
-func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.Mount, projectCfg *config.Project) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
-	// Determine attach modes
-	attachStdin := opts.Stdin
-	attachStdout := true
-	attachStderr := true
-	if opts.Attach != nil && opts.Attach.Len() > 0 {
-		attachStdin = false
-		attachStdout = false
-		attachStderr = false
-		for _, a := range opts.Attach.GetAll() {
-			switch a {
-			case "stdin":
-				attachStdin = true
-			case "stdout":
-				attachStdout = true
-			case "stderr":
-				attachStderr = true
-			}
-		}
+// security is the project's `security:` block — the container security posture
+// the create path applies alongside the CLI flags.
+func (opts *ContainerCreateOptions) BuildConfigs(
+	flags *pflag.FlagSet,
+	mounts []mount.Mount,
+	security config.SecurityConfig,
+) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+	attachStdin, attachStdout, attachStderr := opts.attachModes()
+
+	allEnv, envErr := opts.collectEnv()
+	if envErr != nil {
+		return nil, nil, nil, envErr
 	}
 
-	// Read env files and prepend to env list (CLI -e values take precedence)
-	var envFromFiles []string
-	for _, file := range opts.EnvFile {
-		fileEnvs, err := readEnvFile(file)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to read env file %q: %w", file, err)
-		}
-		envFromFiles = append(envFromFiles, fileEnvs...)
+	allLabels, labelErr := opts.collectLabels()
+	if labelErr != nil {
+		return nil, nil, nil, labelErr
 	}
-	allEnv := append(envFromFiles, opts.Env...)
-
-	// Read label files and prepend to labels list (CLI -l values take precedence)
-	var labelsFromFiles []string
-	for _, file := range opts.LabelsFile {
-		fileLabels, err := readLabelFile(file)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to read label file %q: %w", file, err)
-		}
-		labelsFromFiles = append(labelsFromFiles, fileLabels...)
-	}
-	allLabels := append(labelsFromFiles, opts.Labels...)
 
 	// Container config
 	cfg := &container.Config{
@@ -416,99 +399,49 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 		User:         opts.User,
 	}
 
-	// Set command if provided
-	if len(opts.Command) > 0 {
-		cfg.Cmd = opts.Command
+	if err := opts.applyContainerConfig(cfg, flags, allLabels); err != nil {
+		return nil, nil, nil, err
 	}
 
-	// Set entrypoint if provided; --entrypoint="" resets entrypoint
-	if opts.Entrypoint != "" {
-		cfg.Entrypoint = []string{opts.Entrypoint}
-	} else if flags != nil && flags.Changed("entrypoint") {
-		// --entrypoint="" was explicitly set to reset the entrypoint
-		cfg.Entrypoint = []string{""}
+	hostCfg := opts.newHostConfig(mounts)
+	if err := opts.applyHostConfig(hostCfg, security); err != nil {
+		return nil, nil, nil, err
 	}
 
-	// Parse additional labels
-	if len(allLabels) > 0 {
-		cfg.Labels = make(map[string]string)
-		for _, l := range allLabels {
-			parts := strings.SplitN(l, "=", 2)
-			if len(parts) == 2 {
-				cfg.Labels[parts[0]] = parts[1]
-			} else {
-				cfg.Labels[parts[0]] = ""
-			}
-		}
+	// Cross-cutting process options land last: they read fields both configs
+	// already carry (OpenStdin/AttachStdin for StdinOnce, --rm for the restart
+	// conflict) and write to both.
+	if err := opts.applyProcessOptions(cfg, hostCfg, flags); err != nil {
+		return nil, nil, nil, err
 	}
 
-	// Parse exposed ports (--expose), supporting ranges like "3000-3005/tcp"
-	if len(opts.Expose) > 0 {
-		if cfg.ExposedPorts == nil {
-			cfg.ExposedPorts = make(network.PortSet)
-		}
-		for _, expose := range opts.Expose {
-			pr, err := network.ParsePortRange(expose)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid range format for --expose: %w", err)
-			}
-			for p := range pr.All() {
-				cfg.ExposedPorts[p] = struct{}{}
-			}
-		}
+	epCfg, epErr := parseNetworkOpts(opts)
+	if epErr != nil {
+		return nil, nil, nil, epErr
 	}
 
-	// Health check configuration
-	haveHealthSettings := opts.HealthCmd != "" ||
-		opts.HealthInterval != 0 ||
-		opts.HealthTimeout != 0 ||
-		opts.HealthRetries != 0 ||
-		opts.HealthStartPeriod != 0 ||
-		opts.HealthStartInterval != 0
-
-	if opts.NoHealthcheck {
-		if haveHealthSettings {
-			return nil, nil, nil, fmt.Errorf("--no-healthcheck conflicts with --health-* options")
-		}
-		cfg.Healthcheck = &container.HealthConfig{Test: []string{"NONE"}}
-	} else if haveHealthSettings {
-		if opts.HealthCmd == "" {
-			return nil, nil, nil, fmt.Errorf("--health-cmd is required when using --health-* options")
-		}
-		probe := []string{"CMD-SHELL", opts.HealthCmd}
-		if opts.HealthInterval < 0 {
-			return nil, nil, nil, fmt.Errorf("--health-interval cannot be negative")
-		}
-		if opts.HealthTimeout < 0 {
-			return nil, nil, nil, fmt.Errorf("--health-timeout cannot be negative")
-		}
-		if opts.HealthRetries < 0 {
-			return nil, nil, nil, fmt.Errorf("--health-retries cannot be negative")
-		}
-		if opts.HealthStartPeriod < 0 {
-			return nil, nil, nil, fmt.Errorf("--health-start-period cannot be negative")
-		}
-		if opts.HealthStartInterval < 0 {
-			return nil, nil, nil, fmt.Errorf("--health-start-interval cannot be negative")
-		}
-		cfg.Healthcheck = &container.HealthConfig{
-			Test:          probe,
-			Interval:      opts.HealthInterval,
-			Timeout:       opts.HealthTimeout,
-			StartPeriod:   opts.HealthStartPeriod,
-			StartInterval: opts.HealthStartInterval,
-			Retries:       opts.HealthRetries,
-		}
+	networkCfg := &network.NetworkingConfig{
+		EndpointsConfig: epCfg,
 	}
 
+	return cfg, hostCfg, networkCfg, nil
+}
+
+// newHostConfig seeds the host config with the flag values that need no
+// parsing or validation. Everything conditional is layered on by
+// applyHostConfig; the fields left unset here keep the daemon's own defaults
+// and many are filled in by those helpers, so listing them as zero would be
+// both wrong and a standing merge hazard as moby grows the struct.
+//
+//nolint:exhaustruct // moby HostConfig: unset fields are intentional daemon defaults, and applyHostConfig fills the conditional ones
+func (opts *ContainerCreateOptions) newHostConfig(mounts []mount.Mount) *container.HostConfig {
 	// On macOS Docker Desktop, socket files don't work correctly with HostConfig.Mounts
 	// (the SDK's mount.Mount API). They fail with "/socket_mnt" path errors.
 	// However, they work correctly with HostConfig.Binds (the CLI -v syntax).
 	// Filter socket mounts to Binds format on macOS.
 	filteredMounts, socketBinds := filterSocketMountsForMacOS(mounts)
 
-	// Host config
-	hostCfg := &container.HostConfig{
+	return &container.HostConfig{
 		AutoRemove:      opts.AutoRemove,
 		Mounts:          filteredMounts,
 		Binds:           socketBinds,
@@ -522,14 +455,226 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 		Links:           opts.Links,
 		OomScoreAdj:     opts.OOMScoreAdj,
 	}
+}
 
-	// Security options
-	// Merge CLI-provided capabilities with project config capabilities
-	// CLI flags take precedence if both are provided
+// attachModes resolves which standard streams the container attaches. An
+// explicit --attach list wins outright: it names every stream to attach, so an
+// unnamed stream stays detached even when -i asked for stdin.
+func (opts *ContainerCreateOptions) attachModes() (bool, bool, bool) {
+	if opts.Attach == nil || opts.Attach.Len() == 0 {
+		return opts.Stdin, true, true
+	}
+	var attachStdin, attachStdout, attachStderr bool
+	for _, a := range opts.Attach.GetAll() {
+		switch a {
+		case attachStdinStream:
+			attachStdin = true
+		case attachStdoutStream:
+			attachStdout = true
+		case attachStderrStream:
+			attachStderr = true
+		}
+	}
+	return attachStdin, attachStdout, attachStderr
+}
+
+// collectEnv reads every --env-file and prepends its entries to the CLI -e
+// values, so a -e assignment overrides the same key from a file.
+func (opts *ContainerCreateOptions) collectEnv() ([]string, error) {
+	var envFromFiles []string
+	for _, file := range opts.EnvFile {
+		fileEnvs, err := readEnvFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read env file %q: %w", file, err)
+		}
+		envFromFiles = append(envFromFiles, fileEnvs...)
+	}
+	return append(envFromFiles, opts.Env...), nil
+}
+
+// collectLabels reads every --label-file and prepends its entries to the CLI -l
+// values, so a -l assignment overrides the same key from a file.
+func (opts *ContainerCreateOptions) collectLabels() ([]string, error) {
+	var labelsFromFiles []string
+	for _, file := range opts.LabelsFile {
+		fileLabels, err := readLabelFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read label file %q: %w", file, err)
+		}
+		labelsFromFiles = append(labelsFromFiles, fileLabels...)
+	}
+	return append(labelsFromFiles, opts.Labels...), nil
+}
+
+// applyContainerConfig folds the flag-driven container.Config fields that need
+// parsing or validation onto an already-constructed config.
+func (opts *ContainerCreateOptions) applyContainerConfig(
+	cfg *container.Config,
+	flags *pflag.FlagSet,
+	allLabels []string,
+) error {
+	if len(opts.Command) > 0 {
+		cfg.Cmd = opts.Command
+	}
+
+	// Set entrypoint if provided; --entrypoint="" resets entrypoint
+	if opts.Entrypoint != "" {
+		cfg.Entrypoint = []string{opts.Entrypoint}
+	} else if flags != nil && flags.Changed("entrypoint") {
+		// --entrypoint="" was explicitly set to reset the entrypoint
+		cfg.Entrypoint = []string{""}
+	}
+
+	if len(allLabels) > 0 {
+		cfg.Labels = parseLabelPairs(allLabels)
+	}
+
+	if err := opts.applyExposedPorts(cfg); err != nil {
+		return err
+	}
+	return opts.applyHealthcheck(cfg)
+}
+
+// parseLabelPairs splits "key=value" label strings into a map. A bare "key"
+// with no separator maps to the empty value, matching docker CLI semantics.
+func parseLabelPairs(labels []string) map[string]string {
+	parsed := make(map[string]string, len(labels))
+	for _, l := range labels {
+		key, value, _ := strings.Cut(l, "=")
+		parsed[key] = value
+	}
+	return parsed
+}
+
+// applyExposedPorts expands the --expose specs, which may name ranges such as
+// "3000-3005/tcp", onto the config's exposed-port set.
+func (opts *ContainerCreateOptions) applyExposedPorts(cfg *container.Config) error {
+	if len(opts.Expose) == 0 {
+		return nil
+	}
+	if cfg.ExposedPorts == nil {
+		cfg.ExposedPorts = make(network.PortSet)
+	}
+	for _, expose := range opts.Expose {
+		pr, err := network.ParsePortRange(expose)
+		if err != nil {
+			return fmt.Errorf("invalid range format for --expose: %w", err)
+		}
+		for p := range pr.All() {
+			cfg.ExposedPorts[p] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// applyHealthcheck resolves the --health-* family into a HealthConfig.
+// --no-healthcheck is the disabling form and conflicts with any other setting;
+// with neither present the image's own healthcheck is left in force.
+func (opts *ContainerCreateOptions) applyHealthcheck(cfg *container.Config) error {
+	haveHealthSettings := opts.HealthCmd != "" ||
+		opts.HealthInterval != 0 ||
+		opts.HealthTimeout != 0 ||
+		opts.HealthRetries != 0 ||
+		opts.HealthStartPeriod != 0 ||
+		opts.HealthStartInterval != 0
+
+	if opts.NoHealthcheck {
+		if haveHealthSettings {
+			return errors.New("--no-healthcheck conflicts with --health-* options")
+		}
+		// The "NONE" probe disables the image's healthcheck outright, so every
+		// timing field is deliberately left at zero.
+		cfg.Healthcheck = &container.HealthConfig{
+			Test:          []string{"NONE"},
+			Interval:      0,
+			Timeout:       0,
+			StartPeriod:   0,
+			StartInterval: 0,
+			Retries:       0,
+		}
+		return nil
+	}
+	if !haveHealthSettings {
+		return nil
+	}
+	if opts.HealthCmd == "" {
+		return errors.New("--health-cmd is required when using --health-* options")
+	}
+	if err := opts.validateHealthTimings(); err != nil {
+		return err
+	}
+	cfg.Healthcheck = &container.HealthConfig{
+		Test:          []string{"CMD-SHELL", opts.HealthCmd},
+		Interval:      opts.HealthInterval,
+		Timeout:       opts.HealthTimeout,
+		StartPeriod:   opts.HealthStartPeriod,
+		StartInterval: opts.HealthStartInterval,
+		Retries:       opts.HealthRetries,
+	}
+	return nil
+}
+
+// validateHealthTimings rejects negative --health-* durations and retry counts.
+func (opts *ContainerCreateOptions) validateHealthTimings() error {
+	if opts.HealthInterval < 0 {
+		return errors.New("--health-interval cannot be negative")
+	}
+	if opts.HealthTimeout < 0 {
+		return errors.New("--health-timeout cannot be negative")
+	}
+	if opts.HealthRetries < 0 {
+		return errors.New("--health-retries cannot be negative")
+	}
+	if opts.HealthStartPeriod < 0 {
+		return errors.New("--health-start-period cannot be negative")
+	}
+	if opts.HealthStartInterval < 0 {
+		return errors.New("--health-start-interval cannot be negative")
+	}
+	return nil
+}
+
+// applyHostConfig folds every flag-driven host.Config field onto an
+// already-constructed host config, in the order the docker CLI applies them.
+func (opts *ContainerCreateOptions) applyHostConfig(
+	hostCfg *container.HostConfig,
+	security config.SecurityConfig,
+) error {
+	if err := opts.applySecurityOptions(hostCfg, security); err != nil {
+		return err
+	}
+	if err := opts.applyNamespaceModes(hostCfg); err != nil {
+		return err
+	}
+	if err := opts.applyLogConfig(hostCfg); err != nil {
+		return err
+	}
+	if err := opts.applyDNS(hostCfg); err != nil {
+		return err
+	}
+	opts.applyMemoryLimits(hostCfg)
+	opts.applyCPULimits(hostCfg)
+	opts.applyBlkioLimits(hostCfg)
+	opts.applyWindowsLimits(hostCfg)
+	opts.applyHostTunables(hostCfg)
+	if err := opts.applyDeviceOptions(hostCfg); err != nil {
+		return err
+	}
+	return opts.applyStorageOptions(hostCfg)
+}
+
+// applySecurityOptions resolves the container's security posture. Capabilities
+// come from the CLI when given, otherwise from the project's `security:` block —
+// the flags win outright rather than merging, so a command line can always
+// state the exact capability set.
+func (opts *ContainerCreateOptions) applySecurityOptions(
+	hostCfg *container.HostConfig,
+	security config.SecurityConfig,
+) error {
 	if len(opts.CapAdd) > 0 {
 		hostCfg.CapAdd = opts.CapAdd
-	} else if len(projectCfg.Security.CapAdd) > 0 {
-		hostCfg.CapAdd = projectCfg.Security.CapAdd
+	} else if len(security.CapAdd) > 0 {
+		hostCfg.CapAdd = security.CapAdd
 	}
 	if len(opts.CapDrop) > 0 {
 		hostCfg.CapDrop = opts.CapDrop
@@ -537,25 +682,30 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if opts.Privileged {
 		hostCfg.Privileged = true
 	}
-	if len(opts.SecurityOpt) > 0 {
-		securityOpts, err := parseSecurityOpts(opts.SecurityOpt)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		securityOpts, maskedPaths, readonlyPaths := parseSystemPaths(securityOpts)
-		hostCfg.SecurityOpt = securityOpts
-		if maskedPaths != nil {
-			hostCfg.MaskedPaths = maskedPaths
-		}
-		if readonlyPaths != nil {
-			hostCfg.ReadonlyPaths = readonlyPaths
-		}
+	if len(opts.SecurityOpt) == 0 {
+		return nil
 	}
+	securityOpts, err := parseSecurityOpts(opts.SecurityOpt)
+	if err != nil {
+		return err
+	}
+	securityOpts, maskedPaths, readonlyPaths := parseSystemPaths(securityOpts)
+	hostCfg.SecurityOpt = securityOpts
+	if maskedPaths != nil {
+		hostCfg.MaskedPaths = maskedPaths
+	}
+	if readonlyPaths != nil {
+		hostCfg.ReadonlyPaths = readonlyPaths
+	}
+	return nil
+}
 
-	// Namespace modes (with validation)
+// applyNamespaceModes validates and applies the namespace-sharing flags plus
+// the cgroup/runtime/isolation knobs that ride alongside them.
+func (opts *ContainerCreateOptions) applyNamespaceModes(hostCfg *container.HostConfig) error {
 	pidMode := container.PidMode(opts.PidMode)
 	if !pidMode.Valid() {
-		return nil, nil, nil, fmt.Errorf("--pid: invalid PID mode")
+		return errors.New("--pid: invalid PID mode")
 	}
 	hostCfg.PidMode = pidMode
 
@@ -565,21 +715,22 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 
 	utsMode := container.UTSMode(opts.UtsMode)
 	if !utsMode.Valid() {
-		return nil, nil, nil, fmt.Errorf("--uts: invalid UTS mode")
+		return errors.New("--uts: invalid UTS mode")
 	}
 	hostCfg.UTSMode = utsMode
 
 	usernsMode := container.UsernsMode(opts.UsernsMode)
 	if !usernsMode.Valid() {
-		return nil, nil, nil, fmt.Errorf("--userns: invalid USER mode")
+		return errors.New("--userns: invalid USER mode")
 	}
 	hostCfg.UsernsMode = usernsMode
 
 	cgroupnsMode := container.CgroupnsMode(opts.CgroupnsMode)
 	if !cgroupnsMode.Valid() {
-		return nil, nil, nil, fmt.Errorf("--cgroupns: invalid CGROUP mode")
+		return errors.New("--cgroupns: invalid CGROUP mode")
 	}
 	hostCfg.CgroupnsMode = cgroupnsMode
+
 	if opts.CgroupParent != "" {
 		hostCfg.CgroupParent = opts.CgroupParent
 	}
@@ -589,33 +740,46 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if opts.Isolation != "" {
 		hostCfg.Isolation = container.Isolation(opts.Isolation)
 	}
+	return nil
+}
 
-	// Logging config
-	if opts.LogDriver != "" {
-		loggingOptsMap, err := parseLoggingOpts(opts.LogDriver, opts.LogOpts)
+// applyLogConfig wires the --log-driver / --log-opt pair.
+func (opts *ContainerCreateOptions) applyLogConfig(hostCfg *container.HostConfig) error {
+	if opts.LogDriver == "" {
+		return nil
+	}
+	loggingOptsMap, err := parseLoggingOpts(opts.LogDriver, opts.LogOpts)
+	if err != nil {
+		return err
+	}
+	hostCfg.LogConfig = container.LogConfig{
+		Type:   opts.LogDriver,
+		Config: loggingOptsMap,
+	}
+	return nil
+}
+
+// applyDNS parses the --dns servers from strings into netip addresses.
+func (opts *ContainerCreateOptions) applyDNS(hostCfg *container.HostConfig) error {
+	if len(opts.DNS) == 0 {
+		return nil
+	}
+	dnsAddrs := make([]netip.Addr, 0, len(opts.DNS))
+	for _, dns := range opts.DNS {
+		addr, err := netip.ParseAddr(dns)
 		if err != nil {
-			return nil, nil, nil, err
+			return fmt.Errorf("invalid DNS server address %q: %w", dns, err)
 		}
-		hostCfg.LogConfig = container.LogConfig{
-			Type:   opts.LogDriver,
-			Config: loggingOptsMap,
-		}
+		dnsAddrs = append(dnsAddrs, addr)
 	}
+	hostCfg.DNS = dnsAddrs
+	return nil
+}
 
-	// Parse DNS servers from strings to netip.Addr
-	if len(opts.DNS) > 0 {
-		dnsAddrs := make([]netip.Addr, 0, len(opts.DNS))
-		for _, dns := range opts.DNS {
-			addr, err := netip.ParseAddr(dns)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid DNS server address %q: %w", dns, err)
-			}
-			dnsAddrs = append(dnsAddrs, addr)
-		}
-		hostCfg.DNS = dnsAddrs
-	}
-
-	// Resource limits
+// applyMemoryLimits applies the memory-family resource limits. Each field stays
+// untouched when its flag is at the "unset" sentinel, so the daemon's own
+// default applies instead of an explicit zero.
+func (opts *ContainerCreateOptions) applyMemoryLimits(hostCfg *container.HostConfig) {
 	if opts.Memory.Value() > 0 {
 		hostCfg.Memory = opts.Memory.Value()
 	}
@@ -631,6 +795,16 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if opts.ShmSize.Value() > 0 {
 		hostCfg.ShmSize = opts.ShmSize.Value()
 	}
+	if opts.OOMKillDisable {
+		hostCfg.OomKillDisable = &opts.OOMKillDisable
+	}
+	if opts.PidsLimit != 0 {
+		hostCfg.PidsLimit = &opts.PidsLimit
+	}
+}
+
+// applyCPULimits applies the CPU-family resource limits.
+func (opts *ContainerCreateOptions) applyCPULimits(hostCfg *container.HostConfig) {
 	if opts.CPUs.Value() > 0 {
 		hostCfg.NanoCPUs = opts.CPUs.Value()
 	}
@@ -655,6 +829,28 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if opts.CPURtRuntime > 0 {
 		hostCfg.CPURealtimeRuntime = opts.CPURtRuntime
 	}
+}
+
+// applyWindowsLimits applies the CPU and IO knobs the daemon only honors on
+// Windows. They are accepted everywhere so a compose-style invocation stays
+// portable; on Linux the daemon ignores them.
+func (opts *ContainerCreateOptions) applyWindowsLimits(hostCfg *container.HostConfig) {
+	if opts.CPUCount > 0 {
+		hostCfg.CPUCount = opts.CPUCount
+	}
+	if opts.CPUPercent > 0 {
+		hostCfg.CPUPercent = opts.CPUPercent
+	}
+	if bandwidth := opts.IOMaxBandwidth.Value(); bandwidth > 0 {
+		hostCfg.IOMaximumBandwidth = uint64(bandwidth)
+	}
+	if opts.IOMaxIOps > 0 {
+		hostCfg.IOMaximumIOps = opts.IOMaxIOps
+	}
+}
+
+// applyBlkioLimits applies the block-IO weight and per-device throttles.
+func (opts *ContainerCreateOptions) applyBlkioLimits(hostCfg *container.HostConfig) {
 	if opts.BlkioWeight > 0 {
 		hostCfg.BlkioWeight = opts.BlkioWeight
 	}
@@ -673,59 +869,46 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if opts.DeviceWriteIOps != nil && opts.DeviceWriteIOps.Len() > 0 {
 		hostCfg.BlkioDeviceWriteIOps = opts.DeviceWriteIOps.GetAll()
 	}
-	if opts.PidsLimit != 0 {
-		hostCfg.PidsLimit = &opts.PidsLimit
-	}
-	if opts.OOMKillDisable {
-		hostCfg.OomKillDisable = &opts.OOMKillDisable
-	}
+}
 
-	// Windows-only CPU/IO resources
-	if opts.CPUCount > 0 {
-		hostCfg.CPUCount = opts.CPUCount
-	}
-	if opts.CPUPercent > 0 {
-		hostCfg.CPUPercent = opts.CPUPercent
-	}
-	if opts.IOMaxBandwidth.Value() > 0 {
-		hostCfg.IOMaximumBandwidth = uint64(opts.IOMaxBandwidth.Value())
-	}
-	if opts.IOMaxIOps > 0 {
-		hostCfg.IOMaximumIOps = opts.IOMaxIOps
-	}
-
-	// Ulimits
+// applyHostTunables applies the repeatable key/value host knobs that carry no
+// parsing or validation of their own.
+func (opts *ContainerCreateOptions) applyHostTunables(hostCfg *container.HostConfig) {
 	if opts.Ulimits != nil && opts.Ulimits.Len() > 0 {
 		hostCfg.Ulimits = opts.Ulimits.GetAll()
 	}
+	if opts.Annotations != nil && opts.Annotations.Len() > 0 {
+		hostCfg.Annotations = opts.Annotations.GetAll()
+	}
+	if opts.Sysctls != nil && opts.Sysctls.Len() > 0 {
+		hostCfg.Sysctls = opts.Sysctls.GetAll()
+	}
+}
 
-	// Devices
+// applyDeviceOptions applies device passthrough, GPU requests, and the raw
+// device cgroup rules, which are validated before they reach the daemon.
+func (opts *ContainerCreateOptions) applyDeviceOptions(hostCfg *container.HostConfig) error {
 	if opts.Devices != nil && opts.Devices.Len() > 0 {
 		hostCfg.Devices = opts.Devices.GetAll()
 	}
 	if opts.GPUs != nil && opts.GPUs.Len() > 0 {
 		hostCfg.DeviceRequests = opts.GPUs.GetAll()
 	}
-	if len(opts.DeviceCgroupRules) > 0 {
-		for _, rule := range opts.DeviceCgroupRules {
-			if err := validateDeviceCgroupRule(rule); err != nil {
-				return nil, nil, nil, err
-			}
+	if len(opts.DeviceCgroupRules) == 0 {
+		return nil
+	}
+	for _, rule := range opts.DeviceCgroupRules {
+		if err := validateDeviceCgroupRule(rule); err != nil {
+			return err
 		}
-		hostCfg.DeviceCgroupRules = opts.DeviceCgroupRules
 	}
+	hostCfg.DeviceCgroupRules = opts.DeviceCgroupRules
+	return nil
+}
 
-	// Annotations
-	if opts.Annotations != nil && opts.Annotations.Len() > 0 {
-		hostCfg.Annotations = opts.Annotations.GetAll()
-	}
-
-	// Sysctls
-	if opts.Sysctls != nil && opts.Sysctls.Len() > 0 {
-		hostCfg.Sysctls = opts.Sysctls.GetAll()
-	}
-
-	// Storage options
+// applyStorageOptions applies the rootfs, volume, and tmpfs surface. User -v
+// binds append to whatever filterSocketMountsForMacOS already put in Binds.
+func (opts *ContainerCreateOptions) applyStorageOptions(hostCfg *container.HostConfig) error {
 	if opts.ReadOnly {
 		hostCfg.ReadonlyRootfs = true
 	}
@@ -735,45 +918,77 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	if len(opts.StorageOpt) > 0 {
 		storageOpts, err := parseStorageOpts(opts.StorageOpt)
 		if err != nil {
-			return nil, nil, nil, err
+			return err
 		}
 		hostCfg.StorageOpt = storageOpts
 	}
 	if len(opts.Tmpfs) > 0 {
-		hostCfg.Tmpfs = make(map[string]string)
-		for _, tmpfs := range opts.Tmpfs {
-			// Parse "path" or "path:options"
-			parts := strings.SplitN(tmpfs, ":", 2)
-			path := parts[0]
-			options := ""
-			if len(parts) == 2 {
-				options = parts[1]
-			}
-			hostCfg.Tmpfs[path] = options
-		}
+		hostCfg.Tmpfs = parseTmpfsSpecs(opts.Tmpfs)
 	}
-
 	// Advanced mounts (--mount flag)
 	if opts.Mounts != nil && opts.Mounts.Len() > 0 {
 		hostCfg.Mounts = append(hostCfg.Mounts, opts.Mounts.GetAll()...)
 	}
+	for _, v := range opts.Volumes {
+		hostCfg.Binds = append(hostCfg.Binds, resolveVolumePath(v))
+	}
+	return nil
+}
 
-	// Parse user-provided volumes (via -v flag) as Binds, resolving relative paths
-	// Append to existing Binds (which may include socket mounts from filterSocketMountsForMacOS)
-	if len(opts.Volumes) > 0 {
-		for _, v := range opts.Volumes {
-			hostCfg.Binds = append(hostCfg.Binds, resolveVolumePath(v))
-		}
+// parseTmpfsSpecs splits "path" or "path:options" tmpfs specs into the map the
+// daemon expects; a spec with no options maps to the empty option string.
+func parseTmpfsSpecs(specs []string) map[string]string {
+	parsed := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		path, options, _ := strings.Cut(spec, ":")
+		parsed[path] = options
+	}
+	return parsed
+}
+
+// applyProcessOptions applies the settings that span both configs: restart
+// policy, stop behavior, stdin lifetime, --init, published ports, and the
+// network mode.
+func (opts *ContainerCreateOptions) applyProcessOptions(
+	cfg *container.Config,
+	hostCfg *container.HostConfig,
+	flags *pflag.FlagSet,
+) error {
+	if err := opts.applyRestartPolicy(hostCfg); err != nil {
+		return err
+	}
+	opts.applyStopBehavior(cfg, flags)
+
+	// When allocating stdin in attached mode, close stdin at client disconnect
+	if cfg.OpenStdin && cfg.AttachStdin {
+		cfg.StdinOnce = true
 	}
 
-	// Process and runtime options
-	if opts.Restart != "" {
-		restartPolicy, err := parseRestartPolicy(opts.Restart)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		hostCfg.RestartPolicy = restartPolicy
+	opts.applyInitFlag(hostCfg, flags)
+	opts.applyPublishedPorts(cfg, hostCfg)
+	return opts.applyNetworkMode(hostCfg)
+}
+
+// applyRestartPolicy parses --restart and rejects the --rm combination, which
+// Docker cannot honor: an auto-removed container has nothing left to restart.
+func (opts *ContainerCreateOptions) applyRestartPolicy(hostCfg *container.HostConfig) error {
+	if opts.Restart == "" {
+		return nil
 	}
+	restartPolicy, err := parseRestartPolicy(opts.Restart)
+	if err != nil {
+		return err
+	}
+	hostCfg.RestartPolicy = restartPolicy
+	if opts.AutoRemove && opts.Restart != "no" {
+		return errors.New("conflicting options: cannot specify both --restart and --rm")
+	}
+	return nil
+}
+
+// applyStopBehavior wires --stop-signal and --stop-timeout. flags.Changed
+// distinguishes "--stop-timeout 0" from "not set", which a bare zero cannot.
+func (opts *ContainerCreateOptions) applyStopBehavior(cfg *container.Config, flags *pflag.FlagSet) {
 	if opts.StopSignal != "" {
 		cfg.StopSignal = opts.StopSignal
 	}
@@ -782,60 +997,45 @@ func (opts *ContainerCreateOptions) BuildConfigs(flags *pflag.FlagSet, mounts []
 	} else if opts.StopTimeout > 0 {
 		cfg.StopTimeout = &opts.StopTimeout
 	}
+}
 
-	// Validate --rm and --restart conflict
-	if opts.AutoRemove && opts.Restart != "" && opts.Restart != "no" {
-		return nil, nil, nil, fmt.Errorf("conflicting options: cannot specify both --restart and --rm")
-	}
-
-	// When allocating stdin in attached mode, close stdin at client disconnect
-	if cfg.OpenStdin && cfg.AttachStdin {
-		cfg.StdinOnce = true
-	}
-
-	// Use flags.Changed for --init and --stop-timeout to distinguish "not set" from "set to zero"
+// applyInitFlag wires --init. As with --stop-timeout, flags.Changed is what
+// distinguishes an explicit --init=false from the flag being absent.
+func (opts *ContainerCreateOptions) applyInitFlag(hostCfg *container.HostConfig, flags *pflag.FlagSet) {
 	if flags != nil && flags.Changed("init") {
 		hostCfg.Init = &opts.Init
 	} else if opts.Init {
 		hostCfg.Init = &opts.Init
 	}
+}
 
-	// Add port mappings from PortOpts
-	if opts.Publish != nil && opts.Publish.Len() > 0 {
-		if cfg.ExposedPorts == nil {
-			cfg.ExposedPorts = opts.Publish.GetExposedPorts()
-		} else {
-			for p, v := range opts.Publish.GetExposedPorts() {
-				cfg.ExposedPorts[p] = v
-			}
-		}
-		hostCfg.PortBindings = opts.Publish.GetPortBindings()
+// applyPublishedPorts folds the -p mappings into the exposed-port set and the
+// host port bindings.
+func (opts *ContainerCreateOptions) applyPublishedPorts(cfg *container.Config, hostCfg *container.HostConfig) {
+	if opts.Publish == nil || opts.Publish.Len() == 0 {
+		return
 	}
+	if cfg.ExposedPorts == nil {
+		cfg.ExposedPorts = opts.Publish.GetExposedPorts()
+	} else {
+		maps.Copy(cfg.ExposedPorts, opts.Publish.GetExposedPorts())
+	}
+	hostCfg.PortBindings = opts.Publish.GetPortBindings()
+}
 
-	// Network config — use NetworkMode from NetMode for HostConfig,
-	// and parseNetworkOpts for advanced EndpointsConfig
-	networkMode := opts.NetMode.NetworkMode()
-	if networkMode != "" {
+// applyNetworkMode sets the host network mode and validates --mac-address. The
+// richer per-network endpoint config is built separately by parseNetworkOpts.
+func (opts *ContainerCreateOptions) applyNetworkMode(hostCfg *container.HostConfig) error {
+	if networkMode := opts.NetMode.NetworkMode(); networkMode != "" {
 		hostCfg.NetworkMode = container.NetworkMode(networkMode)
 	}
-
-	// Validate MAC address if provided
-	if opts.MacAddress != "" {
-		if _, err := net.ParseMAC(strings.TrimSpace(opts.MacAddress)); err != nil {
-			return nil, nil, nil, fmt.Errorf("%s is not a valid mac address", opts.MacAddress)
-		}
+	if opts.MacAddress == "" {
+		return nil
 	}
-
-	epCfg, err := parseNetworkOpts(opts)
-	if err != nil {
-		return nil, nil, nil, err
+	if _, err := net.ParseMAC(strings.TrimSpace(opts.MacAddress)); err != nil {
+		return fmt.Errorf("%s is not a valid mac address", opts.MacAddress)
 	}
-
-	networkCfg := &network.NetworkingConfig{
-		EndpointsConfig: epCfg,
-	}
-
-	return cfg, hostCfg, networkCfg, nil
+	return nil
 }
 
 // ValidateFlags performs cross-field validation on the options.
@@ -1308,7 +1508,7 @@ func (o *PortOpts) GetAsStrings() []string {
 func validateAttach(val string) (string, error) {
 	normalized := strings.ToLower(val)
 	switch normalized {
-	case "stdin", "stdout", "stderr":
+	case attachStdinStream, attachStdoutStream, attachStderrStream:
 		return normalized, nil
 	default:
 		return "", fmt.Errorf("invalid attach target %q: must be stdin, stdout, or stderr", val)
@@ -1440,7 +1640,7 @@ type CreateContainerOptions struct {
 	// ProjectRegistry is the shared registry facade (f.ProjectRegistry) used
 	// to resolve the registry-backed project root for the workspace mount
 	// source and ignore-file loading.
-	ProjectRegistry func() (*project.Registry, error)
+	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
 	Log             *logger.Logger
 	Is256Color      bool
@@ -1527,7 +1727,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 	}
 
 	// --- Step 3: Setup environment + build Docker configs ---
-	hostProxyRunning := setupHostProxy(opts.Config.Project(), containerOpts, opts.HostProxy, log)
+	hostProxyRunning := setupHostProxy(opts.Config.SecurityConfig(), containerOpts, opts.HostProxy, log)
 
 	cfgs, err := buildContainerConfigs(ctx, opts, agentName, ws, hostProxyRunning)
 	if err != nil {
@@ -1596,7 +1796,7 @@ func (s *createScope) reclaim() {
 // directory); any other error is a real registry/storage failure — surfacing
 // it prevents a corrupt registry from silently changing the container's
 // workspace mount source.
-func resolveProjectRoot(registry func() (*project.Registry, error), log *logger.Logger) (string, error) {
+func resolveProjectRoot(registry func() (project.Registry, error), log *logger.Logger) (string, error) {
 	if registry == nil {
 		return "", fmt.Errorf("project registry not available")
 	}
@@ -1679,8 +1879,13 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 }
 
 // setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
-func setupHostProxy(cfg *config.Project, containerOpts *ContainerCreateOptions, hostProxyFn func() hostproxy.Service, log *logger.Logger) bool {
-	if !cfg.Security.HostProxyEnabled() {
+func setupHostProxy(
+	security config.SecurityConfig,
+	containerOpts *ContainerCreateOptions,
+	hostProxyFn func() hostproxy.Service,
+	log *logger.Logger,
+) bool {
+	if !security.HostProxyEnabled() {
 		log.Debug().Msg("host proxy disabled by config")
 		return false
 	}
@@ -1705,11 +1910,11 @@ func setupHostProxy(cfg *config.Project, containerOpts *ContainerCreateOptions, 
 // before resolveWorkDir creates a git worktree we'd only reject later.
 // workspace.SetupMounts enforces the same invariant as the load-bearing guard;
 // this is the fail-fast UX layer.
-func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, projectCfg *config.Project) error {
+func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, defaultMode config.Mode) error {
 	if containerOpts.Worktree == "" {
 		return nil
 	}
-	mode, err := workspace.ResolveMode(containerOpts.Mode, projectCfg.Workspace.DefaultMode)
+	mode, err := workspace.ResolveMode(containerOpts.Mode, defaultMode)
 	if err != nil {
 		return fmt.Errorf("invalid workspace mode: %w", err)
 	}
@@ -1815,11 +2020,10 @@ func injectPostInitIfConfigured(
 	ctx context.Context,
 	client *docker.Client,
 	containerID, harnessName string,
-	projectCfg *config.Project,
 	cfg config.Config,
 	log *logger.Logger,
 ) error {
-	script := projectCfg.PostInitFor(harnessName)
+	script := cfg.PostInitFor(harnessName)
 	if script == "" {
 		log.Debug().Msg("no post_init script configured; skipping injection")
 		return nil
@@ -1851,7 +2055,6 @@ type workspaceSetup struct {
 // up the workspace mounts (volumes, bind, config volume).
 func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentName string) (*workspaceSetup, error) {
 	containerOpts := opts.Options
-	projectCfg := opts.Config.Project()
 	log := opts.Log
 
 	projectRoot, err := resolveProjectRoot(opts.ProjectRegistry, log)
@@ -1859,7 +2062,7 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 		return nil, err
 	}
 
-	if err = guardWorktreeSnapshot(containerOpts, projectCfg); err != nil {
+	if err = guardWorktreeSnapshot(containerOpts, opts.Config.WorkspaceDefaultMode()); err != nil {
 		return nil, err
 	}
 
@@ -1891,7 +2094,7 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 		Harness:        bundle.Manifest.Staging,
 		HarnessName:    bundle.Name,
 		HarnessVolumes: bundle.Manifest.Volumes,
-		HarnessConfig:  opts.Config.Project().HarnessConfigFor(bundle.Name),
+		HarnessConfig:  opts.Config.HarnessConfigFor(bundle.Name),
 		Log:            log,
 	})
 	if err != nil {
@@ -1911,7 +2114,7 @@ func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentNa
 		AgentName:        agentName,
 		HarnessName:      bundle.Name,
 		ContainerWorkDir: ws.result.ContainerPath,
-		Harness:          opts.Config.Project().HarnessConfigFor(bundle.Name),
+		Harness:          opts.Config.HarnessConfigFor(bundle.Name),
 		Staging:          bundle.Manifest.Staging,
 		Volumes:          bundle.Manifest.Volumes,
 		FreshVolumes:     ws.result.ConfigVolumeResult.CreatedByName,
@@ -1987,12 +2190,12 @@ type containerConfigs struct {
 // opts.Options.Env with the resolved git + runtime env.
 func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, agentName string, ws *workspaceSetup, hostProxyRunning bool) (*containerConfigs, error) {
 	containerOpts := opts.Options
-	projectCfg := opts.Config.Project()
+	security := opts.Config.SecurityConfig()
 	log := opts.Log
 
 	workspaceMounts := ws.result.Mounts
 
-	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
+	gitSetup := workspace.SetupGitCredentials(security.GitCredentials, hostProxyRunning, log)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
@@ -2010,7 +2213,7 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 	}
 
 	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(
-		opts.Flags, workspaceMounts, projectCfg)
+		opts.Flags, workspaceMounts, security)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -2051,7 +2254,7 @@ func finalizeCreatedContainer(ctx context.Context, opts *CreateContainerOptions,
 		Project:            material.projectSlug,
 		Agent:              material.agentName,
 		ContainerID:        containerID,
-		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
+		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.ControlPlaneSettings().HydraPublicPort),
 		CopyToContainer:    NewCopyToContainerFn(client),
 		Logger:             opts.Log,
 	}
@@ -2060,7 +2263,7 @@ func finalizeCreatedContainer(ctx context.Context, opts *CreateContainerOptions,
 	}
 
 	return injectPostInitIfConfigured(
-		ctx, client, containerID, opts.harnessBundle.Name, opts.Config.Project(), opts.Config, opts.Log)
+		ctx, client, containerID, opts.harnessBundle.Name, opts.Config, opts.Log)
 }
 
 // createAndBootstrapContainer resolves the agent bootstrap material, creates the
@@ -2114,16 +2317,22 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 // projectRootDir is the main repo root when the workspace is a git worktree
 // (empty otherwise) — the same signal workspace.SetupMounts keys the .git
 // mount on. Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd, projectRootDir string, log *logger.Logger) (env []string, warnings []string, retErr error) {
-	projectCfg := opts.Config.Project()
+func buildCreateTimeEnv(
+	ctx context.Context,
+	opts *CreateContainerOptions,
+	containerOpts *ContainerCreateOptions,
+	agentName, wd, projectRootDir string,
+	log *logger.Logger,
+) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
-		workspaceMode = projectCfg.Workspace.DefaultMode
+		workspaceMode = string(opts.Config.WorkspaceDefaultMode())
 	}
 
+	agentCfg := opts.Config.AgentConfig()
 	harnessName := opts.harnessBundle.Name
 	agentEnv, warnings, err := ResolveAgentEnv(
-		projectCfg.Agent, projectCfg.HarnessConfigFor(harnessName), harnessName, wd, log)
+		agentCfg, opts.Config.HarnessConfigFor(harnessName), harnessName, wd, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}
@@ -2131,7 +2340,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 	monitoringActive := opts.Client.IsMonitoringActive(ctx)
 	log.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
 
-	cpSettings := opts.Config.Settings().ControlPlane
+	cpSettings := opts.Config.ControlPlaneSettings()
 	// Clawkerd agent endpoints — populated UNCONDITIONALLY (NOT gated on
 	// firewall). CP, the clawker network, and Hydra are core infrastructure and
 	// always run when an agent container is starting; the firewall is one
@@ -2144,8 +2353,8 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		WorkspaceMode:     workspaceMode,
 		WorkspaceSource:   wd,
 		Worktree:          projectRootDir != "",
-		Editor:            projectCfg.Agent.Editor,
-		Visual:            projectCfg.Agent.Visual,
+		Editor:            agentCfg.Editor,
+		Visual:            agentCfg.Visual,
 		Is256Color:        opts.Is256Color,
 		TrueColor:         opts.IsTrueColor,
 		AgentEnv:          agentEnv,
@@ -2155,28 +2364,41 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 			consts.ContainerCP, strconv.Itoa(cpSettings.HydraPublicPort),
 		),
 	}
-	// Firewall: set the enabled flag (eBPF programs attached post-start via BootstrapServicesPostStart)
-	// + the CP /healthz URL the entrypoint polls before running CMD. Both
-	// containers share the clawker network, so Docker DNS resolves ContainerCP.
-	if opts.Config.Settings().Firewall.FirewallEnabled() {
-		envOpts.FirewallEnabled = true
-		envOpts.CPHealthzURL = "http://" + net.JoinHostPort(
-			consts.ContainerCP,
-			strconv.Itoa(opts.Config.Settings().ControlPlane.HealthPort),
-		) + "/healthz"
-	}
-
-	if projectCfg.Security.GitCredentials != nil {
-		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
-		envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
-	}
-	if projectCfg.Build.Instructions != nil {
-		envOpts.InstructionEnv = projectCfg.Build.Instructions.Env
-	}
+	applyConditionalRuntimeEnv(opts.Config, cpSettings, &envOpts)
 
 	result, err := docker.RuntimeEnv(envOpts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("building container runtime env: %w", err)
 	}
 	return result, warnings, nil
+}
+
+// applyConditionalRuntimeEnv folds the runtime-env inputs that only apply when
+// the project opts into them: the firewall's readiness URL, git-credential
+// forwarding, and build-instruction env. Everything unconditional is set by
+// buildCreateTimeEnv itself.
+func applyConditionalRuntimeEnv(
+	cfg config.Config,
+	cpSettings config.ControlPlaneSettings,
+	envOpts *docker.RuntimeEnvOpts,
+) {
+	// Firewall: set the enabled flag (eBPF programs attached post-start via
+	// BootstrapServicesPostStart) + the CP /healthz URL the entrypoint polls
+	// before running CMD. Both containers share the clawker network, so Docker
+	// DNS resolves ContainerCP.
+	if cfg.FirewallEnabled() {
+		envOpts.FirewallEnabled = true
+		envOpts.CPHealthzURL = "http://" + net.JoinHostPort(
+			consts.ContainerCP,
+			strconv.Itoa(cpSettings.HealthPort),
+		) + "/healthz"
+	}
+
+	if gitCreds := cfg.SecurityConfig().GitCredentials; gitCreds != nil {
+		envOpts.GPGForwardingEnabled = gitCreds.GPGEnabled()
+		envOpts.SSHForwardingEnabled = gitCreds.GitSSHEnabled()
+	}
+	if instructions := cfg.BuildConfig().Instructions; instructions != nil {
+		envOpts.InstructionEnv = instructions.Env
+	}
 }

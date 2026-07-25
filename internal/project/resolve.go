@@ -31,6 +31,36 @@ func resolveRootPath(path string) string {
 	return resolved
 }
 
+// deepestAncestorRoot picks the registered root that is the deepest ancestor of
+// resolvedCwd, all comparisons in symlink-resolved space. It returns the
+// resolved-space root, resolvedCwd's path relative to it, and whether any entry
+// matched at all.
+func deepestAncestorRoot(entries []ProjectEntry, resolvedCwd string) (string, string, bool) {
+	var bestMatch, bestRel string
+	found := false
+	for _, p := range entries {
+		// Skip blank roots: resolveRootPath would anchor them at the process
+		// working directory via filepath.Abs and spuriously match everything.
+		if strings.TrimSpace(p.Root) == "" {
+			continue
+		}
+		root := resolveRootPath(p.Root)
+		rel, relErr := filepath.Rel(root, resolvedCwd)
+		if relErr != nil {
+			continue
+		}
+		// rel escaping the root ("..", "../x") means resolvedCwd is outside it;
+		// "." (root == cwd) and any forward path are ancestors.
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if !found || len(root) > len(bestMatch) {
+			bestMatch, bestRel, found = root, rel, true
+		}
+	}
+	return bestMatch, bestRel, found
+}
+
 // ResolveRoot reads the project registry and returns the deepest registered
 // project root that is an ancestor of cwd. cwd is cleaned and
 // symlink-normalized here, so callers may pass it as-is. Callers pass the
@@ -45,37 +75,15 @@ func resolveRootPath(path string) string {
 // ErrNotInProject when cwd is not within any registered project root,
 // including when a depth-changing symlink leaves the logical cwd with no
 // project ancestor in its own path form.
-func (r *Registry) ResolveRoot(cwd string) (string, error) {
-	if r == nil || r.store == nil {
-		return "", fmt.Errorf("project: registry not initialized")
-	}
+func (r *registryImpl) ResolveRoot(cwd string) (string, error) {
 	cwd = filepath.Clean(cwd)
 
-	registry := r.store.Read()
-
-	// Find the deepest registered root that is an ancestor of cwd, comparing
-	// in symlink-resolved space.
-	resolvedCwd := resolveRootPath(cwd)
-	var bestMatch, bestRel string
-	found := false
-	for _, p := range registry.Projects {
-		// Skip blank roots: resolveRootPath would anchor them at the process
-		// working directory via filepath.Abs and spuriously match everything.
-		if strings.TrimSpace(p.Root) == "" {
-			continue
-		}
-		root := resolveRootPath(p.Root)
-		rel, relErr := filepath.Rel(root, resolvedCwd)
-		if relErr != nil {
-			continue
-		}
-		if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-			if !found || len(root) > len(bestMatch) {
-				bestMatch, bestRel, found = root, rel, true
-			}
-		}
+	entries, err := r.Projects()
+	if err != nil {
+		return "", err
 	}
 
+	bestMatch, bestRel, found := deepestAncestorRoot(entries, resolveRootPath(cwd))
 	if !found {
 		return "", ErrNotInProject
 	}
@@ -109,7 +117,7 @@ func (r *Registry) ResolveRoot(cwd string) (string, error) {
 // Returns ErrNotInProject (via ResolveRoot) when CWD is not within any
 // registered project root, so callers can branch on
 // errors.Is(err, ErrNotInProject) without masking real errors.
-func (r *Registry) CurrentRoot() (string, error) {
+func (r *registryImpl) CurrentRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("project: getting current working directory: %w", err)

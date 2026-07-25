@@ -35,20 +35,24 @@ const (
 // compatibility — maps to the same underlying type as KindBool.
 const KindTriState FieldKind = KindBool
 
-// Field represents a single editable configuration field discovered via reflection.
+// Field represents a single editable configuration field: schema metadata plus
+// the store's current merged value for it.
 type Field struct {
-	Path        string             // Dotted YAML path (e.g. "build.image")
-	Label       string             // Human-readable label
-	Description string             // Help text
-	Kind        FieldKind          // Widget type
-	Value       string             // Formatted current value (compact summary for browse display)
-	EditValue   string             // Full value for editor pre-population (YAML for Map/StructSlice kinds)
-	Default     string             // Effective default shown when Value is "<unset>" or empty
-	Options     []string           // For Select fields
-	Validator   func(string) error // Optional input validation
-	Required    bool               // Whether the field must have a value
-	ReadOnly    bool               // Whether the field is not editable
-	Order       int                // Sort order (lower = first)
+	Path        string    // Dotted YAML path (e.g. "build.image")
+	Label       string    // Human-readable label
+	Description string    // Help text
+	Kind        FieldKind // Widget type
+	Value       string    // Formatted current value (compact summary for browse display)
+	EditValue   string    // Full value for editor pre-population (YAML for Map/StructSlice kinds)
+	// Default is the effective default shown when Value is "<unset>" or empty.
+	// It is deliberately blank for a field the user set to an explicit empty
+	// value: that emptiness masks lower layers, so no default is in effect.
+	Default   string
+	Options   []string           // For Select fields
+	Validator func(string) error // Optional input validation
+	Required  bool               // Whether the field must have a value
+	ReadOnly  bool               // Whether the field is not editable
+	Order     int                // Sort order (lower = first)
 
 	// Editor is a custom editor factory provided by domain adapters.
 	// When non-nil, the field browser uses it instead of the default kind-based

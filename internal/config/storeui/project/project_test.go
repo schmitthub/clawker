@@ -138,7 +138,7 @@ func TestLayerTargets_MixedPlacementLocalOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	// The local override layer must be in play (it wins the merge).
-	assert.Equal(t, "snapshot", cfg.Project().Workspace.DefaultMode)
+	assert.Equal(t, config.ModeSnapshot, cfg.WorkspaceDefaultMode())
 
 	targets, err := LayerTargets(cfg.ProjectStore())
 	require.NoError(t, err)

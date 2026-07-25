@@ -46,7 +46,7 @@ Return contract:
 | `(*ReleaseInfo, nil)` | a **strictly newer** release is available |
 | `(nil, error)` | the fetch failed (API/network/decode) |
 
-`CheckForUpdate` reads `st.State().CheckedAt` for the freshness gate. The caller
+`CheckForUpdate` reads `st.CheckedAt()` for the freshness gate. The caller
 supplies the `*http.Client` (the Factory's HttpClient noun in production; an
 `internal/httpmock` stub in tests). A nil `st` is a programming error (the caller
 wires state via the factory) and returns an error before any fetch.
@@ -101,7 +101,7 @@ just `CheckForUpdate` + `ReleaseInfo`.
 
 1. Parse `currentVersion` with `semver.NewVersion` (v-tolerant); unparseable
    (e.g. `"DEV"`) → `(nil, error)`, before any fetch
-2. Reject a nil `st` (error); read `st.State().CheckedAt`; `shouldCheckForUpdate`
+2. Reject a nil `st` (error); read `st.CheckedAt()`; `shouldCheckForUpdate`
    → return `(nil, nil)` if TTL-fresh
 3. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` via the
    supplied client (timeout from the client, context-aware)

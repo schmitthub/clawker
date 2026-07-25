@@ -6,7 +6,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 **Import boundary**: Does NOT import `lipgloss` or `lipgloss/table` directly. Styles via `iostreams` (e.g., `iostreams.PanelStyle`), text via `internal/text`. Enforced by `import_boundary_test.go`.
 
-**Allowed imports**: `bubbletea`, `bubbles/*`, `internal/iostreams`, `internal/text`.
+**Allowed imports**: `bubbletea`, `bubbles/*`, `gopkg.in/yaml.v3` (map / struct-slice editors carry YAML values), `internal/iostreams`, `internal/text`.
 
 **Style pattern**: Use `func(string) string` instead of `lipgloss.Style` in signatures. Inline via type inference: `style := iostreams.PanelStyle`.
 
@@ -24,7 +24,7 @@ Full table of render helpers (`RenderHeader`, `RenderStatus`, `RenderBadge`, `Re
 
 ## Interactive Components
 
-All models use value semantics — setters return new copies. Each has `Init()`, `Update()`, `View()`.
+All models use value semantics — setters return new copies. Each implements only the BubbleTea methods it needs: `View()` always, plus `Update()`/`Init()` where the model handles input or ticks (`SpinnerModel`, `ViewportModel` have all three; `ListModel` has `Update`/`View`; `PanelModel`, `PanelGroup`, `StatusBarModel`, `HelpModel` are setters + `View`).
 
 | Component | File | Key API |
 |-----------|------|---------|
@@ -108,8 +108,6 @@ err := tp.Render()
 
 **Methods**: `AddRow(cols ...string)`, `Len() int`, `Render() error`, `WithHeaderStyle(fn func(string) string) *TablePrinter`, `WithPrimaryStyle(fn func(string) string) *TablePrinter`, `WithCellStyle(fn func(string) string) *TablePrinter`
 
-**Golden tests**: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run "TestTable.*_Golden" -v`
-
 ## Field Models (`fields.go`)
 
 Three standalone BubbleTea field models. All use value semantics and share `FieldOption{Label, Description}`.
@@ -129,21 +127,17 @@ Three standalone BubbleTea field models. All use value semantics and share `Fiel
 
 Generic tabbed field browser/editor. Domain-agnostic — no knowledge of stores, reflection, or config schemas. Used by `internal/storeui` to edit any `Store[T]`.
 
-**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Map/StructSlice`), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`. Constructor `NewFieldBrowser(cfg)`; result via `.Result() BrowserResult{Saved, Cancelled, SavedCount}`.
+**Types**: `BrowserFieldKind` (`BrowserText/Bool/TriState/Select/Int/StringSlice/Duration/Map/StructSlice`; `BrowserTriState` is deprecated — it maps to `BrowserBool` and exists only to hold its iota slot), `BrowserField`, `BrowserLayerTarget`, `BrowserLayer`, `BrowserResult`, `BrowserConfig`. Constructor `NewFieldBrowser(cfg) *FieldBrowserModel` (pointer model); result via `.Result() BrowserResult{Saved, Cancelled, SavedCount}`.
 
-Fields are grouped into tabs by top-level path key with sub-section headings for 3+ segment paths. Inline editing dispatches to `SelectField`/`TextField`/`ListEditorModel`/`TextareaEditorModel`/`KVEditorModel` based on kind. Keys: `←/→` tabs, `↑/↓` navigate, `enter` edit, `d` delete (when `OnFieldDeleted` is wired), `esc/q/ctrl+c` quit.
+Fields are grouped into tabs by top-level path key with sub-section headings for 3+ segment paths. Inline editing dispatches to `SelectField`/`TextField`/`ListEditorModel`/`TextareaEditorModel`/`KVEditorModel` based on kind — unless the field carries an `Editor func(label, value string) any` factory, which takes priority and must return a `FieldEditor` (anything else aborts back to browse with an error). Keys: `←/→` tabs, `↑/↓` navigate, `enter` edit, `d` delete (when `OnFieldDeleted` is wired), `esc/q/ctrl+c` quit.
 
-## Inline Editors (`listeditor.go`, `textareaeditor.go`, `kveditor.go`)
+## Inline Editors (`listeditor.go`, `textareaeditor.go`, `kveditor.go`, `itemlisteditor.go`)
 
-All three share the same shape: value-type model, `New<Kind>(label, value, opts...)` constructor, `With<Kind>Validator` option, `Value()`/`IsConfirmed()`/`IsCancelled()`/`Err()` accessors.
+`FieldEditor` (`fieldeditor.go`) is the contract every editor satisfies — `tea.Model` plus `Value()`/`IsConfirmed()`/`IsCancelled()`/`Err()` — and is also what a `BrowserField.Editor` factory must return. Built-ins are value-type models with a `New<Kind>(label, value, ...)` constructor; the first three take a `With<Kind>Validator` option.
 
 | Editor | Value format | Browse keys | Edit keys | Notes |
 |--------|-------------|-------------|-----------|-------|
 | `ListEditorModel` | Comma-separated string | `a` add, `e` edit, `d/backspace` delete, `↑/↓` nav, `enter/esc` done | `enter` confirm, `esc` cancel | For `[]string` fields |
 | `TextareaEditorModel` | Raw string | — (single mode) | `ctrl+s` save, `esc` cancel | Wraps `bubbles/textarea`; auto-sizes height |
 | `KVEditorModel` | YAML map string | `a` add pair, `e` edit value, `E` edit key, `d/backspace` delete, `↑/↓` nav, `enter` done, `esc` cancel | `enter` confirm, `esc` cancel | Default for `BrowserMap` fields. Shows merged store state — duplicate key validation belongs at the write boundary, not here |
-
-## Golden Tests
-
-- Progress: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v`
-- Tables: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run "TestTable.*_Golden" -v`
+| `ItemListEditorModel` | YAML list-of-maps | `a` add, `e` edit, `d/backspace` delete, `↑/↓` nav, `enter` done, `esc` cancel | delegates to `FormEditorModel`: `tab/shift+tab` fields, `ctrl+s` confirm, `esc` cancel | `NewItemListEditor(label, value, []StructFieldDef)` — struct-slice items without domain knowledge. No validation yet: `Err()` always returns `""` and a YAML parse failure silently yields an empty list, so fix that before wiring it to a field |

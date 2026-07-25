@@ -7,11 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
@@ -21,6 +25,19 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// Surface names for the two listeners, used as the component field on every
+// structured log line the stack emits and as the prefix of the errors it
+// deposits on the orchestrator's serve-failure channel.
+const (
+	surfaceAdmin = "grpc-admin"
+	surfaceAgent = "grpc-agent"
+)
+
+// grpcPanicMessage is the client-visible detail of the codes.Internal status
+// a recovered handler panic is converted into. The recovered value and the
+// stack go to the structured log, never onto the wire.
+const grpcPanicMessage = "internal error"
 
 // ErrNilFirewallHandler is returned by NewGRPCStack when no firewall
 // handler is supplied. The handler backs the AdminService surface (its
@@ -49,7 +66,7 @@ type GRPCDeps struct {
 	// container owning that endpoint, grounding the IdentityInterceptor's
 	// trust check on a kernel-attested source instead of cert claims. A
 	// nil-yielding IdentityInterceptor (wiring regression) degrades the
-	// AgentService surface — see Serve / the identity gate below.
+	// AgentService surface — see ServeAgent / the identity gate below.
 	PeerLookup agent.ContainerByPeerIP
 
 	// ServerCertPath / ServerKeyPath locate the CP server leaf used for
@@ -101,7 +118,83 @@ type GRPCStack struct {
 	adminPort int
 	agentPort int
 
+	// serveAdminOnce / serveAgentOnce make double-serve structurally
+	// impossible: grpc.Server.Serve on an already-serving listener is a
+	// race the orchestrator must never be able to trigger by wiring order.
+	serveAdminOnce sync.Once
+	serveAgentOnce sync.Once
+
+	// adminServing reports whether the admin serve goroutine is live. Both
+	// listener sockets are BOUND at construction, so a TCP dial to the admin
+	// port completes from the accept backlog whether or not anything is in
+	// Serve — this flag is the only signal that distinguishes the two, and
+	// the orchestrator's /healthz probe consumes it via AdminServing.
+	adminServing atomic.Bool
+
 	log *logger.Logger
+}
+
+// handlerPanicStatus audits a recovered gRPC handler panic and returns the
+// status it is converted into. grpc-go does NOT recover handler panics: an
+// unrecovered panic unwinds out of the serve goroutine and kills PID 1,
+// leaving the pinned eBPF programs filtering agent egress with no supervisor
+// — a security incident, not an availability one. The recovered value and
+// stack land on the structured surface only; the caller sees codes.Internal.
+func handlerPanicStatus(log *logger.Logger, method string, recovered any) error {
+	log.Error().
+		Interface("panic", recovered).
+		Bytes("stack", debug.Stack()).
+		Str("component", "grpc-handler").
+		Str("method", method).
+		Str("event", "grpc_handler_panic").
+		Msg("gRPC handler panicked; converted to codes.Internal so the serve goroutine survives and eBPF stays supervised")
+	//nolint:wrapcheck // status.Error CREATES the terminal status here (same class as the errors.New/.Errorf constructors wrapcheck ignores); the interceptor contract returns status errors verbatim and wrapping adds no context.
+	return status.Error(codes.Internal, grpcPanicMessage)
+}
+
+// recoveryUnaryInterceptor contains a panic raised anywhere downstream of it
+// — handler, auth interceptor, or identity gate. It must be the OUTERMOST
+// link of the unary chain so nothing it is meant to contain runs outside it.
+func recoveryUnaryInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		var resp any
+		var err error
+		// The handler runs inside a closure so its panic can be converted to
+		// the (nil, codes.Internal) result without named returns.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					resp = nil
+					err = handlerPanicStatus(log, info.FullMethod, r)
+				}
+			}()
+			resp, err = handler(ctx, req)
+		}()
+		return resp, err
+	}
+}
+
+// recoveryStreamInterceptor is recoveryUnaryInterceptor's streaming twin and
+// carries the same outermost-link requirement.
+func recoveryStreamInterceptor(log *logger.Logger) grpc.StreamServerInterceptor {
+	return func(
+		srv any,
+		ss grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = handlerPanicStatus(log, info.FullMethod, r)
+			}
+		}()
+		return handler(srv, ss)
+	}
 }
 
 // NewGRPCStack constructs both gRPC listeners from deps without starting
@@ -109,8 +202,17 @@ type GRPCStack struct {
 // shared Hydra introspector and the two per-listener auth interceptors,
 // registers the AdminService on the admin server, and — when the
 // IdentityInterceptor is available — builds the agent server and
-// registers the AgentService.Register handler. Call Serve to start
-// accepting connections.
+// registers the AgentService.Register handler.
+//
+// Both listener sockets are BOUND here; neither serves until asked, and the
+// order is a contract the orchestrator owns:
+//
+//   - ServeAgent runs at boot, before the CP is ready — clawkerd dial-back
+//     and agent registration are boot-time flows.
+//   - ServeAdmin runs only AFTER the startup gates and SetReady, so no admin
+//     RPC — in particular no rule mutation — can be accepted mid-boot. An
+//     early client waits in the bound listener's accept backlog rather than
+//     getting connection-refused.
 //
 // All failures return an error; the CP serve path never panics (a panic
 // would strand pinned eBPF programs with no supervisor — a security
@@ -155,14 +257,16 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	// interceptor stays unpinned — the CLI is the only client that holds
 	// the admin scope and we don't want to lock out a future second admin
 	// client.
-	agentInterceptor :=
-		auth.NewAuthInterceptor(introspector, agentv1.AgentMethodScopes(), log).
-			RequireClientID(consts.ClientIDAgent)
+	agentInterceptor := auth.NewAuthInterceptor(introspector, agentv1.AgentMethodScopes(), log).
+		RequireClientID(consts.ClientIDAgent)
 
+	// The recovery interceptor is FIRST in both chains — grpc.Chain*
+	// interceptors run outermost-first, and a panic in the auth interceptor
+	// itself must be contained just as a handler panic is.
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
-		grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor()),
-		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
+		grpc.ChainUnaryInterceptor(recoveryUnaryInterceptor(log), authInterceptor.UnaryInterceptor()),
+		grpc.ChainStreamInterceptor(recoveryStreamInterceptor(log), authInterceptor.StreamInterceptor()),
 	)
 
 	adminServer, err := NewAdminServer(deps.Handler, deps.Registry, log)
@@ -174,6 +278,22 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(deps.AdminPort))
 	if err != nil {
 		return nil, fmt.Errorf("grpc listen: %w", err)
+	}
+
+	// A listener bound here holds its port until closed. Every error arm
+	// below must release what is already bound, or a CP restart after a
+	// late constructor failure hits address-in-use on a port nothing serves.
+	closeBound := func(listeners ...net.Listener) {
+		for _, l := range listeners {
+			if l == nil {
+				continue
+			}
+			if cerr := l.Close(); cerr != nil {
+				log.Warn().Err(cerr).
+					Str("component", "grpc-stack").
+					Msg("closing bound listener after constructor failure")
+			}
+		}
 	}
 
 	stack := &GRPCStack{
@@ -221,11 +341,20 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 
 	agentServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
-		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
+		grpc.ChainUnaryInterceptor(
+			recoveryUnaryInterceptor(log),
+			agentInterceptor.UnaryInterceptor(),
+			identityUnary,
+		),
+		grpc.ChainStreamInterceptor(
+			recoveryStreamInterceptor(log),
+			agentInterceptor.StreamInterceptor(),
+			identityStream,
+		),
 	)
 	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(deps.AgentPort))
 	if err != nil {
+		closeBound(grpcLis)
 		return nil, fmt.Errorf("agent grpc listen: %w", err)
 	}
 
@@ -239,6 +368,7 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 		log.With("component", "agent-register"),
 	)
 	if herr != nil {
+		closeBound(grpcLis, agentLis)
 		return nil, fmt.Errorf("agent register handler: %w", herr)
 	}
 	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
@@ -248,27 +378,97 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	return stack, nil
 }
 
-// Serve starts the recovered serve goroutines for both listeners. The
-// admin listener always serves; the agent listener serves only when it
-// was brought up (identity gate available). A non-nil Serve error from
-// either server is deposited on failed without blocking — the channel is
-// orchestrator-owned and buffered to cover every serve goroutine.
-func (s *GRPCStack) Serve(failed chan<- error) {
-	go func() {
-		s.log.Info().Int("port", s.adminPort).Msg("gRPC admin API serving")
-		if err := s.adminServer.Serve(s.adminLis); err != nil {
-			failed <- fmt.Errorf("gRPC admin serve: %w", err)
+// serveLoop is the body of both serve goroutines. A non-nil Serve error is
+// deposited on failed so the orchestrator's serve select reaches its drain;
+// the channel is orchestrator-owned and buffered to cover every serve
+// goroutine, and each goroutine deposits at most once.
+//
+// The recover is the reason this loop exists as a shared helper: an
+// unrecovered panic here unwinds through PID 1 and kills the CP with the
+// eBPF programs still pinned and unsupervised, so a panic is converted into
+// the same terminal serve failure a Serve error produces — the orchestrator
+// then drains and flushes eBPF instead of dying.
+func (s *GRPCStack) serveLoop(surface string, srv *grpc.Server, lis net.Listener, failed chan<- error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("component", surface).
+				Str("event", "grpc_serve_panic").
+				Msg("gRPC serve goroutine panicked; converting to a terminal serve failure so drain-to-zero/eBPF flush still runs")
+			failed <- fmt.Errorf("%s serve panic: %v", surface, r)
 		}
 	}()
+	if err := srv.Serve(lis); err != nil {
+		failed <- fmt.Errorf("%s serve: %w", surface, err)
+	}
+}
 
-	if s.agentServer != nil {
+// ServeAgent starts the recovered serve goroutine for the agent listener
+// (no-op when the identity gate was unavailable and the listener was never
+// brought up). It runs during startup, before the CP is ready: clawkerd
+// dial-back and agent registration are boot-time flows and must not wait
+// on the admin surface. Serving is single-shot — a second call serves
+// nothing and warns.
+func (s *GRPCStack) ServeAgent(failed chan<- error) {
+	if s.agentServer == nil {
+		return
+	}
+	started := false
+	s.serveAgentOnce.Do(func() {
+		started = true
 		go func() {
 			s.log.Info().Int("port", s.agentPort).Msg("gRPC agent API serving")
-			if err := s.agentServer.Serve(s.agentLis); err != nil {
-				failed <- fmt.Errorf("gRPC agent serve: %w", err)
-			}
+			s.serveLoop(surfaceAgent, s.agentServer, s.agentLis, failed)
 		}()
+	})
+	if !started {
+		s.log.Warn().
+			Str("component", surfaceAgent).
+			Str("event", "grpc_serve_already_started").
+			Msg("agent listener is already serving; ignoring repeat ServeAgent")
 	}
+}
+
+// ServeAdmin starts the recovered serve goroutine for the admin listener.
+// The orchestrator calls it only AFTER the startup gates and SetReady, so
+// no admin RPC — in particular no rule mutation — can be accepted while
+// the CP is still booting. The listener socket is bound at construction,
+// so a client that connects early simply waits in the accept backlog until
+// the CP is ready rather than getting connection-refused. Serving is
+// single-shot — a second call serves nothing and warns.
+//
+// The serving flag flips BEFORE the goroutine is scheduled: /healthz starts
+// after this call, and a probe landing between the go statement and the
+// goroutine's first instruction must not read a false not-serving.
+func (s *GRPCStack) ServeAdmin(failed chan<- error) {
+	started := false
+	s.serveAdminOnce.Do(func() {
+		started = true
+		s.adminServing.Store(true)
+		go func() {
+			defer s.adminServing.Store(false)
+			s.log.Info().Int("port", s.adminPort).Msg("gRPC admin API serving")
+			s.serveLoop(surfaceAdmin, s.adminServer, s.adminLis, failed)
+		}()
+	})
+	if !started {
+		s.log.Warn().
+			Str("component", surfaceAdmin).
+			Str("event", "grpc_serve_already_started").
+			Msg("admin listener is already serving; ignoring repeat ServeAdmin")
+	}
+}
+
+// AdminServing reports whether the admin serve goroutine is live: true from
+// the moment ServeAdmin dispatches it until Serve returns. The listener
+// socket is bound at construction, so a TCP dial to the admin port succeeds
+// even when nothing is serving — a health probe that trusts the dial alone
+// reports healthy while every admin RPC hangs in the accept backlog. This is
+// the signal that closes that gap.
+func (s *GRPCStack) AdminServing() bool {
+	return s.adminServing.Load()
 }
 
 // GracefulStop drains in-flight RPCs on both listeners, then returns. If

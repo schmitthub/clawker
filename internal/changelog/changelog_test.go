@@ -242,7 +242,7 @@ func TestCheckForChanges_FirstRunReseedNoFetch(t *testing.T) {
 			if len(gained) != 0 {
 				t.Errorf("returned %v, want no entries (first-run reseed)", versions(gained))
 			}
-			if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
+			if cur := st.LastSeenChangelog(); cur != "0.12.0" {
 				t.Errorf("cursor = %q, want reseeded to 0.12.0", cur)
 			}
 			if len(reg.Requests) != 0 {
@@ -267,7 +267,7 @@ func TestCheckForChanges_AdvancesCursor(t *testing.T) {
 	if len(gained) == 0 {
 		t.Fatal("expected gained entries")
 	}
-	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
+	if cur := st.LastSeenChangelog(); cur != "0.12.0" {
 		t.Errorf("cursor = %q, want advanced to 0.12.0", cur)
 	}
 }
@@ -284,7 +284,7 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
-		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
+		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
 			t.Errorf("seeded cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
 		}
 	})
@@ -297,7 +297,7 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
-		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
+		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
 			t.Errorf("advanced cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
 		}
 	})
@@ -333,7 +333,7 @@ func TestCheckForChanges_FetchErrorNoAdvance(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on non-200 response")
 	}
-	if cur := st.State().LastSeenChangelog; cur != "0.10.0" {
+	if cur := st.LastSeenChangelog(); cur != "0.10.0" {
 		t.Errorf("cursor advanced to %q on fetch error, want untouched 0.10.0", cur)
 	}
 }

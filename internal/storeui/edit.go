@@ -1,10 +1,14 @@
 package storeui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -35,6 +39,12 @@ const (
 	LabelUser    = "User"    // configured directory candidate (config dir etc.)
 	LabelLocal   = "Local"   // domain-applied: discovered local override file
 )
+
+// unreadableValue is the browse-list marker for a field whose stored value
+// could not be decoded in any shape. It is deliberately not blank: blank is
+// what an unset field renders, and conflating the two would let an operator
+// save over data the editor never showed them.
+const unreadableValue = "<unreadable>"
 
 // BuildLayerTargets builds save destinations from the store's own write
 // targets (storage.Store.WriteTargets), so the editor only ever offers
@@ -169,9 +179,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 	}
 
 	buildBrowserState := func() ([]tui.BrowserField, []tui.BrowserLayer) {
-		snapshot := store.Read()
-		fields := WalkFields(snapshot)
-		enrichWithSchema(fields, (*snapshot).Fields())
+		fields := schemaFields(store)
 
 		if len(cfg.onlyPaths) > 0 {
 			filtered := make([]Field, 0, len(cfg.onlyPaths))
@@ -205,34 +213,14 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		// Coerce the TUI string into the field's typed value (via a fresh T), then
-		// set it on the store by path.
-		var fresh T
-		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, err)
-		}
-		typed, err := GetFieldValue(&fresh, fieldPath)
-		if err != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, err)
-		}
-		if err = store.Set(fieldPath, typed); err != nil {
-			return fmt.Errorf("updating store: %w", err)
-		}
-
-		prov, hasProv := store.Provenance(fieldPath)
-		if hasProv && prov.Path != target.Path {
-			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
-			if normalizeLayerValue(layerVal) != value {
-				if merr := store.MarkForWrite(fieldPath); merr != nil {
-					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
-				}
-			}
+		if err := stageFieldValue(store, fieldPath, value); err != nil {
+			return err
 		}
 
 		// Flush ONLY this field: the store may carry other staged mutations
 		// (a preset store's seed marks, edits routed to other targets), and a
 		// whole-store WriteTo would dump them all into this field's target.
-		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
+		if werr := store.WriteFieldTo(target.Path, fieldKey(fieldPath)...); werr != nil {
 			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
@@ -244,11 +232,14 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		if _, err := store.Remove(fieldPath); err != nil {
+		key := fieldKey(fieldPath)
+		// An already-unset field is nothing to delete, not a failure: the row
+		// the user pressed "d" on was showing a default or a lower layer.
+		if err := store.Remove(key...); err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if werr := store.WriteFieldTo(target.Path, fieldPath); werr != nil {
+		if werr := store.WriteFieldTo(target.Path, key...); werr != nil {
 			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
@@ -269,139 +260,20 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 //
 // Each field edit is saved immediately to a user-chosen layer target.
 // The orchestration flow:
-//  1. store.Read() → snapshot
-//  2. WalkFields(snapshot) → fields
-//  3. Filter skip paths, ApplyOverrides
-//  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. OnFieldSaved callback: store.Set + store.WriteTo(target) per field
-//  6. Return Result
+//  1. schemaFields(store) → fields (schema metadata + one storage.Get per field)
+//  2. Filter skip paths, ApplyOverrides
+//  3. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
+//  4. OnFieldSaved callback: store.Set + store.WriteFieldTo(target) per field
+//  5. Return Result
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
-	cfg := editOptions{
-		title:     "Configuration Editor",
-		skipPaths: make(map[string]bool),
-	}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
-	// Validate layer targets early.
-	for _, t := range cfg.layerTargets {
-		if t.Path != "" && !filepath.IsAbs(t.Path) {
-			return Result{}, fmt.Errorf("layer target %q has non-absolute path: %s", t.Label, t.Path)
-		}
-	}
-
-	// buildBrowserState reads the current store snapshot and produces
-	// the TUI field and layer representations. Called at init and after
-	// every save/delete to refresh the display with winning values.
-	buildBrowserState := func() ([]tui.BrowserField, []tui.BrowserLayer) {
-		snapshot := store.Read()
-		fields := WalkFields(snapshot)
-		enrichWithSchema(fields, (*snapshot).Fields())
-
-		if len(cfg.onlyPaths) > 0 {
-			filtered := make([]Field, 0, len(cfg.onlyPaths))
-			for _, f := range fields {
-				if cfg.onlyPaths[f.Path] {
-					filtered = append(filtered, f)
-				}
-			}
-			fields = filtered
-		} else if len(cfg.skipPaths) > 0 {
-			filtered := make([]Field, 0, len(fields))
-			for _, f := range fields {
-				if !cfg.skipPaths[f.Path] {
-					filtered = append(filtered, f)
-				}
-			}
-			fields = filtered
-		}
-		fields = ApplyOverrides(fields, cfg.overrides)
-
-		provMap := store.ProvenanceMap()
-		return fieldsToBrowserFields(fields, provMap), layersToBrowserLayers(store.Layers())
-	}
-
-	// Initial state.
-	browserFields, browserLayers := buildBrowserState()
-	browserTargets := layerTargetsToBrowserTargets(cfg.layerTargets)
-
-	// Wire per-field save callback.
-	onFieldSaved := func(fieldPath, value string, targetIdx int) error {
-		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
-			return fmt.Errorf("invalid layer target index: %d", targetIdx)
-		}
-		target := cfg.layerTargets[targetIdx]
-
-		// Update in-memory store.
-		// Coerce the TUI string into the field's typed value (via a fresh T), then
-		// set it on the store by path.
-		var fresh T
-		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, err)
-		}
-		typed, err := GetFieldValue(&fresh, fieldPath)
-		if err != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, err)
-		}
-		if err = store.Set(fieldPath, typed); err != nil {
-			return fmt.Errorf("updating store: %w", err)
-		}
-
-		// When saving to a layer that isn't the provenance winner,
-		// Set() may not have dirtied the path (merged value unchanged).
-		// Compare against the target layer's raw data — only force a
-		// write when the layer file actually needs updating.
-		prov, hasProv := store.Provenance(fieldPath)
-		if hasProv && prov.Path != target.Path {
-			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
-			if normalizeLayerValue(layerVal) != value {
-				if merr := store.MarkForWrite(fieldPath); merr != nil {
-					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
-				}
-			}
-		}
-
-		// Persist dirty fields to the target file. Write() remerges
-		// internally, so the snapshot reflects the true merged state.
-		if werr := store.WriteTo(target.Path); werr != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
-		}
-		return nil
-	}
-
-	// Wire per-field delete callback.
-	onFieldDeleted := func(fieldPath string, targetIdx int) error {
-		if targetIdx < 0 || targetIdx >= len(cfg.layerTargets) {
-			return fmt.Errorf("invalid layer target index: %d", targetIdx)
-		}
-		target := cfg.layerTargets[targetIdx]
-
-		// Remove from the in-memory store tree.
-		if _, err := store.Remove(fieldPath); err != nil {
-			return fmt.Errorf("deleting from store: %w", err)
-		}
-
-		// Persist the deletion to the target file. Write() remerges
-		// internally, so the snapshot reflects the true merged state.
-		if werr := store.WriteTo(target.Path); werr != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
-		}
-		return nil
-	}
-
-	model := tui.NewFieldBrowser(tui.BrowserConfig{
-		Title:          cfg.title,
-		Fields:         browserFields,
-		LayerTargets:   browserTargets,
-		Layers:         browserLayers,
-		OnFieldSaved:   onFieldSaved,
-		OnFieldDeleted: onFieldDeleted,
-		OnRefresh:      buildBrowserState,
-	})
-	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
+	model, err := BuildBrowser(store, opts...)
 	if err != nil {
 		return Result{}, err
+	}
+
+	finalModel, err := tui.RunProgram(ios, model, tui.WithAltScreen(true))
+	if err != nil {
+		return Result{}, fmt.Errorf("running field editor: %w", err)
 	}
 
 	browser, ok := finalModel.(*tui.FieldBrowserModel)
@@ -416,20 +288,204 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 	}, nil
 }
 
-// enrichWithSchema replaces the schema metadata (Label, Description, Default, Kind)
-// on walked fields with authoritative values from the storage.Schema.
-// Runtime values (Value, Order) are preserved from the walked fields.
-func enrichWithSchema(fields []Field, schema storage.FieldSet) {
-	for i := range fields {
-		sf := schema.Get(fields[i].Path)
-		if sf == nil {
-			continue
+// fieldKey splits a dotted schema path into storage key segments. Schema field
+// names never contain a literal dot, so the split is lossless.
+func fieldKey(path string) []string {
+	return strings.Split(path, ".")
+}
+
+// schemaFields builds the editable field list for a store: the schema owns the
+// metadata (path, label, description, kind, default) and the store owns the
+// values, one storage.Get per declared leaf. There is no whole-struct read.
+func schemaFields[T storage.Schema](store *storage.Store[T]) []Field {
+	var zero T
+	all := zero.Fields().All()
+	fields := make([]Field, 0, len(all))
+	for i, sf := range all {
+		read := fieldValue(store, sf.Kind(), fieldKey(sf.Path()))
+		value, editValue := read.value, read.editValue
+		desc := sf.Description()
+		def := sf.Default()
+		readOnly := false
+		switch {
+		case read.err != nil:
+			// The field holds something the store cannot decode in any shape.
+			// Render it as unreadable — visibly distinct from the blank an unset
+			// field shows — and lock the row: an operator must not overwrite a
+			// value they were never shown. Clearing the key with "d" still works.
+			value, editValue = unreadableValue, ""
+			desc = fmt.Sprintf("%s (%s: %v)", desc, unreadableValue, read.err)
+			def = ""
+			readOnly = true
+		case read.set && value == "":
+			// Explicitly set to empty (`key: ""`, `key: []`) is a real value that
+			// masks lower layers — the default is NOT in effect, so the row must
+			// not render "<default> (default)". An unset key keeps it.
+			def = ""
 		}
-		fields[i].Label = sf.Label()
-		fields[i].Description = sf.Description()
-		fields[i].Default = sf.Default()
-		fields[i].Kind = sf.Kind()
+		fields = append(fields, Field{
+			Path:        sf.Path(),
+			Label:       sf.Label(),
+			Description: desc,
+			Kind:        sf.Kind(),
+			Value:       value,
+			EditValue:   editValue,
+			Default:     def,
+			Required:    sf.Required(),
+			Order:       i,
+			ReadOnly:    readOnly,
+			// Presentation-only concerns the schema does not describe; domain
+			// adapters supply them through ApplyOverrides.
+			Options:   nil,
+			Validator: nil,
+			Editor:    nil,
+		})
 	}
+	return fields
+}
+
+// fieldValue reads one field from the store and renders it for display. The
+// FieldKind picks the Go shape the merged YAML is decoded into.
+func fieldValue[T storage.Schema](store *storage.Store[T], kind FieldKind, key []string) fieldRead {
+	switch kind {
+	case KindText, KindSelect:
+		return readField(store, key, func(v string) (string, string) { return v, "" })
+	case KindBool:
+		return readField(store, key, func(v bool) (string, string) { return strconv.FormatBool(v), "" })
+	case KindInt:
+		return readField(store, key, func(v int64) (string, string) { return strconv.FormatInt(v, 10), "" })
+	case KindDuration:
+		return readField(store, key, func(v time.Duration) (string, string) { return v.String(), "" })
+	case KindTime:
+		return readField(store, key, formatTime)
+	case KindStringSlice:
+		return readField(store, key, func(v []string) (string, string) { return strings.Join(v, ", "), "" })
+	case KindMap:
+		return readField(store, key, func(v map[string]string) (string, string) {
+			return countSummary(len(v), "entry", "entries"), marshalYAMLValue(reflect.ValueOf(v))
+		})
+	case KindStructSlice:
+		return readField(store, key, func(v []any) (string, string) {
+			return countSummary(len(v), "item", "items"), marshalYAMLValue(reflect.ValueOf(v))
+		})
+	default:
+		// KindStructMap and consumer-defined kinds (> KindLast) have no dedicated
+		// Go shape: decode untyped and edit as a YAML blob.
+		return readField(store, key, func(v any) (string, string) {
+			return summarizeValue(v), marshalYAMLValue(reflect.ValueOf(v))
+		})
+	}
+}
+
+// fieldRead is one field's read result: how it renders in the browse list, what
+// pre-populates its editor, whether the key carries a value at all (false =
+// unset, so the schema default shows through), and the read error when the
+// field could not be decoded in any shape.
+type fieldRead struct {
+	value     string
+	editValue string
+	set       bool
+	err       error
+}
+
+// readField decodes the field at key into V and renders it with format,
+// falling back to rawFieldValue when the decode does not produce V.
+func readField[V any, T storage.Schema](
+	store *storage.Store[T],
+	key []string,
+	format func(V) (string, string),
+) fieldRead {
+	v, err := storage.Get[V](store, key...)
+	if err != nil {
+		return rawFieldValue(store, key, err)
+	}
+	value, editValue := format(v)
+	return fieldRead{value: value, editValue: editValue, set: true, err: nil}
+}
+
+// formatTime renders an RFC3339Nano scalar; the zero time is the schema's
+// "never happened" and displays blank rather than as a sentinel date.
+func formatTime(v time.Time) (string, string) {
+	if v.IsZero() {
+		return "", ""
+	}
+	return v.Format(time.RFC3339Nano), ""
+}
+
+// summarizeValue renders the compact browse summary for an untyped value: a
+// container gets a count, anything else its YAML scalar form.
+func summarizeValue(v any) string {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Map {
+		return countSummary(rv.Len(), "entry", "entries")
+	}
+	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+		return countSummary(rv.Len(), "item", "items")
+	}
+	return marshalYAMLValue(rv)
+}
+
+// rawFieldValue is the fallback for a Get that did not produce the kind's Go
+// shape. An absent key is simply unset. Anything else means the merged value
+// contradicts its declared kind — structurally impossible after the
+// construction-time strict decode, but display it untyped rather than lying
+// about it being unset.
+//
+// When even the untyped read fails the field is unreadable: it holds something,
+// but nothing this process can render. That error is returned, never folded —
+// rendering an unreadable field as unset would invite the operator to save over
+// data they never saw.
+func rawFieldValue[T storage.Schema](store *storage.Store[T], key []string, err error) fieldRead {
+	if errors.Is(err, storage.ErrKeyNotFound) {
+		return fieldRead{}
+	}
+	v, gerr := storage.Get[any](store, key...)
+	if gerr != nil {
+		return fieldRead{value: "", editValue: "", set: false, err: gerr}
+	}
+	y := marshalYAMLValue(reflect.ValueOf(v))
+	return fieldRead{value: y, editValue: y, set: true, err: nil}
+}
+
+// countSummary renders the compact browse summary for container fields
+// ("3 entries"); an empty container renders blank so the default shows.
+func countSummary(n int, one, many string) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "1 " + one
+	default:
+		return fmt.Sprintf("%d %s", n, many)
+	}
+}
+
+// stageFieldValue coerces a TUI string into T's typed value and stages it on
+// the store: Set for a value, Remove when the editor produced nothing at all
+// (a cleared map or struct blob), since storage.Set rejects nil and Remove is
+// the one unset verb. An explicit empty scalar or list is a real value and is
+// staged as such.
+func stageFieldValue[T storage.Schema](store *storage.Store[T], fieldPath, value string) error {
+	var fresh T
+	if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+		return fmt.Errorf("setting field %s: %w", fieldPath, err)
+	}
+	typed, err := GetFieldValue(&fresh, fieldPath)
+	if err != nil {
+		return fmt.Errorf("setting field %s: %w", fieldPath, err)
+	}
+
+	key := fieldKey(fieldPath)
+	if isNilValue(typed) {
+		if rerr := store.Remove(key...); rerr != nil && !errors.Is(rerr, storage.ErrKeyNotFound) {
+			return fmt.Errorf("clearing field %s: %w", fieldPath, rerr)
+		}
+		return nil
+	}
+	if serr := store.Set(key, typed); serr != nil {
+		return fmt.Errorf("updating store: %w", serr)
+	}
+	return nil
 }
 
 // fieldsToBrowserFields maps storeui fields to tui browser fields.
@@ -462,50 +518,6 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 		}
 	}
 	return out
-}
-
-// normalizeLayerValue formats a raw YAML-decoded value into the same string
-// representation that the TUI editor produces, enabling accurate comparison
-// to avoid spurious MarkForWrite calls.
-func normalizeLayerValue(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch val := v.(type) {
-	case []any:
-		parts := make([]string, 0, len(val))
-		for _, item := range val {
-			parts = append(parts, fmt.Sprintf("%v", item))
-		}
-		return strings.Join(parts, ", ")
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-// lookupLayerFieldValue finds the raw value for a dotted field path in a
-// specific layer identified by its file path. Returns nil if the layer is
-// not found or the field is absent from that layer's data.
-func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
-	for _, l := range layers {
-		if l.Path != layerPath {
-			continue
-		}
-		segments := strings.Split(fieldPath, ".")
-		var cur any = l.Data
-		for _, seg := range segments {
-			m, ok := cur.(map[string]any)
-			if !ok {
-				return nil
-			}
-			cur, ok = m[seg]
-			if !ok {
-				return nil
-			}
-		}
-		return cur
-	}
-	return nil
 }
 
 // resolveFieldSource finds the source file for a field path by checking

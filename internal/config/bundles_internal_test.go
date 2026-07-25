@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,35 +34,29 @@ func TestBundleSchemaFields_AllTagged(t *testing.T) {
 // TestValidateBundles_RelativePathAnyLayer proves a local path-only source is
 // layer-agnostic: a relative path is legal in the user config-dir clawker.yaml
 // exactly as in a project-layer file (it resolves against the declaring file's
-// directory at resolution time — one rule, no layer special case).
+// directory at resolution time — one rule, no layer special case), and the
+// declaration comes back pinned to whichever file declared it.
 func TestValidateBundles_RelativePathAnyLayer(t *testing.T) {
-	t.Run("relative path in config-dir layer passes", func(t *testing.T) {
-		configDir := t.TempDir()
-		t.Setenv(consts.EnvConfigDir, configDir)
-		require.NoError(t, os.WriteFile(
-			filepath.Join(configDir, consts.ProjectConfigFile),
-			[]byte("bundles:\n  - path: ./vendor/b\n"), 0o644))
+	const declaration = "bundles:\n  - path: ./vendor/b\n"
 
-		store, err := storage.New[Project]("",
-			storage.WithFilenames(consts.ProjectConfigFile),
-			storage.WithConfigDir(),
-		)
-		require.NoError(t, err)
-		require.NoError(t, validateProjectNodes(store))
+	t.Run("relative path in the user config-dir layer passes", func(t *testing.T) {
+		f := newProjectEnv(t)
+		file := f.writeUser(t, declaration)
+
+		decls := f.load(t).BundleDeclarations()
+		require.Len(t, decls, 1)
+		assert.Equal(t, "./vendor/b", decls[0].Source.Path)
+		assert.Equal(t, file, decls[0].File)
 	})
 
-	t.Run("relative path in a project layer passes", func(t *testing.T) {
-		projectDir := t.TempDir()
-		require.NoError(t, os.WriteFile(
-			filepath.Join(projectDir, consts.ProjectConfigFile),
-			[]byte("bundles:\n  - path: ./vendor/b\n"), 0o644))
+	t.Run("relative path in the project layer passes", func(t *testing.T) {
+		f := newProjectEnv(t)
+		file := f.writeProject(t, declaration)
 
-		store, err := storage.New[Project]("",
-			storage.WithFilenames(consts.ProjectConfigFile),
-			storage.WithPaths(projectDir),
-		)
-		require.NoError(t, err)
-		require.NoError(t, validateProjectNodes(store))
+		decls := f.load(t).BundleDeclarations()
+		require.Len(t, decls, 1)
+		assert.Equal(t, "./vendor/b", decls[0].Source.Path)
+		assert.Equal(t, file, decls[0].File)
 	})
 }
 
@@ -74,23 +66,16 @@ func TestValidateBundles_RelativePathAnyLayer(t *testing.T) {
 // the losing file's mistake. One representative row — the individual malformed
 // shapes are covered single-layer by TestValidateBundles_Table.
 func TestValidateBundles_MalformedShadow(t *testing.T) {
-	winDir, loseDir := t.TempDir(), t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(winDir, consts.ProjectConfigFile),
-		[]byte("bundles:\n  - url: https://x/y.git\n    ref: main\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(loseDir, consts.ProjectConfigFile),
-		[]byte("bundles: nope\n"), 0o644))
+	f := newProjectEnv(t)
+	f.writeLocal(t, "bundles:\n  - url: https://x/y.git\n    ref: main\n")
+	f.writeProject(t, "bundles: nope\n")
 
-	store, err := storage.New[Project]("",
-		storage.WithFilenames(consts.ProjectConfigFile),
-		storage.WithPaths(winDir, loseDir),
-	)
-	require.NoError(t, err,
-		"malformed losing layer must not break store construction — that is the silent-shadow hazard")
-
-	err = validateProjectNodes(store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bundles: must be a list")
-	assert.Contains(t, err.Error(), consts.ProjectConfigFile)
+	errMsg := f.loadErr(t)
+	assert.Contains(t, errMsg, "bundles: must be a list")
+	assert.Contains(t, errMsg, consts.ProjectConfigFile,
+		"the error must name the file the malformed node lives in")
+	assert.NotContains(t, errMsg, consts.ProjectLocalConfigFile,
+		"the winning layer is well-formed — it must not be blamed")
 }
 
 // TestBundleSourceFromMap_CoversAllFields is the drift guard for
@@ -126,73 +111,40 @@ func TestBundleSourceFromMap_CoversAllFields(t *testing.T) {
 }
 
 // TestBundleDeclarations_Provenance proves BundleDeclarations preserves the
-// declaring file per entry (which the union-merged Project().Bundles cannot),
-// walking layers highest-priority first.
+// declaring file per entry (which the merged bundles: list cannot), walking
+// layers highest-priority first: the local override outranks the project file,
+// exactly as it does in the merge.
 func TestBundleDeclarations_Provenance(t *testing.T) {
-	winDir, loseDir := t.TempDir(), t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(winDir, consts.ProjectConfigFile),
-		[]byte("bundles:\n  - url: https://x/win.git\n    ref: main\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(loseDir, consts.ProjectConfigFile),
-		[]byte("bundles:\n  - url: https://x/lose.git\n    ref: dev\n"), 0o644))
+	f := newProjectEnv(t)
+	winFile := f.writeLocal(t, "bundles:\n  - url: https://x/win.git\n    ref: main\n")
+	loseFile := f.writeProject(t, "bundles:\n  - url: https://x/lose.git\n    ref: dev\n")
 
-	store, err := storage.New[Project]("",
-		storage.WithFilenames(consts.ProjectConfigFile),
-		storage.WithPaths(winDir, loseDir),
-	)
-	require.NoError(t, err)
-
-	cfg := &configImpl{project: store, settings: nil, projectRoot: ""}
-	decls := cfg.BundleDeclarations()
+	decls := f.load(t).BundleDeclarations()
 	require.Len(t, decls, 2)
 
-	// Highest-priority layer first (winDir).
 	assert.Equal(t, "https://x/win.git", decls[0].Source.URL)
-	assert.Equal(t, filepath.Join(winDir, consts.ProjectConfigFile), decls[0].File)
+	assert.Equal(t, winFile, decls[0].File)
 	assert.Equal(t, "https://x/lose.git", decls[1].Source.URL)
-	assert.Equal(t, filepath.Join(loseDir, consts.ProjectConfigFile), decls[1].File)
+	assert.Equal(t, loseFile, decls[1].File)
 }
 
-// TestBundles_UnionMergeAcrossLayers proves Project().Bundles union-merges
-// across layers: distinct sources survive as separate entries, an identical
-// entry declared in two layers dedupes to one.
+// TestBundles_UnionMergeAcrossLayers pins what config owns about the merge of
+// the bundles: list — the `merge:"union"` tag on the schema field. Two layers of
+// a real load each declare a different source and BOTH resolve out of the merged
+// tree; under an override-merge tag the project file's entry alone would survive
+// and every bundle declared in the user config-dir clawker.yaml would silently
+// stop being fetched. The mechanics of union merging (including how identical
+// entries dedupe) are storage's contract and are pinned by its own tests.
 func TestBundles_UnionMergeAcrossLayers(t *testing.T) {
-	t.Run("distinct sources both survive", func(t *testing.T) {
-		hiDir, loDir := t.TempDir(), t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(hiDir, consts.ProjectConfigFile),
-			[]byte("bundles:\n  - url: https://x/a.git\n    ref: main\n"), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(loDir, consts.ProjectConfigFile),
-			[]byte("bundles:\n  - url: https://x/b.git\n    ref: main\n"), 0o644))
+	f := newProjectEnv(t)
+	f.writeProject(t, "bundles:\n  - url: https://x/a.git\n    ref: main\n")
+	f.writeUser(t, "bundles:\n  - url: https://x/b.git\n    ref: main\n")
 
-		store, err := storage.New[Project]("",
-			storage.WithFilenames(consts.ProjectConfigFile),
-			storage.WithPaths(hiDir, loDir),
-		)
-		require.NoError(t, err)
-
-		urls := bundleURLs(store.Read().Bundles)
-		assert.ElementsMatch(t, []string{"https://x/a.git", "https://x/b.git"}, urls)
-	})
-
-	t.Run("identical entry dedupes to one", func(t *testing.T) {
-		hiDir, loDir := t.TempDir(), t.TempDir()
-		const same = "bundles:\n  - url: https://x/a.git\n    ref: main\n"
-		require.NoError(t, os.WriteFile(filepath.Join(hiDir, consts.ProjectConfigFile), []byte(same), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(loDir, consts.ProjectConfigFile), []byte(same), 0o644))
-
-		store, err := storage.New[Project]("",
-			storage.WithFilenames(consts.ProjectConfigFile),
-			storage.WithPaths(hiDir, loDir),
-		)
-		require.NoError(t, err)
-
-		assert.Equal(t, []string{"https://x/a.git"}, bundleURLs(store.Read().Bundles))
-	})
-}
-
-func bundleURLs(bundles []BundleSource) []string {
+	bundles, err := storage.Get[[]BundleSource](f.load(t).ProjectStore(), keyBundles)
+	require.NoError(t, err)
 	urls := make([]string, 0, len(bundles))
 	for _, b := range bundles {
 		urls = append(urls, b.URL)
 	}
-	return urls
+	assert.ElementsMatch(t, []string{"https://x/a.git", "https://x/b.git"}, urls)
 }

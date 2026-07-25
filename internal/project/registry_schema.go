@@ -2,16 +2,21 @@ package project
 
 import "github.com/schmitthub/clawker/internal/storage"
 
+// keyProjects is the storage key segment addressing ProjectRegistry.Projects —
+// the one field of the registry schema, and therefore the only key the
+// registry facade reads or writes.
+const keyProjects = "projects"
+
 // ProjectEntry represents a project in the registry.
 type ProjectEntry struct {
-	Name      string                   `yaml:"name" label:"Name" desc:"Project slug identifier"`
-	Root      string                   `yaml:"root" label:"Root" desc:"Filesystem path to project root"`
+	Name      string                   `yaml:"name"                label:"Name"      desc:"Project slug identifier"`
+	Root      string                   `yaml:"root"                label:"Root"      desc:"Filesystem path to project root"`
 	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty" label:"Worktrees" desc:"Active worktrees for this project"`
 }
 
 // WorktreeEntry represents a worktree within a project.
 type WorktreeEntry struct {
-	Path   string `yaml:"path" label:"Path" desc:"Filesystem path to worktree"`
+	Path   string `yaml:"path"             label:"Path"   desc:"Filesystem path to worktree"`
 	Branch string `yaml:"branch,omitempty" label:"Branch" desc:"Git branch for this worktree"`
 }
 

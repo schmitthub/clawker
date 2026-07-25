@@ -122,7 +122,7 @@ func (m *manager) ProbeHealthz(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("loading config: %w", err)
 	}
-	return probeHealthz(ctx, cfg.Settings().ControlPlane.HealthPort)
+	return probeHealthz(ctx, cfg.ControlPlaneSettings().HealthPort)
 }
 
 // probeHealthz performs a GET on http://127.0.0.1:<port>/healthz with a

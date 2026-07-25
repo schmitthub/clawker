@@ -771,7 +771,7 @@ func cpReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *log
 // the CP has caught up, an error on timeout/non-convergence. Respects ctx
 // cancellation.
 func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logger) error {
-	adminPort := cfg.Settings().ControlPlane.AdminPort
+	adminPort := cfg.ControlPlaneSettings().AdminPort
 
 	start := time.Now()
 	deadline := start.Add(cpClockSyncTimeout)
@@ -868,12 +868,12 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 //     feedback the operator needs. Transient lookup failures keep the
 //     loop polling and surface on the timeout error's diagnostics.
 func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config) error {
-	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", cfg.Settings().ControlPlane.HealthPort)
+	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", cfg.ControlPlaneSettings().HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	start := time.Now()
 	budget := cpReadyTimeout
-	if cfg.Settings().Firewall.FirewallEnabled() {
+	if cfg.FirewallEnabled() {
 		budget += consts.FirewallStackBringupRPCTimeout
 	}
 	deadline := start.Add(budget)
@@ -913,7 +913,7 @@ func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config)
 				if terminalErr != nil {
 					var exitErr *CPExitedError
 					if errors.As(terminalErr, &exitErr) {
-						exitErr.FirewallEnabled = cfg.Settings().Firewall.FirewallEnabled()
+						exitErr.FirewallEnabled = cfg.FirewallEnabled()
 					}
 					return terminalErr
 				}

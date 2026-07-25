@@ -114,8 +114,8 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	switch {
 	case opts.Name != "":
 		raw = opts.Name
-	case cfgGateway.Project().Name != "":
-		raw = cfgGateway.Project().Name
+	case cfgGateway.ProjectName() != "":
+		raw = cfgGateway.ProjectName()
 	case opts.Yes || !ios.IsInteractive():
 		raw = dirName
 	default:

@@ -21,6 +21,9 @@ import (
 // entry is written (the persisted schema stays git-generic).
 const githubHost = "https://github.com/"
 
+// keyBundles is the project-config key holding the bundle declaration list.
+const keyBundles = "bundles"
+
 // InstallOptions holds the options for the bundle install command.
 type InstallOptions struct {
 	IOStreams     *iostreams.IOStreams
@@ -128,7 +131,7 @@ func installRun(ctx context.Context, opts *InstallOptions) error {
 	added := !alreadyDeclared
 	if added {
 		store := cfg.ProjectStore()
-		if setErr := store.Set("bundles", updated); setErr != nil {
+		if setErr := store.Set([]string{keyBundles}, updated); setErr != nil {
 			return fmt.Errorf("setting bundles: %w", setErr)
 		}
 		if writeErr := store.WriteTo(targetPath); writeErr != nil {

@@ -158,7 +158,7 @@ All user-level directories follow the XDG Base Directory Specification. Walk-up 
 
 Dir form and flat form are mutually exclusive per level. Both `.yaml` and `.yml` extensions accepted. First filename takes merge precedence at the same level.
 
-**Walk-up pattern:** Bounded from CWD to registered project root. Home-level configs (`~/.config/clawker/`) are added via `WithConfig()` convenience option — never discovered via walk-up. Walk-up requires CWD to be within a registered project; if not, only home/explicit configs are loaded (sentinel error `ErrNotInProject` lets callers decide how to handle it).
+**Walk-up pattern:** Bounded from CWD to registered project root. Home-level configs (`~/.config/clawker/`) are added via the `WithConfigDir()` convenience option — never discovered via walk-up. Walk-up requires CWD to be within a registered project; if not, only home/explicit configs are loaded (sentinel error `ErrNotInProject` lets callers decide how to handle it).
 
 **Env overrides (precedence order):**
 1. `CLAWKER_CONFIG_DIR` / `CLAWKER_DATA_DIR` / `CLAWKER_STATE_DIR` — clawker-specific, highest precedence
@@ -184,11 +184,15 @@ type Settings struct {
 
 // Project defaults — tiered via walk-up (global → project → local)
 type Project struct {
-    Name      string          `yaml:"name,omitempty"`
-    Build     BuildConfig     `yaml:"build"`
-    Agent     AgentConfig     `yaml:"agent"`
-    Workspace WorkspaceConfig `yaml:"workspace"`
-    Security  SecurityConfig  `yaml:"security"`
+    Name      string                   `yaml:"name,omitempty"`
+    Build     BuildConfig              `yaml:"build"`
+    Agent     AgentConfig              `yaml:"agent"`
+    Workspace WorkspaceConfig          `yaml:"workspace"`
+    Security  SecurityConfig           `yaml:"security"`
+    Harnesses map[string]HarnessConfig `yaml:"harnesses,omitempty"`
+    Aliases   map[string]string        `yaml:"aliases,omitempty"   merge:"union"`
+    Bundles   []BundleSource           `yaml:"bundles,omitempty"   merge:"union"`
+    Monitor   MonitorConfig            `yaml:"monitor,omitempty"`
 }
 ```
 
@@ -199,17 +203,21 @@ type Project struct {
 
 #### Config Interface
 
-Single access point with namespaced sub-accessors. One factory closure (`f.Config()`), one interface.
+Single access point with value-specific and group accessors. One factory closure (`f.Config()`), one interface.
 
 ```go
 type Config interface {
-    // Store accessors (preferred — direct access to the underlying Store[T])
+    // Store accessors — the raw-verb escape hatch (Set/Remove + Write)
     ProjectStore() *storage.Store[Project]   // → project config store
     SettingsStore() *storage.Store[Settings] // → settings store
 
-    // Schema accessors
-    Settings() *Settings         // → ~/.config/clawker/settings.yaml
-    Project() *Project           // → merged walk-up result
+    // Value accessors — one value, or the one group struct that travels
+    // together. There is deliberately NO whole-schema getter.
+    BuildConfig() BuildConfig               // → clawker.yaml `build:` block
+    SecurityConfig() SecurityConfig         // → clawker.yaml `security:` block
+    LoggingConfig() LoggingConfig           // → settings.yaml `logging:` block
+    ControlPlaneSettings() ControlPlaneSettings
+    // ...
 
     // Path helpers, constants, labels (~40 methods)
     ConfigDirEnvVar() string
@@ -219,40 +227,42 @@ type Config interface {
 }
 ```
 
-`cfg.ProjectStore().Set(path, value)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(path, value)` / `cfg.SettingsStore().Write()` are the mutation API — thin wrappers on `Store[T].Set` / `Store[T].Write` (with `Remove(path)` for clears).
+`cfg.ProjectStore().Set(key, value)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(key, value)` / `cfg.SettingsStore().Write()` are the raw mutation escape hatch — the engine verbs on the two stores (with `Remove(key...)` for clears). Keys are segment slices.
 
-**Usage:**
-- `cfg.Project().Build.Image` — from merged config walk-up
-- `cfg.Settings().Logging.MaxSizeMB` — from settings.yaml
-- `cfg.MonitoringConfig()` — deprecated convenience accessor (prefer `cfg.SettingsStore().Read().Monitoring`)
+**Usage (reads are value-specific accessors — there is no whole-schema getter):**
+- `cfg.BuildConfig().Image` — from merged config walk-up
+- `cfg.LoggingConfig().MaxSizeMB` — from settings.yaml
+- `cfg.MonitoringConfig()` — group accessor for the monitoring block
 - `cfg.ConfigDirEnvVar()` — constants via interface methods
 
-**No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
+**No collision risk:** each accessor names its schema explicitly (`BuildConfig` is project-side, `LoggingConfig` settings-side).
 
-**Path-based mutation.** `cfg.ProjectStore().Set(path, value)` / `Remove(path)` and `cfg.SettingsStore().Set(path, value)` mutate by dotted path; `Read()` returns the typed snapshot and `Get(path, &dest)` decodes one field. There is no closure mutator.
+**Key-based mutation.** `cfg.ProjectStore().Set([]string{"build", "image"}, v)` / `Remove("build", "image")` mutate by segment key; reads decode one value via `storage.Get[V](store, key...)` or, preferably, a config accessor. There is no closure mutator and no snapshot getter.
 
 #### Node-Native Architecture
 
-Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The typed struct `*T` is an immutable snapshot decoded from the merged node and published via `atomic.Pointer` (lock-free `Read`).
+Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The merged tree is the single in-memory representation: `storage.Get[V]` decodes the requested subtree on demand, and every mutation is validated by a strict decode of the candidate tree into `T` before it commits.
 
 ```
-Load:   file/string → layer node ─→ merge nodes → decode → immutable *T
+New:    file/string → layer nodes → per-layer migrations → merge → strict decode (validation)
 
-Set:    encode value → graft into merged node at path → mark dirty → re-decode
+Get:    merged-node value at key → decode into V
 
-Write:  dirty paths → route by provenance → graft into target layer node → per-file atomic write
+Set:    encode value → graft into candidate tree → strict decode → commit + mark dirty
+
+Write:  merged-node value → graft into TARGET LAYER's own node → encode → per-file atomic write
 ```
 
 **Why node-native:** `yaml.Marshal` respects `omitempty` tags, silently dropping fields set to zero values (e.g., `false`, `0`, `""`). Grafting the encoded value straight into the node tree avoids this — the value handed to `Set` lands as-is, so explicit zero values survive and per-field comments are preserved across a merge mutation.
 
 #### Two-Phase Load
 
+The constructor IS the load — both phases run inside `storage.New`/`NewFromString`, so a broken file surfaces as an error from the domain constructor, never at first read.
+
 1. **Phase 1 (lenient):** YAML → layer node → run precondition migrations against each layer's own node → re-save any layer a migration changed
-2. **Phase 2 (typed):** Merged node → typed struct snapshot via `decode`. Only known keys read, unknowns silently ignored. Struct defaults fill missing keys.
+2. **Phase 2 (strict):** merged node → strict decode into `T` (validation only — no snapshot is retained). A declared key carrying an incompatible value fails construction with a schema error.
 
-Unknown fields silently ignored — matches Claude Code and Serena. No `KnownFields(true)`. Typos are the user's problem.
-
-Node merge preserves unknown keys not in the struct schema, so raw YAML content the struct doesn't model survives round-trips.
+Unknown FILE keys are tolerated: ignored by the decode and preserved on re-save, so raw YAML the struct doesn't model survives round-trips (hand-edit tolerance). `Set` cannot create them — an undeclared key is `ErrUnknownKey`, so a typo can never reach disk through code.
 
 #### Merge Strategy
 
@@ -281,7 +291,7 @@ Higher precedence wins silently (no warnings on override).
 
 | Tag | Behavior | Applies To | Used By |
 |-----|----------|------------|---------|
-| `merge:"union"` | Additive, deduped | Slices, maps | `security.firewall.add_domains`, `security.firewall.rules`, `build.instructions.labels` |
+| `merge:"union"` | Additive, deduped | Slices, maps | `security.firewall.add_domains`, `security.firewall.rules`, `build.instructions.labels`, `aliases`, `bundles` |
 | `merge:"overwrite"` | Last-wins (explicit) | Slices, maps | (none currently — all overwrite fields use implicit default) |
 | (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env` |
 
@@ -299,27 +309,26 @@ Precondition-based idempotent functions (Claude Code + Serena pattern):
 
 ```go
 func migrateOldBuildKey(s *storage.Store[Project]) (bool, error) {
-    // Check: does the old data shape exist in this layer?
-    var v any
-    had, err := s.Get("old_key", &v)
+    // Precondition guard: does the old data shape exist in this layer?
+    v, err := storage.Get[string](s, "old_key")
+    if errors.Is(err, storage.ErrKeyNotFound) {
+        return false, nil // already current or never had old shape
+    }
     if err != nil {
         return false, err
     }
-    if !had {
-        return false, nil // already current or never had old shape
-    }
     // Transform: old shape → new shape, then drop the legacy key.
-    if err := s.Set("new_key", v); err != nil {
+    if err := s.Set([]string{"new_key"}, v); err != nil {
         return false, err
     }
-    if _, err := s.Remove("old_key"); err != nil {
+    if err := s.Remove("old_key"); err != nil {
         return false, err
     }
     return true, nil // signal: re-save needed
 }
 ```
 
-- Each migration checks if the old data shape exists via the store's `Has`/`Get`
+- Each migration checks if the old data shape exists via `storage.Get` + `errors.Is(err, storage.ErrKeyNotFound)` (or `Keys`)
 - If found: transform → re-save → done
 - If not found: skip (already current or never applied)
 - No version field, no migration chain, no ordering constraints
@@ -328,13 +337,13 @@ func migrateOldBuildKey(s *storage.Store[Project]) (bool, error) {
 
 #### Write Model
 
-All writes go through `Set(path, value)` + `Write()` on the store obtained from the `Config` interface:
+All writes go through `Set(key, value)` + `Write()` on the store obtained from the `Config` interface:
 
 ```go
-cfg.ProjectStore().Set("build.image", "ubuntu:24.04")
-cfg.ProjectStore().Write(storage.ToPath(localPath))
+cfg.ProjectStore().Set([]string{"build", "image"}, "ubuntu:24.04")
+cfg.ProjectStore().WriteTo(localPath)
 
-cfg.SettingsStore().Set("logging.max_size_mb", 100)
+cfg.SettingsStore().Set([]string{"logging", "max_size_mb"}, 100)
 cfg.SettingsStore().Write()
 ```
 
@@ -342,10 +351,11 @@ cfg.SettingsStore().Write()
 |------|-------------|--------|------|
 | `cfg.SettingsStore().Write()` | `~/.config/clawker/settings.yaml` | `clawker project init` (bootstrap), settings commands | Settings mutation |
 | `cfg.ProjectStore().Write()` | Auto-routed by provenance | Programmatic | Project config updates |
-| `cfg.ProjectStore().Write(ToPath(p))` | Explicit absolute path | User/programmatic | Personal overrides |
-| `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |
+| `cfg.ProjectStore().WriteTo(p)` | Explicit absolute path | User/programmatic | Personal overrides |
+| `cfg.ProjectStore().WriteFieldTo(p, key...)` | Explicit absolute path, ONE field | `storeui` per-field save | Layer-targeted field placement |
+| `project.Registry` write verbs (`Register`, `Update`, `RegisterWorktree`, …) | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD (each verb Sets + Writes in one call) |
 
-Write semantics: `Set(path, value)` grafts the encoded value into the in-memory node tree and marks the path dirty. `Write()` persists dirty fields — routes each by provenance, grafts into a clone of the target layer's node, encodes, and atomically writes per file (temp+fsync+rename).
+Write semantics: `Set(key, value)` grafts the encoded value into the in-memory node tree and marks the key dirty. `Write()` persists dirty fields — routes each by provenance, grafts into the destination file's own re-read node tree, encodes, and atomically writes per file (temp+fsync+rename).
 
 Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
 
@@ -353,8 +363,8 @@ Settings files do NOT need locking — per-machine, no concurrent writers. Regis
 
 | Package | Owns | Imports |
 |---------|------|---------|
-| `internal/storage` | Node tree engine (node-native merge, provenance), path-based Set/Remove, atomic write (temp+rename), flock, YAML read/write | Leaf — only internal import is `internal/consts` (stdlib-only) |
-| `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `logger` |
+| `internal/storage` | Node tree engine (node-native merge, provenance), key-segment Set/Remove, atomic write (temp+rename), flock, YAML read/write | Leaf — only internal import is `internal/consts` (stdlib-only) |
+| `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `consts`, `build` |
 | `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `consts`, `git`, `logger`, `text` |
 
 `internal/project` is a middle-tier domain package ("if I want project operations, I go here"). Registry is its persistence layer, not its identity — don't rename to `internal/registry`.
@@ -365,12 +375,12 @@ Storage provides mechanisms — composing packages (`config/mocks`, `project/moc
 
 | Mechanism | What it does | Owned by |
 |-----------|-------------|----------|
-| `storage.New[T](yaml)` (no path options) | Same constructor, no discovery options: the seed YAML is the only layer (no files, no migrations). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
-| Real `Store[T]` + `t.TempDir()` | Full store pointed at a jailed temp dir. Consumer wires its own schemas/filenames/defaults. Full node tree plumbing. | Consumer (`config/mocks`, `project/mocks`) |
+| `storage.NewFromString[T](yaml)` | The in-memory seam: no path options, so the seed YAML is the only layer (no discovery, no disk, no migrations). `Write` errors (`no write path available`) by design. | `storage` |
+| Real `Store[T]` + `testenv`/`t.TempDir()` | Full store pointed at a jailed temp dir. Consumer wires its own schemas/filenames/defaults. Full node tree plumbing. | Consumer (`config/mocks`, `project/mocks`, `state/mocks`) |
 
-Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `storage.New[T]` directly.
+Consumer mock APIs are the stable surface (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, `NewBlankState`, etc.). Callers never see `Store[T]` or `storage.New[T]` directly.
 
-`Store[T]` itself has no mock interface — it's a concrete struct composed inside `configImpl` / `projectManagerImpl`. The consumer interfaces (`Config`, `ProjectManager`) are the mock boundary, generated via `go:generate moq`.
+`Store[T]` itself has no mock interface — each domain's unexported impl embeds it (`registryImpl`, `stateStoreImpl`, `egressRulesStoreImpl`, `routeIdentityStoreImpl`, …; `configImpl` holds two named stores because it composes a project and a settings schema). The domain interfaces (`Config`, `Registry`, `StateStore`, `EgressRulesStore`, …) are the mock boundary, generated via `go:generate moq`.
 
 ## 3. System Architecture
 
@@ -615,11 +625,13 @@ Clawker does **not** expose Docker passthrough commands. Users cannot run arbitr
 
 ### 5.1 Stateless CLI
 
-Clawker stores **no local state**. All state lives in Docker:
+Clawker keeps **no local copy of runtime state**. All of it lives in Docker and is re-queried on demand:
 
 - Container state (running, stopped, etc.)
 - Labels (project, agent, metadata)
 - Volumes (workspace, config, history)
+
+The only host-side persistence is user-facing configuration plus a few small store-backed files, each owned by one domain package: `registry.yaml` (`internal/project`), `update-state.yaml` (`internal/state`), and the CP's `egress-rules.yaml` / route-identity table (`controlplane/firewall`). None of them cache Docker state.
 
 Benefits:
 
@@ -735,7 +747,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Embedded binaries**: The eBPF manager binary is embedded via `controlplane/manager/embed_ebpf.go` (`go:embed`); the custom CoreDNS binary via `controlplane/firewall/embed_coredns.go`. Each package builds its image on demand from the embedded binary using an inline Dockerfile SHA-pinned to `alpine:3.21`.
 
-**Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
+**Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store is `firewall.EgressRulesStore`, the domain facade over `storage.Store[EgressRulesFile]` with cross-process flock (`WithLock`). The facade holds no lock of its own — in-process serialization comes from the CP's `ActionQueue`, which every rules-file writer goes through as a non-coalescing `ActionRuleMutate` closure.
 
 **Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
 

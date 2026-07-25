@@ -39,6 +39,8 @@ func New(t *testing.T, opts ...Option) *Env
 
 Pass `nil` for `gitFactory` if worktree operations are not needed.
 
+`WithConfig` anchors project-config walk-up at the root resolved from the isolated registry (`env.Registry(t).CurrentRoot()`); `project.ErrNotInProject` degrades to an empty anchor, any other registry error fails the test. Seed registry YAML before applying the option if the test needs a project anchor.
+
 ## ConfigFile Constants
 
 | Constant | Target |
@@ -46,14 +48,14 @@ Pass `nil` for `gitFactory` if worktree operations are not needed.
 | `ProjectConfig` | `.clawker.yaml` in caller-provided project dir |
 | `ProjectConfigLocal` | `.clawker.local.yaml` in caller-provided project dir |
 | `Settings` | `settings.yaml` in config dir |
-| `EgressRules` | `egress-rules.yaml` in state dir |
+| `EgressRules` | `egress-rules.yaml` in the firewall subdir of the data dir (`consts.FirewallDataSubdir()`, where the rules store discovers it) |
 | `ProjectRegistry` | `registry.yaml` in data dir |
 
 ## Accessors
 
 - `env.Config()` — panics if `WithConfig()` was not applied
 - `env.ProjectManager()` — panics if `WithProjectManager()` was not applied
-- `env.Registry(t)` — constructs a fresh `*project.Registry` over the isolated data dir (`project.WithRegistryDir`). Fresh per call: the store snapshots the registry file at construction, so construct after seeding registry YAML
+- `env.Registry(t)` — constructs a fresh `project.Registry` over the isolated data dir (`project.NewRegistry`, resolving the `CLAWKER_DATA_DIR` this env sets). Fresh per call: the constructor is the load, so construct after seeding registry YAML
 - `env.Dirs` — always available (struct field, not method)
 - `env.WriteYAML(t, file, dir, content)` — writes YAML content to the canonical location for the given `ConfigFile`. For project configs (`ProjectConfig`, `ProjectConfigLocal`), `dir` is the project directory; for others, `dir` is ignored and the appropriate XDG directory is used
 
@@ -67,8 +69,8 @@ env := testenv.New(t)
 // Config mutation tests
 env := testenv.New(t, testenv.WithConfig())
 cfg := env.Config()
-cfg.SetProject(func(p *config.Project) { p.Build.Image = "alpine" })
-cfg.WriteProject()
+cfg.ProjectStore().Set([]string{"agent", "editor"}, "emacs")
+cfg.ProjectStore().Write()
 
 // Project registration round-trips
 env := testenv.New(t, testenv.WithProjectManager(nil))

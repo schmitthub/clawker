@@ -15,12 +15,28 @@ import (
 // trees, and writes graft values into a single layer's own node tree — so a
 // write to file B preserves B's comments and never leaks comments from any
 // other layer. map[string]any survives only as a transient decode view for the
-// public API (LayerInfo.Data); the typed snapshot is decoded straight from the
+// public API (LayerInfo.Data); every typed decode reads straight from the
 // merged node, never through a map.
+
+// nullTag is the YAML tag of a null scalar — the parse-tree form of a bare
+// `key:`. It is the discriminator between unset (`key:` → !!null, ignored by
+// the merge) and set-empty (`key: ""` → !!str, a real value that wins).
+const nullTag = "!!null"
+
+// mappingStride is the Content-slice step of a yaml.v3 mapping node: entries
+// are stored flat as [key1, val1, key2, val2, ...], so keys sit at every
+// second element and a mapping holds len(Content)/mappingStride entries.
+const mappingStride = 2
 
 // newMapping returns an empty YAML mapping node.
 func newMapping() *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+}
+
+// isNullNode reports whether n is a null scalar (`key:` bare, `key: null`,
+// `key: ~`) — an unset marker, not a value.
+func isNullNode(n *yaml.Node) bool {
+	return n != nil && n.Kind == yaml.ScalarNode && n.Tag == nullTag
 }
 
 // nodeKindName returns a human-readable name for a yaml.Node kind, used in
@@ -309,12 +325,19 @@ func decodedEqual(a, b *yaml.Node) bool {
 }
 
 // mergeNodes folds src (the higher-priority layer) into dst, mutating dst and
-// recording provenance per dotted path. Merge semantics: opaque (non-union) maps
+// recording provenance per joined key. Merge semantics: opaque (non-union) maps
 // replace wholesale, union maps merge per-entry, struct nesting recurses,
 // sequences union or replace, scalars last-win. Because callers fold
 // lowest→highest priority, src wins on conflict and its value node (with its
 // comments) lands in the merged tree — so the top layer's comments are the ones
 // preserved through a union merge.
+//
+// A null-valued entry (`key:` bare) is UNSET, not a value: it is skipped
+// entirely — the lower layer's value (or the defaults layer's) stands, no
+// provenance is recorded for this layer, and the merged tree never contains
+// it. Explicit empties (`key: ""`, `key: []`, `key: {}`) are real values and
+// merge normally. The layer's own node keeps the bare key on disk; only the
+// merge ignores it.
 func mergeNodes(dst, src *yaml.Node, prov provenance, layerIdx int, prefix string, tags tagRegistry) {
 	if !isMapping(src) {
 		return
@@ -323,9 +346,13 @@ func mergeNodes(dst, src *yaml.Node, prov provenance, layerIdx int, prefix strin
 		key := src.Content[i].Value
 		srcVal := src.Content[i+1]
 
+		if isNullNode(srcVal) {
+			continue // unset — ignored in all cases; lower layer / defaults show through
+		}
+
 		path := key
 		if prefix != "" {
-			path = prefix + "." + key
+			path = prefix + pathSep + key
 		}
 
 		mergeEntry(dst, key, srcVal, path, prov, layerIdx, tags)

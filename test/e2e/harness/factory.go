@@ -68,7 +68,7 @@ func cacheableState(s connectivity.State) bool {
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
-	ProjectManager func(*logger.Logger, project.GitManagerFactory, string, *project.Registry) (project.ProjectManager, error)
+	ProjectManager func(*logger.Logger, project.GitManagerFactory, string, project.Registry) (project.ProjectManager, error)
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
@@ -187,10 +187,10 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// wiring in internal/cmd/factory/default.go.
 	var (
 		regOnce sync.Once
-		reg     *project.Registry
+		reg     project.Registry
 		regErr  error
 	)
-	f.ProjectRegistry = func() (*project.Registry, error) {
+	f.ProjectRegistry = func() (project.Registry, error) {
 		regOnce.Do(func() {
 			reg, regErr = project.NewRegistry()
 		})
@@ -216,7 +216,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					pmErr = rErr
 					return
 				}
-				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.Project().Name, r)
+				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.ProjectName(), r)
 			}
 		})
 		return pm, pmErr
@@ -344,7 +344,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 				return nil, fmt.Errorf("admin client: config: %w", err)
 			}
 
-			cp := cfg.Settings().ControlPlane
+			cp := cfg.ControlPlaneSettings()
 			newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
 				grpc.WithKeepaliveParams(harnessAdminKeepalive),
 			)

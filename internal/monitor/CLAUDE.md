@@ -97,9 +97,9 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 | `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` / `CurlImage` | `string` | Pinned image refs |
 | `OpenSearchBootstrapDirName` | `string` | Workdir subdir holding bootstrap.sh + JSON/NDJSON assets; bind-mounted into the bootstrap container |
 
-### NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemplateData, error)
+### NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (MonitorTemplateData, error)
 
-Constructor that populates `MonitorTemplateData` from full `config.Settings` plus the seeded unit union. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`; `Units []UnitRouting` and `ISMIndexPatternsJSON` (infra indices + seeded default-retention lane indices, JSON-encoded Go-side) come from the union. `PrepareTemplateData` (`render.go`) wraps this and additionally mints + populates the OTEL mTLS cert host paths; `RenderStack` renders the three stack files (force-gated) plus the bootstrap tree and reports whether otel-config bytes changed.
+Constructor that populates `MonitorTemplateData` from the `monitoring:` settings block plus the seeded unit union. It takes exactly the group it consumes — `cfg.MonitoringConfig()`, never the settings schema root. Service hostnames come from the consts package; ports + heap come from `mon`; `Units []UnitRouting` and `ISMIndexPatternsJSON` (infra indices + seeded default-retention lane indices, JSON-encoded Go-side) come from the union. `PrepareTemplateData` (`render.go`) wraps this with the same signature and additionally mints + populates the OTEL mTLS cert host paths; `RenderStack` renders the three stack files (force-gated) plus the bootstrap tree and reports whether otel-config bytes changed.
 
 ### RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error)
 

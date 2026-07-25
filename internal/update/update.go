@@ -107,7 +107,7 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 		return nil, fmt.Errorf("parsing current version %q: %w", currentVersion, err)
 	}
 
-	if !shouldCheckForUpdate(st.State().CheckedAt) {
+	if !shouldCheckForUpdate(st.CheckedAt()) {
 		return nil, nil
 	}
 

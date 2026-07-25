@@ -124,17 +124,17 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 1. `bootLogging` — trusted-lane OTel certs + the file/OTEL logger (degraded `os.Stderr` fallback when `New` fails).
 2. Config + signal-aware contexts — `config.NewConfig`, `signalCtx` (SIGTERM/SIGINT), `watcherCtx` (long-lived workers), `subprocess.NewSubprocessManager`, `NewControlPlane`.
 3. `startOryStack` — writes Ory configs, starts Kratos + Hydra + Oathkeeper subprocesses, waits healthy, configures service probes, registers the CLI + agent Hydra clients; returns the single CA pool + CA TLS surface (startup gate).
-4. `buildEnforcement` — Docker client + `firewall.Stack` + rules store + `ebpfMgr.Load()` + `CleanupStaleBypass` (INV-B2-013); returns the joined cleanup (startup gates, pre-`SetReady`).
+4. `buildEnforcement` — Docker client + `firewall.Stack` + the `firewall.EgressRulesStore` + the `RouteIdentityStore`-backed `IdentityAllocator` + `ebpfMgr.Load()` + `CleanupStaleBypass` (INV-B2-013); returns the joined cleanup (startup gates, pre-`SetReady`).
 5. `buildTopics` — the typed pub/sub topics (`dockerTopic`, `agentTopic`, `enrolledTopic`); one topic per payload type, the generic audit hook self-attaches in `NewTopic`.
 6. `buildAgentInfra` — agent sqlite registry + `MobyPeerLookup` + `ContainerLister` + the in-memory `agent.Repository` (worldview) with its agent-event and docker-event subscriptions wired.
-7. `buildGRPCStack` — firewall `ActionQueue` + `fwhandler.Handler` (holds publish-only `enrolledTopic`) + the admin (`cp.AdminPort`, mTLS + CLI-scope AuthInterceptor) and agent (`cp.AgentPort`, clawker-net only, agent-scope AuthInterceptor chained ahead of `agent.IdentityInterceptor`) gRPC listeners; starts serving. The admin surface hosts the 13 firewall RPCs + `ListAgents` + the lone public-scope `GetSystemTime`. `IdentityInterceptor` runs a universal three-stage gate (CN pin to `consts.ContainerClawkerd` → peer-IP→`purpose=agent` container resolution reading `dev.clawker.{project,agent}` labels → constant-time `AgentFullName` vs `urn:clawker:agent:` URI SAN compare). CP→clawkerd dispatch is the OUTBOUND dialer (step 13), not this listener — see `internal/controlplane/agent/CLAUDE.md` and the asymmetric-trust clarification in the root `CLAUDE.md`.
+7. `buildGRPCStack` — firewall `ActionQueue` + `fwhandler.Handler` (holds publish-only `enrolledTopic`) + the admin (`cp.AdminPort`, mTLS + CLI-scope AuthInterceptor) and agent (`cp.AgentPort`, clawker-net only, agent-scope AuthInterceptor chained ahead of `agent.IdentityInterceptor`) gRPC listeners; both listeners are BOUND here but only the agent listener starts serving (`ServeAgent`) — boot-time clawkerd dial-back/registration needs it. The admin listener serves only after the startup gates and `SetReady` (step 9, `ServeAdmin`), so no admin RPC — in particular no rule mutation — is accepted mid-boot; an early client waits in the accept backlog instead of getting connection-refused. The admin surface hosts the 13 firewall RPCs + `ListAgents` + the lone public-scope `GetSystemTime`. `IdentityInterceptor` runs a universal three-stage gate (CN pin to `consts.ContainerClawkerd` → peer-IP→`purpose=agent` container resolution reading `dev.clawker.{project,agent}` labels → constant-time `AgentFullName` vs `urn:clawker:agent:` URI SAN compare). CP→clawkerd dispatch is the OUTBOUND dialer (step 13), not this listener — see `internal/controlplane/agent/CLAUDE.md` and the asymmetric-trust clarification in the root `CLAUDE.md`.
 8. `firewallBringupGate` — when `firewall.enable` (settings.yaml) is true, runs `FirewallInit` synchronously BEFORE `SetReady` so a green `/healthz` means "everything the settings enable is enforcing". A failure FAILS startup (pre-`SetReady` exit 1, same doctrine as `CleanupStaleBypass`; logged `event=firewall_bringup_failed`, bounded by `consts.FirewallStackBringupTimeout`, does NOT flush eBPF so enrolled agents stay fail-closed). Caveat: re-enrollment events published by this gate precede netlogger construction (step 12), so netlogger's label cache stays cold for agents that outlived the previous CP until the next FirewallInit/FirewallEnable — telemetry enrichment only, enforcement unaffected.
-9. `orchestrator.SetReady()` — the ready gate flips; everything below is post-`SetReady`.
+9. `orchestrator.SetReady()` — the ready gate flips, then `grpcStack.ServeAdmin(serveFailed)` opens the admin surface; everything below is post-`SetReady`.
 10. `startHealthz` — serves aggregate `/healthz` on `HealthPort`.
 11. `startFeeder` — the `dockerevents` feeder, sole producer of `DockerEvent` onto its typed topic.
 12. `startWorkers` — the long-lived observability workers: the `pubsub.NewStatsHeartbeat`, the `netlogger.Service` (subscribes `enrolledTopic` to hydrate its label cache; degrades to `netloggerSvc=nil` with `event=netlogger_unavailable` on any chain failure), and the `dns_cache` GC goroutine (`event=dns_gc_*`, escalates `dns_gc_degraded` after `dnsGCDegradedThreshold` consecutive reclaim-failures). All run on `watcherCtx`.
 13. Agent watcher + `startAgentDialer` — `agent.NewAgentWatcher` (drain-to-zero trigger; its goroutine recovers panics into a terminal shutdown error, `event=agent_watcher_panic`) plus the executor, CP→clawkerd dialer, and agent-axis subscriptions (§3.4 degrade contract).
-14. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once), then tears the container down at exit code 0 (the `on-failure` restart policy does NOT retrigger).
+14. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once). EVERY arm drains — the subprocess-crash and serve-failure arms (`event=cp_subprocess_crashed` / `event=cp_serve_failed`) run the callback before returning their error, since a bare return would exit PID 1 with eBPF pinned and unsupervised. Drain-to-zero and signal exit 0 (the `on-failure` restart policy does NOT retrigger); a crash or serve failure exits 1 after draining.
 
 ## Aggregate Health (`internal/controlplane/cmd.go`)
 
@@ -145,8 +145,15 @@ The `ControlPlane` orchestrator type (`NewControlPlane`, `SetReady`, `HealthzHan
   - Hydra public (TLS), Hydra admin (TLS)
   - Kratos public (TLS), Kratos admin (TLS)
   - Oathkeeper proxy (TLS), Oathkeeper API (TLS)
-  - gRPC admin (raw TCP)
+  - gRPC admin (raw TCP **plus** a serving check — `GRPCStack.AdminServing`, installed via `SetAdminServingCheck`)
 - Returns 200 only when ALL probes succeed
+
+The admin listener socket is bound at gRPC stack construction and only starts
+serving after the startup gates and `SetReady`, so a bare TCP dial completes
+out of the accept backlog whether or not anything is in `Serve`. The
+grpc-admin probe therefore gates its dial on the stack's serving signal: the
+dial proves reachability, the signal proves liveness. The check fails closed
+until it is installed (right after `buildGRPCStack`, before the ready gate).
 
 ## Container Config (`controlplane/manager/cp_container.go`)
 
@@ -154,7 +161,7 @@ The `ControlPlane` orchestrator type (`NewControlPlane`, `SetReady`, `HealthzHan
 func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContainerConfig, error)
 ```
 
-All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
+All ports from `cfg.ControlPlaneSettings()` (defaults via struct tags). Published to `127.0.0.1` only:
 
 | Published Port | Purpose |
 |----------------|---------|
@@ -213,6 +220,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `manager.Manager` interface — `controlplane/manager/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
 - `adminv1.AdminServiceClient` — `api/admin/v1/mocks.AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/CLAUDE.md`).
+- `firewall.EgressRulesStore` / `firewall.RouteIdentityStore` — the two store-backed firewall domain facades; moq mocks in `controlplane/firewall/mocks/`. CP wiring (`buildEnforcement`) threads the interfaces, never a `storage.Store`. Firewall's own tests use real stores instead.
 - `agent.Registry` — moq-generated `RegistryMock` (in `controlplane/agent/mocks/registry_mock.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage

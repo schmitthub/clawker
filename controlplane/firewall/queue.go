@@ -28,6 +28,7 @@ const (
 	ActionBringup
 	ActionTeardown
 	ActionReconcile
+	ActionRuleMutate
 	ActionRead
 	ActionEnable
 	ActionDisable
@@ -42,6 +43,8 @@ func (k ActionKind) String() string {
 		return "teardown"
 	case ActionReconcile:
 		return "reconcile"
+	case ActionRuleMutate:
+		return "rule-mutate"
 	case ActionRead:
 		return "read"
 	case ActionEnable:
@@ -60,9 +63,29 @@ func (k ActionKind) String() string {
 // mapped to it regenerates stack state from the current rules store, so
 // drained submitters observe identical output. Per-container kinds
 // (Enable, Disable, Bypass) carry distinct arguments per call and must
-// run individually; Bringup, Teardown, and Read likewise execute one-by-one.
+// run individually; RuleMutate carries a distinct rule payload per call
+// (coalescing would silently drop the collapsed submitter's mutation);
+// Bringup, Teardown, and Read likewise execute one-by-one.
+//
+// Every ActionKind is enumerated and there is no default arm, so a kind
+// added later cannot inherit a coalescing semantic by omission — the
+// exhaustive check makes the author state it. Inheriting the wrong one
+// silently drops a submitter's work.
 func (k ActionKind) Coalesces() bool {
-	return k == ActionReconcile
+	switch k {
+	case ActionReconcile:
+		return true
+	case ActionUnknown,
+		ActionBringup,
+		ActionTeardown,
+		ActionRuleMutate,
+		ActionRead,
+		ActionEnable,
+		ActionDisable,
+		ActionBypass:
+		return false
+	}
+	return false
 }
 
 // ActionResult is produced by a queued closure and delivered to every

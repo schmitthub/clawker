@@ -321,7 +321,7 @@ func buildHTTPDFPCluster() map[string]any {
 		"lb_policy":       "CLUSTER_PROVIDED",
 		"cluster_type": map[string]any{
 			"name": "envoy.clusters.dynamic_forward_proxy",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type":            "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
 				"dns_cache_config": dfpDNSCacheConfig(httpDFPCacheName),
 			},
@@ -340,7 +340,7 @@ func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) m
 		"lb_policy":       "CLUSTER_PROVIDED",
 		"cluster_type": map[string]any{
 			"name": "envoy.clusters.dynamic_forward_proxy",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type":            "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
 				"dns_cache_config": dfpDNSCacheConfig(httpsDFPCacheName),
 			},
@@ -378,7 +378,7 @@ func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only bool) map[string]
 	}
 	return map[string]any{
 		"name": "envoy.transport_sockets.tls",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 			"common_tls_context": map[string]any{
 				"alpn_protocols": alpn,

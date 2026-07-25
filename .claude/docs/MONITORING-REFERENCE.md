@@ -113,7 +113,7 @@ Logged when user submits a prompt.
 
 ### `ebpf.egress`
 
-Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state`). Source: `internal/controlplane/firewall/ebpf/netlogger`. Resource: `service.name=ebpf-egress`. Instrumentation scope: `clawker.netlogger`. Lands in the `clawker-ebpf-egress` OpenSearch index on the mTLS-gated `otlp/infra` lane.
+Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state`). Source: `controlplane/firewall/ebpf/netlogger`. Resource: `service.name=ebpf-egress`. Instrumentation scope: `clawker.netlogger`. Lands in the `clawker-ebpf-egress` OpenSearch index on the mTLS-gated `otlp/infra` lane.
 
 **Emission contract**: every field below is written on every record by default — empty strings and zero numbers ship verbatim. Three attributes are omitted when their source value is absent: `dst_ip` (when `Event.DstIP` is invalid), `dst_port` (when `Event.NoDst` is true), `dst_host` (when `Event.Domain` is empty). Operators partition cleanly via `_exists_:attributes.<key>` / `NOT _exists_:attributes.<key>` in OSD. Adding or removing an attribute is a contract change.
 

@@ -29,7 +29,7 @@ Currently a no-op (`return nil`). Cobra error/usage output is silenced globally 
 - **Top-level:** `init` (alias for `project init`), `project`, `settings`, `plugin` (alias `skill`), `monitor`, `version`
 - **Management:** `alias`, `auth`, `bundle`, `container`, `controlplane`, `firewall`, `harness`, `image`, `stack`, `volume`, `network`, `worktree`
 - **Hidden internal:** `hostproxy`, `bridge`
-- **User aliases:** registered last from `cfg.Project().Aliases` (merged across all project config layers; see below)
+- **User aliases:** registered last from `cfg.Aliases()` (merged across all project config layers; see below)
 
 ## Testing
 
@@ -48,7 +48,7 @@ func registerBuiltinAliases(root *cobra.Command, f *cmdutil.Factory)
 
 ## User Aliases (`useraliases.go`)
 
-User-configured aliases from the merged project config (`Project.Aliases` — walk-up files > user config-dir `clawker.yaml` > shipped defaults), gh-CLI-shaped:
+User-configured aliases from the merged project config (`cfg.Aliases()` — walk-up files > user config-dir `clawker.yaml` > shipped defaults), gh-CLI-shaped:
 
 ```go
 func registerUserAliases(root *cobra.Command, f *cmdutil.Factory)   // never fails root construction

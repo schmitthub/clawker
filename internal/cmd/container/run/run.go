@@ -39,7 +39,7 @@ type RunOptions struct {
 	Client          func(context.Context) (*docker.Client, error)
 	Config          func() (config.Config, error)
 	ProjectManager  func() (project.ProjectManager, error)
-	ProjectRegistry func() (*project.Registry, error)
+	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
 	ControlPlane    func() manager.Manager
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)

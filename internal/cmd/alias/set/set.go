@@ -80,7 +80,7 @@ func setRun(_ context.Context, opts *SetOptions) error {
 		return err
 	}
 
-	aliases := cfg.Project().Aliases
+	aliases := cfg.Aliases()
 	_, exists := aliases[opts.Name]
 	if exists && !opts.Clobber {
 		return fmt.Errorf("alias %q already exists; use --clobber to overwrite it", opts.Name)
@@ -97,9 +97,7 @@ func setRun(_ context.Context, opts *SetOptions) error {
 
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	if err := shared.WriteAliases(ios.Out, target, func(m map[string]string) {
-		m[opts.Name] = opts.Expansion
-	}); err != nil {
+	if err = shared.WriteAliasEntries(ios.Out, cfg, target, map[string]string{opts.Name: opts.Expansion}); err != nil {
 		return err
 	}
 	verb := "Added"
@@ -110,7 +108,7 @@ func setRun(_ context.Context, opts *SetOptions) error {
 
 	// Walk-up project files outrank the user config-dir file in the merge —
 	// a same-named alias there keeps winning over what was just written.
-	winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(opts.Name))
+	winner, ok := cfg.ProjectStore().Provenance(shared.AliasKey(opts.Name)...)
 	if ok && winner.Path != "" && !shared.SamePath(winner.Path, target) {
 		fmt.Fprintf(ios.ErrOut, "%s Alias %q is also defined in %s, which takes precedence\n", cs.WarningIcon(), opts.Name, winner.Path)
 	}

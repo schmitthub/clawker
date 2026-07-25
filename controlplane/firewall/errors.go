@@ -18,14 +18,15 @@ var (
 	ErrCPUnhealthy      = errors.New("clawker-controlplane not healthy")
 )
 
-// Constructor-validation sentinels. NewHandler returns these instead of
-// panicking so a wiring fault degrades the subsystem with a structured
-// event=<subsystem>_unavailable line rather than killing PID 1 (which
-// would strand pinned eBPF programs with no supervisor).
+// Constructor-validation sentinels. The firewall constructors return these
+// instead of panicking so a wiring fault degrades the subsystem with a
+// structured event=<subsystem>_unavailable line rather than killing PID 1
+// (which would strand pinned eBPF programs with no supervisor).
 var (
-	ErrNilEBPFManager = errors.New("firewall: NewHandler requires a non-nil EBPFManager")
-	ErrNilResolver    = errors.New("firewall: NewHandler requires a non-nil ContainerResolver")
-	ErrNilQueue       = errors.New("firewall: NewHandler requires a non-nil ActionQueue")
+	ErrNilEBPFManager   = errors.New("firewall: NewHandler requires a non-nil EBPFManager")
+	ErrNilResolver      = errors.New("firewall: NewHandler requires a non-nil ContainerResolver")
+	ErrNilQueue         = errors.New("firewall: NewHandler requires a non-nil ActionQueue")
+	ErrNilIdentityStore = errors.New("firewall: NewIdentityAllocator requires a non-nil RouteIdentityStore")
 )
 
 // Sentinels surfaced through the Handler and queue. Each has a companion

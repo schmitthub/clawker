@@ -51,7 +51,7 @@ func deleteRun(_ context.Context, opts *DeleteOptions) error {
 		return err
 	}
 
-	if _, ok := cfg.Project().Aliases[opts.Name]; !ok {
+	if _, ok := cfg.Aliases()[opts.Name]; !ok {
 		return fmt.Errorf("no alias %q configured", opts.Name)
 	}
 
@@ -64,16 +64,16 @@ func deleteRun(_ context.Context, opts *DeleteOptions) error {
 	// Defaults are the immutable base layer — only file entries are
 	// deletable. Remove the entry from every file layer that carries it,
 	// so a single delete clears the name instead of unmasking the next
-	// layer down.
+	// layer down. The layer paths are resolved up front: each write
+	// refreshes the store's layers, and the walk must cover the set that
+	// carried the alias when the command started.
 	layers := shared.LayersContaining(cfg, opts.Name)
 	if len(layers) == 0 {
 		return fmt.Errorf("alias %q is a shipped default and cannot be deleted; override it with 'clawker alias set %s <expansion> --clobber'", opts.Name, opts.Name)
 	}
 	ios := opts.IOStreams
 	for _, path := range layers {
-		if err := shared.WriteAliases(ios.Out, path, func(m map[string]string) {
-			delete(m, opts.Name)
-		}); err != nil {
+		if err = shared.DeleteAliasEntry(ios.Out, cfg, path, opts.Name); err != nil {
 			return err
 		}
 	}

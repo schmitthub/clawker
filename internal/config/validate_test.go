@@ -26,7 +26,7 @@ build:
 `, "")
 	require.NoError(t, err)
 
-	b := cfg.Project().Build
+	b := cfg.BuildConfig()
 	assert.Equal(t, []string{"go", "my-rust"}, b.Stacks)
 	overlay, ok := b.Harnesses["claude"]
 	require.True(t, ok)

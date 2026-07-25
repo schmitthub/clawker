@@ -42,7 +42,7 @@ func registerUserAliases(root *cobra.Command, f *cmdutil.Factory) {
 		return
 	}
 
-	aliases := cfg.Project().Aliases
+	aliases := cfg.Aliases()
 	names := make([]string, 0, len(aliases))
 	for name := range aliases {
 		names = append(names, name)

@@ -17,7 +17,7 @@ import (
 // Builder handles Docker image building for clawker projects.
 type Builder struct {
 	client      *Client
-	config      *config.Project
+	buildCfg    config.BuildConfig
 	log         *logger.Logger
 	workDir     string
 	projectName string
@@ -76,12 +76,14 @@ func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, conte
 }
 
 // NewBuilder creates a new Builder instance.
+// buildCfg is the project's `build:` block — the only config group the builder
+// reads (user-defined image labels from build.instructions.labels).
 // projectName is the resolved project identity (from ProjectManager); empty string for unregistered projects.
 // The builder inherits the logger from the Client.
-func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *Builder {
+func NewBuilder(cli *Client, buildCfg config.BuildConfig, workDir, projectName string) *Builder {
 	return &Builder{
 		client:      cli,
-		config:      cfg,
+		buildCfg:    buildCfg,
 		log:         cli.log,
 		workDir:     workDir,
 		projectName: projectName,
@@ -311,8 +313,8 @@ func (b *Builder) mergeImageLabels(existing map[string]string) map[string]string
 	}
 
 	// Add user-defined labels from build instructions
-	if b.config.Build.Instructions != nil {
-		for k, v := range b.config.Build.Instructions.Labels {
+	if b.buildCfg.Instructions != nil {
+		for k, v := range b.buildCfg.Instructions.Labels {
 			merged[k] = v
 		}
 	}

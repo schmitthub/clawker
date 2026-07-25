@@ -16,18 +16,19 @@ import (
 )
 
 // layerPathForKey finds the layer path that owns a field via provenance.
+// key is a joined key (see paths.go).
 //
 // Resolution:
 //  1. Scan provenance for exact or descendant matches in a single pass
-//     (e.g. key="build" matches "build" or "build.image"). When multiple
+//     (e.g. key "build" matches "build" or "build␟image"). When multiple
 //     entries match, the highest-priority (lowest index) layer wins.
-//  2. If no match, walk up ancestor paths stopping only at opaque value
-//     fields (e.g. key="env.FOO" walks up to "env" if it's a KindMap).
+//  2. If no match, walk up ancestor keys stopping only at opaque value
+//     fields (e.g. "env␟FOO" walks up to "env" if it's a KindMap).
 //     This handles new entries in map[string]string fields whose parent
 //     has provenance but the entry itself does not.
 func (s *Store[T]) layerPathForKey(key string) string {
 	bestIdx := -1
-	prefix := key + "."
+	prefix := key + pathSep
 
 	// Check exact match and descendant matches.
 	for provKey, idx := range s.prov {
@@ -38,18 +39,13 @@ func (s *Store[T]) layerPathForKey(key string) string {
 		}
 	}
 
-	// If no match, walk up ancestor paths. Only stop at ancestors that
+	// If no match, walk up ancestor keys. Only stop at ancestors that
 	// are opaque value fields (maps, struct slices) — a new entry in an
 	// opaque field should route to the layer that owns that field.
 	// Struct nesting ancestors are skipped since they don't represent
 	// a meaningful write target for leaf entries.
 	if bestIdx == -1 {
-		for parent := key; ; {
-			dot := strings.LastIndex(parent, ".")
-			if dot < 0 {
-				break
-			}
-			parent = parent[:dot]
+		for parent := parentKey(key); parent != ""; parent = parentKey(parent) {
 			if idx, ok := s.prov[parent]; ok && isOpaqueField(s.tags, parent) {
 				bestIdx = idx
 				break // closest opaque ancestor is the most specific match

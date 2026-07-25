@@ -18,17 +18,22 @@ import (
 )
 
 // managedInspectFn builds a ContainerInspectFn that returns a managed
-// container with the given long ID. whail.Engine.ContainerInspect passes
+// container whose ID is longHexID. whail.Engine.ContainerInspect passes
 // through its managed-label jail and the returned ID has to be the long
-// canonical form so downstream callers see the resolved ref.
-func managedInspectFn(cfg config.Config, longID string, captured *string) func(context.Context, string, mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+// canonical form so downstream callers see the resolved ref. When captured
+// is non-nil it records the ref the caller passed in, so a test can assert
+// the ref reached Docker verbatim.
+func managedInspectFn(
+	cfg config.Config,
+	captured *string,
+) func(context.Context, string, mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 	return func(_ context.Context, ref string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 		if captured != nil {
 			*captured = ref
 		}
 		return mobyclient.ContainerInspectResult{
 			Container: container.InspectResponse{
-				ID: longID,
+				ID: longHexID,
 				Config: &container.Config{
 					Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
 				},
@@ -93,7 +98,7 @@ func TestResolveContainerID_ResolvesNameViaInspect(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	fake := dockermocks.NewFakeClient(cfg)
 	var seen string
-	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, longHexID, &seen)
+	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, &seen)
 
 	got, err := fwcp.ResolveContainerID(t.Context(), fake.Client, friendly)
 	require.NoError(t, err)
@@ -108,7 +113,7 @@ func TestResolveContainerID_RejectsShortHexID(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	fake := dockermocks.NewFakeClient(cfg)
 	var seen string
-	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, longHexID, &seen)
+	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, &seen)
 
 	got, err := fwcp.ResolveContainerID(t.Context(), fake.Client, shortID)
 	require.NoError(t, err)
@@ -123,7 +128,7 @@ func TestResolveContainerID_RejectsNonHexLong(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	fake := dockermocks.NewFakeClient(cfg)
 	var seen string
-	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, longHexID, &seen)
+	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, &seen)
 
 	_, err := fwcp.ResolveContainerID(t.Context(), fake.Client, ref)
 	require.NoError(t, err)
@@ -149,7 +154,7 @@ func TestNewContainerResolver_ResolvesToCanonicalIDAndCgroupPath(t *testing.T) {
 	const friendly = "clawker.myapp.dev"
 	cfg := configmocks.NewBlankConfig()
 	fake := dockermocks.NewFakeClient(cfg)
-	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, longHexID, nil)
+	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, nil)
 
 	resolve := fwcp.NewContainerResolver(fake.Client, "systemd")
 	id, cgroupPath, exists, err := resolve(t.Context(), friendly)

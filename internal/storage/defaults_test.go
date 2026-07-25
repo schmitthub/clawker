@@ -125,52 +125,52 @@ func TestGenerateDefaultsYAML_RoundTrip(t *testing.T) {
 	out := GenerateDefaultsYAML[defaultsTestSimple]()
 	require.NotEmpty(t, out)
 
-	store, err := New[defaultsTestSimple](out)
+	store, err := NewFromString[defaultsTestSimple](out)
 	require.NoError(t, err)
 
-	snap := store.Read()
-	assert.Equal(t, "myapp", snap.Name)
-	assert.Equal(t, 8080, snap.Port)
-	assert.True(t, snap.Verbose)
-	assert.Equal(t, []string{"web", "api"}, snap.Tags)
-	assert.Equal(t, 30*time.Second, snap.Timeout)
-	assert.Empty(t, snap.NoDefault)
+	assertSimpleDefaults(t, store)
+}
+
+// assertSimpleDefaults checks every defaulted field of defaultsTestSimple
+// through the merged view; the undefaulted field must stay unset.
+func assertSimpleDefaults(t *testing.T, store *Store[defaultsTestSimple]) {
+	t.Helper()
+	assert.Equal(t, "myapp", mustGet[string](t, store, "name"))
+	assert.Equal(t, 8080, mustGet[int](t, store, "port"))
+	assert.True(t, mustGet[bool](t, store, "verbose"))
+	assert.Equal(t, []string{"web", "api"}, mustGet[[]string](t, store, "tags"))
+	assert.Equal(t, 30*time.Second, mustGet[time.Duration](t, store, "timeout"))
+	requireAbsent(t, store, "no_default")
 }
 
 func TestGenerateDefaultsYAML_NestedRoundTrip(t *testing.T) {
 	out := GenerateDefaultsYAML[defaultsTestNested]()
 	require.NotEmpty(t, out)
 
-	store, err := New[defaultsTestNested](out)
+	store, err := NewFromString[defaultsTestNested](out)
 	require.NoError(t, err)
 
-	snap := store.Read()
-	assert.Equal(t, "debian:latest", snap.Build.Image)
-	assert.Equal(t, []string{"git", "curl"}, snap.Build.Packages)
-	require.NotNil(t, snap.Agent)
-	require.NotNil(t, snap.Agent.Enabled)
-	assert.True(t, *snap.Agent.Enabled)
-	assert.Equal(t, "auto", snap.Agent.Mode)
+	assert.Equal(t, "debian:latest", mustGet[string](t, store, "build", "image"))
+	assert.Equal(t, []string{"git", "curl"}, mustGet[[]string](t, store, "build", "packages"))
+	agent := mustGet[*defaultsTestAgent](t, store, "agent")
+	require.NotNil(t, agent)
+	require.NotNil(t, agent.Enabled)
+	assert.True(t, *agent.Enabled)
+	assert.Equal(t, "auto", agent.Mode)
 }
 
 func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
 	dir := t.TempDir()
 
 	// Build a real filesystem-backed store using WithDefaultsFromStruct.
-	store, err := New[defaultsTestSimple]("",
+	store, err := New[defaultsTestSimple](
 		WithFilenames("test.yaml"),
 		WithDefaultsFromStruct[defaultsTestSimple](),
 		WithPaths(dir),
 	)
 	require.NoError(t, err)
 
-	snap := store.Read()
-	assert.Equal(t, "myapp", snap.Name)
-	assert.Equal(t, 8080, snap.Port)
-	assert.True(t, snap.Verbose)
-	assert.Equal(t, []string{"web", "api"}, snap.Tags)
-	assert.Equal(t, 30*time.Second, snap.Timeout)
-	assert.Empty(t, snap.NoDefault)
+	assertSimpleDefaults(t, store)
 }
 
 func TestGenerateDefaultsYAML_MapField(t *testing.T) {
@@ -190,11 +190,12 @@ func TestGenerateDefaultsYAML_MapField(t *testing.T) {
 	assert.False(t, exists, "map fields without defaults should not appear")
 
 	// Generated defaults survive the store pipeline as the typed map.
-	store, err := New[defaultsTestMap](out)
+	store, err := NewFromString[defaultsTestMap](out)
 	require.NoError(t, err)
-	snap := store.Read()
-	assert.Equal(t, map[string]string{"go": "run --flag @ value", "ver": "version"}, snap.Aliases)
-	assert.Empty(t, snap.Labels)
+	assert.Equal(t,
+		map[string]string{"go": "run --flag @ value", "ver": "version"},
+		mustGet[map[string]string](t, store, "aliases"))
+	requireAbsent(t, store, "labels")
 }
 
 func TestParseDefaultValue_Map(t *testing.T) {

@@ -128,7 +128,7 @@ type InstallAgentBootstrapOptions struct {
 	ContainerID string
 	// HydraTokenAudience is the `aud` claim in the Hydra
 	// client_assertion. Resolved by callers via
-	// hydraTokenAudienceFromPort(cfg.Settings().ControlPlane.HydraPublicPort).
+	// hydraTokenAudienceFromPort(cfg.ControlPlaneSettings().HydraPublicPort).
 	HydraTokenAudience string
 	// CopyToContainer streams the bootstrap tar into ContainerID's
 	// writable layer at consts.BootstrapDir.

@@ -6,9 +6,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,10 +18,10 @@ func TestValidateName(t *testing.T) {
 	assert.Error(t, ValidateName("two words"))
 	assert.Error(t, ValidateName(" padded"))
 	assert.Error(t, ValidateName("-flagish"))
-	assert.Error(t, ValidateName("a.b"))
-	assert.Error(t, ValidateName("a.b.c"))
-	assert.Error(t, ValidateName(".lead"))
-	assert.Error(t, ValidateName("trail."))
+	// Dots are addressed as one key segment ({"aliases", "a.b"}), never
+	// reparsed as nesting, so a dotted name is a legal single-word alias.
+	assert.NoError(t, ValidateName("a.b"))
+	assert.NoError(t, ValidateName("a.b.c"))
 }
 
 func TestSplitExpansion(t *testing.T) {
@@ -64,18 +61,14 @@ func TestExportTarget(t *testing.T) {
 		return path
 	}
 
-	newCfg := func(t *testing.T, dirs ...string) config.Config {
+	// newCfg loads a real config from projectDir the way a CLI run inside
+	// that directory would: walk-up over the project dir, then the config dir.
+	newCfg := func(t *testing.T, projectDir string) config.Config {
 		t.Helper()
-		opts := []storage.Option{storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile)}
-		if len(dirs) > 0 {
-			opts = append(opts, storage.WithDirs(dirs...))
-		}
-		opts = append(opts, storage.WithConfigDir())
-		store, err := storage.New[config.Project]("", opts...)
+		t.Chdir(projectDir)
+		cfg, err := config.NewConfig(config.WithProjectRoot(projectDir))
 		require.NoError(t, err)
-		mock := configmocks.NewBlankConfig()
-		mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
-		return mock
+		return cfg
 	}
 
 	t.Run("most local highest-priority file wins, local variant included", func(t *testing.T) {
@@ -100,7 +93,7 @@ func TestExportTarget(t *testing.T) {
 	t.Run("user-level config-dir file is not a target", func(t *testing.T) {
 		write(t, configDir, "clawker.yaml")
 
-		_, err := ExportTarget(newCfg(t))
+		_, err := ExportTarget(newCfg(t, t.TempDir()))
 		assert.ErrorContains(t, err, "no project config found")
 	})
 }

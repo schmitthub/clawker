@@ -61,13 +61,12 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 
 | Method | Purpose |
 |--------|---------|
-| `store.Read()` | Immutable `*T` snapshot |
-| `store.Set(path, value)` | Set an in-memory field by dotted path |
-| `store.Remove(path)` | Delete a dotted path from the tree |
-| `store.WriteTo(path)` | Persist dirty fields to an explicit layer file |
+| `storage.Get[V](store, key...)` | Decode one field's merged value into V; `ErrKeyNotFound` = unset (render the default) — there is NO whole-struct snapshot |
+| `store.Set(key []string, value)` | Stage an in-memory field by segment key (`fieldKey(path)` splits a dotted schema path); nil → `ErrNilValue` — clearing a field is `Remove` |
+| `store.Remove(key...)` | Delete a key (the unset verb); tolerate `ErrKeyNotFound` on already-unset rows |
+| `store.WriteFieldTo(path, key...)` | Persist ONE dirty field to the chosen layer file (per-field save primitive) |
 | `store.Layers()` | Discovered layer files (for the per-layer breakdown display) |
 | `store.WriteTargets()` | Candidate save locations derived from the store's options (for `LayerTargets`) |
-| `store.Options()` | Copy of the resolved construction options (introspection) |
-| `store.Provenance(path)` | Which layer won a specific field (for the breakdown display) |
+| `store.ProvenanceMap()` | Display-form field keys → source file paths (drives the per-field source column) |
 
 Everything else — full type→kind→editor table, SetFieldValue semantics, TUI component APIs, test recipes, gotchas — is in `.claude/docs/STOREUI-REFERENCE.md`.

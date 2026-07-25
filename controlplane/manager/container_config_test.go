@@ -20,7 +20,7 @@ import (
 func TestINV_B1_005_HydraAdminInternalOnly(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
-	cp := cfg.Settings().ControlPlane
+	cp := cfg.ControlPlaneSettings()
 
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)

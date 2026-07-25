@@ -6,6 +6,7 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/pflag"
@@ -358,7 +359,7 @@ func TestContainerOptions_BuildConfigs_ResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Memory.Set("512m"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(512*1024*1024), hostCfg.Memory)
 	})
@@ -369,7 +370,7 @@ func TestContainerOptions_BuildConfigs_ResourceLimits(t *testing.T) {
 		require.NoError(t, opts.Memory.Set("512m"))
 		require.NoError(t, opts.MemorySwap.Set("1g"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1*1024*1024*1024), hostCfg.MemorySwap)
 	})
@@ -379,7 +380,7 @@ func TestContainerOptions_BuildConfigs_ResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.CPUs.Set("1.5"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1.5e9), hostCfg.NanoCPUs)
 	})
@@ -389,7 +390,7 @@ func TestContainerOptions_BuildConfigs_ResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CPUShares = 1024
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1024), hostCfg.CPUShares)
 	})
@@ -398,7 +399,7 @@ func TestContainerOptions_BuildConfigs_ResourceLimits(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), hostCfg.Memory)
 		assert.Equal(t, int64(0), hostCfg.MemorySwap)
@@ -465,7 +466,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Hostname = "myhost"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "myhost", cfg.Hostname)
 	})
@@ -475,7 +476,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DNS = []string{"8.8.8.8", "8.8.4.4"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.Len(t, hostCfg.DNS, 2)
 		assert.Equal(t, "8.8.8.8", hostCfg.DNS[0].String())
@@ -487,7 +488,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DNSSearch = []string{"example.com", "test.local"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"example.com", "test.local"}, hostCfg.DNSSearch)
 	})
@@ -497,7 +498,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.ExtraHosts = []string{"myservice:192.168.1.100", "db:10.0.0.5"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"myservice:192.168.1.100", "db:10.0.0.5"}, hostCfg.ExtraHosts)
 	})
@@ -507,7 +508,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DNS = []string{"not-an-ip"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid DNS server address")
 	})
@@ -516,7 +517,7 @@ func TestContainerOptions_BuildConfigs_Networking(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		cfg, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "", cfg.Hostname)
 		assert.Nil(t, hostCfg.DNS)
@@ -563,7 +564,7 @@ func TestContainerOptions_BuildConfigs_Storage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.ReadOnly = true
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, hostCfg.ReadonlyRootfs)
 	})
@@ -573,7 +574,7 @@ func TestContainerOptions_BuildConfigs_Storage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.VolumesFrom = []string{"container1", "container2:ro"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"container1", "container2:ro"}, hostCfg.VolumesFrom)
 	})
@@ -583,7 +584,7 @@ func TestContainerOptions_BuildConfigs_Storage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Tmpfs = []string{"/tmp"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.Tmpfs)
 		assert.Equal(t, "", hostCfg.Tmpfs["/tmp"])
@@ -594,7 +595,7 @@ func TestContainerOptions_BuildConfigs_Storage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Tmpfs = []string{"/tmp:rw,size=64m", "/run:noexec"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.Tmpfs)
 		assert.Equal(t, "rw,size=64m", hostCfg.Tmpfs["/tmp"])
@@ -605,7 +606,7 @@ func TestContainerOptions_BuildConfigs_Storage(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.False(t, hostCfg.ReadonlyRootfs)
 		assert.Nil(t, hostCfg.VolumesFrom)
@@ -661,7 +662,7 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CapAdd = []string{"SYS_PTRACE", "NET_ADMIN"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"SYS_PTRACE", "NET_ADMIN"}, hostCfg.CapAdd)
 	})
@@ -670,13 +671,9 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		projectCfg := &config.Project{
-			Security: config.SecurityConfig{
-				CapAdd: []string{"NET_RAW"},
-			},
-		}
+		security := configmocks.SecurityConfig(func(s *config.SecurityConfig) { s.CapAdd = []string{"NET_RAW"} })
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, projectCfg)
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, security)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"NET_RAW"}, hostCfg.CapAdd)
 	})
@@ -686,13 +683,9 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CapAdd = []string{"SYS_PTRACE"}
 
-		projectCfg := &config.Project{
-			Security: config.SecurityConfig{
-				CapAdd: []string{"NET_RAW"},
-			},
-		}
+		security := configmocks.SecurityConfig(func(s *config.SecurityConfig) { s.CapAdd = []string{"NET_RAW"} })
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, projectCfg)
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, security)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"SYS_PTRACE"}, hostCfg.CapAdd)
 	})
@@ -702,7 +695,7 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CapDrop = []string{"ALL", "MKNOD"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"ALL", "MKNOD"}, hostCfg.CapDrop)
 	})
@@ -712,7 +705,7 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Privileged = true
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, hostCfg.Privileged)
 	})
@@ -722,7 +715,7 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts.Image = "alpine"
 		opts.SecurityOpt = []string{"seccomp=unconfined", "label=disable"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"seccomp=unconfined", "label=disable"}, hostCfg.SecurityOpt)
 	})
@@ -731,7 +724,7 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Nil(t, hostCfg.CapAdd)
 		assert.Nil(t, hostCfg.CapDrop)
@@ -808,7 +801,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.Image = "alpine"
 		opts.HealthCmd = "curl -f http://localhost/"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, []string{"CMD-SHELL", "curl -f http://localhost/"}, cfg.Healthcheck.Test)
@@ -820,7 +813,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.HealthCmd = "echo ok"
 		opts.HealthInterval = 30 * time.Second
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, 30*time.Second, cfg.Healthcheck.Interval)
@@ -832,7 +825,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.HealthCmd = "echo ok"
 		opts.HealthTimeout = 10 * time.Second
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, 10*time.Second, cfg.Healthcheck.Timeout)
@@ -844,7 +837,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.HealthCmd = "echo ok"
 		opts.HealthRetries = 3
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, 3, cfg.Healthcheck.Retries)
@@ -856,7 +849,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.HealthCmd = "echo ok"
 		opts.HealthStartPeriod = 5 * time.Second
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, 5*time.Second, cfg.Healthcheck.StartPeriod)
@@ -867,7 +860,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.Image = "alpine"
 		opts.NoHealthcheck = true
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, []string{"NONE"}, cfg.Healthcheck.Test)
@@ -879,7 +872,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts.NoHealthcheck = true
 		opts.HealthCmd = "echo ok"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--no-healthcheck conflicts")
 	})
@@ -888,7 +881,7 @@ func TestContainerOptions_BuildConfigs_HealthCheck(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Nil(t, cfg.Healthcheck)
 	})
@@ -942,7 +935,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = "always"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "always", string(hostCfg.RestartPolicy.Name))
 	})
@@ -952,7 +945,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = "on-failure:5"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "on-failure", string(hostCfg.RestartPolicy.Name))
 		assert.Equal(t, 5, hostCfg.RestartPolicy.MaximumRetryCount)
@@ -963,7 +956,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = "on-failure:invalid"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "maximum retry count must be an integer")
 	})
@@ -973,7 +966,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = ":5"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no policy provided before colon")
 	})
@@ -983,7 +976,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.StopSignal = "SIGKILL"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "SIGKILL", cfg.StopSignal)
 	})
@@ -993,7 +986,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.StopTimeout = 30
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.StopTimeout)
 		assert.Equal(t, 30, *cfg.StopTimeout)
@@ -1004,7 +997,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Init = true
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.Init)
 		assert.True(t, *hostCfg.Init)
@@ -1016,7 +1009,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.AutoRemove = true
 		opts.Restart = "always"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot specify both --restart and --rm")
 	})
@@ -1027,7 +1020,7 @@ func TestContainerOptions_BuildConfigs_Runtime(t *testing.T) {
 		opts.AutoRemove = true
 		opts.Restart = "no"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 	})
 }
@@ -1053,7 +1046,7 @@ func TestContainerOptions_ValidationErrors(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DNS = []string{"not-an-ip-address"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid DNS server address")
 	})
@@ -1063,7 +1056,7 @@ func TestContainerOptions_ValidationErrors(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = "on-failure:not-a-number"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "maximum retry count must be an integer")
 	})
@@ -1073,7 +1066,7 @@ func TestContainerOptions_ValidationErrors(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Restart = ":3"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no policy provided before colon")
 	})
@@ -1103,7 +1096,7 @@ func TestContainerOptions_ValidationErrors(t *testing.T) {
 		opts.NoHealthcheck = true
 		opts.HealthCmd = "echo ok"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--no-healthcheck conflicts")
 	})
@@ -1114,7 +1107,7 @@ func TestContainerOptions_ValidationErrors(t *testing.T) {
 		opts.AutoRemove = true
 		opts.Restart = "always"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot specify both --restart and --rm")
 	})
@@ -1147,7 +1140,7 @@ func TestContainerOptions_AttachFlag(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Attach.Set("stdout"))
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.False(t, cfg.AttachStdin)
 		assert.True(t, cfg.AttachStdout)
@@ -1213,7 +1206,7 @@ func TestContainerOptions_BuildConfigs_NewSimpleFields(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Domainname = "example.com"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "example.com", cfg.Domainname)
 	})
@@ -1223,7 +1216,7 @@ func TestContainerOptions_BuildConfigs_NewSimpleFields(t *testing.T) {
 		opts.Image = "alpine"
 		opts.ContainerIDFile = "/tmp/cid"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "/tmp/cid", hostCfg.ContainerIDFile)
 	})
@@ -1233,7 +1226,7 @@ func TestContainerOptions_BuildConfigs_NewSimpleFields(t *testing.T) {
 		opts.Image = "alpine"
 		opts.GroupAdd = []string{"audio", "video"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"audio", "video"}, hostCfg.GroupAdd)
 	})
@@ -1327,7 +1320,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DNSOptions = []string{"ndots:5", "timeout:2"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"ndots:5", "timeout:2"}, hostCfg.DNSOptions)
 	})
@@ -1337,7 +1330,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Expose = []string{"80/tcp"}
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.NotNil(t, cfg.ExposedPorts)
 		assert.Equal(t, 1, len(cfg.ExposedPorts))
@@ -1348,7 +1341,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.PublishAll = true
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, hostCfg.PublishAllPorts)
 	})
@@ -1360,7 +1353,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		opts.Aliases = []string{"web", "frontend"}
 		opts.IPv4Address = "172.30.100.104"
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, netCfg)
 		ep := netCfg.EndpointsConfig["mynet"]
@@ -1376,7 +1369,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		require.NoError(t, opts.NetMode.Set("mynet"))
 		opts.IPv4Address = "not-an-ip"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid IPv4 address")
 	})
@@ -1387,7 +1380,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		require.NoError(t, opts.NetMode.Set("mynet"))
 		opts.MacAddress = "92:d0:c6:0a:29:33"
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		ep := netCfg.EndpointsConfig["mynet"]
 		assert.Equal(t, "92:d0:c6:0a:29:33", ep.MacAddress.String())
@@ -1399,7 +1392,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		require.NoError(t, opts.NetMode.Set("mynet"))
 		opts.MacAddress = "invalid-mac"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not a valid mac address")
 	})
@@ -1409,7 +1402,7 @@ func TestContainerOptions_BuildConfigs_NewNetworking(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Links = []string{"db:database"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"db:database"}, hostCfg.Links)
 	})
@@ -1513,7 +1506,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.MemoryReservation.Set("256m"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(256*1024*1024), hostCfg.MemoryReservation)
 	})
@@ -1523,7 +1516,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.ShmSize.Set("128m"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(128*1024*1024), hostCfg.ShmSize)
 	})
@@ -1533,7 +1526,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CPUSetCPUs = "0-3"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "0-3", hostCfg.CpusetCpus)
 	})
@@ -1543,7 +1536,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CPUSetMems = "0,1"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "0,1", hostCfg.CpusetMems)
 	})
@@ -1553,7 +1546,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CPUPeriod = 100000
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(100000), hostCfg.CPUPeriod)
 	})
@@ -1563,7 +1556,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CPUQuota = 50000
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, int64(50000), hostCfg.CPUQuota)
 	})
@@ -1573,7 +1566,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.BlkioWeight = 500
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, uint16(500), hostCfg.BlkioWeight)
 	})
@@ -1583,7 +1576,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.PidsLimit = 100
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.PidsLimit)
 		assert.Equal(t, int64(100), *hostCfg.PidsLimit)
@@ -1594,7 +1587,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.OOMKillDisable = true
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.OomKillDisable)
 		assert.True(t, *hostCfg.OomKillDisable)
@@ -1605,7 +1598,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.OOMScoreAdj = -500
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, -500, hostCfg.OomScoreAdj)
 	})
@@ -1615,7 +1608,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Swappiness = 50
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, hostCfg.MemorySwappiness)
 		assert.Equal(t, int64(50), *hostCfg.MemorySwappiness)
@@ -1625,7 +1618,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Nil(t, hostCfg.MemorySwappiness)
 	})
@@ -1635,7 +1628,7 @@ func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Ulimits.Set("nofile=1024:2048"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.Len(t, hostCfg.Ulimits, 1)
 		assert.Equal(t, "nofile", hostCfg.Ulimits[0].Name)
@@ -1730,7 +1723,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.PidMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "host", string(hostCfg.PidMode))
 	})
@@ -1740,7 +1733,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.IpcMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "host", string(hostCfg.IpcMode))
 	})
@@ -1750,7 +1743,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.UtsMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "host", string(hostCfg.UTSMode))
 	})
@@ -1760,7 +1753,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.UsernsMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "host", string(hostCfg.UsernsMode))
 	})
@@ -1770,7 +1763,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CgroupnsMode = "private"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "private", string(hostCfg.CgroupnsMode))
 	})
@@ -1780,7 +1773,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CgroupParent = "/mygroup"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "/mygroup", hostCfg.CgroupParent)
 	})
@@ -1790,7 +1783,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Runtime = "nvidia"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "nvidia", hostCfg.Runtime)
 	})
@@ -1800,7 +1793,7 @@ func TestContainerOptions_BuildConfigs_Namespaces(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Isolation = "hyperv"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "hyperv", string(hostCfg.Isolation))
 	})
@@ -1835,7 +1828,7 @@ func TestContainerOptions_BuildConfigs_Logging(t *testing.T) {
 		opts.LogDriver = "json-file"
 		opts.LogOpts = []string{"max-size=10m", "max-file=3"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "json-file", hostCfg.LogConfig.Type)
 		assert.Equal(t, "10m", hostCfg.LogConfig.Config["max-size"])
@@ -1847,7 +1840,7 @@ func TestContainerOptions_BuildConfigs_Logging(t *testing.T) {
 		opts.Image = "alpine"
 		opts.LogDriver = "syslog"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "syslog", hostCfg.LogConfig.Type)
 		assert.Nil(t, hostCfg.LogConfig.Config)
@@ -1892,7 +1885,7 @@ func TestContainerOptions_BuildConfigs_NewStorage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.VolumeDriver = "local"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "local", hostCfg.VolumeDriver)
 	})
@@ -1902,7 +1895,7 @@ func TestContainerOptions_BuildConfigs_NewStorage(t *testing.T) {
 		opts.Image = "alpine"
 		opts.StorageOpt = []string{"size=120G"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "120G", hostCfg.StorageOpt["size"])
 	})
@@ -1912,7 +1905,7 @@ func TestContainerOptions_BuildConfigs_NewStorage(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Mounts.Set("type=bind,source=/src,target=/dst"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		// Mounts from --mount are appended to the mounts parameter
 		require.Len(t, hostCfg.Mounts, 1)
@@ -1958,7 +1951,7 @@ func TestContainerOptions_BuildConfigs_Devices(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Devices.Set("/dev/sda:/dev/xvdc:r"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.Len(t, hostCfg.Devices, 1)
 		assert.Equal(t, "/dev/sda", hostCfg.Devices[0].PathOnHost)
@@ -1969,7 +1962,7 @@ func TestContainerOptions_BuildConfigs_Devices(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.GPUs.Set("all"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.Len(t, hostCfg.DeviceRequests, 1)
 		assert.Equal(t, -1, hostCfg.DeviceRequests[0].Count)
@@ -1980,7 +1973,7 @@ func TestContainerOptions_BuildConfigs_Devices(t *testing.T) {
 		opts.Image = "alpine"
 		opts.DeviceCgroupRules = []string{"c 1:3 rwm"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"c 1:3 rwm"}, hostCfg.DeviceCgroupRules)
 	})
@@ -2018,7 +2011,7 @@ func TestContainerOptions_BuildConfigs_AnnotationsAndSysctls(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Annotations.Set("com.example.key=value"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "value", hostCfg.Annotations["com.example.key"])
 	})
@@ -2028,7 +2021,7 @@ func TestContainerOptions_BuildConfigs_AnnotationsAndSysctls(t *testing.T) {
 		opts.Image = "alpine"
 		require.NoError(t, opts.Sysctls.Set("net.ipv4.ip_forward=1"))
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "1", hostCfg.Sysctls["net.ipv4.ip_forward"])
 	})
@@ -2041,7 +2034,7 @@ func TestContainerOptions_BuildConfigs_HealthStartInterval(t *testing.T) {
 		opts.HealthCmd = "echo ok"
 		opts.HealthStartInterval = 5 * time.Second
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, cfg.Healthcheck)
 		assert.Equal(t, 5*time.Second, cfg.Healthcheck.StartInterval)
@@ -2327,7 +2320,7 @@ func TestContainerOptions_BuildConfigs_HealthCheckNegatives(t *testing.T) {
 		opts.HealthCmd = "true"
 		opts.HealthInterval = -1
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "health-interval")
 	})
@@ -2338,7 +2331,7 @@ func TestContainerOptions_BuildConfigs_HealthCheckNegatives(t *testing.T) {
 		opts.HealthCmd = "true"
 		opts.HealthTimeout = -1
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "health-timeout")
 	})
@@ -2349,7 +2342,7 @@ func TestContainerOptions_BuildConfigs_HealthCheckNegatives(t *testing.T) {
 		opts.HealthCmd = "true"
 		opts.HealthStartPeriod = -1
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "health-start-period")
 	})
@@ -2360,7 +2353,7 @@ func TestContainerOptions_BuildConfigs_HealthCheckNegatives(t *testing.T) {
 		opts.HealthCmd = "true"
 		opts.HealthStartInterval = -1
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "health-start-interval")
 	})
@@ -2371,7 +2364,7 @@ func TestContainerOptions_BuildConfigs_HealthCheckNegatives(t *testing.T) {
 		opts.HealthCmd = "true"
 		opts.HealthRetries = -1
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "health-retries")
 	})
@@ -2417,7 +2410,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.PidMode = "invalid"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid PID mode")
 	})
@@ -2427,7 +2420,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.PidMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, container.PidMode("host"), hostCfg.PidMode)
 	})
@@ -2437,7 +2430,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.UtsMode = "invalid"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid UTS mode")
 	})
@@ -2447,7 +2440,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.UtsMode = "host"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, container.UTSMode("host"), hostCfg.UTSMode)
 	})
@@ -2457,7 +2450,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.UsernsMode = "invalid"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid USER mode")
 	})
@@ -2467,7 +2460,7 @@ func TestContainerOptions_ValidateNamespaceModes(t *testing.T) {
 		opts.Image = "alpine"
 		opts.CgroupnsMode = "invalid"
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid CGROUP mode")
 	})
@@ -2484,7 +2477,7 @@ func TestContainerOptions_BuildConfigs_StdinOnce(t *testing.T) {
 		opts.Stdin = true
 		require.NoError(t, opts.Attach.Set("stdin"))
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, cfg.OpenStdin)
 		assert.True(t, cfg.AttachStdin)
@@ -2498,7 +2491,7 @@ func TestContainerOptions_BuildConfigs_StdinOnce(t *testing.T) {
 		// When -i is used without -a, default attach includes stdin
 		// so StdinOnce is also set
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, cfg.OpenStdin)
 		assert.True(t, cfg.AttachStdin)
@@ -2511,7 +2504,7 @@ func TestContainerOptions_BuildConfigs_StdinOnce(t *testing.T) {
 		opts.Stdin = true
 		require.NoError(t, opts.Attach.Set("stdout"))
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.True(t, cfg.OpenStdin)
 		assert.False(t, cfg.AttachStdin)
@@ -2525,7 +2518,7 @@ func TestContainerOptions_BuildConfigs_PortRange(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Expose = []string{"3000-3005"}
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		// Should have 6 ports (3000, 3001, 3002, 3003, 3004, 3005)
 		assert.Len(t, cfg.ExposedPorts, 6)
@@ -2536,7 +2529,7 @@ func TestContainerOptions_BuildConfigs_PortRange(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Expose = []string{"8080"}
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Len(t, cfg.ExposedPorts, 1)
 	})
@@ -2546,7 +2539,7 @@ func TestContainerOptions_BuildConfigs_PortRange(t *testing.T) {
 		opts.Image = "alpine"
 		opts.Expose = []string{"abc-def"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 	})
 }
@@ -2558,7 +2551,7 @@ func TestContainerOptions_BuildConfigs_LoggingNoneValidation(t *testing.T) {
 		opts.LogDriver = "none"
 		opts.LogOpts = []string{"max-size=10m"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "none")
 	})
@@ -2568,7 +2561,7 @@ func TestContainerOptions_BuildConfigs_LoggingNoneValidation(t *testing.T) {
 		opts.Image = "alpine"
 		opts.LogDriver = "none"
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "none", hostCfg.LogConfig.Type)
 	})
@@ -2580,7 +2573,7 @@ func TestContainerOptions_BuildConfigs_StorageOptValidation(t *testing.T) {
 		opts.Image = "alpine"
 		opts.StorageOpt = []string{"size=20G"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, "20G", hostCfg.StorageOpt["size"])
 	})
@@ -2590,7 +2583,7 @@ func TestContainerOptions_BuildConfigs_StorageOptValidation(t *testing.T) {
 		opts.Image = "alpine"
 		opts.StorageOpt = []string{"invalid_no_equals"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid storage option")
 	})
@@ -2602,7 +2595,7 @@ func TestContainerOptions_BuildConfigs_SecurityOpts(t *testing.T) {
 		opts.Image = "alpine"
 		opts.SecurityOpt = []string{"systempaths=unconfined"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{}, hostCfg.MaskedPaths)
 		assert.Equal(t, []string{}, hostCfg.ReadonlyPaths)
@@ -2615,7 +2608,7 @@ func TestContainerOptions_BuildConfigs_SecurityOpts(t *testing.T) {
 		opts.Image = "alpine"
 		opts.SecurityOpt = []string{"seccomp=unconfined"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Contains(t, hostCfg.SecurityOpt, "seccomp=unconfined")
 	})
@@ -2627,7 +2620,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.Image = "alpine"
 		opts.NetMode.Set("name=mynet,alias=web")
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, netCfg)
 		ep, ok := netCfg.EndpointsConfig["mynet"]
@@ -2641,7 +2634,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.NetMode.Set("name=net1,alias=web")
 		opts.NetMode.Set("name=net2,alias=api")
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, netCfg)
 		assert.Contains(t, netCfg.EndpointsConfig, "net1")
@@ -2653,7 +2646,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.Image = "alpine"
 		opts.NetMode.Set("name=mynet,driver-opt=opt1=val1,alias=web")
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, netCfg)
 		ep := netCfg.EndpointsConfig["mynet"]
@@ -2666,7 +2659,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.Image = "alpine"
 		opts.NetMode.Set("name=mynet,ip=172.20.0.5,ip6=fd00::1")
 
-		_, _, netCfg, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, netCfg, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		require.NotNil(t, netCfg)
 		ep := netCfg.EndpointsConfig["mynet"]
@@ -2682,7 +2675,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.NetMode.Set("mynet")
 		opts.NetMode.Set("mynet")
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "specified multiple times")
 	})
@@ -2693,7 +2686,7 @@ func TestContainerOptions_BuildConfigs_AdvancedNetwork(t *testing.T) {
 		opts.NetMode.Set("host")
 		opts.NetMode.Set("mynet")
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "conflicting")
 	})
@@ -2710,7 +2703,7 @@ func TestContainerOptions_BuildConfigs_EntrypointEmpty(t *testing.T) {
 		AddFlags(flags, opts)
 		flags.Parse([]string{"--entrypoint", ""})
 
-		cfg, _, _, err := opts.BuildConfigs(flags, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(flags, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		// When entrypoint is explicitly empty, it should be set to empty slice
 		assert.Equal(t, []string{""}, []string(cfg.Entrypoint))
@@ -2720,7 +2713,7 @@ func TestContainerOptions_BuildConfigs_EntrypointEmpty(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
-		cfg, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		cfg, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		// When entrypoint flag not set, Entrypoint should be nil
 		assert.Nil(t, cfg.Entrypoint)
@@ -2733,7 +2726,7 @@ func TestContainerOptions_BuildConfigs_DeviceCgroupRuleValidation(t *testing.T) 
 		opts.Image = "alpine"
 		opts.DeviceCgroupRules = []string{"c 1:3 rwm"}
 
-		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"c 1:3 rwm"}, hostCfg.DeviceCgroupRules)
 	})
@@ -2743,7 +2736,7 @@ func TestContainerOptions_BuildConfigs_DeviceCgroupRuleValidation(t *testing.T) 
 		opts.Image = "alpine"
 		opts.DeviceCgroupRules = []string{"invalid rule"}
 
-		_, _, _, err := opts.BuildConfigs(nil, nil, &config.Project{})
+		_, _, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid device cgroup")
 	})

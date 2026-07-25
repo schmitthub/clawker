@@ -64,13 +64,17 @@ func TestPresets_WriteAndReload(t *testing.T) {
 			cfg, err := config.NewConfig(config.WithProjectRoot(projDir))
 			require.NoError(t, err)
 
-			reloaded, err := yaml.Marshal(cfg.Project())
-			require.NoError(t, err)
-
-			var want, got map[string]any
+			// Every top-level key the preset declares must still resolve out
+			// of the reloaded store, with its value intact. Reading key by key
+			// (instead of marshalling a whole-schema snapshot) is the same
+			// assertion expressed against the values consumers actually read.
+			var want map[string]any
 			require.NoError(t, yaml.Unmarshal([]byte(p.YAML), &want))
-			require.NoError(t, yaml.Unmarshal(reloaded, &got))
-			assertYAMLSubset(t, want, got, p.Name)
+			for key, wantVal := range want {
+				gotVal, gErr := storage.Get[any](cfg.ProjectStore(), key)
+				require.NoErrorf(t, gErr, "%s: preset key %q missing after write+reload", p.Name, key)
+				assertYAMLSubset(t, wantVal, gotVal, p.Name+"."+key)
+			}
 		})
 	}
 }
@@ -112,25 +116,30 @@ func TestPresets_FieldAssertions(t *testing.T) {
 
 	for _, p := range config.Presets() {
 		t.Run(p.Name, func(t *testing.T) {
-			store, err := storage.New[config.Project](p.YAML,
-				storage.WithDefaultsFromStruct[config.Project](),
-			)
+			// NewProjectStoreFromPreset is the constructor project init uses,
+			// and it carries NO defaults layer — so every value asserted below
+			// has to come from the preset itself. A schema default could
+			// otherwise satisfy these assertions on a preset that declares
+			// nothing (build.packages defaults to ripgrep).
+			store, err := config.NewProjectStoreFromPreset(p.YAML)
 			require.NoError(t, err)
 
-			snap := store.Read()
-
-			assert.NotEmpty(t, snap.Build.Packages,
+			packages, err := storage.Get[[]string](store, "build", "packages")
+			require.NoError(t, err)
+			assert.NotEmpty(t, packages,
 				"preset %q: build.packages must not be empty", p.Name)
 
 			// ripgrep is the only package all presets add (git/curl are in
 			// the Dockerfile template base and no longer listed in presets).
-			assert.Contains(t, snap.Build.Packages, "ripgrep",
+			assert.Contains(t, packages, "ripgrep",
 				"preset %q: build.packages must include ripgrep", p.Name)
 
 			// Node users rely on dependencies being installed out of the box;
 			// the Node preset must ship an npm install pre_run.
 			if p.Name == "Node" {
-				assert.Contains(t, snap.Agent.PreRun, "npm install",
+				preRun, pErr := storage.Get[string](store, "agent", "pre_run")
+				require.NoError(t, pErr)
+				assert.Contains(t, preRun, "npm install",
 					"preset %q: agent.pre_run must run npm install", p.Name)
 			}
 
@@ -138,11 +147,11 @@ func TestPresets_FieldAssertions(t *testing.T) {
 			// come from the VCS wizard/flags. Only language-specific domains
 			// remain (e.g., pypi.org, proxy.golang.org).
 			if presetsWithDomains[p.Name] {
-				require.NotNil(t, snap.Security.Firewall,
-					"preset %q: security.firewall must not be nil", p.Name)
-				assert.NotEmpty(t, snap.Security.Firewall.AddDomains,
+				domains, dErr := storage.Get[[]string](store, "security", "firewall", "add_domains")
+				require.NoErrorf(t, dErr, "preset %q: security.firewall.add_domains must be set", p.Name)
+				assert.NotEmpty(t, domains,
 					"preset %q: should have language-specific domains", p.Name)
-				assert.NotContains(t, snap.Security.Firewall.AddDomains, "github.com",
+				assert.NotContains(t, domains, "github.com",
 					"preset %q: VCS domains should not be in presets", p.Name)
 			}
 		})
@@ -165,13 +174,14 @@ func TestPresets_AutoCustomizeContract(t *testing.T) {
 func TestPresets_SchemaDefaultsFillGaps(t *testing.T) {
 	for _, p := range config.Presets() {
 		t.Run(p.Name, func(t *testing.T) {
-			store, err := storage.New[config.Project](p.YAML,
-				storage.WithDefaultsFromStruct[config.Project](),
-			)
-			require.NoError(t, err)
+			// The defaults layer only exists on the full load path, so the gap
+			// filling is asserted where a user actually sees it: the preset on
+			// disk, read back through NewConfig's accessors.
+			f := newProjectFixture(t)
+			f.writeProject(t, p.YAML)
+			cfg := f.load(t)
 
-			snap := store.Read()
-			assert.Equal(t, "bind", snap.Workspace.DefaultMode,
+			assert.Equal(t, config.ModeBind, cfg.WorkspaceDefaultMode(),
 				"preset %q: workspace.default_mode should be filled by schema default", p.Name)
 		})
 	}

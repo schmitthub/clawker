@@ -7,10 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -18,7 +15,7 @@ import (
 
 // newExportEnv builds a project dir with a sparse .clawker.yaml — standing
 // in for an init-written file that predates newer schema fields — plus a
-// user config-dir clawker.yaml carrying the given aliases, and a config
+// user config-dir clawker.yaml carrying the given aliases, and a real config
 // whose project store discovers both over the shipped defaults. The sparse
 // file is what makes the surgical-write contract observable: export must
 // not backfill the missing fields.
@@ -34,17 +31,12 @@ func newExportEnv(t *testing.T, userAliasesYAML, targetYAML string) (config.Conf
 	target := filepath.Join(proj, ".clawker.yaml")
 	require.NoError(t, os.WriteFile(target, []byte(targetYAML), 0o644))
 
-	store, err := storage.New[config.Project](storage.GenerateDefaultsYAML[config.Project](),
-		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
-		storage.WithDirs(proj),
-		storage.WithConfigDir(),
-	)
+	// Run from the project dir the way the CLI does, so walk-up discovers
+	// the project file above the user config-dir file.
+	t.Chdir(proj)
+	cfg, err := config.NewConfig(config.WithProjectRoot(proj))
 	require.NoError(t, err)
-
-	mock := configmocks.NewBlankConfig()
-	mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
-	mock.ProjectFunc = func() *config.Project { return store.Read() }
-	return mock, target
+	return cfg, target
 }
 
 func executeExport(t *testing.T, cfg config.Config, args ...string) (stdout string, err error) {
@@ -72,7 +64,7 @@ func readYAML(t *testing.T, path string) map[string]any {
 
 func TestExportRun(t *testing.T) {
 	t.Run("writes only alias entries, preserves file content", func(t *testing.T) {
-		cfg, target := newExportEnv(t, "aliases:\n  v: version\n  off: \"\"\n", "build:\n  image: node:20-slim\n")
+		cfg, target := newExportEnv(t, "aliases:\n  v: version\n  off: \"\"\n", "build:\n  packages:\n    - ripgrep\n")
 		stdout, err := executeExport(t, cfg)
 		require.NoError(t, err)
 		assert.Contains(t, stdout, "Wrote "+target)
@@ -88,7 +80,7 @@ func TestExportRun(t *testing.T) {
 
 		build, ok := m["build"].(map[string]any)
 		require.True(t, ok, "existing file content must survive")
-		assert.Equal(t, "node:20-slim", build["image"])
+		assert.Equal(t, []any{"ripgrep"}, build["packages"])
 
 		_, hasAgent := m["agent"]
 		assert.False(t, hasAgent, "schema defaults must not be materialized into the project file")
@@ -107,7 +99,7 @@ func TestExportRun(t *testing.T) {
 	})
 
 	t.Run("nothing to export reports and writes nothing", func(t *testing.T) {
-		cfg, target := newExportEnv(t, "", "build:\n  image: node:20-slim\n")
+		cfg, target := newExportEnv(t, "", "build:\n  packages:\n    - ripgrep\n")
 		stdout, err := executeExport(t, cfg)
 		require.NoError(t, err)
 		assert.NotContains(t, stdout, "Wrote")
@@ -119,12 +111,12 @@ func TestExportRun(t *testing.T) {
 
 	t.Run("no project config errors", func(t *testing.T) {
 		t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())
-		store, err := storage.New[config.Project]("", storage.WithFilenames("clawker.yaml"))
+		empty := t.TempDir()
+		t.Chdir(empty)
+		cfg, err := config.NewConfig(config.WithProjectRoot(empty))
 		require.NoError(t, err)
-		mock := configmocks.NewBlankConfig()
-		mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
 
-		_, err = executeExport(t, mock)
+		_, err = executeExport(t, cfg)
 		assert.ErrorContains(t, err, "no project config found")
 	})
 }

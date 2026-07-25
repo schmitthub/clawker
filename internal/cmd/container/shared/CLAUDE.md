@@ -8,7 +8,7 @@ Container flag types, domain orchestration, and container creation -- shared bet
 
 `ContainerCreateOptions` -- all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
-Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
+Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, security)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(security)`.
 
 ### CreateContainer (`container_create.go`)
 
@@ -123,7 +123,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
 | `MarkMutuallyExclusive(cmd)` | Mark `--agent`/`--name` mutually exclusive |
 | `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
-| `NeedsSocketBridge(cfg)` | Check if GPG/SSH bridge needed from project config |
+| `NeedsSocketBridge(security)` | Check if GPG/SSH bridge needed from the project's `security:` block |
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
 | `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
 | `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |

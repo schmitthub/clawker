@@ -26,7 +26,7 @@ Prioritize fixing technical debt and improving architecture over completing the 
 
 ## CP ≠ firewall (common LLM confusion)
 
-- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. No "disable CP" flag. CP owns clawker-net.
+- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `manager.EnsureRunning` (`controlplane/manager`). No "disable CP" flag. CP owns clawker-net.
 - **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
 
 Do **NOT** gate non-firewall behavior on `firewall.enable`.

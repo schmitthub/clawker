@@ -18,12 +18,12 @@ func NewBlankConfig() *ConfigMock {
 }
 
 // NewFromString creates an in-memory *ConfigMock from YAML.
-// projectYAML and settingsYAML are raw YAML strings with NO defaults merged.
-// Pass empty strings for schemas you don't care about.
+// projectYAML and settingsYAML are raw YAML strings with NO defaults merged
+// (config.NewFromString is the option-free in-memory seam: no discovery, no
+// disk). Pass empty strings for schemas you don't care about.
 // Panics on invalid YAML to match test-stub ergonomics.
-// SetProject, SetSettings, WriteProject, WriteSettings are NOT wired —
-// calling them panics via moq's nil-func guard, signaling that
-// NewIsolatedTestConfig should be used for mutation tests.
+// Mutation goes through ProjectStore()/SettingsStore(), whose Write() fails on
+// a seam store by design — use NewIsolatedTestConfig for mutation tests.
 func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 	cfg, err := config.NewFromString(projectYAML, settingsYAML)
 	if err != nil {
@@ -32,27 +32,41 @@ func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 	return newMockFrom(cfg)
 }
 
-// newMockFrom wires all read-only Func fields on a ConfigMock to delegate to cfg.
-// Mutation methods (SetProject, SetSettings, WriteProject, WriteSettings) are
-// intentionally NOT wired — calling them panics via moq's nil-func guard,
-// signaling that NewIsolatedTestConfig should be used.
+// newMockFrom wires every read Func field on a ConfigMock to delegate to cfg —
+// the seeded in-memory Config is the source of truth for reads.
+//
+// The store accessors (ProjectStore/SettingsStore) are the mutation surface,
+// and they hand back the seam's real stores: those have no path options, so a
+// Write() through them fails by design. Consumer tests that mutate config use
+// NewIsolatedTestConfig instead, which is file-backed.
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
-	mock.ProjectEgressRulesFunc = cfg.ProjectEgressRules
-	mock.BundleDeclarationsFunc = cfg.BundleDeclarations
-
-	// Store accessors
+	// Store accessors (the raw-verb escape hatch)
 	mock.ProjectStoreFunc = cfg.ProjectStore
 	mock.SettingsStoreFunc = cfg.SettingsStore
 	mock.ProjectRootFunc = cfg.ProjectRoot
 
-	// Schema accessors
-	mock.ProjectFunc = cfg.Project
-	mock.SettingsFunc = cfg.Settings
+	// Project value accessors
+	mock.ProjectNameFunc = cfg.ProjectName
+	mock.AliasesFunc = cfg.Aliases
+	mock.BuildConfigFunc = cfg.BuildConfig
+	mock.AgentConfigFunc = cfg.AgentConfig
+	mock.WorkspaceDefaultModeFunc = cfg.WorkspaceDefaultMode
+	mock.SecurityConfigFunc = cfg.SecurityConfig
+	mock.HarnessConfigForFunc = cfg.HarnessConfigFor
+	mock.PostInitForFunc = cfg.PostInitFor
+	mock.PreRunForFunc = cfg.PreRunFor
+	mock.MonitorExtensionsFunc = cfg.MonitorExtensions
+	mock.ProjectEgressRulesFunc = cfg.ProjectEgressRules
+	mock.BundleDeclarationsFunc = cfg.BundleDeclarations
+
+	// Settings value accessors
 	mock.LoggingConfigFunc = cfg.LoggingConfig
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
+	mock.ControlPlaneSettingsFunc = cfg.ControlPlaneSettings
+	mock.FirewallEnabledFunc = cfg.FirewallEnabled
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
 
 	// Constants
@@ -126,4 +140,28 @@ func NewIsolatedTestConfig(t *testing.T) config.Config {
 	t.Helper()
 	env := testenv.New(t, testenv.WithConfig())
 	return env.Config()
+}
+
+// SecurityConfig builds the config.SecurityConfig value a test hands to code
+// that takes one directly (rather than through a Config double).
+//
+// With no mutators it is the "project declares no security block" baseline:
+// no firewall, no docker socket, no extra capabilities, and nil pointers that
+// let SecurityConfig's own nil-tolerant methods apply their defaults. That
+// baseline is what the vast majority of container-build tests want, so it
+// lives here once instead of being respelled as a bare struct literal at
+// every call site.
+//
+// Each mutator receives the value under construction, so a test that cares
+// about one field states only that field:
+//
+//	sec := configmocks.SecurityConfig(func(s *config.SecurityConfig) {
+//		s.CapAdd = []string{"NET_RAW"}
+//	})
+func SecurityConfig(mutators ...func(*config.SecurityConfig)) config.SecurityConfig {
+	var security config.SecurityConfig
+	for _, mutate := range mutators {
+		mutate(&security)
+	}
+	return security
 }

@@ -7,14 +7,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/schmitthub/clawker/internal/storage"
 )
 
 // The ONLY firewall Envoy-generation tests. Three STRICT rules (see
 // .claude/rules/envoy.md → Testing):
-//  1. input is real egress-rules YAML parsed via storage.New — the
-//     exact production read path, never structs/mocks/internals;
+//  1. input is real egress-rules YAML loaded through the package's own
+//     NewRulesStoreFromString seam — the exact production read path, never
+//     structs/mocks/internals;
 //  2. every case compares the COMPLETE generated config against a committed
 //     control (the testdata/envoy/<case>.envoy.golden file), never field-level
 //     structural assertions — a whole-config golden catches every chain, vhost,
@@ -277,7 +276,7 @@ rules:
 func TestGenerateEnvoyConfig(t *testing.T) {
 	cases := []struct {
 		name  string    // golden: testdata/envoy/<name>.envoy.golden
-		rules string    // real egress-rules YAML, parsed via storage.New
+		rules string    // real egress-rules YAML, loaded via NewRulesStoreFromString
 		als   ALSConfig // generation-side access-log config (not part of the rules sample)
 		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
 		// containing this substring (the "control" for a fail-closed case) and skips
@@ -434,9 +433,10 @@ rules:
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := storage.New[EgressRulesFile](tc.rules)
+			store, err := NewRulesStoreFromString(tc.rules)
 			require.NoError(t, err, "parse rules sample via the storage engine")
-			rules, _ := NormalizeAndDedup(store.Read().Rules)
+			rules, _, err := store.Rules()
+			require.NoError(t, err, "read rules from the seeded store")
 
 			out, _, err := GenerateEnvoyConfig(rules, testPorts(), tc.als)
 			if tc.wantErrContains != "" {

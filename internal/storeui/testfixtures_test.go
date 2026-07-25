@@ -55,6 +55,24 @@ type yamlTagStruct struct {
 	Skipped   string `yaml:"-"`
 }
 
+// kindsStruct carries one field per storage.FieldKind the editor renders, with
+// the `default` tags the unset-versus-set-empty display depends on.
+type kindsStruct struct {
+	Mode      string               `yaml:"mode"      label:"Workspace Mode" desc:"How the workspace is mounted" default:"bind"`
+	Enabled   *bool                `yaml:"enabled"                                                              default:"true"`
+	Count     int                  `yaml:"count"`
+	Timeout   time.Duration        `yaml:"timeout"                                                              default:"30s"`
+	Packages  []string             `yaml:"packages"                                                             default:"git,curl"`
+	Env       map[string]string    `yaml:"env"`
+	Rules     []ruleEntry          `yaml:"rules"`
+	Harnesses map[string]ruleEntry `yaml:"harnesses"`
+	SeenAt    time.Time            `yaml:"seen_at"`
+}
+
+type ruleEntry struct {
+	Dst string `yaml:"dst"`
+}
+
 // Schema implementations for test fixture types (required by Store[T Schema] constraint).
 func (s simpleStruct) Fields() storage.FieldSet       { return storage.NormalizeFields(s) }
 func (n nestedStruct) Fields() storage.FieldSet       { return storage.NormalizeFields(n) }
@@ -63,6 +81,9 @@ func (n nilPtrStructParent) Fields() storage.FieldSet { return storage.Normalize
 func (d durationStruct) Fields() storage.FieldSet     { return storage.NormalizeFields(d) }
 func (c complexStruct) Fields() storage.FieldSet      { return storage.NormalizeFields(c) }
 func (y yamlTagStruct) Fields() storage.FieldSet      { return storage.NormalizeFields(y) }
+
+//nolint:ireturn // storage.Schema mandates returning the FieldSet interface.
+func (k kindsStruct) Fields() storage.FieldSet { return storage.NormalizeFields(k) }
 
 // ptr is a generic helper for creating pointer values in tests.
 func ptr[T any](v T) *T {

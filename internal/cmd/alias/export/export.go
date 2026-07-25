@@ -60,14 +60,14 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 	// Collect aliases worth publishing: skip empty entries, shipped
 	// defaults (never baked into project files), and entries whose winning
 	// value already lives in the target itself.
-	active := cfg.Project().Aliases
+	active := cfg.Aliases()
 	exported := make(map[string]string, len(active))
 	names := make([]string, 0, len(active))
 	for name, expansion := range active {
 		if expansion == "" {
 			continue // empty — nothing to execute
 		}
-		winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(name))
+		winner, ok := cfg.ProjectStore().Provenance(shared.AliasKey(name)...)
 		if !ok || winner.Path == "" {
 			continue // shipped default — never published into project files
 		}
@@ -83,11 +83,7 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 	}
 	sort.Strings(names)
 
-	if err := shared.WriteAliases(ios.Out, target, func(m map[string]string) {
-		for name, expansion := range exported {
-			m[name] = expansion
-		}
-	}); err != nil {
+	if err = shared.WriteAliasEntries(ios.Out, cfg, target, exported); err != nil {
 		return err
 	}
 	fmt.Fprintf(ios.Out, "%s Exported %d alias(es): %s\n", cs.SuccessIcon(), len(names), strings.Join(names, ", "))

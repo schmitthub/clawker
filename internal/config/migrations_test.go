@@ -4,60 +4,152 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-// loadProjectWithMigrations writes yamlContent to a real clawker.yaml, loads it
-// through a file-backed Project store with the production migrations, and
-// returns the decoded snapshot plus the on-disk file content after load. A
-// migration that fires rewrites the file (content differs from input); a no-op
-// leaves it byte-identical. This drives the real migration through the public
-// load path, not a hand-rolled schema.
-func loadProjectWithMigrations(t *testing.T, yamlContent string) (*config.Project, string) {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o644))
-
-	store, err := storage.New[config.Project]("",
-		storage.WithFilenames("clawker.yaml"),
-		storage.WithPaths(dir),
-		storage.WithMigrations(config.ProjectMigrations()...),
-	)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	return store.Read(), string(data)
+// projectFixture is an isolated workspace whose config files sit exactly where
+// the production loader looks for them: the walk-up root (also CWD) holds the
+// project file and its local override, and the isolated config dir holds the
+// user-level file. Every load goes through [config.NewConfig], so the rows
+// below exercise the wiring the CLI itself uses — dual-placement discovery, the
+// schema defaults layer, the migration chain, the $schema header stamped onto
+// rewrites, and front-door validation. A filename or option that drifts out of
+// NewConfig fails these tests instead of quietly discovering nothing.
+type projectFixture struct {
+	env  *testenv.Env
+	root string // walk-up anchor, also CWD
 }
 
-func instructions(t *testing.T, p *config.Project) *config.DockerInstructions {
+func newProjectFixture(t *testing.T) *projectFixture {
 	t.Helper()
-	require.NotNil(t, p.Build.Instructions, "build.instructions should be present")
-	return p.Build.Instructions
+	env := testenv.New(t)
+	root := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	t.Chdir(root)
+	return &projectFixture{env: env, root: root}
 }
 
-// loadProjectMigrationErr loads yamlContent through the file-backed Project
-// store with production migrations and asserts construction fails, returning the
-// error string. Used for migrations that reject a malformed legacy shape.
+// writeProject seeds the project file at the walk-up root and returns its path.
+func (f *projectFixture) writeProject(t *testing.T, content string) string {
+	t.Helper()
+	f.env.WriteYAML(t, testenv.ProjectConfig, f.root, content)
+	return f.projectPath()
+}
+
+// writeLocal seeds the local override at the walk-up root — the
+// higher-precedence layer of that same level — and returns its path.
+func (f *projectFixture) writeLocal(t *testing.T, content string) string {
+	t.Helper()
+	f.env.WriteYAML(t, testenv.ProjectConfigLocal, f.root, content)
+	return f.localPath()
+}
+
+// writeUser seeds the user-level project file in the isolated config dir: the
+// lowest-priority project layer, probed without dual placement.
+func (f *projectFixture) writeUser(t *testing.T, content string) string {
+	t.Helper()
+	path := f.userPath()
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
+// projectPath / localPath mirror the flat dotfile placement testenv writes and
+// walk-up discovery probes.
+func (f *projectFixture) projectPath() string {
+	return filepath.Join(f.root, "."+consts.ProjectConfigFile)
+}
+
+func (f *projectFixture) localPath() string {
+	return filepath.Join(f.root, "."+consts.ProjectLocalConfigFile)
+}
+
+func (f *projectFixture) userPath() string {
+	return filepath.Join(f.env.Dirs.Config, consts.ProjectConfigFile)
+}
+
+// load runs the production config load against the fixture.
+//
+//nolint:ireturn // config exports only the Config interface; configImpl is package-private.
+func (f *projectFixture) load(t *testing.T) config.Config {
+	t.Helper()
+	cfg, err := config.NewConfig(config.WithProjectRoot(f.root))
+	require.NoError(t, err)
+	return cfg
+}
+
+// loadProject writes yamlContent as the project file, loads it through the
+// production config path, and returns the loaded Config plus the on-disk file
+// content after the load. A migration that fires rewrites the file (content
+// differs from input); a no-op leaves it byte-identical.
+//
+//nolint:ireturn // config exports only the Config interface; configImpl is package-private.
+func loadProject(t *testing.T, yamlContent string) (config.Config, string) {
+	t.Helper()
+	f := newProjectFixture(t)
+	f.writeProject(t, yamlContent)
+	cfg := f.load(t)
+	return cfg, readFile(t, f.projectPath())
+}
+
+// instructions reads the build.instructions block through the Config accessor
+// consumers use, requiring it to be present.
+func instructions(t *testing.T, cfg config.Config) *config.DockerInstructions {
+	t.Helper()
+	inst := cfg.BuildConfig().Instructions
+	require.NotNil(t, inst, "build.instructions should be present")
+	return inst
+}
+
+// defaultHarnessEntry reads the harnesses.<default> map entry — the destination
+// every legacy agent.claude_code block migrates into — requiring it to exist.
+// It goes through the store rather than Config.HarnessConfigFor because that
+// accessor falls back to the legacy block for the default harness, so it cannot
+// tell a completed move from an untouched file.
+func defaultHarnessEntry(t *testing.T, cfg config.Config) config.HarnessConfig {
+	t.Helper()
+	hc, err := storage.Get[config.HarnessConfig](cfg.ProjectStore(), "harnesses", consts.DefaultHarnessName)
+	require.NoErrorf(t, err, "harnesses.%s should exist", consts.DefaultHarnessName)
+	return hc
+}
+
+// requireLegacyBlockGoneFromFiles asserts no discovered FILE layer still spells
+// agent.claude_code. Absence from the merged tree is the wrong question under
+// the production load: the schema defaults layer declares agent.claude_code, so
+// the key keeps resolving after the move — what the migration owes is that no
+// file still carries it.
+func requireLegacyBlockGoneFromFiles(t *testing.T, cfg config.Config) {
+	t.Helper()
+	for _, layer := range cfg.ProjectStore().Layers() {
+		if layer.Path == "" {
+			continue // virtual defaults layer — declares the legacy block by design
+		}
+		agent, ok := layer.Data["agent"].(map[string]any)
+		if !ok {
+			continue
+		}
+		assert.NotContainsf(t, agent, "claude_code", "agent.claude_code must be gone from %s", layer.Path)
+	}
+}
+
+// loadProjectMigrationErr loads yamlContent through the production config path
+// and asserts construction fails, returning the error string. Used for
+// migrations that reject a malformed legacy shape.
 func loadProjectMigrationErr(t *testing.T, yamlContent string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o644))
+	f := newProjectFixture(t)
+	f.writeProject(t, yamlContent)
 
-	_, err := storage.New[config.Project]("",
-		storage.WithFilenames("clawker.yaml"),
-		storage.WithPaths(dir),
-		storage.WithMigrations(config.ProjectMigrations()...),
-	)
+	_, err := config.NewConfig(config.WithProjectRoot(f.root))
 	require.Error(t, err, "expected migration to reject the input")
 	return err.Error()
 }
@@ -72,9 +164,9 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
     root_run:
       - cmd: apt-get update
 `
-		snap, after := loadProjectWithMigrations(t, in)
+		cfg, after := loadProject(t, in)
 
-		inst := instructions(t, snap)
+		inst := instructions(t, cfg)
 		assert.Equal(t, []string{"npm ci", "pip install -r requirements.txt"}, inst.UserRun)
 		assert.Equal(t, []string{"apt-get update"}, inst.RootRun)
 		assert.NotEqual(t, in, after, "migration should have rewritten the file")
@@ -88,8 +180,8 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
       - npm ci
       - pip install
 `
-		snap, after := loadProjectWithMigrations(t, in)
-		assert.Equal(t, []string{"npm ci", "pip install"}, instructions(t, snap).UserRun)
+		cfg, after := loadProject(t, in)
+		assert.Equal(t, []string{"npm ci", "pip install"}, instructions(t, cfg).UserRun)
 		assert.Equal(t, in, after, "already-migrated file must not be rewritten")
 	})
 
@@ -101,8 +193,8 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
       - alpine: apk add python3
       - cmd: ""
 `
-		snap, after := loadProjectWithMigrations(t, in)
-		assert.Equal(t, []string{"npm ci"}, instructions(t, snap).UserRun)
+		cfg, after := loadProject(t, in)
+		assert.Equal(t, []string{"npm ci"}, instructions(t, cfg).UserRun)
 		assert.NotEqual(t, in, after, "migration should have rewritten the file")
 	})
 
@@ -110,7 +202,7 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
 		const in = `agent:
   editor: vim
 `
-		_, after := loadProjectWithMigrations(t, in)
+		_, after := loadProject(t, in)
 		assert.Equal(t, in, after, "file without build must be untouched")
 	})
 
@@ -119,7 +211,7 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
   packages:
     - git
 `
-		_, after := loadProjectWithMigrations(t, in)
+		_, after := loadProject(t, in)
 		assert.Equal(t, in, after, "file without instructions must be untouched")
 	})
 
@@ -128,7 +220,7 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
   instructions:
     user_run: []
 `
-		_, after := loadProjectWithMigrations(t, in)
+		_, after := loadProject(t, in)
 		assert.Equal(t, in, after, "empty list must not trigger a rewrite")
 	})
 
@@ -143,8 +235,8 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
           MESSAGE="hi" && \
           echo "${MESSAGE}"
 `
-		snap, after := loadProjectWithMigrations(t, in)
-		root := instructions(t, snap).RootRun
+		cfg, after := loadProject(t, in)
+		root := instructions(t, cfg).RootRun
 		require.Len(t, root, 2)
 		assert.Contains(t, root[0], "ARCH=$(dpkg --print-architecture)")
 		assert.Contains(t, root[0], "curl -fsSL")
@@ -160,8 +252,8 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
       - alpine: apk add python3
       - cmd: ""
 `
-		snap, after := loadProjectWithMigrations(t, in)
-		assert.Empty(t, instructions(t, snap).UserRun)
+		cfg, after := loadProject(t, in)
+		assert.Empty(t, instructions(t, cfg).UserRun)
 		assert.NotContains(t, after, "cmd:", "legacy maps must be gone from disk")
 		assert.NotContains(t, after, "alpine:", "dropped variant must be gone from disk")
 	})
@@ -182,11 +274,11 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
 // layer, not just the merged winner: the same legacy list-of-maps shape lives in
 // two layer files, and the migration must convert AND route the result back to
 // each owning file independently — preserving each file's other content and
-// leaving a clean file byte-identical. A second load is byte-stable.
+// leaving a clean file byte-identical. A second load is byte-stable. The three
+// layers are the three a production load discovers: the local override, the
+// project file, and the user-level file in the config dir.
 func TestProjectMigration_LayeredRouting(t *testing.T) {
-	hiDir := t.TempDir()
-	loDir := t.TempDir()
-	cleanDir := t.TempDir()
+	f := newProjectFixture(t)
 
 	const hiYAML = `# high layer
 build:
@@ -206,27 +298,13 @@ build:
 build:
   packages: [git] # nothing to migrate
 `
-	hiPath := filepath.Join(hiDir, "clawker.yaml")
-	loPath := filepath.Join(loDir, "clawker.yaml")
-	cleanPath := filepath.Join(cleanDir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(hiPath, []byte(hiYAML), 0o644))
-	require.NoError(t, os.WriteFile(loPath, []byte(loYAML), 0o644))
-	require.NoError(t, os.WriteFile(cleanPath, []byte(cleanYAML), 0o644))
+	hiPath := f.writeLocal(t, hiYAML)
+	loPath := f.writeProject(t, loYAML)
+	cleanPath := f.writeUser(t, cleanYAML)
 
-	cleanBefore, err := os.ReadFile(cleanPath)
-	require.NoError(t, err)
+	cleanBefore := readFile(t, cleanPath)
 
-	newStore := func() *storage.Store[config.Project] {
-		s, sErr := storage.New[config.Project]("",
-			storage.WithFilenames("clawker.yaml"),
-			storage.WithPaths(hiDir, loDir, cleanDir), // first = highest priority
-			storage.WithMigrations(config.ProjectMigrations()...),
-		)
-		require.NoError(t, sErr)
-		return s
-	}
-
-	_ = newStore()
+	f.load(t)
 
 	hiAfter := readFile(t, hiPath)
 	loAfter := readFile(t, loPath)
@@ -242,54 +320,42 @@ build:
 	assert.Contains(t, loAfter, "# low layer", "low layer comment lost")
 
 	// File with nothing to migrate is left byte-identical.
-	cleanAfter, err := os.ReadFile(cleanPath)
-	require.NoError(t, err)
-	assert.Equal(t, cleanBefore, cleanAfter, "clean layer was rewritten")
+	assert.Equal(t, cleanBefore, readFile(t, cleanPath), "clean layer was rewritten")
 
 	// Idempotent: a second load re-runs migrations but changes nothing.
-	_ = newStore()
+	f.load(t)
 	assert.Equal(t, hiAfter, readFile(t, hiPath), "high layer not byte-stable on reload")
 	assert.Equal(t, loAfter, readFile(t, loPath), "low layer not byte-stable on reload")
-	cleanReload, err := os.ReadFile(cleanPath)
-	require.NoError(t, err)
-	assert.Equal(t, cleanBefore, cleanReload, "clean layer not byte-stable on reload")
+	assert.Equal(t, cleanBefore, readFile(t, cleanPath), "clean layer not byte-stable on reload")
 }
 
-// loadSettingsWithMigrations is the settings analogue of
-// loadProjectWithMigrations.
-func loadSettingsWithMigrations(t *testing.T, yamlContent string) string {
+// loadSettings is the settings analogue of loadProject: it writes yamlContent
+// as the user settings file in the isolated config dir — the settings store's
+// one discoverable location — runs the production load, and returns the
+// on-disk content afterwards.
+func loadSettings(t *testing.T, yamlContent string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o644))
+	env := testenv.New(t)
+	env.WriteYAML(t, testenv.Settings, "", yamlContent)
 
-	_, err := storage.New[config.Settings]("",
-		storage.WithFilenames("settings.yaml"),
-		storage.WithPaths(dir),
-		storage.WithMigrations(config.SettingsMigrations()...),
-	)
+	_, err := config.NewConfig()
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	return string(data)
+	return readFile(t, filepath.Join(env.Dirs.Config, consts.SettingsFile))
 }
 
 // TestSettingsLoadDoesNotWriteKeys pins the write-ownership contract:
 // config load never invents state — a settings.yaml without a key stays
-// byte-identical across loads (migrations rewrite only what they match).
+// byte-identical across loads (migrations rewrite only what they match, and
+// the schema defaults layer is never materialized into the user's file).
 func TestSettingsLoadDoesNotWriteKeys(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.yaml")
+	env := testenv.New(t)
 	const in = "host_proxy:\n  port: 9999\n"
-	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+	env.WriteYAML(t, testenv.Settings, "", in)
+	path := filepath.Join(env.Dirs.Config, consts.SettingsFile)
 
 	load := func() {
-		_, err := storage.New[config.Settings]("",
-			storage.WithFilenames("settings.yaml"),
-			storage.WithPaths(dir),
-			storage.WithMigrations(config.SettingsMigrations()...),
-		)
+		_, err := config.NewConfig()
 		require.NoError(t, err)
 	}
 	load()
@@ -309,7 +375,7 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
   loki_port: 3100
   jaeger_port: 16686
 `
-		after := loadSettingsWithMigrations(t, in)
+		after := loadSettings(t, in)
 		assert.NotContains(t, after, "otel_cp_port", "renamed key must be gone")
 		assert.NotContains(t, after, "loki_port", "dead key must be removed")
 		assert.NotContains(t, after, "jaeger_port", "dead key must be removed")
@@ -324,7 +390,7 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
   otel_cp_port: 5319
   otel_infra_port: 7000
 `
-		after := loadSettingsWithMigrations(t, in)
+		after := loadSettings(t, in)
 		assert.NotContains(t, after, "otel_cp_port", "legacy key must be dropped on collision")
 		assert.Contains(t, after, "otel_infra_port: 7000",
 			"existing otel_infra_port value must be kept, not overwritten")
@@ -336,48 +402,45 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 		const in = `host_proxy:
   port: 9999
 `
-		after := loadSettingsWithMigrations(t, in)
+		after := loadSettings(t, in)
 		assert.Equal(t, in, after, "file without monitoring must be untouched")
 	})
 }
 
-// TestSettingsMigration_LayeredRouting proves the remove+rename settings
-// migration runs against each layer file and routes the cleaned result back to
-// its origin.
-func TestSettingsMigration_LayeredRouting(t *testing.T) {
-	hiDir := t.TempDir()
-	loDir := t.TempDir()
+// TestMigrations_RouteToTheOwningFile proves one load cleans each schema's
+// legacy keys in the file that owns them and never writes one schema's keys
+// into the other's file — both files live in the config dir, so a rewrite
+// aimed at the wrong destination lands next door instead of failing. The
+// settings store has exactly one discoverable layer in production (the config
+// dir), so this is where the settings chain's routing is observable;
+// multi-layer routing within the project schema is covered by
+// TestProjectMigration_LayeredRouting and TestLegacyKeyMigrations_LayeredRouting.
+func TestMigrations_RouteToTheOwningFile(t *testing.T) {
+	f := newProjectFixture(t)
 
-	const hiYAML = `monitoring:
+	const settingsYAML = `monitoring:
   otel_cp_port: 5111
   loki_port: 3100
 `
-	const loYAML = `monitoring:
-  otel_cp_port: 5222
-  jaeger_port: 16686
+	const userProjectYAML = `build:
+  image: legacy-image
 `
-	hiPath := filepath.Join(hiDir, "settings.yaml")
-	loPath := filepath.Join(loDir, "settings.yaml")
-	require.NoError(t, os.WriteFile(hiPath, []byte(hiYAML), 0o644))
-	require.NoError(t, os.WriteFile(loPath, []byte(loYAML), 0o644))
+	f.env.WriteYAML(t, testenv.Settings, "", settingsYAML)
+	userPath := f.writeUser(t, userProjectYAML)
+	settingsPath := filepath.Join(f.env.Dirs.Config, consts.SettingsFile)
 
-	_, err := storage.New[config.Settings]("",
-		storage.WithFilenames("settings.yaml"),
-		storage.WithPaths(hiDir, loDir),
-		storage.WithMigrations(config.SettingsMigrations()...),
-	)
-	require.NoError(t, err)
+	_ = captureStderr(t, func() { f.load(t) })
 
-	hiAfter := readFile(t, hiPath)
-	loAfter := readFile(t, loPath)
+	settingsAfter := readFile(t, settingsPath)
+	userAfter := readFile(t, userPath)
 
-	assert.NotContains(t, hiAfter, "otel_cp_port")
-	assert.NotContains(t, hiAfter, "loki_port")
-	assert.Contains(t, hiAfter, "otel_infra_port: 5111")
+	assert.NotContains(t, settingsAfter, "otel_cp_port")
+	assert.NotContains(t, settingsAfter, "loki_port")
+	assert.Contains(t, settingsAfter, "otel_infra_port: 5111")
+	assert.NotContains(t, settingsAfter, "build", "project keys must not land in the settings file")
 
-	assert.NotContains(t, loAfter, "otel_cp_port")
-	assert.NotContains(t, loAfter, "jaeger_port")
-	assert.Contains(t, loAfter, "otel_infra_port: 5222")
+	assert.NotContains(t, userAfter, "image:")
+	assert.NotContains(t, userAfter, "monitoring", "settings keys must not land in the project file")
 }
 
 func readFile(t *testing.T, path string) string {
@@ -421,10 +484,10 @@ agent:
     use_host_auth: true
     mount_projects: false
 `
-		var snap *config.Project
+		var cfg config.Config
 		var after string
 		notice := captureStderr(t, func() {
-			snap, after = loadProjectWithMigrations(t, in)
+			cfg, after = loadProject(t, in)
 		})
 
 		// Legacy keys gone from disk; surviving siblings intact.
@@ -445,28 +508,38 @@ agent:
 
 		// The surviving claude_code field rides the rewrite migration into
 		// the harnesses map — WITHOUT the stripped use_host_auth key.
-		require.Contains(t, snap.Harnesses, consts.DefaultHarnessName)
-		hcMoved := snap.Harnesses[consts.DefaultHarnessName]
+		hcMoved := defaultHarnessEntry(t, cfg)
 		assert.False(t, hcMoved.MountProjectsEnabled())
 		assert.Contains(t, after, "harnesses:")
 		assert.NotContains(t, after, "claude_code:")
 	})
 
 	t.Run("prunes parents the strip emptied", func(t *testing.T) {
+		// Loaded through ProjectConfigExistsIn — the package's other production
+		// constructor that wires the migration chain, and the one that does it
+		// WITHOUT a $schema header (NewConfig always stamps one). That makes it
+		// the path where the byte contract for a fully-emptied file is
+		// observable: an empty file, not a "{}" stub, not residue. The
+		// header-stamped twin of the same contract is
+		// TestMigration_FullyEmptiedFileIsNotBraceStub.
 		const in = `build:
   image: golang:1.25
 agent:
   claude_code:
     use_host_auth: false
 `
-		var after string
+		f := newProjectFixture(t)
+		path := f.writeProject(t, in)
+
 		_ = captureStderr(t, func() {
-			_, after = loadProjectWithMigrations(t, in)
+			exists, err := config.ProjectConfigExistsIn(f.root)
+			require.NoError(t, err)
+			require.True(t, exists)
 		})
+
+		after := readFile(t, path)
 		assert.NotContains(t, after, "build:", "emptied build block must be pruned, not left as {}")
-		assert.NotContains(t, after, "agent:", "emptied agent block must be pruned, not left as {}")
-		// The strip emptied the whole document and no header is configured:
-		// the exact contract is an empty file — not a {} stub, not residue.
+		assert.NotContains(t, after, "agent:", "emptied agent block must be pruned")
 		assert.Empty(t, after, "a file emptied of all content must be written as an empty file")
 	})
 
@@ -477,28 +550,19 @@ agent:
 `
 		var after string
 		notice := captureStderr(t, func() {
-			_, after = loadProjectWithMigrations(t, in)
+			_, after = loadProject(t, in)
 		})
 		assert.Equal(t, in, after, "file without legacy keys must not be rewritten")
 		assert.Empty(t, notice, "no notice without legacy keys")
 	})
 
 	t.Run("byte-stable and silent on reload", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "clawker.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("build:\n  image: golang:1.25\n  packages: [git]\n"), 0o644))
+		f := newProjectFixture(t)
+		path := f.writeProject(t, "build:\n  image: golang:1.25\n  packages: [git]\n")
 
-		load := func() {
-			_, err := storage.New[config.Project]("",
-				storage.WithFilenames("clawker.yaml"),
-				storage.WithPaths(dir),
-				storage.WithMigrations(config.ProjectMigrations()...),
-			)
-			require.NoError(t, err)
-		}
-		_ = captureStderr(t, load)
+		_ = captureStderr(t, func() { f.load(t) })
 		first := readFile(t, path)
-		notice := captureStderr(t, load)
+		notice := captureStderr(t, func() { f.load(t) })
 		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
 		assert.Empty(t, notice, "second load must not re-notice")
 	})
@@ -519,19 +583,18 @@ agent:
     mount_projects: false
     post_init: echo hi
 `
-		var snap *config.Project
+		var cfg config.Config
 		var after string
 		notice := captureStderr(t, func() {
-			snap, after = loadProjectWithMigrations(t, in)
+			cfg, after = loadProject(t, in)
 		})
 
 		// Every legacy field lands on the map entry (same HarnessConfig shape).
-		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
-		require.NotNil(t, hc)
+		hc := defaultHarnessEntry(t, cfg)
 		assert.Equal(t, config.ConfigStrategyFresh, hc.ConfigStrategy())
 		assert.False(t, hc.MountProjectsEnabled())
 		assert.Equal(t, "echo hi", hc.PostInit)
-		assert.Nil(t, snap.Agent.ClaudeCode, "legacy shim must be empty after the move")
+		requireLegacyBlockGoneFromFiles(t, cfg)
 
 		// On disk: legacy key gone, map entry present, comments elsewhere
 		// preserved (node-native rewrite drags untouched comments along).
@@ -546,7 +609,7 @@ agent:
 	})
 
 	t.Run("existing harnesses entry out-ranks legacy block", func(t *testing.T) {
-		// Project.HarnessConfigFor consults the harnesses map before the
+		// Config.HarnessConfigFor consults the harnesses map before the
 		// legacy shim, so when both exist the legacy block was already dead —
 		// it is dropped, never merged over the map entry.
 		const in = `harnesses:
@@ -557,14 +620,13 @@ agent:
     mount_projects: true
     post_init: legacy-only
 `
-		var snap *config.Project
+		var cfg config.Config
 		var after string
 		notice := captureStderr(t, func() {
-			snap, after = loadProjectWithMigrations(t, in)
+			cfg, after = loadProject(t, in)
 		})
 
-		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
-		require.NotNil(t, hc)
+		hc := defaultHarnessEntry(t, cfg)
 		assert.False(t, hc.MountProjectsEnabled(), "map entry value must survive untouched")
 		assert.Empty(t, hc.PostInit, "legacy-only value must NOT be merged into the map entry")
 		assert.NotContains(t, after, "claude_code:")
@@ -578,7 +640,7 @@ agent:
 `
 		var after string
 		notice := captureStderr(t, func() {
-			_, after = loadProjectWithMigrations(t, in)
+			_, after = loadProject(t, in)
 		})
 		assert.NotContains(t, after, "claude_code:")
 		assert.NotContains(t, after, "harnesses:", "an empty legacy block must not spawn a map entry")
@@ -598,21 +660,21 @@ agent:
     mount_projects: false
     use_hosts_auth: true
 `
-		var snap *config.Project
-		var after string
-		notice := captureStderr(t, func() {
-			snap, after = loadProjectWithMigrations(t, in)
-		})
+		f := newProjectFixture(t)
+		path := f.writeProject(t, in)
 
-		require.Contains(t, snap.Harnesses, consts.DefaultHarnessName)
-		hc := snap.Harnesses[consts.DefaultHarnessName]
+		var cfg config.Config
+		notice := captureStderr(t, func() { cfg = f.load(t) })
+		after := readFile(t, path)
+
+		hc := defaultHarnessEntry(t, cfg)
 		assert.False(t, hc.MountProjectsEnabled(), "valid fields must still move")
 
 		assert.Contains(t, after, "harnesses:")
 		assert.NotContains(t, after, "use_hosts_auth", "unknown key must not ride into the strict node")
 		assert.Contains(t, notice, "agent.claude_code.use_hosts_auth = true",
 			"dropped key must be surfaced with its value, not silently discarded")
-		assert.Contains(t, notice, "clawker.yaml", "notice must name the owning file")
+		assert.Contains(t, notice, path, "notice must name the owning file")
 	})
 
 	t.Run("drops invalid config.strategy instead of moving it", func(t *testing.T) {
@@ -625,14 +687,13 @@ agent:
       strategy: sideways
     mount_projects: false
 `
-		var snap *config.Project
+		var cfg config.Config
 		var after string
 		notice := captureStderr(t, func() {
-			snap, after = loadProjectWithMigrations(t, in)
+			cfg, after = loadProject(t, in)
 		})
 
-		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
-		require.NotNil(t, hc)
+		hc := defaultHarnessEntry(t, cfg)
 		assert.Equal(t, config.ConfigStrategyCopy, hc.ConfigStrategy(), "invalid strategy falls back to default")
 		assert.Contains(t, after, "harnesses:")
 		assert.NotContains(t, after, "sideways")
@@ -646,7 +707,7 @@ agent:
 `
 		var after string
 		notice := captureStderr(t, func() {
-			_, after = loadProjectWithMigrations(t, in)
+			_, after = loadProject(t, in)
 		})
 		assert.NotContains(t, after, "claude_code:")
 		assert.NotContains(t, after, "harnesses:", "nothing valid remained — no entry must be spawned")
@@ -666,19 +727,10 @@ agent:
   claude_code:
     # mount_projects: false
 `
-		dir := t.TempDir()
-		path := filepath.Join(dir, "clawker.yaml")
-		require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+		f := newProjectFixture(t)
+		path := f.writeProject(t, in)
 
-		load := func() {
-			_, err := storage.New[config.Project]("",
-				storage.WithFilenames("clawker.yaml"),
-				storage.WithPaths(dir),
-				storage.WithMigrations(config.ProjectMigrations()...),
-			)
-			require.NoError(t, err, "a null legacy block must migrate, not error")
-		}
-		notice := captureStderr(t, load)
+		notice := captureStderr(t, func() { f.load(t) })
 
 		after := readFile(t, path)
 		assert.NotContains(t, after, "claude_code:")
@@ -687,7 +739,7 @@ agent:
 			"null and {} spellings must produce the same removed-empty-block notice")
 
 		// Run 2 — the brick shape is both runs failing identically.
-		notice = captureStderr(t, load)
+		notice = captureStderr(t, func() { f.load(t) })
 		assert.Equal(t, after, readFile(t, path), "second load must be byte-stable")
 		assert.Empty(t, notice, "second load must not re-notice")
 	})
@@ -703,17 +755,12 @@ agent:
   claude_code:
     env: notamap
 `
-		dir := t.TempDir()
-		path := filepath.Join(dir, "clawker.yaml")
-		require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
+		f := newProjectFixture(t)
+		f.writeProject(t, in)
 
 		var err error
 		notice := captureStderr(t, func() {
-			_, err = storage.New[config.Project]("",
-				storage.WithFilenames("clawker.yaml"),
-				storage.WithPaths(dir),
-				storage.WithMigrations(config.ProjectMigrations()...),
-			)
+			_, err = config.NewConfig(config.WithProjectRoot(f.root))
 		})
 		require.Error(t, err, "an undecodable known-field value keeps failing the load (shim parity)")
 		assert.NotContains(t, notice, "moved project config",
@@ -729,28 +776,19 @@ harnesses:
 `
 		var after string
 		notice := captureStderr(t, func() {
-			_, after = loadProjectWithMigrations(t, in)
+			_, after = loadProject(t, in)
 		})
 		assert.Equal(t, in, after, "file without the legacy key must not be rewritten")
 		assert.Empty(t, notice)
 	})
 
 	t.Run("idempotent across reloads", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "clawker.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("agent:\n  claude_code:\n    mount_projects: false\n"), 0o644))
+		f := newProjectFixture(t)
+		path := f.writeProject(t, "agent:\n  claude_code:\n    mount_projects: false\n")
 
-		load := func() {
-			_, err := storage.New[config.Project]("",
-				storage.WithFilenames("clawker.yaml"),
-				storage.WithPaths(dir),
-				storage.WithMigrations(config.ProjectMigrations()...),
-			)
-			require.NoError(t, err)
-		}
-		_ = captureStderr(t, load)
+		_ = captureStderr(t, func() { f.load(t) })
 		first := readFile(t, path)
-		notice := captureStderr(t, load)
+		notice := captureStderr(t, func() { f.load(t) })
 		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
 		assert.Empty(t, notice, "second load must not re-notice")
 	})
@@ -761,8 +799,7 @@ harnesses:
 // the user config-dir clawker.yaml) is cleaned in each owning file, exactly
 // like the run-instructions precedent.
 func TestLegacyKeyMigrations_LayeredRouting(t *testing.T) {
-	hiDir := t.TempDir()
-	loDir := t.TempDir()
+	f := newProjectFixture(t)
 
 	const hiYAML = `# hi layer
 build:
@@ -781,19 +818,10 @@ agent:
   claude_code:
     mount_projects: false
 `
-	hiPath := filepath.Join(hiDir, "clawker.yaml")
-	loPath := filepath.Join(loDir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(hiPath, []byte(hiYAML), 0o644))
-	require.NoError(t, os.WriteFile(loPath, []byte(loYAML), 0o644))
+	hiPath := f.writeLocal(t, hiYAML)
+	loPath := f.writeProject(t, loYAML)
 
-	notice := captureStderr(t, func() {
-		_, err := storage.New[config.Project]("",
-			storage.WithFilenames("clawker.yaml"),
-			storage.WithPaths(hiDir, loDir),
-			storage.WithMigrations(config.ProjectMigrations()...),
-		)
-		require.NoError(t, err)
-	})
+	notice := captureStderr(t, func() { f.load(t) })
 
 	hiAfter := readFile(t, hiPath)
 	loAfter := readFile(t, loPath)
@@ -829,22 +857,18 @@ agent:
 // ever remove the key again. This drives the full NewConfig path (migrations
 // + validation + header) and proves both loads succeed.
 func TestNewConfig_MigratedLegacyBlockSurvivesValidation(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
 	const in = `agent:
   claude_code:
     mount_projects: false
     use_hosts_auth: true
 `
-	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
-	t.Setenv(consts.EnvConfigDir, dir)
+	f := newProjectFixture(t)
+	path := f.writeProject(t, in)
 
 	var cfg config.Config
-	var err error
-	notice := captureStderr(t, func() { cfg, err = config.NewConfig() })
-	require.NoError(t, err, "first load must survive its own migration rewrite")
+	notice := captureStderr(t, func() { cfg = f.load(t) })
 
-	hc := cfg.Project().HarnessConfigFor(consts.DefaultHarnessName)
+	hc := cfg.HarnessConfigFor(consts.DefaultHarnessName)
 	require.NotNil(t, hc)
 	assert.False(t, hc.MountProjectsEnabled(), "valid legacy fields must move to the harnesses entry")
 
@@ -855,8 +879,7 @@ func TestNewConfig_MigratedLegacyBlockSurvivesValidation(t *testing.T) {
 	assert.Contains(t, notice, path, "notice must name the rewritten file")
 
 	// THE brick was run 2: the rewritten file must pass validation forever after.
-	notice = captureStderr(t, func() { _, err = config.NewConfig() })
-	require.NoError(t, err, "second load must succeed against the migrated file")
+	notice = captureStderr(t, func() { f.load(t) })
 	assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
 	assert.Empty(t, notice, "second load must not re-notice")
 }
@@ -872,33 +895,29 @@ func TestNewConfig_MigrationRewriteFailureDegrades(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("read-only dir permissions are ineffective for root")
 	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
 	const in = `build:
   image: golang:1.25
 agent:
   claude_code:
     mount_projects: false
 `
-	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
-	t.Setenv(consts.EnvConfigDir, dir)
-	require.NoError(t, os.Chmod(dir, 0o555))
+	f := newProjectFixture(t)
+	path := f.writeProject(t, in)
+	require.NoError(t, os.Chmod(f.root, 0o555))
 	t.Cleanup(func() {
 		// Best-effort: restore so TempDir cleanup can remove the tree.
-		if chErr := os.Chmod(dir, 0o755); chErr != nil {
+		if chErr := os.Chmod(f.root, 0o755); chErr != nil {
 			t.Logf("restoring dir mode: %v", chErr)
 		}
 	})
 
 	var cfg config.Config
-	var err error
-	notice := captureStderr(t, func() { cfg, err = config.NewConfig() })
-	require.NoError(t, err, "an unwritable config dir must degrade the load, not fail it")
+	notice := captureStderr(t, func() { cfg = f.load(t) })
 
 	// The migration applied in-memory: the legacy block is visible through the
 	// harnesses map even though the file rewrite never landed.
-	require.Contains(t, cfg.Project().Harnesses, consts.DefaultHarnessName)
-	migratedEntry := cfg.Project().Harnesses[consts.DefaultHarnessName]
+	migratedEntry := cfg.HarnessConfigFor(consts.DefaultHarnessName)
+	require.NotNil(t, migratedEntry, "the migrated harnesses entry must be visible in-memory")
 	assert.False(t, migratedEntry.MountProjectsEnabled())
 
 	assert.Equal(t, in, readFile(t, path), "file must be untouched when the rewrite fails")
@@ -910,37 +929,31 @@ agent:
 		"must not claim a move that never landed on disk")
 
 	// Every subsequent load degrades identically instead of bricking.
-	_ = captureStderr(t, func() { _, err = config.NewConfig() })
-	require.NoError(t, err, "later loads must keep degrading, not fail")
+	_ = captureStderr(t, func() { f.load(t) })
 }
 
 // TestMigration_FullyEmptiedFileIsNotBraceStub: a config whose only content
-// was legacy keys must migrate to an empty file (or header-only, when a
-// header is configured), never to a literal "{}" — which users read as
-// clawker having eaten the file.
+// was legacy keys must migrate to the header comment block NewConfig stamps
+// (an empty file when no header is configured — see the "prunes parents the
+// strip emptied" row), never to a literal "{}" — which users read as clawker
+// having eaten the file.
 func TestMigration_FullyEmptiedFileIsNotBraceStub(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("build:\n  image: golang:1.25\n"), 0o644))
+	f := newProjectFixture(t)
+	path := f.writeProject(t, "build:\n  image: golang:1.25\n")
 
-	load := func() {
-		_, err := storage.New[config.Project]("",
-			storage.WithFilenames("clawker.yaml"),
-			storage.WithPaths(dir),
-			storage.WithMigrations(config.ProjectMigrations()...),
-			storage.WithHeader("yaml-language-server: $schema=https://example.test/clawker.json"),
-		)
-		require.NoError(t, err)
-	}
-	_ = captureStderr(t, load)
+	_ = captureStderr(t, func() { f.load(t) })
 
 	after := readFile(t, path)
-	// Byte-exact contract: the emptied file is the header comment block and
-	// nothing else — no {} stub, no residue.
-	assert.Equal(t, "# yaml-language-server: $schema=https://example.test/clawker.json\n", after,
-		"fully-migrated file must be exactly the header comment block")
+	// Byte-exact contract: the emptied file is the schema header comment block
+	// and nothing else — no {} stub, no residue.
+	lines := strings.Split(strings.TrimSuffix(after, "\n"), "\n")
+	require.Len(t, lines, 1, "fully-migrated file must hold nothing but the header comment block")
+	assert.True(t, strings.HasPrefix(lines[0], "#"), "the sole surviving line must be a comment")
+	assert.Contains(t, lines[0],
+		consts.SchemaURL(consts.ProjectSchemaFile, consts.SchemaRef(build.Version, build.Revision)),
+		"the emptied file must keep the $schema header every write stamps")
 
 	// The header-only file must reload cleanly and stay byte-stable.
-	_ = captureStderr(t, load)
+	_ = captureStderr(t, func() { f.load(t) })
 	assert.Equal(t, after, readFile(t, path), "emptied file must be byte-stable on reload")
 }

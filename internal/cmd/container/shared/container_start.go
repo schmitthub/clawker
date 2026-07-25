@@ -52,24 +52,24 @@ type CommandOpts struct {
 	Project string
 }
 
-// NeedsSocketBridge returns true if the project config enables GPG or SSH
-// forwarding, which requires a socket bridge daemon.
-func NeedsSocketBridge(cfg *config.Project) bool {
-	if cfg == nil || cfg.Security.GitCredentials == nil {
+// NeedsSocketBridge returns true if the project's security config enables GPG
+// or SSH forwarding, which requires a socket bridge daemon.
+func NeedsSocketBridge(security config.SecurityConfig) bool {
+	if security.GitCredentials == nil {
 		return false
 	}
-	return cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled()
+	return security.GitCredentials.GPGEnabled() || security.GitCredentials.GitSSHEnabled()
 }
 
 // ensureHostProxyRunning starts the host proxy when the project enables it.
 // A nil provider or a nil proxy instance is a no-op (debug-logged); only a
 // failure from EnsureRunning aborts the start. log may be nil.
 func ensureHostProxyRunning(
-	projectCfg *config.Project,
+	security config.SecurityConfig,
 	hostProxyFn func() hostproxy.Service,
 	log *logger.Logger,
 ) error {
-	if projectCfg == nil || !projectCfg.Security.HostProxyEnabled() {
+	if !security.HostProxyEnabled() {
 		if log != nil {
 			log.Debug().Msg("host proxy disabled by config")
 		}
@@ -113,8 +113,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return fmt.Errorf("bootstrapping services: config is nil")
 	}
 
-	projectCfg := cfg.Project()
-	settings := cfg.Settings()
+	security := cfg.SecurityConfig()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -177,32 +176,13 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// sync project rules only when firewall.enable (settings.yaml) is
 	// true. Per-container FirewallEnable runs post-start because the
 	// cgroup only exists after docker start creates the init process.
-	if settings != nil && settings.Firewall.FirewallEnabled() {
-		if cmdOpts.AdminClient == nil {
-			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
-		}
-
-		adminClient, err := cmdOpts.AdminClient(ctx)
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
-		}
-
-		if _, err := adminClient.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); err != nil {
-			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
-		}
-
-		egressRules, egressErr := bundler.EgressRules(cfg, harnessName)
-		if egressErr != nil {
-			return fmt.Errorf("bootstrapping services: composing egress rules: %w", egressErr)
-		}
-		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: adminv1.EgressRulesToProto(egressRules),
-		}); err != nil {
-			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
+	if cfg.FirewallEnabled() {
+		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harnessName); fwErr != nil {
+			return fwErr
 		}
 	}
 
-	if err = ensureHostProxyRunning(projectCfg, cmdOpts.HostProxy, log); err != nil {
+	if err = ensureHostProxyRunning(security, cmdOpts.HostProxy, log); err != nil {
 		return err
 	}
 
@@ -212,10 +192,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// removal are both handled with no staleness. CP runs it (pre-run
 	// step) right before the CMD. Not firewall-gated; a copy failure aborts
 	// the start.
-	var preRun string
-	if projectCfg != nil {
-		preRun = projectCfg.PreRunFor(harnessName)
-	}
+	preRun := cfg.PreRunFor(harnessName)
 	if err := InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     container,
 		Script:          preRun,
@@ -228,6 +205,43 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
 	}
 
+	return nil
+}
+
+// bringUpFirewall performs the pre-start half of firewall bootstrap: dial the
+// CP, bring the Envoy+CoreDNS stack up, and push the container's composed
+// egress rules (harness floor + project rules) into the rules store. The
+// per-container cgroup enroll is deliberately NOT here — the cgroup only
+// exists once docker start has created the init process, so that half lives in
+// BootstrapServicesPostStart.
+func bringUpFirewall(
+	ctx context.Context,
+	cmdOpts CommandOpts,
+	cfg config.Config,
+	harnessName string,
+) error {
+	if cmdOpts.AdminClient == nil {
+		return errors.New("bootstrapping services: firewall is enabled but no admin client provided")
+	}
+
+	adminClient, dialErr := cmdOpts.AdminClient(ctx)
+	if dialErr != nil {
+		return fmt.Errorf("bootstrapping services: connecting to control plane: %w", dialErr)
+	}
+
+	if _, initErr := adminClient.FirewallInit(ctx, &adminv1.FirewallInitRequest{}); initErr != nil {
+		return fmt.Errorf("bootstrapping services: firewall init: %w", initErr)
+	}
+
+	egressRules, egressErr := bundler.EgressRules(cfg, harnessName)
+	if egressErr != nil {
+		return fmt.Errorf("bootstrapping services: composing egress rules: %w", egressErr)
+	}
+	if _, addErr := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
+		Rules: adminv1.EgressRulesToProto(egressRules),
+	}); addErr != nil {
+		return fmt.Errorf("bootstrapping services: adding firewall rules: %w", addErr)
+	}
 	return nil
 }
 
@@ -307,8 +321,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		return fmt.Errorf("bootstrapping services: config is nil")
 	}
 
-	projectCfg := cfg.Project()
-	settings := cfg.Settings()
+	security := cfg.SecurityConfig()
 
 	var log *logger.Logger
 	if cmdOpts.Logger != nil {
@@ -325,7 +338,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 	// exists after docker start creates the container's init process, so
 	// this must run post-start. CP + stack + rules came up in pre-start.
 	// Drift-guarded per-container enroll (INV-B2-016).
-	if settings != nil && settings.Firewall.FirewallEnabled() {
+	if cfg.FirewallEnabled() {
 		if cmdOpts.AdminClient == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
 		}
@@ -346,28 +359,43 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		}
 	}
 
-	if NeedsSocketBridge(projectCfg) {
-		if cmdOpts.SocketBridge == nil {
-			if log != nil {
-				log.Debug().Msg("socket bridge provider is nil, skipping")
-			}
-		} else {
-			sb := cmdOpts.SocketBridge()
-			if sb == nil {
-				if log != nil {
-					log.Debug().Msg("socket bridge manager is nil, skipping")
-				}
-			} else {
-				gpgEnabled := projectCfg.Security.GitCredentials != nil &&
-					projectCfg.Security.GitCredentials.GPGEnabled()
-				if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
-					if log != nil {
-						log.Error().Err(err).Msg("failed to start socket bridge")
-					}
-					return fmt.Errorf("bootstrapping services: starting socket bridge: %w", err)
-				}
-			}
+	if NeedsSocketBridge(security) {
+		if bridgeErr := startSocketBridge(container, security, cmdOpts, log); bridgeErr != nil {
+			return bridgeErr
 		}
+	}
+	return nil
+}
+
+// startSocketBridge brings up the per-container SSH/GPG agent socket bridge.
+// An unwired provider or a nil manager means forwarding is simply unavailable
+// in this process — it is logged and skipped, not an error. Only a bridge that
+// was asked for and failed to start aborts the start sequence.
+func startSocketBridge(
+	container string,
+	security config.SecurityConfig,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) error {
+	if cmdOpts.SocketBridge == nil {
+		if log != nil {
+			log.Debug().Msg("socket bridge provider is nil, skipping")
+		}
+		return nil
+	}
+	sb := cmdOpts.SocketBridge()
+	if sb == nil {
+		if log != nil {
+			log.Debug().Msg("socket bridge manager is nil, skipping")
+		}
+		return nil
+	}
+	gpgEnabled := security.GitCredentials != nil && security.GitCredentials.GPGEnabled()
+	if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
+		if log != nil {
+			log.Error().Err(err).Msg("failed to start socket bridge")
+		}
+		return fmt.Errorf("bootstrapping services: starting socket bridge: %w", err)
 	}
 	return nil
 }

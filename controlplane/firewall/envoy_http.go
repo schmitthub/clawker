@@ -40,6 +40,15 @@ type appDFP struct {
 	cache  string // dns_cache_config name the DFP filter references (when active)
 }
 
+// noDFP is the appDFP for a chain that carries NO dynamic_forward_proxy filter.
+// Both fields are spelled out rather than left to a bare appDFP{} so the "DFP is
+// deliberately OFF here" decision stays legible at every call site: the chain's
+// upstream is pinned (LOGICAL_DNS / ORIGINAL_DST / STATIC), so there is no Host
+// to resolve and therefore no dns_cache to name.
+func noDFP() appDFP {
+	return appDFP{active: false, cache: ""}
+}
+
 // httpAppLayer returns the L7 app block. Reused verbatim by http and https: it
 // renders the SAME HCM envelope (codec, hardening, http_filters skeleton,
 // deny_all) and only ITS rule's vhost. For http, all rules share one raw_buffer
@@ -71,8 +80,15 @@ func httpAppLayer(dfp appDFP) layer {
 			}
 			ctx.filters = []any{
 				map[string]any{
-					"name":         "envoy.filters.network.http_connection_manager",
-					"typed_config": httpHCM(ctx.hcmCodec, ctx.tlsTerminated, httpFilterChain(ctx, appDFP{}), ctx.als, []any{vhost}, ctx.websocket),
+					"name": httpConnectionManagerFilterName,
+					keyTypedConfig: httpHCM(
+						ctx.hcmCodec,
+						ctx.tlsTerminated,
+						httpFilterChain(ctx, noDFP()),
+						ctx.als,
+						[]any{vhost},
+						ctx.websocket,
+					),
 				},
 			}
 			return nil
@@ -103,8 +119,15 @@ func httpAppLayer(dfp appDFP) layer {
 
 		ctx.filters = []any{
 			map[string]any{
-				"name":         "envoy.filters.network.http_connection_manager",
-				"typed_config": httpHCM(ctx.hcmCodec, ctx.tlsTerminated, httpFilterChain(ctx, dfp), ctx.als, []any{vhost, deny}, ctx.websocket),
+				"name": httpConnectionManagerFilterName,
+				keyTypedConfig: httpHCM(
+					ctx.hcmCodec,
+					ctx.tlsTerminated,
+					httpFilterChain(ctx, dfp),
+					ctx.als,
+					[]any{vhost, deny},
+					ctx.websocket,
+				),
 			},
 		}
 		return nil
@@ -143,7 +166,7 @@ func httpFilterChain(ctx *genCtx, dfp appDFP) []any {
 func dynamicForwardProxyHTTPFilter(cacheName string) map[string]any {
 	return map[string]any{
 		"name": dynamicForwardProxyFilterName,
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type":            "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
 			"dns_cache_config": dfpDNSCacheConfig(cacheName),
 		},
@@ -207,7 +230,14 @@ func httpDomains(dst string, port, barePort int) []string {
 // the transport-decided seams are codec (AUTO for http/https, HTTP3 for QUIC) and
 // tlsTerminated (drives the access log's tls.established + server.address source).
 // No upgrade_configs: websocket upgrades are denied unless a ws intent adds them.
-func httpHCM(codec string, tlsTerminated bool, httpFilters []any, als ALSConfig, vhosts []any, websocket bool) map[string]any {
+func httpHCM(
+	codec string,
+	tlsTerminated bool,
+	httpFilters []any,
+	als ALSConfig,
+	vhosts []any,
+	websocket bool,
+) map[string]any {
 	// The L4 the access log reports follows the codec: HTTP/3 rides QUIC (UDP),
 	// everything else (AUTO: http/https/ws/wss) rides TCP.
 	transport := "tcp"
@@ -376,7 +406,7 @@ func methodHeaderMatch(methods []string) []any {
 func routerFilter() map[string]any {
 	return map[string]any{
 		"name": "envoy.filters.http.router",
-		"typed_config": map[string]any{
+		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
 		},
 	}

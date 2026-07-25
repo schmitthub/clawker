@@ -84,7 +84,7 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 		// Ensure config is created first.
 		WithConfig()(t, e)
 
-		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.Project().Name, e.Registry(t))
+		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.ProjectName(), e.Registry(t))
 		if err != nil {
 			t.Fatalf("testenv: creating project manager: %v", err)
 		}
@@ -93,12 +93,14 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 }
 
 // Registry constructs a fresh project registry facade over the isolated data
-// directory (explicit injection — no env-var resolution). Fresh per call on
-// purpose: the underlying store snapshots the registry file at construction,
-// so tests that seed registry YAML must construct the registry afterwards.
-func (e *Env) Registry(t *testing.T) *project.Registry {
+// directory (resolved from the CLAWKER_DATA_DIR env var New sets). Fresh per
+// call on purpose: the constructor is the load, so tests that seed registry
+// YAML must construct the registry afterwards.
+//
+//nolint:ireturn // returns the project.Registry domain interface by design — its impl stays package-private
+func (e *Env) Registry(t *testing.T) project.Registry {
 	t.Helper()
-	reg, err := project.NewRegistry(project.WithRegistryDir(e.Dirs.Data))
+	reg, err := project.NewRegistry()
 	if err != nil {
 		t.Fatalf("testenv: creating project registry: %v", err)
 	}
@@ -174,17 +176,47 @@ const (
 
 // configFileInfo maps a ConfigFile to its filename and directory resolution.
 type configFileInfo struct {
-	filename func() string       // canonical filename
-	dir      func(e *Env) string // target directory (nil = use caller-provided dir)
-	dotfile  bool                // prepend "." to filename
+	filename func() string                // canonical filename
+	dir      func(e *Env) (string, error) // target directory (nil = use caller-provided dir)
+	dotfile  bool                         // prepend "." to filename
 }
 
+// Every entry states all three attributes: a nil dir means "the caller supplies
+// the directory" and dotfile records the leading-dot placement, so the table
+// reads as a complete description of each file's canonical location. A dir
+// resolved through a consts accessor rather than an Env field is one the
+// production store discovers through that same accessor — seeding anywhere else
+// writes a file the store under test never reads.
 var configFiles = map[ConfigFile]configFileInfo{
-	ProjectConfig:      {filename: func() string { return consts.ProjectConfigFile }, dotfile: true},
-	ProjectConfigLocal: {filename: func() string { return consts.ProjectLocalConfigFile }, dotfile: true},
-	Settings:           {filename: func() string { return consts.SettingsFile }, dir: func(e *Env) string { return e.Dirs.Config }},
-	EgressRules:        {filename: func() string { return consts.EgressRulesFile }, dir: func(e *Env) string { return e.Dirs.State }},
-	ProjectRegistry:    {filename: func() string { return consts.RegistryFile }, dir: func(e *Env) string { return e.Dirs.Data }},
+	ProjectConfig: {
+		filename: func() string { return consts.ProjectConfigFile },
+		dir:      nil,
+		dotfile:  true,
+	},
+	ProjectConfigLocal: {
+		filename: func() string { return consts.ProjectLocalConfigFile },
+		dir:      nil,
+		dotfile:  true,
+	},
+	Settings: {
+		filename: func() string { return consts.SettingsFile },
+		dir:      func(e *Env) (string, error) { return e.Dirs.Config, nil },
+		dotfile:  false,
+	},
+	EgressRules: {
+		filename: func() string { return consts.EgressRulesFile },
+		// The rules store discovers this file under the firewall subdir of the
+		// data dir (cfg.FirewallDataSubdir()), not the state dir. Resolved
+		// through the same accessor, which honors the CLAWKER_DATA_DIR this env
+		// sets and creates the subdir.
+		dir:     func(_ *Env) (string, error) { return consts.FirewallDataSubdir() },
+		dotfile: false,
+	},
+	ProjectRegistry: {
+		filename: func() string { return consts.RegistryFile },
+		dir:      func(e *Env) (string, error) { return e.Dirs.Data, nil },
+		dotfile:  false,
+	},
 }
 
 // WriteYAML writes YAML content to the canonical location for the given file type.
@@ -205,7 +237,11 @@ func (e *Env) WriteYAML(t *testing.T, file ConfigFile, dir string, content strin
 
 	targetDir := dir
 	if info.dir != nil {
-		targetDir = info.dir(e)
+		resolved, err := info.dir(e)
+		if err != nil {
+			t.Fatalf("testenv: resolving target dir for %s: %v", info.filename(), err)
+		}
+		targetDir = resolved
 	}
 	if targetDir == "" {
 		t.Fatalf("testenv: WriteYAML(%d) requires a dir argument for project config files", file)
@@ -238,7 +274,10 @@ func (e *Env) Config() config.Config {
 // WithProjectManager was not passed to New.
 func (e *Env) ProjectManager() project.ProjectManager {
 	if e.projectManager == nil {
-		panic("testenv: ProjectManager() called but WithProjectManager() was not applied — pass testenv.WithProjectManager() to testenv.New()")
+		//nolint:forbidigo // panic-on-unconfigured-access is this test-only package's documented contract (see CLAUDE.md): there is no error to return, only a test-wiring bug to surface immediately
+		panic(
+			"testenv: ProjectManager() called but WithProjectManager() was not applied — pass testenv.WithProjectManager() to testenv.New()",
+		)
 	}
 	return e.projectManager
 }

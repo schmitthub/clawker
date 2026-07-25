@@ -1,17 +1,26 @@
 package firewall_test
 
 import (
+	"context"
+	"errors"
 	"hash/fnv"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
+	fwmocks "github.com/schmitthub/clawker/controlplane/firewall/mocks"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // TestValidateDst exercises the pure ValidateDst function across the full
@@ -955,4 +964,165 @@ func TestNormalizeAndDedup_MethodsOnOpaqueWarns(t *testing.T) {
 	}}
 	_, warnings = firewall.NormalizeAndDedup(httpFamily)
 	assert.Empty(t, warnings)
+}
+
+// TestEgressRulesStore_Canonicalize covers the on-disk heal the Stack runs
+// before every config generation: a legacy file whose rules carry no proto,
+// action, or port is rewritten in canonical form, and a second pass is a no-op.
+// The idempotency half is the load-bearing assertion — a heal that always
+// reports a rewrite would re-save (and flock) the file on every single reload.
+func TestEgressRulesStore_Canonicalize(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	dataDir, err := cfg.FirewallDataSubdir()
+	require.NoError(t, err)
+	// A file as an older binary left it: proto/action/port all unset, plus a
+	// duplicate that only dedups after the proto default fills in.
+	legacy := "rules:\n    - dst: example.com\n    - dst: example.com\n      proto: https\n      port: \"443\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, consts.EgressRulesFile), []byte(legacy), 0o644))
+
+	store, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+
+	healed, err := store.Canonicalize()
+	require.NoError(t, err)
+	assert.True(t, healed, "legacy shape must be rewritten")
+
+	rules, _, err := store.Rules()
+	require.NoError(t, err)
+	require.Len(t, rules, 1, "the two entries collapse once the proto default fills in")
+	assert.Equal(t, "https", rules[0].Proto)
+	assert.Equal(t, "443", rules[0].Port)
+	assert.Equal(t, "allow", rules[0].Action)
+
+	healed, err = store.Canonicalize()
+	require.NoError(t, err)
+	assert.False(t, healed, "an already-canonical file must not be rewritten again")
+
+	// Reopen from disk: the canonical form is what actually landed, not just
+	// what the in-memory tree holds.
+	reopened, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+	persisted, _, err := reopened.Rules()
+	require.NoError(t, err)
+	assert.Equal(t, rules, persisted)
+}
+
+// TestEgressRulesStore_Canonicalize_HealsMethodCasing pins the heal against the
+// WHOLE canonical shape, not a proto/action/port subset. A file whose only
+// non-canonical part is a path rule's method set (lowercase, duplicated,
+// unsorted) still differs from what every reader sees, so it must be rewritten
+// — a subset comparison reported "already canonical" and left the file that way
+// forever.
+func TestEgressRulesStore_Canonicalize_HealsMethodCasing(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	dataDir, err := cfg.FirewallDataSubdir()
+	require.NoError(t, err)
+	legacy := "rules:\n" +
+		"    - dst: example.com\n" +
+		"      proto: https\n" +
+		"      port: \"443\"\n" +
+		"      action: allow\n" +
+		"      path_rules:\n" +
+		"        - path: /api/\n" +
+		"          action: allow\n" +
+		"          methods: [post, get, get]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, consts.EgressRulesFile), []byte(legacy), 0o644))
+
+	store, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+
+	healed, err := store.Canonicalize()
+	require.NoError(t, err)
+	assert.True(t, healed, "a method set that normalization moves is a non-canonical on-disk shape")
+
+	reopened, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+	persisted, _, err := reopened.Rules()
+	require.NoError(t, err)
+	require.Len(t, persisted, 1)
+	require.Len(t, persisted[0].PathRules, 1)
+	assert.Equal(t, []string{"GET", "POST"}, persisted[0].PathRules[0].Methods,
+		"the healed file carries the uppercased, deduped, sorted method set")
+
+	healed, err = reopened.Canonicalize()
+	require.NoError(t, err)
+	assert.False(t, healed, "the healed file is canonical — no rewrite on every reload")
+}
+
+// stubStack is the minimal StackLifecycle the store-failure paths need: the
+// reconcile closure only asks whether the stack is running before it reads the
+// store.
+type stubStack struct{}
+
+func (s *stubStack) EnsureRunning(context.Context) error { return nil }
+func (s *stubStack) Stop(context.Context) error          { return nil }
+func (s *stubStack) Reload(context.Context) error        { return nil }
+
+func (s *stubStack) Status(context.Context) (*firewall.Status, error) {
+	var st firewall.Status
+	st.Running = true
+	return &st, nil
+}
+
+func (s *stubStack) NetworkInfo(context.Context) (*firewall.NetworkInfo, error) {
+	var info firewall.NetworkInfo
+	return &info, nil
+}
+
+// TestEgressRulesStore_ReadFailureBlocksRouteSync pins the fail-closed contract
+// at the consumer boundary: when the store cannot answer, the reconcile must
+// fail instead of pushing an empty route set. Syncing zero routes silently
+// wipes route_map, which drops every enrolled agent's egress redirect — the
+// exact failure an unreadable store must never masquerade as.
+func TestEgressRulesStore_ReadFailureBlocksRouteSync(t *testing.T) {
+	boom := errors.New("rules file unreadable")
+	cases := []struct {
+		name     string
+		newStore func() *fwmocks.EgressRulesStoreMock
+	}{
+		{
+			name: "canonical read fails",
+			newStore: func() *fwmocks.EgressRulesStoreMock {
+				var s fwmocks.EgressRulesStoreMock
+				s.RulesFunc = func() ([]config.EgressRule, []string, error) { return nil, nil, boom }
+				return &s
+			},
+		},
+		{
+			name: "route projection fails",
+			newStore: func() *fwmocks.EgressRulesStoreMock {
+				var s fwmocks.EgressRulesStoreMock
+				s.RulesFunc = func() ([]config.EgressRule, []string, error) { return nil, nil, nil }
+				s.RoutesFunc = func(firewall.EnvoyPorts, firewall.IdentityResolver) ([]ebpf.Route, []string, error) {
+					return nil, nil, boom
+				}
+				return &s
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ebpfMock ebpfmocks.EBPFManagerMock
+			ebpfMock.SyncRoutesFunc = func([]ebpf.Route) error { return nil }
+
+			queue := firewall.NewActionQueue(nil)
+			t.Cleanup(func() { _ = queue.Close() })
+
+			var deps firewall.HandlerDeps
+			deps.EBPF = &ebpfMock
+			deps.Stack = &stubStack{}
+			deps.Store = tc.newStore()
+			deps.Resolver = func(context.Context, string) (string, string, bool, error) {
+				return "", "", false, nil
+			}
+			deps.Queue = queue
+			h, err := firewall.NewHandler(deps)
+			require.NoError(t, err)
+
+			_, err = h.FirewallReload(context.Background(), &adminv1.FirewallReloadRequest{})
+			require.ErrorContains(t, err, boom.Error())
+			assert.Empty(t, ebpfMock.SyncRoutesCalls(),
+				"an unreadable store must never sync an empty route set")
+		})
+	}
 }

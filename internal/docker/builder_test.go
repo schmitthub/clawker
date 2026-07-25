@@ -299,7 +299,7 @@ func TestBuild_BuildsBaseThenHarness(t *testing.T) {
 	builds := captureImageBuilds(t, fakeAPI)
 
 	workDir := t.TempDir()
-	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), workDir, "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -338,7 +338,7 @@ func TestBuild_SkipsBaseWhenHashMatches(t *testing.T) {
 	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), workDir, "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -355,7 +355,7 @@ func TestBuild_StaleHashRebuildsBase(t *testing.T) {
 	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", "stale-hash")
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), t.TempDir(), "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -374,7 +374,7 @@ func TestBuild_NoCacheRebuildsBase(t *testing.T) {
 	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), workDir, "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -398,7 +398,7 @@ func TestBuild_RelevantBuildArgRebuildsBase(t *testing.T) {
 	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), workDir, "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -420,7 +420,7 @@ func TestBuild_HarnessOnlyBuildArgSkipsBase(t *testing.T) {
 	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), workDir, "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -444,7 +444,7 @@ func TestBuild_BaseFailureAborts(t *testing.T) {
 		return client.ImageBuildResult{}, errors.New("boom")
 	}
 
-	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), t.TempDir(), "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -462,7 +462,7 @@ func TestBuild_HarnessBuildNeverPulls(t *testing.T) {
 	setupInspectNotFound(fakeAPI)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), t.TempDir(), "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -483,7 +483,7 @@ func TestBuild_SelectsHarnessFromOptions(t *testing.T) {
 	setupInspectNotFound(fakeAPI)
 	builds := captureImageBuilds(t, fakeAPI)
 
-	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	b := NewBuilder(cli, cfg.BuildConfig(), t.TempDir(), "proj")
 	var buildOpts BuilderOptions
 	buildOpts.HarnessName = "other"
 	buildOpts.SuppressOutput = true
@@ -568,9 +568,8 @@ build:
       dev.clawker.project: "attacker-project"
       custom-label: "custom-value"
 `)
-	projectCfg := cfg.Project()
 	client, _ := newTestClientWithConfig(cfg)
-	b := NewBuilder(client, projectCfg, "", "myproject")
+	b := NewBuilder(client, cfg.BuildConfig(), "", "myproject")
 	labels := b.mergeImageLabels(nil)
 
 	// Clawker internal labels must win over user labels

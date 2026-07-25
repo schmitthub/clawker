@@ -65,7 +65,7 @@ monitoring:
 				// Isolated data dir (testenv above) → empty registry →
 				// ErrNotInProject → cwd fallback, hermetic from any real
 				// registry on the host.
-				ProjectRegistry: func() (*project.Registry, error) {
+				ProjectRegistry: func() (project.Registry, error) {
 					return env.Registry(t), nil
 				},
 				HttpClient: func() (*http.Client, error) {
@@ -138,7 +138,7 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		ProjectRegistry: func() (*project.Registry, error) {
+		ProjectRegistry: func() (project.Registry, error) {
 			return env.Registry(t), nil
 		},
 		HttpClient: func() (*http.Client, error) {
@@ -201,7 +201,7 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		ProjectRegistry: func() (*project.Registry, error) {
+		ProjectRegistry: func() (project.Registry, error) {
 			return env.Registry(t), nil
 		},
 		HttpClient: func() (*http.Client, error) {
@@ -259,7 +259,7 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		ProjectRegistry: func() (*project.Registry, error) {
+		ProjectRegistry: func() (project.Registry, error) {
 			return env.Registry(t), nil
 		},
 		HttpClient: func() (*http.Client, error) {

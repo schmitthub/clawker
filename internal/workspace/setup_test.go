@@ -336,14 +336,38 @@ func TestResolveMode(t *testing.T) {
 	tests := []struct {
 		name        string
 		override    string
-		defaultMode string
+		defaultMode config.Mode
 		want        config.Mode
 		wantErr     bool
 	}{
-		{name: "override wins over default", override: "snapshot", defaultMode: "bind", want: config.ModeSnapshot},
-		{name: "empty override falls back to default", override: "", defaultMode: "snapshot", want: config.ModeSnapshot},
-		{name: "both empty resolves to bind", override: "", defaultMode: "", want: config.ModeBind},
-		{name: "unrecognized value errors", override: "bogus", defaultMode: "bind", wantErr: true},
+		{
+			name:        "override wins over default",
+			override:    "snapshot",
+			defaultMode: "bind",
+			want:        config.ModeSnapshot,
+			wantErr:     false,
+		},
+		{
+			name:        "empty override falls back to default",
+			override:    "",
+			defaultMode: "snapshot",
+			want:        config.ModeSnapshot,
+			wantErr:     false,
+		},
+		{
+			name:        "both empty resolves to bind",
+			override:    "",
+			defaultMode: "",
+			want:        config.ModeBind,
+			wantErr:     false,
+		},
+		{
+			name:        "unrecognized value errors",
+			override:    "bogus",
+			defaultMode: "bind",
+			want:        "",
+			wantErr:     true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -391,7 +415,7 @@ func setupMountsForBindBranch(t *testing.T, projectYAML string) (cfg SetupMounts
 		HarnessVolumes: []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		// Resolved the way the command layer does — exercises the legacy
 		// agent.claude_code shim for the built-in default harness.
-		HarnessConfig: mockCfg.Project().HarnessConfigFor(consts.DefaultHarnessName),
+		HarnessConfig: mockCfg.HarnessConfigFor(consts.DefaultHarnessName),
 	}
 	return cfg, hostDir, fake
 }

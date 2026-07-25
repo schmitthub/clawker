@@ -104,26 +104,27 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  COMMANDS (internal/cmd/*)                                               │
 │                                                                         │
-│  cfg, _ := f.Config()              pm, _ := f.Project()                 │
-│  cfg.Project().Build.Image         pm.Register(slug, path)              │
-│  cfg.Settings().Logging            pm.ListWorktrees(ctx)                │
-│  cfg.SetProject(fn); cfg.WriteProject()  pm.Resolve(cwd)               │
+│  cfg, _ := f.Config()              pm, _ := f.ProjectManager()          │
+│  cfg.BuildConfig().Image           pm.Register(ctx, name, path)         │
+│  cfg.LoggingConfig().MaxSizeMB     pm.ListWorktrees(ctx)                │
+│  cfg.ProjectStore().Set(k, v)      reg.ResolveRoot(cwd)                 │
+│  cfg.ProjectStore().Write()                                             │
 └────────────┬────────────────────────────────────┬───────────────────────┘
-             │ Config interface                   │ ProjectManager interface
+             │ Config interface                   │ ProjectManager + Registry
              ▼                                    ▼
 ┌────────────────────────────┐     ┌────────────────────────────────────┐
 │  internal/config            │     │  internal/project                   │
-│  (thin domain wrapper)      │     │  (thin domain wrapper)              │
+│  (domain facade)            │     │  (domain facade)                    │
 │                             │     │                                     │
-│  configImpl {               │     │  projectManagerImpl {               │
-│    *Store[Project]       │     │    *Store[ProjectRegistry]                 │
-│    *Store[Settings]     │     │  }                                  │
+│  configImpl {               │     │  registryImpl {                     │
+│    project  *Store[Project] │     │    *Store[ProjectRegistry]          │
+│    settings *Store[Settings]│     │  }                                  │
 │  }                          │     │                                     │
-│                             │     │  • Project CRUD, resolution         │
-│  • Config interface         │     │  • Worktree lifecycle               │
-│  • Schema types             │     │  • Registry schema                  │
-│  • Filenames + migrations   │     │  • Registry migrations              │
-│  • Path/constant helpers    │     │                                     │
+│                             │     │  • Registry write verbs (Set+Write) │
+│  • Config interface         │     │  • Project CRUD, resolution         │
+│  • Schema types             │     │  • Worktree lifecycle               │
+│  • Filenames + migrations   │     │  • Registry schema                  │
+│  • Path/constant helpers    │     │  • projectManager on top of it      │
 └────────────┬────────────────┘     └──────────────────┬─────────────────┘
              │ composes                                │ composes
              ▼                                         ▼
@@ -142,16 +143,17 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 │  └─────────────┘  └──────────────┘  └───────────────┘  └─────────────┘ │
 │                                                                         │
 │  Node tree (yaml.Node) = merge engine + persistence layer (comments ride)│
-│  Typed struct *T = immutable snapshot (lock-free Read via atomic.Pointer)│
-│  Set(path,value)/Remove(path) graft into the node tree                  │
+│  The merged tree is the ONLY in-memory representation — no typed snapshot│
+│  Get[V](s,key...) decodes one subtree; Set([]string,v)/Remove(key...)   │
+│  graft into the node tree (Set = the schema front-door)                 │
 │  Also: flock locking (optional), atomic I/O (temp+rename)               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key relationships:**
 
-- Commands never see `storage` — they use `Config` and `ProjectManager` interfaces
-- `config` and `project` are thin wrappers — they compose `Store[T]`, provide schemas/filenames/migrations, expose domain APIs
+- Commands never see `storage` — they use `Config`, `ProjectManager`/`Registry`, `StateStore` and the other domain facades
+- Every store-backed package is a domain facade: an interface with exported verbs over an unexported impl that **embeds** `*storage.Store[T]`, providing the schema/filenames/migrations (see `.claude/rules/store-backed-package.md`; `internal/state` is the reference shape)
 - `storage` is the engine — discovery, load, migrate, merge, provenance, write
 - `storage` has zero domain knowledge — it doesn't know about clawker, config files, or registries
 
@@ -159,15 +161,19 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 
 Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Leaf package — its only `internal/` import is `internal/consts` (itself stdlib-only), for XDG directory resolution and the dotted config-directory name. See `internal/storage/CLAUDE.md` for detailed API reference.
 
-**Node-native architecture:** Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The typed struct `*T` is an immutable snapshot decoded from the merged node and published via `atomic.Pointer` (lock-free `Read`). `map[string]any` survives only as a transient decode view (`LayerInfo.Data`). This avoids the `omitempty` problem — the value handed to `Set` is grafted as-is, so explicit zero values (`false`, `0`, `""`) are preserved.
+**Node-native architecture:** Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The merged tree is the single in-memory representation — there is no typed snapshot; `Get` decodes the requested subtree on demand, and the strict decode into `T` exists only to validate. `map[string]any` survives only as a transient decode view (`LayerInfo.Data`). This avoids the `omitempty` problem — the value handed to `Set` is grafted as-is, so explicit zero values (`false`, `0`, `""`) are preserved.
 
 ```
-Load:   file/string → layer node ─→ merge nodes → decode → immutable *T
+New:    file/string → layer nodes → per-layer migrations → merge → strict decode (validation)
 
-Set:    encode value → graft into merged node at path → mark dirty → re-decode
+Get:    merged-node value at key → decode into V
 
-Write:  dirty paths → route by provenance → graft into target layer node → per-file atomic write
+Set:    encode value → graft into candidate tree → strict decode → commit + mark dirty
+
+Write:  merged-node value → graft into TARGET LAYER's own node → encode → per-file atomic write
 ```
+
+**The verbs:** construction (`New`, `NewFromString` — the constructor IS the load, errors are eager), memory (`Keys`, package-level `Get[V]`, `Set`, `Remove`), persistence (`Write`, `WriteTo`, `WriteFieldTo`). Keys are explicit segments, never dotted strings. There is no snapshot getter, no closure mutator, no transaction wrapper, and no refresh.
 
 **Discovery** (how files are found — two additive modes):
 
@@ -188,13 +194,15 @@ Write:  dirty paths → route by provenance → graft into target layer node →
 
 Each file migrates independently — any file at any depth can be independently stale.
 
-**Merge with provenance**: Fold N layer node trees in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. Absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set".
+**Merge with provenance**: Fold N layer node trees in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. A key that is absent OR bare (`key:`, YAML null) is **unset** — skipped by the merge, so lower layers and defaults show through; a present key with an explicit empty value (`""`, `0`, `false`, `[]`, `{}`) is **set** and masks lower layers.
 
-**Write model**: Targeted (`Write(ToPath(p))` / `Write(ToLayer(i))`) or auto-route (`Write()` — provenance resolves each dirty field's target). Each dirty value is grafted into a clone of the target layer's own node tree (preserving its comments), then encoded and atomically written. Node merge preserves unknown keys in the tree that aren't in the struct schema.
+**Write model**: Targeted (`WriteTo(path)` for all dirty fields, `WriteFieldTo(path, key...)` for exactly one) or auto-route (`Write()` — provenance resolves each dirty field's target). Every write re-reads the destination file and grafts the dirty value into its own node tree (preserving its comments), then encodes and atomically writes. Node merge preserves unknown keys in the tree that aren't in the struct schema.
 
-**Testing**: `storage.New[T](yaml)` with no path options it discovers nothing on disk and the seed YAML is the only layer — an in-memory double, parsed through the real schema. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
+**Thread safety**: the engine owns it — per-operation locking plus optional flock (`WithLock`) around the whole read-modify-write cycle. Domain impls carry **no** locks of their own. A compound Get → mutate → Set → Write is not atomic across the caller's compute; serialize concurrent writers architecturally (CP's `ActionQueue` single-writer funnel; the CLI is single-threaded).
 
-**Imported by:** `internal/config`, `internal/project`, `internal/state`
+**Testing**: `storage.NewFromString[T](yaml)` takes no path options, so it discovers nothing on disk and the seed YAML is the only layer — an in-memory double parsed through the real schema. Composing packages (`config/mocks`, `project/mocks`, `state/mocks`) use it to build their test doubles, and use real `Store[T]` + `testenv`/`t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; the domain facades are the mock boundary.
+
+**Imported by:** `internal/config`, `internal/project`, `internal/state`, `internal/storeui`, `internal/docs`, `controlplane/firewall`
 
 ### internal/config - Configuration
 
@@ -204,9 +212,9 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 
 **Two independent schemas, one interface:**
 
-- `Settings` — host infrastructure (logging, host_proxy, monitoring)
-- `Project` — project defaults (build, workspace, security, agent). Tiered via walk-up.
-- Callers access both through namespaced sub-accessors: `cfg.Settings().Logging`, `cfg.Project().Build.Image`, `cfg.ConfigDir()`
+- `Settings` — host infrastructure (logging, host_proxy, monitoring, firewall, control_plane, docker)
+- `Project` — project defaults (build, workspace, security, agent, harnesses, aliases, bundles, monitor). Tiered via walk-up.
+- Callers access both through value-specific accessors: `cfg.LoggingConfig().MaxSizeMB`, `cfg.BuildConfig().Image`, `cfg.ConfigDir()`. There is no whole-schema getter — `Project()`/`Settings()` snapshots do not exist and must not be reintroduced.
 
 **File layout (full XDG — walk-up bounded at project root, never reaches HOME):**
 
@@ -237,14 +245,16 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 
 - Filenames (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`) — ordered, same schema
 - Migration functions (schema evolution)
-- Schema types (`ConfigFile`, `SettingsFile`)
-- Discovery options (`WithWalkUp`, `WithConfig`) — anchors locked in at construction
+- Schema types (`Project`, `Settings`)
+- Discovery options (`WithWalkUp`, `WithConfigDir`) — anchors locked in at construction
+- The `yaml-language-server: $schema=` header stamped on every write (`WithHeader`)
 
 **What `configImpl` adds on top of `Store[T]`:**
 
-- `Config` interface with namespaced accessors
+- `Config` interface with value-specific and group accessors (`BuildConfig()`, `SecurityConfig()`, `LoggingConfig()`, …), each built on `storage.Get[V]` with the real key
 - Path/constant helpers (`ConfigDir()`, `Domain()`, `LabelDomain()`, ~40 methods)
-- `SetProject`/`SetSettings` + `WriteProject`/`WriteSettings` — typed mutation wrappers around `Store[T].Set`/`Write`
+- Node-level validation of the `harnesses:`/`build:`/`bundles:` blocks, run once inside the constructor
+- `ProjectStore()`/`SettingsStore()` — the raw-verb escape hatch (`Set`/`Remove` + `Write`) for mutation the typed accessors don't cover
 
 **Testing**: See `internal/config/CLAUDE.md` for test helpers and mocks.
 
@@ -300,7 +310,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 
 **Dependency wiring order:**
 
-0. ProjectRegistry (lazy, `project.NewRegistry()` — sole constructor of registry storage; shared by Config, GitManager, ProjectManager, and commands) → 1. Config (lazy, `config.NewConfig()` via `sync.Once` — settings load + project walk-up anchored at the registry-resolved root) → 2. ProjectManager (lazy, reads Config for the `name:` override + Logger + ProjectRegistry; registry CRUD lives in `internal/project`) → 3. Logger (lazy, reads Config) → 4. HostProxy (lazy, reads Config) → 5. SocketBridge (lazy, reads Config) → 6. IOStreams (eager, `iostreams.System()`) → 7. TUI (eager, wraps IOStreams) → 8. Client (lazy, reads Config) → 9. GitManager (lazy, anchors at the registry-resolved project root — no Config dependency) → 10. Prompter (lazy) → 11. AdminClient (lazy, reads Config) → 12. ControlPlane (lazy, reads Config + Logger + Client) → 13. HttpClient (lazy, stdlib `*http.Client`)
+0. ProjectRegistry (lazy, `project.NewRegistry()` — sole constructor of registry storage; shared by Config, GitManager, ProjectManager, and commands) and CLIState (lazy, `state.New()` — self-contained, no dependencies) → 1. Config (lazy, `config.NewConfig()` via `sync.Once` — settings load + project walk-up anchored at the registry-resolved root) → 2. ProjectManager (lazy, reads Config for the `name:` override + Logger + ProjectRegistry; registry CRUD lives in `internal/project`) → 3. Logger (lazy, reads Config) → 4. HostProxy (lazy, reads Config) → 5. SocketBridge (lazy, reads Config) → 6. IOStreams (eager, `iostreams.System()`) → 7. TUI (eager, wraps IOStreams) → 8. Client (lazy, reads Config) → 9. GitManager (lazy, anchors at the registry-resolved project root — no Config dependency) → 10. Prompter (lazy) → 11. AdminClient (lazy, reads Config) → 12. ControlPlane (lazy, reads Config + Logger + Client) → 13. HttpClient (lazy, stdlib `*http.Client`) → 14. BundleManager (lazy, reads Config)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -349,7 +359,8 @@ User interaction utilities with TTY and CI awareness.
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — only internal import is `internal/consts` (stdlib-only). See `internal/storage/CLAUDE.md` |
-| `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers (~40 methods). **Foundation** — imports storage only. See `internal/config/CLAUDE.md` |
+| `internal/config` | Domain facade composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with value-specific/group accessors, path/constant helpers (~40 methods), and `ProjectStore()`/`SettingsStore()` as the raw-verb escape hatch. **Foundation** — imports storage, consts, build. See `internal/config/CLAUDE.md` |
+| `internal/state` | `StateStore` — domain facade over `Store[State]` for the CLI's persisted runtime state (update-check cache + changelog cursor). The reference implementation of `.claude/rules/store-backed-package.md`. Factory noun `f.CLIState()`. See `internal/state/CLAUDE.md` |
 | `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -374,7 +385,7 @@ User interaction utilities with TTY and CI awareness.
 | `controlplane/otel` | CP-side `NewOtelLoggerProvider` factory — per-subsystem OTLP log providers over mTLS to the trusted-infra receiver |
 | `controlplane/server` | AdminService composition (`NewAdminServer`) + `AuthInterceptor` authz + AgentService listener wiring |
 | `controlplane/subprocess` | Ory subprocess lifecycle manager (start, wait-healthy, crash detection, ordered shutdown) |
-| `controlplane/firewall` | Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS container lifecycle), `ActionQueue` (serialized mutation), Envoy/CoreDNS config generators, certificate PKI, rules store, cgroup helpers, drift resolver, rich error types |
+| `controlplane/firewall` | Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS container lifecycle), `ActionQueue` (serialized mutation, rule writes included), Envoy/CoreDNS config generators, certificate PKI, `EgressRulesStore`/`RouteIdentityStore` facades, cgroup helpers, drift resolver, rich error types |
 | `controlplane/firewall/ebpf` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |
 | `controlplane/firewall/ebpf/netlogger` | Per-decision-point egress event emitter — drains BPF `events_ringbuf`, enriches by `cgroup_id` via pub/sub enrollment events, emits OTLP log records (`service.name=ebpf-egress`) on the trusted infra lane |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
@@ -485,7 +496,7 @@ Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `
 
 **Certificate PKI:** Path-based egress rules require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair in `FirewallDataSubdir/certs`. `GenerateDomainCert` signs per-domain certificates for Envoy's MITM termination. `FirewallRotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
 
-**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` under `FirewallDataSubdir`. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `cfg.EgressRules()` merges required internal rules (Claude API, Docker registry) with project-specific rules; `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
+**Rule persistence:** Active egress rules live behind `firewall.EgressRulesStore` — the domain facade over `storage.Store[EgressRulesFile]`, backed by `egress-rules.yaml` under `FirewallDataSubdir`; the Handler and Stack hold the interface, never the raw store. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `bundler.EgressRules(cfg, harness)` composes the selected harness's required egress floor with the project's own contribution (`cfg.ProjectEgressRules()` — `security.firewall.rules` plus the `add_domains` shorthand); `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
 
 **Network isolation:** The CP creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — `gateway+EnvoyIPLastOctet` (.2) for Envoy, `gateway+CoreDNSIPLastOctet` (.3) for CoreDNS, `gateway+CPIPLastOctet` (.202) for the CP container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. Static-IP assignment cannot go through whail's `EnsureNetwork` helper (which hard-overwrites `EndpointSettings`) — call `dc.EnsureNetwork` first, then explicit `NetworkingConfig.IPAMConfig.IPv4Address` in `ContainerCreate`.
 
@@ -525,7 +536,7 @@ Key packages:
 - `controlplane/pubsub` — **Generic, stateless pub/sub pipe.** `Topic[T]`/`Event[T]`: `Subscribe(func(Event[T]))`, non-blocking `Publish` with back-pressure, per-subscriber bounded buffer + drop-oldest (counted), panic-recovered delivery (one bad subscriber can't kill PID 1 — CP §3.4). Holds no application state and prescribes no state pattern. Zero imports from CP siblings — domains import pubsub, never the reverse. See `controlplane/pubsub/CLAUDE.md`.
 - `controlplane/dockerevents` — **Docker events feeder.** `Feeder` subscribes to Docker's event stream with automatic reconnection and publishes `DockerEvent` (wraps `events.Message`) on a `pubsub.Topic`. A subscriber folds container start/stop/destroy + rename into the package's own container state repo. `EventsClient` interface abstracts Docker API for testability. Includes `reconcile` (full container+network sync on reconnect) and managed-label filtering.
 - `controlplane/adminclient` — **CLI-side AdminService dial.** `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `adminv1.AdminServiceClient`. Handles mTLS + auto-refreshing OAuth2 bearer token via Hydra `client_credentials` grant.
-- `controlplane/firewall` — Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue` (single-goroutine FIFO serializing all firewall mutations — bringup, teardown, reconcile, enable, disable, bypass), Envoy+CoreDNS config generators, certificate PKI, rules store, cgroup helpers, drift resolver, rich error types with gRPC status integration. See `controlplane/firewall/CLAUDE.md`.
+- `controlplane/firewall` — Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue` (single-goroutine FIFO serializing all firewall mutations — bringup, teardown, reconcile, enable, disable, bypass, and `ActionRuleMutate` rule writes, which are non-coalescing so no submitter's mutation is dropped), Envoy+CoreDNS config generators, certificate PKI, `EgressRulesStore` + `RouteIdentityStore` facades, cgroup helpers, drift resolver, rich error types with gRPC status integration. See `controlplane/firewall/CLAUDE.md`.
 - `controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `controlplane/firewall/ebpf/CLAUDE.md`.
 - `controlplane/firewall/ebpf/netlogger` — userspace consumer of the BPF `events_ringbuf`. Enriches per-decision records with `{container_id, agent, project, domain}` via pub/sub enrollment events + dockerevents eviction, ships OTLP log records (`service.name=ebpf-egress`) through `otel.NewOtelLoggerProvider` to the trusted-infra OTLP receiver. See `controlplane/firewall/ebpf/netlogger/CLAUDE.md`.
 - `controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawkercp` in the container image.
@@ -535,7 +546,7 @@ Key packages:
 - `clawkerd` — per-container agent daemon (package): mTLS listener on `:7700`, `ClawkerdService.Session` bidi-stream for CP command dispatch, `registerCoordinator` for one-time CP-triggered Register handshake. Boot sequence in `clawkerd/CLAUDE.md`. `cmd/clawkerd` is the thin entrypoint (`os.Exit(clawkerd.Main())`); `Main`/`run` live in `internal/clawkerd`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
 - `api/agent/v1` — AgentService proto. `Register` RPC for clawkerd→CP identity binding; `AgentMethodScopes()` in `api/agent/v1/agent.go` maps it to `ScopeSelfRegister`.
-- `cmd/clawkercp/clawkercp.go` — thin daemon wrapper (`os.Exit(controlplane.Main())`). The real orchestration lives in `internal/controlplane/cmd.go`, which wires the Ory stack + firewall `Handler` + `ActionQueue` + pub/sub topics + dockerevents `Feeder` + `agent.Start` (registry + dialer + evict/dial subscribers) + `AgentWatcher` + drain callback + admin listener + agent listener (with chained Auth + Identity interceptors) + `netlogger.Service` (via `otel.NewOtelLoggerProvider` + `circuitExporter`).
+- `cmd/clawkercp/clawkercp.go` — thin daemon wrapper (`os.Exit(controlplane.Main())`). The real orchestration lives in `internal/controlplane/cmd.go`, which wires the Ory stack + firewall `Handler` + `ActionQueue` + pub/sub topics + dockerevents `Feeder` + `agent.Start` (registry + dialer + evict/dial subscribers) + `AgentWatcher` + drain callback + the two gRPC listeners + `netlogger.Service` (via `otel.NewOtelLoggerProvider` + `circuitExporter`). The listeners start at different times: `GRPCStack.ServeAgent` comes up during boot (clawkerd flows need it), while `ServeAdmin` is called by `run()` only after `SetReady`, so early admin clients wait in the accept backlog instead of hitting a half-built CP. The agent listener chains Auth + Identity interceptors.
 
 ## Command Dependency Injection Pattern
 
@@ -677,7 +688,8 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │                                                                 │
 │  Universally imported as infrastructure by most of the codebase.│
 │                                                                 │
-│  config → storage                                               │
+│  config → storage, consts, build                                │
+│  state → storage, consts                                        │
 │  iostreams → term, text                                         │
 │  ebpf → logger (BPF loader, global route_map via SyncRoutes)    │
 └────────────────────────────┬────────────────────────────────────┘
@@ -765,7 +777,9 @@ Each package with complex dependencies provides test infrastructure:
 | `testenv/` | `New(t, opts...)` → isolated XDG dirs + optional Config/ProjectManager; `WriteYAML` |
 | `config/mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq) |
 | `docker/mocks/` | `FakeClient` (wraps `whailtest.FakeAPIClient`), `SetupXxx` helpers, fixtures, assertions |
-| `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
+| `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)`, `RegistryMock` (moq) |
+| `state/mocks/` | `NewBlankState()`, `NewFromString(yaml)`, `StateStoreMock` (moq) — reads delegate to a seeded in-memory store, writes are record-only |
+| `controlplane/firewall/mocks/` | `EgressRulesStoreMock`, `RouteIdentityStoreMock` (moq-generated; the package's own tests use real stores) |
 | `git/gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `whail/whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios, `EventRecorder` |
 | `api/admin/v1/mocks/` | `AdminServiceClientMock` (moq-generated) |

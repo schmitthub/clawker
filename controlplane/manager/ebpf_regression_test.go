@@ -16,7 +16,7 @@ import (
 func TestINV_B1_017_AllRequiredPortsPublished(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
-	cp := cfg.Settings().ControlPlane
+	cp := cfg.ControlPlaneSettings()
 
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)

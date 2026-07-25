@@ -77,7 +77,10 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	// bringup forever (stack up, but route-seed + agent re-enroll never run).
 	// Refuse to ship such a config rather than strand the firewall.
 	if ports.HealthPort > 0 && !cfg.HasListener(healthListenerName) {
-		return nil, warnings, fmt.Errorf("generated envoy config is missing the health listener on port %d — firewall bringup would hang", ports.HealthPort)
+		return nil, warnings, fmt.Errorf(
+			"generated envoy config is missing the health listener on port %d — firewall bringup would hang",
+			ports.HealthPort,
+		)
 	}
 
 	out, err := cfg.Bytes()
@@ -144,7 +147,10 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 		}
 		lists := layersFor(r, gen)
 		if lists == nil {
-			warnings = append(warnings, fmt.Sprintf("layered generator: proto %q not yet supported (rule %s) — skipped", r.Proto, r.Dst))
+			warnings = append(
+				warnings,
+				fmt.Sprintf("layered generator: proto %q not yet supported (rule %s) — skipped", r.Proto, r.Dst),
+			)
 			continue
 		}
 		// https/wss to a CIDR reencrypts to an arbitrary in-range host whose cert
@@ -152,7 +158,13 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 		// (fail-closed, secure by default) unless insecure_skip_tls_verify is set. Not
 		// an error — a UX nudge so the operator knows why the upstream is rejected.
 		if isCIDR(r.Dst) && baseProto(strings.ToLower(r.Proto)) == "https" && !r.InsecureSkipTLSVerify {
-			warnings = append(warnings, fmt.Sprintf("https to CIDR %s reencrypts to the original in-range host; Envoy will refuse the upstream TLS handshake unless that host presents a CA-trusted cert — set insecure_skip_tls_verify: true to accept self-signed in-range upstreams (MITM inspection still applies)", r.Dst))
+			warnings = append(
+				warnings,
+				fmt.Sprintf(
+					"https to CIDR %s reencrypts to the original in-range host; Envoy will refuse the upstream TLS handshake unless that host presents a CA-trusted cert — set insecure_skip_tls_verify: true to accept self-signed in-range upstreams (MITM inspection still applies)",
+					r.Dst,
+				),
+			)
 		}
 		for i, ls := range lists {
 			perms = append(perms, permutation{
@@ -162,7 +174,14 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 				// wildcard rule for the same apex+port stay distinct permutations
 				// — same rationale as RuleKey. normalizeDomain would collapse
 				// "mintlify.com" and ".mintlify.com" into one, dropping a chain.
-				key: fmt.Sprintf("%s:%s:%s:%s#%d", r.Dst, r.Port, strings.ToLower(r.Action), strings.ToLower(r.Proto), i),
+				key: fmt.Sprintf(
+					"%s:%s:%s:%s#%d",
+					r.Dst,
+					r.Port,
+					strings.ToLower(r.Action),
+					strings.ToLower(r.Proto),
+					i,
+				),
 			})
 		}
 	}
@@ -270,7 +289,9 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// per-host vhost can't enumerate the range). A single IP keeps the per-host
 		// vhost (its Host header IS the one host), so only a true CIDR routes here.
 		if isCIDR(r.Dst) {
-			return [][]layer{withWS(prefixRangeTransportLayer(httpPort(r)), httpOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+			return [][]layer{
+				withWS(prefixRangeTransportLayer(httpPort(r)), httpOriginalDstUpstreamLayer, httpAppLayer(noDFP())),
+			}
 		}
 		app := httpAppLayer(appDFP{active: gen.httpDFPActive, cache: httpDFPCacheName})
 		if isWildcardDomain(r.Dst) {
@@ -294,7 +315,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// is advertised for a range. The range cert is invalid for any single in-range
 		// host on purpose (agent-side verification is not the enforcement boundary).
 		if isCIDR(r.Dst) {
-			return [][]layer{withWS(tcpTransport, httpsOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+			return [][]layer{withWS(tcpTransport, httpsOriginalDstUpstreamLayer, httpAppLayer(noDFP()))}
 		}
 		if isWildcardDomain(r.Dst) {
 			dfp := appDFP{active: true, cache: httpsDFPCacheName}
@@ -310,11 +331,11 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// CIDR; only an SNI-selectable FQDN host gets the h3 sibling. (CIDR is already
 		// returned above; by here isIPOrCIDR means a single IP literal.)
 		if isIPOrCIDR(r.Dst) {
-			return [][]layer{withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{}))}
+			return [][]layer{withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(noDFP()))}
 		}
 		return [][]layer{
-			withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
-			withWS(quicTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
+			withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(noDFP())),
+			withWS(quicTransport, httpsExactUpstreamLayer, httpAppLayer(noDFP())),
 		}
 	case "ssh", "tcp":
 		// Opaque TCP: dedicated listener → tcp_proxy → pinned cluster, NO app
@@ -452,7 +473,7 @@ func denyDefaultFilterChain(als ALSConfig) map[string]any {
 		"filters": []any{
 			map[string]any{
 				"name": "envoy.filters.network.tcp_proxy",
-				"typed_config": map[string]any{
+				keyTypedConfig: map[string]any{
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
 					"cluster":     denyClusterName,
@@ -539,7 +560,7 @@ func buildOtelALSCluster(als ALSConfig) map[string]any {
 		},
 		"transport_socket": map[string]any{
 			"name": "envoy.transport_sockets.tls",
-			"typed_config": map[string]any{
+			keyTypedConfig: map[string]any{
 				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 				"sni":   consts.MonitoringServiceOtelCollector,
 				"common_tls_context": map[string]any{
@@ -604,8 +625,8 @@ func buildHealthListener(port int) map[string]any {
 			map[string]any{
 				"filters": []any{
 					map[string]any{
-						"name": "envoy.filters.network.http_connection_manager",
-						"typed_config": map[string]any{
+						"name": httpConnectionManagerFilterName,
+						keyTypedConfig: map[string]any{
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 							"stat_prefix": "health_check",
 							"route_config": map[string]any{
@@ -689,7 +710,9 @@ func checkProtoCollisions(rules []config.EgressRule) error {
 				if port, ok := lowestSpanOverlap(protoSpans[protos[i]], protoSpans[protos[j]]); ok {
 					return fmt.Errorf(
 						"envoy config: %s:%d is claimed by multiple protos %v — a host:port maps to exactly one network stack; split onto distinct ports or pick one proto",
-						h, port, []string{protos[i], protos[j]},
+						h,
+						port,
+						[]string{protos[i], protos[j]},
 					)
 				}
 			}
@@ -765,7 +788,9 @@ func checkOpaquePortActionConflicts(rules []config.EgressRule) error {
 		if port, ok := lowestSpanOverlap(allow[k], deny[k]); ok {
 			return fmt.Errorf(
 				"envoy config: %s %s:%d has conflicting allow and deny rules for the same port — a single port has no range to carve; remove one or express the exception as a port range",
-				k.proto, k.host, port,
+				k.proto,
+				k.host,
+				port,
 			)
 		}
 	}
@@ -796,7 +821,12 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 
 	for _, b := range bands {
 		if b.n > 0 && b.base+b.n-1 > 65535 {
-			return fmt.Errorf("envoy config: %d dedicated %s listeners from base %d overflow past port 65535 (port_range fan-out too wide) — narrow the range(s) or lower the base", b.n, b.name, b.base)
+			return fmt.Errorf(
+				"envoy config: %d dedicated %s listeners from base %d overflow past port 65535 (port_range fan-out too wide) — narrow the range(s) or lower the base",
+				b.n,
+				b.name,
+				b.base,
+			)
 		}
 	}
 
@@ -826,7 +856,14 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 		lo, hi := b.base, b.base+b.n-1
 		for _, p := range infra {
 			if p.port >= lo && p.port <= hi {
-				return fmt.Errorf("envoy config: dedicated %s band [%d-%d] collides with the fixed %s listener on port %d (port_range fan-out too wide) — narrow the range(s) or move the band base", b.name, lo, hi, p.name, p.port)
+				return fmt.Errorf(
+					"envoy config: dedicated %s band [%d-%d] collides with the fixed %s listener on port %d (port_range fan-out too wide) — narrow the range(s) or move the band base",
+					b.name,
+					lo,
+					hi,
+					p.name,
+					p.port,
+				)
 			}
 		}
 	}
@@ -838,7 +875,15 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 		tLo, tHi := ports.TCPPortBase, ports.TCPPortBase+len(tcp)-1
 		uLo, uHi := ports.UDPPortBase, ports.UDPPortBase+len(udp)-1
 		if tLo <= uHi && uLo <= tHi {
-			return fmt.Errorf("envoy config: dedicated tcp/ssh band [%d-%d] overlaps the raw-udp band [%d-%d] (port_range fan-out too wide) — narrow the range(s) or widen the gap between TCPPortBase (%d) and UDPPortBase (%d)", tLo, tHi, uLo, uHi, ports.TCPPortBase, ports.UDPPortBase)
+			return fmt.Errorf(
+				"envoy config: dedicated tcp/ssh band [%d-%d] overlaps the raw-udp band [%d-%d] (port_range fan-out too wide) — narrow the range(s) or widen the gap between TCPPortBase (%d) and UDPPortBase (%d)",
+				tLo,
+				tHi,
+				uLo,
+				uHi,
+				ports.TCPPortBase,
+				ports.UDPPortBase,
+			)
 		}
 	}
 	return nil
@@ -858,7 +903,10 @@ func validateProtoDstSupport(rules []config.EgressRule) error {
 			continue
 		}
 		if strings.ToLower(r.Proto) == "udp" && isCIDR(r.Dst) {
-			return fmt.Errorf("envoy config: raw udp to a CIDR range %q is not supported (udp_proxy cannot forward to the original destination); use a single IP dst or split the range into per-host rules", r.Dst)
+			return fmt.Errorf(
+				"envoy config: raw udp to a CIDR range %q is not supported (udp_proxy cannot forward to the original destination); use a single IP dst or split the range into per-host rules",
+				r.Dst,
+			)
 		}
 	}
 	return nil

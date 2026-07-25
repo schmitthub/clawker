@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -787,16 +789,16 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 
 	// Pre-seed the store via the handler's own helper so the rules land
 	// on disk exactly as a prior CP run would have left them.
-	statuses, err := h.addRulesToStore([]config.EgressRule{
+	statuses, err := h.store.AddRules([]config.EgressRule{
 		{Dst: "github.com", Proto: "ssh", Port: "22", Action: "allow"},
 		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
 	require.NoError(t, err)
 	require.Len(t, statuses, 2, "one status per input rule")
 	for _, s := range statuses {
-		require.Equal(t, addStatusAdded, s, "both rules are brand-new")
+		require.Equal(t, AddStatusAdded, s, "both rules are brand-new")
 	}
-	// addRulesToStore writes to disk only; no Submit, so no SyncRoutes
+	// AddRules writes to disk only; no Submit, so no SyncRoutes
 	// calls have been recorded yet.
 	require.Empty(t, mock.SyncRoutesCalls(), "store seed must not invoke SyncRoutes")
 
@@ -856,7 +858,7 @@ func TestHandler_FirewallInit_EmitsNormalizeWarningsButSyncsSurvivors(t *testing
 	// Two rules that normalize to the same key → first lands as ADDED,
 	// the second collides on the same RuleKey and reports UNCHANGED
 	// (identical re-apply after the first insert).
-	statuses, err := h.addRulesToStore([]config.EgressRule{
+	statuses, err := h.store.AddRules([]config.EgressRule{
 		{Dst: "Example.Com", Proto: "https", Port: "443", Action: "allow"},
 		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
@@ -1050,6 +1052,19 @@ func TestHandler_CancelAllBypassTimers_StopsAndClears(t *testing.T) {
 // statusResult.Running = false to exercise the down-stack path.
 func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, *fakeStack) {
 	t.Helper()
+	h, stack, _ := ruleStoreHandlerWithCfg(t, mock)
+	return h, stack
+}
+
+// ruleStoreHandlerWithCfg is ruleStoreHandler plus the isolated config, for
+// tests that need to inspect the store's files directly.
+//
+//nolint:ireturn // config.Config is an interface by design; the helper hands back what the constructors took
+func ruleStoreHandlerWithCfg(
+	t *testing.T,
+	mock *ebpfmocks.EBPFManagerMock,
+) (*Handler, *fakeStack, config.Config) {
+	t.Helper()
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
@@ -1076,7 +1091,76 @@ func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, 
 		return []string{"192.168.65.254"}, nil
 	}
 	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
-	return h, stack
+	return h, stack, cfg
+}
+
+// TestHandler_RuleMutation_NilStoreFailsLoud pins the wiring-fault contract on
+// the mutating RPCs: with no store wired they must name the missing dependency,
+// not nil-deref inside the queued closure. A deref there comes back as a
+// recovered-panic result, which tells an operator nothing about which
+// dependency is missing.
+func TestHandler_RuleMutation_NilStoreFailsLoud(t *testing.T) {
+	h := newTestHandler(t, noopMock(), nil)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
+	})
+	require.ErrorContains(t, err, "rules store not wired")
+	require.NotErrorIs(t, err, ErrClosurePanic)
+
+	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "example.com", Proto: "https", Port: "443", Path: "",
+	})
+	require.ErrorContains(t, err, "rules store not wired")
+	require.NotErrorIs(t, err, ErrClosurePanic)
+}
+
+// TestHandler_AddRules_MediatedByQueue pins the ordering half of the
+// single-writer funnel: FirewallAddRules does not touch the rules file until
+// the queue's worker reaches its ActionRuleMutate closure, and the RPC does not
+// return before that write lands. It is an ORDERING assertion — concurrent
+// writers are the queue's problem, not the store's, so nothing here claims a
+// no-lost-update contract.
+func TestHandler_AddRules_MediatedByQueue(t *testing.T) {
+	h, _, cfg := ruleStoreHandlerWithCfg(t, noopMock())
+	dataDir, err := cfg.FirewallDataSubdir()
+	require.NoError(t, err)
+	rulesPath := filepath.Join(dataDir, consts.EgressRulesFile)
+
+	// Occupy the single worker so the RPC's closure cannot run.
+	blocker := newGate()
+	blockerReply := h.queue.Submit(ActionBringup, blocker.fn(nil, nil))
+	blocker.waitEntered(t)
+
+	done := make(chan error, 1)
+	go func() {
+		_, addErr := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+			Rules: []*adminv1.EgressRule{
+				{Dst: "queued.example.com", Proto: "https", Port: "443", Action: "allow"},
+			},
+		})
+		done <- addErr
+	}()
+
+	select {
+	case rpcErr := <-done:
+		t.Fatalf("FirewallAddRules returned while the queue worker was occupied: %v", rpcErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+	assert.NoFileExists(t, rulesPath, "no rule may be written before the queued closure runs")
+
+	blocker.open()
+	_ = recvOrFail(t, blockerReply)
+
+	select {
+	case rpcErr := <-done:
+		require.NoError(t, rpcErr)
+	case <-time.After(awaitTimeout):
+		t.Fatal("FirewallAddRules never returned after the queue was released")
+	}
+	persisted, err := os.ReadFile(rulesPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(persisted), "queued.example.com", "the rule landed once the closure ran")
 }
 
 // TestHandler_Reload_CallsSyncRoutesAfterReload verifies the
@@ -1353,7 +1437,7 @@ func assertReason(t *testing.T, err error, wantReason string) {
 // for the path_rules-propagation bug. Pre-seeding the store with a path
 // rule, then re-sending the same key with a different path rule, must
 // produce a rule whose PathRules list contains BOTH entries — not the
-// first-write-wins skip the old addRulesToStore exhibited.
+// first-write-wins skip the old per-key merge exhibited.
 func TestHandler_AddRules_KeyCollision_MergesPathRules(t *testing.T) {
 	mock := noopMock()
 	h, stack := ruleStoreHandler(t, mock)

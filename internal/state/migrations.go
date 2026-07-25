@@ -1,15 +1,17 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
 // StateMigrations returns the migration functions for the CLI state store. They
-// run on the discovered state file during load and trigger an atomic re-save
-// when any returns true. The list is intentionally additive — append a
-// migration here when the schema evolves; never edit a shipped one in place.
+// run inside construction, once against each discovered file layer, and trigger
+// an atomic re-save of that layer when any returns true. The list is
+// intentionally additive — append a migration here when the schema evolves;
+// never edit a shipped one in place.
 func StateMigrations() []storage.Migration[State] {
 	return []storage.Migration[State]{
 		dropLegacyUpdateKeys,
@@ -22,18 +24,23 @@ func StateMigrations() []storage.Migration[State] {
 // update-state.yaml; the store now reads the still-valid keys (checked_at,
 // latest_version) in place, but storage preserves unknown keys on re-save — so
 // without this the two dead keys would linger in the file indefinitely.
-// Returning true triggers an atomic re-save of the cleaned file at load time.
+// Returning true triggers an atomic re-save of the cleaned layer at load time.
 // It is idempotent: a file with neither key returns false (no re-save).
 func dropLegacyUpdateKeys(s *storage.Store[State]) (bool, error) {
 	changed := false
 	// Historical wire keys from the deleted update-checker struct — there is no
 	// live symbol to reference, so they are spelled out here intentionally.
 	for _, key := range []string{"latest_url", "current_version"} {
-		removed, err := s.Remove(key)
-		if err != nil {
+		err := s.Remove(key)
+		switch {
+		case err == nil:
+			changed = true
+		case errors.Is(err, storage.ErrKeyNotFound):
+			// Key absent from this layer — nothing to strip. This is the
+			// precondition guard that keeps the migration idempotent.
+		default:
 			return false, fmt.Errorf("removing %s: %w", key, err)
 		}
-		changed = changed || removed
 	}
 	return changed, nil
 }

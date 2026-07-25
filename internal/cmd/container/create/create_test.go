@@ -365,7 +365,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -433,7 +433,7 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 		TUI:       tui.NewTUI(tio),
 		// Isolated data dir (testenv.New above) → empty registry →
 		// not-in-project cwd fallback.
-		ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
+		ProjectRegistry: project.NewRegistry,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -572,7 +572,7 @@ agent: { claude_code: { mount_projects: false, config: { strategy: "fresh" } } }
 			TUI:       tui.NewTUI(tio),
 			// Isolated data dir (testenv.New above) → empty registry →
 			// not-in-project cwd fallback.
-			ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
+			ProjectRegistry: project.NewRegistry,
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},

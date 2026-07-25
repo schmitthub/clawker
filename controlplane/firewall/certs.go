@@ -26,7 +26,19 @@ const (
 	caValidYears = 10
 
 	domainCertValidYears = 1
+
+	// The two PEM block types this package emits (RFC 7468 labels).
+	pemBlockCertificate  = "CERTIFICATE"
+	pemBlockECPrivateKey = "EC PRIVATE KEY"
 )
+
+// encodePEM renders a DER payload as a PEM block of the given type. Headers is
+// explicitly nil: PEM headers are an RFC 1421 legacy that nothing in the firewall
+// stack reads, and Go's own encoders emit none — so every block this package
+// writes is header-free by intent, not by omission.
+func encodePEM(blockType string, der []byte) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: blockType, Headers: nil, Bytes: der})
+}
 
 // EnsureCA creates a self-signed CA keypair if none exists under certDir,
 // or loads the existing one.
@@ -90,7 +102,11 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 // the apex (e.g., "datadoghq.com") and the wildcard ("*.datadoghq.com")
 // so TLS inspection works for any subdomain.
 // Returns PEM-encoded cert and key bytes.
-func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domain string) (certPEM, keyPEM []byte, err error) {
+func GenerateDomainCert(
+	caCert *x509.Certificate,
+	caKey *ecdsa.PrivateKey,
+	domain string,
+) ([]byte, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generating domain key: %w", err)
@@ -144,13 +160,13 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 		return nil, nil, fmt.Errorf("creating domain certificate: %w", err)
 	}
 
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certPEM := encodePEM(pemBlockCertificate, certDER)
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshalling domain key: %w", err)
 	}
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	keyPEM := encodePEM(pemBlockECPrivateKey, keyDER)
 
 	return certPEM, keyPEM, nil
 }
@@ -177,20 +193,62 @@ func certBasename(dst string) string {
 //
 // Cert generation runs before stale cleanup so that a partial failure leaves
 // previously-working certs intact rather than an empty directory.
-func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
+func RegenerateDomainCerts(
+	rules []config.EgressRule,
+	certDir string,
+	caCert *x509.Certificate,
+	caKey *ecdsa.PrivateKey,
+) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
 
-	// Deduplicate by cert basename (the flat on-disk filename stem), tracking the
-	// domain form passed to GenerateDomainCert and whether any rule uses the
-	// wildcard convention so the cert includes wildcard SANs if needed.
-	type domainCertInfo struct {
-		domain    string // normalizeDomain(dst): FQDN, IP literal, or CIDR (keeps "/")
-		needsWild bool
+	plans, order := planDomainCerts(rules)
+
+	// Generate certs first — overwrites existing files in-place.
+	// If generation fails partway, domains before the failure have fresh certs
+	// and domains after still have their old (valid) certs.
+	for _, bn := range order {
+		if err := writeDomainCert(certDir, bn, plans[bn], caCert, caKey); err != nil {
+			return err
+		}
 	}
-	seen := make(map[string]*domainCertInfo)
-	var order []string // preserve deterministic iteration (cert basenames)
+
+	// Clean stale domain cert files only after all new certs are written.
+	// Only removes certs for domains no longer in the rule set.
+	if err := cleanStaleDomainCerts(certDir, plans); err != nil {
+		return fmt.Errorf("cleaning stale certs: %w", err)
+	}
+
+	return nil
+}
+
+// domainCertPlan is the decision for ONE flat on-disk cert basename: which
+// domain form to sign and whether the leaf needs wildcard SANs. Several rules
+// can fold into one plan (same dst on two ports, exact + wildcard on one apex),
+// which is why the plan — not the rule — is the unit of generation.
+type domainCertPlan struct {
+	domain    string // normalizeDomain(dst): FQDN, IP literal, or CIDR (keeps "/")
+	needsWild bool
+}
+
+// certDomain is the domain string handed to GenerateDomainCert: the leading dot
+// is re-added for a wildcard plan so the leaf carries both apex and wildcard SANs.
+func (p *domainCertPlan) certDomain() string {
+	if p.needsWild {
+		return "." + p.domain
+	}
+	return p.domain
+}
+
+// planDomainCerts reduces the rule set to one cert plan per cert basename (the
+// flat on-disk filename stem), plus the deterministic basename order to generate
+// them in. If ANY rule for a basename uses the wildcard convention the plan is
+// marked wildcard, so a later exact-domain rule cannot demote a cert that also
+// needs wildcard SANs.
+func planDomainCerts(rules []config.EgressRule) (map[string]*domainCertPlan, []string) {
+	plans := make(map[string]*domainCertPlan)
+	var order []string
 
 	for _, rule := range rules {
 		// Normalize first so legacy `proto: tls` translates to `https` before
@@ -201,7 +259,7 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		// over TLS — same downstream TLS termination as https, just with an
 		// upgrade enrichment). Plaintext http/ws, opaque TCP/SSH/UDP, and any
 		// other proto pass through without TLS termination.
-		if p := strings.ToLower(rule.Proto); p != "https" && p != "wss" {
+		if p := strings.ToLower(rule.Proto); p != protoHTTPS && p != protoWSS {
 			continue
 		}
 		// Every TLS-terminated dst gets a MITM cert — FQDN (dNSName SANs), IP
@@ -209,54 +267,40 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		// network address; see GenerateDomainCert). A range cert cannot validate
 		// every in-range host, but agent-side verification is not the enforcement
 		// boundary — the cert exists to encrypt the hop and enable MITM inspection.
-
 		bn := certBasename(rule.Dst)
-		if info, exists := seen[bn]; exists {
-			if isWildcardDomain(rule.Dst) {
-				info.needsWild = true
-			}
+		if plan, exists := plans[bn]; exists {
+			plan.needsWild = plan.needsWild || isWildcardDomain(rule.Dst)
 			continue
 		}
-		seen[bn] = &domainCertInfo{
+		plans[bn] = &domainCertPlan{
 			domain:    normalizeDomain(rule.Dst),
 			needsWild: isWildcardDomain(rule.Dst),
 		}
 		order = append(order, bn)
 	}
 
-	// Generate certs first — overwrites existing files in-place.
-	// If generation fails partway, domains before the failure have fresh certs
-	// and domains after still have their old (valid) certs.
-	for _, bn := range order {
-		info := seen[bn]
-		// Re-add leading dot so GenerateDomainCert produces wildcard SANs.
-		domain := info.domain
-		if info.needsWild {
-			domain = "." + info.domain
-		}
+	return plans, order
+}
 
-		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, domain)
-		if err != nil {
-			return fmt.Errorf("generating cert for %s: %w", info.domain, err)
-		}
-
-		certPath := filepath.Join(certDir, bn+"-cert.pem")
-		keyPath := filepath.Join(certDir, bn+"-key.pem")
-
-		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
-			return fmt.Errorf("writing cert for %s: %w", info.domain, err)
-		}
-		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return fmt.Errorf("writing key for %s: %w", info.domain, err)
-		}
+// writeDomainCert signs one plan against the CA and writes the cert/key pair to
+// certDir under the plan's basename. Overwrites in place, so a failure here
+// leaves every not-yet-regenerated dst on its previous (still valid) cert.
+func writeDomainCert(
+	certDir, basename string,
+	plan *domainCertPlan,
+	caCert *x509.Certificate,
+	caKey *ecdsa.PrivateKey,
+) error {
+	certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, plan.certDomain())
+	if err != nil {
+		return fmt.Errorf("generating cert for %s: %w", plan.domain, err)
 	}
-
-	// Clean stale domain cert files only after all new certs are written.
-	// Only removes certs for domains no longer in the rule set.
-	if err := cleanStaleDomainCerts(certDir, seen); err != nil {
-		return fmt.Errorf("cleaning stale certs: %w", err)
+	if err = os.WriteFile(filepath.Join(certDir, basename+"-cert.pem"), certPEM, 0o600); err != nil {
+		return fmt.Errorf("writing cert for %s: %w", plan.domain, err)
 	}
-
+	if err = os.WriteFile(filepath.Join(certDir, basename+"-key.pem"), keyPEM, 0o600); err != nil {
+		return fmt.Errorf("writing key for %s: %w", plan.domain, err)
+	}
 	return nil
 }
 
@@ -364,7 +408,7 @@ func loadCA(certPath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, err
 }
 
 func writeCertPEM(path string, certDER []byte) error {
-	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	data := encodePEM(pemBlockCertificate, certDER)
 	return os.WriteFile(path, data, 0o600)
 }
 
@@ -373,6 +417,6 @@ func writeKeyPEM(path string, key *ecdsa.PrivateKey) error {
 	if err != nil {
 		return fmt.Errorf("marshalling key: %w", err)
 	}
-	data := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	data := encodePEM(pemBlockECPrivateKey, keyDER)
 	return os.WriteFile(path, data, 0o600)
 }
