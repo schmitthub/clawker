@@ -57,9 +57,9 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	cs := ios.ColorScheme()
 
 	// Short-circuit when the CP container does not exist or is stopped —
-	// calling f.AdminClient would otherwise trigger EnsureRunning and spin
-	// up a brand-new CP just to ask it to stop. Old host-side daemon
-	// `down` was a no-op in the same case; preserve that contract.
+	// f.AdminClient is a pure dial, so dialing a dead CP would burn the RPC
+	// deadline before failing, and with no CP there is no stack to tear
+	// down anyway.
 	if opts.Client != nil {
 		dc, err := opts.Client(ctx)
 		if err != nil {

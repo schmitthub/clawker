@@ -1446,6 +1446,35 @@ func TestHandler_RemoveRule_All_WipesStore(t *testing.T) {
 	assert.Empty(t, listResp.GetRules(), "store wiped")
 }
 
+// TestHandler_RemoveRule_All_StackDown_PersistsWipe mirrors the single-rule
+// stack-down test for the all form: the wipe is durable on disk even when
+// the stack is down, and stack_restarted reports false so the CLI can emit
+// the "takes effect next firewall up" note.
+func TestHandler_RemoveRule_All_StackDown_PersistsWipe(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	stack.statusResult = Status{Running: false} //nolint:exhaustruct // fixture: only the running gate matters here
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "", Proto: "", Port: "", Path: "", All: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED, resp.GetStatus())
+	assert.False(t, resp.GetStackRestarted(), "stack down: wipe persisted, nothing restarted")
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.GetRules(), "wipe durable on disk")
+}
+
 // TestHandler_RemoveRule_All_EmptyStore_NotFound mirrors the single-rule
 // miss: an already-empty store reports NOT_FOUND on the response and fires
 // no reconcile.
@@ -1472,6 +1501,8 @@ func TestHandler_RemoveRule_All_WithSelector_Rejected(t *testing.T) {
 
 	for _, req := range []*adminv1.FirewallRemoveRuleRequest{
 		{Dst: "example.com", Proto: "", Port: "", Path: "", All: true},
+		{Dst: "", Proto: "https", Port: "", Path: "", All: true},
+		{Dst: "", Proto: "", Port: "443", Path: "", All: true},
 		{Dst: "", Proto: "", Port: "", Path: "/api/", All: true},
 	} {
 		_, err := h.FirewallRemoveRule(context.Background(), req)

@@ -72,9 +72,9 @@ egress firewall, including container health, active rule count, and network info
 }
 
 func statusRun(ctx context.Context, opts *StatusOptions) error {
-	// Avoid bootstrapping the CP just to ask about state. If no CP
-	// container exists or it's stopped, synthesize a "stopped" row —
-	// matches the old host-side daemon `status` contract.
+	// f.AdminClient is a pure dial with an RPC deadline — dialing a CP that
+	// is absent or stopped burns the deadline before failing. Check
+	// liveness cheaply first and synthesize a "stopped" row instead.
 	var row statusRow
 	if opts.Client != nil {
 		dc, err := opts.Client(ctx)
@@ -120,8 +120,15 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 func renderStatus(opts *StatusOptions, row statusRow) error {
 	ios := opts.IOStreams
 
-	// Format dispatch.
 	switch {
+	case opts.Format.Quiet:
+		state := "stopped"
+		if row.Running {
+			state = "running"
+		}
+		fmt.Fprintln(ios.Out, state)
+		return nil
+
 	case opts.Format.IsJSON():
 		if err := cmdutil.WriteJSON(ios.Out, row); err != nil {
 			return fmt.Errorf("writing json: %w", err)

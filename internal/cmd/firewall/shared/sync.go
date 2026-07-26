@@ -15,8 +15,12 @@ import (
 // ComposeProjectRules gates on the firewall being enabled and a resolvable
 // current project, then composes the effective egress rule set — the selected
 // harness's egress floor plus the project's security.firewall contribution —
-// as wire rules. This is the same set the container-start sync pushes; both
-// `firewall refresh` and `firewall prune` re-derive it through here.
+// as wire rules. The same composition the container-start sync uses, but
+// resolved against the config's current build.harness rather than any
+// container's stamped harness label: a running agent created under a harness
+// the config has since moved away from gets the current harness's floor, not
+// the one it was built with. Both `firewall refresh` and `firewall prune`
+// re-derive the set through here.
 func ComposeProjectRules(
 	ctx context.Context,
 	cfgF func() (config.Config, error),

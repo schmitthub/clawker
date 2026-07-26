@@ -48,7 +48,9 @@ func TestNewCmdFirewall_NoServeSubcommand(t *testing.T) {
 
 	for _, sub := range cmd.Commands() {
 		if sub.Name() == "serve" {
-			t.Fatalf("firewall command must not register a serve subcommand — daemon path is dissolved in Branch 2")
+			t.Fatalf(
+				"firewall command must not register a serve subcommand — no host-side daemon; stack lifecycle is owned by the CP container",
+			)
 		}
 	}
 }

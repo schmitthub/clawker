@@ -966,14 +966,9 @@ func TestNormalizeAndDedup_MethodsOnOpaqueWarns(t *testing.T) {
 	assert.Empty(t, warnings)
 }
 
-// TestEgressRulesStore_Canonicalize covers the on-disk heal the Stack runs
-// before every config generation: a legacy file whose rules carry no proto,
-// action, or port is rewritten in canonical form, and a second pass is a no-op.
-// The idempotency half is the load-bearing assertion — a heal that always
-// reports a rewrite would re-save (and flock) the file on every single reload.
 // TestEgressRulesStore_RemoveAll exercises the wipe verb behind
-// `firewall remove --all` / `firewall prune`: a populated store is emptied in
-// one write, and the emptiness is what actually landed on disk.
+// `firewall prune`: a populated store is emptied in one write, and the
+// emptiness is what actually landed on disk.
 func TestEgressRulesStore_RemoveAll(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dataDir, err := cfg.FirewallDataSubdir()
@@ -1013,6 +1008,26 @@ func TestEgressRulesStore_RemoveAll(t *testing.T) {
 	assert.False(t, matched, "an empty store has nothing to remove")
 }
 
+// TestEgressRulesStore_RemoveAll_FreshStore covers the key-absent branch: a
+// store whose rules key was never written (fresh install — distinct from a
+// file holding `rules: []`) must report a clean no-op, not an error, so
+// `firewall prune` works on a never-configured machine.
+func TestEgressRulesStore_RemoveAll_FreshStore(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	store, err := firewall.NewRulesStore(cfg)
+	require.NoError(t, err)
+
+	matched, err := store.RemoveAll()
+	require.NoError(t, err, "a fresh store with no rules key must not error")
+	assert.False(t, matched, "nothing stored, nothing to remove")
+}
+
+// TestEgressRulesStore_Canonicalize covers the on-disk heal the Stack runs
+// before every config generation: a legacy file whose rules carry no proto,
+// action, or port is rewritten in canonical form, and a second pass is a no-op.
+// The idempotency half is the load-bearing assertion — a heal that always
+// reports a rewrite would re-save (and flock) the file on every single reload.
 func TestEgressRulesStore_Canonicalize(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dataDir, err := cfg.FirewallDataSubdir()

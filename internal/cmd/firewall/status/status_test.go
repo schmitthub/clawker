@@ -70,7 +70,7 @@ func healthyStatus() *adminv1.FirewallStatusResult {
 	}
 }
 
-// degradedStatus is a stack that reports running with an unhealthy CoreDNS
+// degradedStatus is a stack that reports stopped with a stale-healthy Envoy
 // and no addresses — the optional lines must stay suppressed.
 //
 //nolint:exhaustruct // fixture sets only the fields the status renderer reads

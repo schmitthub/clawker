@@ -308,7 +308,7 @@ func stopBypassAfterInterrupt(opts *BypassOptions, containerName string) error {
 // reEnableAfterExpiry runs once the timer expires. The CP-side dead-man timer
 // SHOULD have re-enabled enforcement already, but a CP restart mid-bypass
 // drops the in-memory timer and leaves enforcement off silently. Defensive
-// Enable is cheap (idempotent per B2 spec) and closes that gap. Re-fetch the
+// Enable is cheap — FirewallEnable is idempotent — and closes that gap. Re-fetch the
 // admin client so the Factory closure can rebuild a stale grpc.ClientConn.
 func reEnableAfterExpiry(ctx context.Context, opts *BypassOptions, containerName string) error {
 	ios := opts.IOStreams

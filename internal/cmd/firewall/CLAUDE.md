@@ -12,7 +12,7 @@ One subpackage per subcommand (the `internal/cmd/<noun>/<verb>` pattern); cross-
 | `up/` | `firewall up` — CP bootstrap (`f.ControlPlane().EnsureRunning`) then `shared.BringUpStack`. One of the explicit CP-bootstrap verbs; all other firewall admin commands fail fast when the CP is down |
 | `down/` | `firewall down` — `FirewallRemove` RPC (global teardown) |
 | `status/` | `firewall status` — health snapshot; `--format`/`--json`/`--quiet` via `cmdutil.AddFormatFlags` |
-| `list/` | `firewall list` (alias `ls`) — rule dump sorted by domain; format flags like `status` |
+| `list/` | `firewall list` (alias `ls`) — rule dump sorted by (domain, proto, port); format flags like `status` |
 | `add/` | `firewall add <domain>` — `--proto`, `--port` (spec validated CLI-side via `shared.ValidatePortFlag`), `--path`+`--action` (required together), `--methods` |
 | `remove/` | `firewall remove <domain>` — key removal, `--path` for single PathRule; domain tab-completion (`domainCompletions`); NOT_FOUND exits non-zero |
 | `reload/` | `firewall reload` — `FirewallReload` with the bringup RPC deadline |
@@ -29,7 +29,7 @@ Imported by every subcommand package (and by `internal/cmd/controlplane` for `Br
 
 | Symbol | Purpose |
 |--------|---------|
-| `CallWithSpinner` / `CallWithSpinnerTimeout` | Spinner-wrapped AdminService RPC with the 15s quick deadline / an explicit one (`consts.FirewallStackBringupRPCTimeout` for FirewallInit/FirewallReload) |
+| `CallWithSpinner` / `CallWithSpinnerTimeout` | Spinner-wrapped AdminService RPC with the quick deadline (`rpcTimeout`) / an explicit one (`consts.FirewallStackBringupRPCTimeout` for FirewallInit/FirewallReload) |
 | `WrapRPCError` | gRPC error → header + per-sentinel remediation lines (from `errdetails.ErrorInfo` Reasons) |
 | `WarnStackDownExposure` | Loud stderr security warning on failed stack bringup |
 | `PrintStackRestartedNote` | "takes effect on next `firewall up`" note when `stack_restarted=false` |

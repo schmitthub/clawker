@@ -257,6 +257,16 @@ func TestFirewall_AddRemove(t *testing.T) {
 func TestFirewall_Prune(t *testing.T) {
 	h := newFirewallHarness(t)
 
+	// The rule store is shared, host-level state that outlives this test —
+	// the final `prune --all` leaves it empty, so restore the config set for
+	// whatever runs next.
+	t.Cleanup(func() {
+		res := h.Run("firewall", "refresh")
+		if res.Err != nil {
+			t.Logf("restoring firewall rules after prune test failed: %v\nstderr: %s", res.Err, res.Stderr)
+		}
+	})
+
 	// A CLI-added rule the project config does not define.
 	addRes := h.Run("firewall", "add", "example.com")
 	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s",

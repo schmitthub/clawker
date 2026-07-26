@@ -48,8 +48,16 @@ the current project config defines — the harness egress floor plus
 security.firewall.add_domains and security.firewall.rules. Rules added with
 ` + "`clawker firewall add`" + ` that are not in config are removed.
 
+The rule store is shared across projects: rules other projects contributed
+are removed too, and only the current project's rules are re-synced. Other
+projects restore their rules with ` + "`clawker firewall refresh`" + ` or on
+their next container start.
+
 With --all, every rule is removed and nothing is re-synced: agent containers
 lose all allowed egress until rules are re-added.
+
+If the re-sync fails after the wipe, the previous rules are restored — a
+failed prune leaves the store unchanged.
 
 Prompts for confirmation; pass --yes to skip the prompt (required in
 non-interactive sessions).`,
@@ -78,7 +86,6 @@ non-interactive sessions).`,
 
 func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	ios := opts.IOStreams
-	cs := ios.ColorScheme()
 
 	// Compose the keep set BEFORE wiping — a config or harness resolution
 	// failure must surface while the store is still intact.
@@ -97,7 +104,7 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		return err
 	}
 	if !confirmed {
-		fmt.Fprintln(ios.ErrOut, "Aborted. (pass --yes to skip confirmation)")
+		fmt.Fprintln(ios.ErrOut, "Aborted.")
 		return nil
 	}
 
@@ -105,6 +112,35 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
+
+	// Snapshot the store before mutating: the wipe and the re-sync are two
+	// RPCs, so a failure between them would otherwise leave the store empty.
+	// Any failure past this point rolls back to the snapshot, making the
+	// command's contract "fully pruned or nothing changed".
+	snapshot, err := shared.CallWithSpinner(ctx, ios, "Reading current firewall rules...",
+		func(rpcCtx context.Context) (*adminv1.FirewallListRulesResult, error) {
+			return client.FirewallListRules(rpcCtx, &adminv1.FirewallListRulesRequest{})
+		})
+	if err != nil {
+		//nolint:wrapcheck // WrapRPCError IS the wrap: it attaches the header plus per-sentinel remediation lines
+		return shared.WrapRPCError("reading firewall rules before prune", err)
+	}
+
+	if applyErr := applyPrune(ctx, opts, client, keep); applyErr != nil {
+		return rollbackPrune(ctx, ios, client, snapshot.GetRules(), applyErr)
+	}
+	return nil
+}
+
+// applyPrune wipes the store and, unless --all, re-syncs the composed keep
+// set — the same sync path `firewall refresh` uses.
+func applyPrune(
+	ctx context.Context,
+	opts *PruneOptions,
+	client adminv1.AdminServiceClient,
+	keep []*adminv1.EgressRule,
+) error {
+	ios := opts.IOStreams
 
 	resp, err := shared.CallWithSpinner(ctx, ios, "Removing all firewall rules...",
 		func(rpcCtx context.Context) (*adminv1.FirewallRemoveRuleResult, error) {
@@ -131,10 +167,45 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		//nolint:wrapcheck // SyncRules already prefixes every failure with the errHeader passed here
 		return err
 	}
+	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.Out, "%s Re-synced %d rules from project config\n",
 		cs.SuccessIcon(), res.Added+res.Modified+res.Unchanged)
-	shared.PrintStackRestartedNote(ios, res.StackRestarted, "rules synced from project config")
+	// The server reports stack_restarted=false both when the stack is down
+	// and when no rule changed (no reconcile fires) — only print the
+	// stack-down note when something actually changed, mirroring refresh.
+	if res.Added > 0 || res.Modified > 0 {
+		shared.PrintStackRestartedNote(ios, res.StackRestarted, "rules synced from project config")
+	}
 	return nil
+}
+
+// rollbackPrune restores the pre-prune snapshot after a failed wipe or
+// re-sync, reports the rollback outcome on stderr, and returns the original
+// failure. A wipe that failed without persisting makes the restore an
+// idempotent no-op merge, so the rollback is safe to attempt on every
+// post-snapshot failure.
+func rollbackPrune(
+	ctx context.Context,
+	ios *iostreams.IOStreams,
+	client adminv1.AdminServiceClient,
+	rules []*adminv1.EgressRule,
+	cause error,
+) error {
+	if len(rules) == 0 {
+		return cause
+	}
+	cs := ios.ColorScheme()
+	_, err := shared.CallWithSpinner(ctx, ios, "Restoring previous firewall rules...",
+		func(rpcCtx context.Context) (*adminv1.FirewallAddRulesResult, error) {
+			return client.FirewallAddRules(rpcCtx, &adminv1.FirewallAddRulesRequest{Rules: rules})
+		})
+	if err != nil {
+		fmt.Fprintf(ios.ErrOut, "%s unable to recover firewall rules after failure: %v\n", cs.WarningIcon(), err)
+		fmt.Fprintln(ios.ErrOut, "  run `clawker firewall refresh` to restore config-defined rules")
+		return cause
+	}
+	fmt.Fprintf(ios.ErrOut, "%s previous firewall rules were restored — no changes were applied\n", cs.InfoIcon())
+	return cause
 }
 
 // reportWipe renders the wipe RPC's outcome. NOT_FOUND (already-empty store)
@@ -166,15 +237,21 @@ func confirmPrune(opts *PruneOptions, keepCount int) (bool, error) {
 	if opts.Yes {
 		return true, nil
 	}
+	// A non-interactive session cannot answer the prompt; silently resolving
+	// to "no" would exit 0 and let automation believe the prune ran.
+	if !opts.IOStreams.CanPrompt() {
+		//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
+		return false, cmdutil.FlagErrorf("--yes is required to prune in a non-interactive session")
+	}
 	cs := opts.IOStreams.ColorScheme()
 	warning := fmt.Sprintf(
-		"%s This removes ALL firewall egress rules, then re-syncs the %d rules the project config and harness define. Rules added with `clawker firewall add` will be lost.",
+		"%s This removes ALL firewall egress rules — the store is shared, so rules other projects contributed are removed too — then re-syncs the %d rules this project's config and harness define. Rules added with `clawker firewall add` will be lost.",
 		cs.WarningIcon(),
 		keepCount,
 	)
 	if opts.All {
 		warning = fmt.Sprintf(
-			"%s This removes ALL firewall egress rules. Agent containers lose all allowed egress until rules are re-added.",
+			"%s This removes ALL firewall egress rules across every project. Agent containers lose all allowed egress until rules are re-added.",
 			cs.WarningIcon(),
 		)
 	}

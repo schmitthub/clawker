@@ -35,9 +35,10 @@ func NewCmdRefresh(f *cmdutil.Factory, runF func(context.Context, *RefreshOption
 	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Re-sync firewall rules from the current project config",
-		Long: `Re-read the current project's config (security.firewall.add_domains
-and security.firewall.rules) and sync those rules into the firewall store —
-the same sync that runs when a container starts, but without a restart.
+		Long: `Re-read the current project's config and sync its rules — the harness
+egress floor plus security.firewall.add_domains and security.firewall.rules —
+into the firewall store: the same sync that runs when a container starts,
+but without a restart.
 
 This is how you apply yaml edits live: edit config, then run refresh.
 
