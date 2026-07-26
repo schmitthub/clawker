@@ -194,7 +194,7 @@ Firewall rules are stored in a persistent `egress-rules.yaml` file in clawker's 
 
 Rules are keyed by `dst:proto:port`. When a key already exists in the store, the new call merges in: caller wins on `Action`; caller wins on `PathDefault` only when the incoming value is non-empty (an empty incoming `path_default` preserves the stored value, so a bare `clawker firewall add` will not clobber a yaml-set `path_default` on the same rule). `PathRules` is unioned by `Path` with caller winning on same-`Path` collision; `--path` identifies a `PathRule` by exact-string match against the stored `path`, while at request time Envoy matches the stored `path` as a prefix when routing. A re-apply where every rule in the batch is identical to what's already in the store is a true no-op (no write, no reload); mixed batches still reconcile. Rules persist across container restarts. Removing a domain from `clawker.yaml` does **not** remove it from the store on its own — the workaround is `clawker firewall remove <domain>` (whole entry) or `clawker firewall remove <domain> --path <p>` (single path rule).
 
-**The only way to remove a rule is `clawker firewall remove`.** No other command (`reload`, `disable`, `stop`) removes rules from the store.
+**The only commands that remove rules are `clawker firewall remove` (single rule) and `clawker firewall prune` (bulk reset: wipe the store, then re-sync only what `clawker.yaml` + the harness define; `--all` wipes without re-syncing).** No other command (`reload`, `disable`, `stop`) removes rules from the store.
 
 ### Other firewall commands available to the user
 
@@ -204,6 +204,7 @@ Rules are keyed by `dst:proto:port`. When a key already exists in the store, the
 | `clawker firewall list` | Show all active egress rules |
 | `clawker firewall remove <domain>` | Remove a domain from the allow list |
 | `clawker firewall refresh` | Live-apply `clawker.yaml` egress edits (re-sync `add_domains` + `security.firewall.rules` into the store without a restart; add/update only) |
+| `clawker firewall prune` | Reset the store to config: remove all rules, re-sync harness floor + project rules (`--all` = remove everything, no re-sync; confirms unless `--yes`) |
 | `clawker firewall reload` | Force-reload firewall configuration |
 
 ## What you can and cannot do

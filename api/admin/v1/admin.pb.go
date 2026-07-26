@@ -880,7 +880,12 @@ type FirewallRemoveRuleRequest struct {
 	// Optional. When set, only the matching PathRule entry is removed from
 	// the rule identified by (dst, proto, port); the rule itself remains.
 	// When empty, the whole rule is removed.
-	Path          string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	Path string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	// When true, every rule in the store is removed in one mutation (one
+	// stack reload). Mutually exclusive with dst/proto/port/path — the
+	// server rejects a request that sets both. An already-empty store
+	// reports NOT_FOUND, mirroring the single-rule miss.
+	All           bool `protobuf:"varint,5,opt,name=all,proto3" json:"all,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -941,6 +946,13 @@ func (x *FirewallRemoveRuleRequest) GetPath() string {
 		return x.Path
 	}
 	return ""
+}
+
+func (x *FirewallRemoveRuleRequest) GetAll() bool {
+	if x != nil {
+		return x.All
+	}
+	return false
 }
 
 type FirewallRemoveRuleResult struct {
@@ -1871,12 +1883,13 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x05rules\x18\x01 \x03(\v2\x1c.clawker.admin.v1.EgressRuleR\x05rules\"~\n" +
 	"\x16FirewallAddRulesResult\x12;\n" +
 	"\bstatuses\x18\x01 \x03(\x0e2\x1f.clawker.admin.v1.AddRuleStatusR\bstatuses\x12'\n" +
-	"\x0fstack_restarted\x18\x02 \x01(\bR\x0estackRestarted\"k\n" +
+	"\x0fstack_restarted\x18\x02 \x01(\bR\x0estackRestarted\"}\n" +
 	"\x19FirewallRemoveRuleRequest\x12\x10\n" +
 	"\x03dst\x18\x01 \x01(\tR\x03dst\x12\x14\n" +
 	"\x05proto\x18\x02 \x01(\tR\x05proto\x12\x12\n" +
 	"\x04port\x18\x03 \x01(\tR\x04port\x12\x12\n" +
-	"\x04path\x18\x04 \x01(\tR\x04path\"\x7f\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\x10\n" +
+	"\x03all\x18\x05 \x01(\bR\x03all\"\x7f\n" +
 	"\x18FirewallRemoveRuleResult\x12'\n" +
 	"\x0fstack_restarted\x18\x01 \x01(\bR\x0estackRestarted\x12:\n" +
 	"\x06status\x18\x02 \x01(\x0e2\".clawker.admin.v1.RemoveRuleStatusR\x06status\"\x1a\n" +

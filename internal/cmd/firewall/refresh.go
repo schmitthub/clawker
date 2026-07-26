@@ -2,16 +2,15 @@ package firewall
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/spf13/cobra"
 )
 
 // RefreshOptions holds the options for the firewall refresh command.
@@ -42,7 +41,8 @@ This is how you apply yaml edits live: edit config, then run refresh.
 
 Sync is add/update only (merge, keyed by dst:proto:port). Domains removed
 from config are NOT pruned from the store — use ` + "`clawker firewall remove`" + `
-to delete a rule.`,
+to delete a rule, or ` + "`clawker firewall prune`" + ` to reset the store to
+what config defines.`,
 		Example: `  # Apply config egress edits without restarting a container
   clawker firewall refresh`,
 		Args: cobra.NoArgs,
@@ -61,70 +61,29 @@ func refreshRun(ctx context.Context, opts *RefreshOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	cfg, err := opts.Config()
+	rules, err := composeProjectRules(ctx, opts.Config, opts.ProjectManager)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
-	if !cfg.FirewallEnabled() {
-		return errors.New("firewall is disabled — set `firewall.enable: true` in settings.yaml to use it")
-	}
-
-	// refresh re-reads the current project's config, so it only makes sense
-	// inside a project. Detect project presence before touching the firewall;
-	// the rules themselves come from the (project-anchored) config.
-	pm, err := opts.ProjectManager()
-	if err != nil {
-		return fmt.Errorf("loading project manager: %w", err)
-	}
-	if _, err := pm.CurrentProject(ctx); err != nil {
-		return fmt.Errorf("resolving current project: %w", err)
-	}
-
-	egressRules, err := bundler.EgressRules(cfg, "")
-	if err != nil {
-		return fmt.Errorf("composing egress rules: %w", err)
-	}
-	rules := adminv1.EgressRulesToProto(egressRules)
 
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := callWithSpinner(ctx, ios, "Refreshing firewall rules from project config...",
-		func(rpcCtx context.Context) (*adminv1.FirewallAddRulesResult, error) {
-			return client.FirewallAddRules(rpcCtx, &adminv1.FirewallAddRulesRequest{Rules: rules})
-		})
+	res, err := syncRules(ctx, ios, client, rules,
+		"Refreshing firewall rules from project config...", "refreshing firewall rules")
 	if err != nil {
-		return wrapRPCError("refreshing firewall rules", err)
+		return err
 	}
 
-	statuses := resp.GetStatuses()
-	if len(statuses) != len(rules) {
-		return fmt.Errorf("refreshing firewall rules: server returned %d statuses for %d rules", len(statuses), len(rules))
-	}
-
-	var added, modified, unchanged int
-	for _, s := range statuses {
-		switch s {
-		case adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED:
-			added++
-		case adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED:
-			modified++
-		case adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED:
-			unchanged++
-		default:
-			return fmt.Errorf("refreshing firewall rules: server returned unknown status %v", s)
-		}
-	}
-
-	if added == 0 && modified == 0 {
+	if res.added == 0 && res.modified == 0 {
 		fmt.Fprintf(ios.Out, "%s Firewall rules already in sync with project config — no changes\n", cs.InfoIcon())
 		return nil
 	}
 
 	fmt.Fprintf(ios.Out, "%s Refreshed firewall rules: %d added, %d updated, %d unchanged\n",
-		cs.SuccessIcon(), added, modified, unchanged)
-	printStackRestartedNote(ios, resp.GetStackRestarted(), "rules synced from project config")
+		cs.SuccessIcon(), res.added, res.modified, res.unchanged)
+	printStackRestartedNote(ios, res.stackRestarted, "rules synced from project config")
 	return nil
 }

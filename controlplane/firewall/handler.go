@@ -835,6 +835,10 @@ func (h *Handler) FirewallRemoveRule(
 		// wiring fault.
 		return nil, toStatus(errors.New("firewall remove rule: rules store not wired"))
 	}
+	if req.GetAll() && (req.GetDst() != "" || req.GetProto() != "" || req.GetPort() != "" || req.GetPath() != "") {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"firewall remove rule: all is mutually exclusive with dst/proto/port/path")
+	}
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
 		Proto: req.GetProto(),
@@ -846,6 +850,9 @@ func (h *Handler) FirewallRemoveRule(
 		// operator whichever way the mutation goes — they describe what is on
 		// disk, which exists either way.
 		defer h.logRuleWarnings()
+		if req.GetAll() {
+			return h.store.RemoveAll()
+		}
 		if pathMode {
 			return h.store.RemovePathRule(rule, req.GetPath())
 		}

@@ -26,6 +26,9 @@ var _ firewall.EgressRulesStore = &EgressRulesStoreMock{}
 //			CanonicalizeFunc: func() (bool, error) {
 //				panic("mock out the Canonicalize method")
 //			},
+//			RemoveAllFunc: func() (bool, error) {
+//				panic("mock out the RemoveAll method")
+//			},
 //			RemovePathRuleFunc: func(target config.EgressRule, path string) (bool, error) {
 //				panic("mock out the RemovePathRule method")
 //			},
@@ -51,6 +54,9 @@ type EgressRulesStoreMock struct {
 	// CanonicalizeFunc mocks the Canonicalize method.
 	CanonicalizeFunc func() (bool, error)
 
+	// RemoveAllFunc mocks the RemoveAll method.
+	RemoveAllFunc func() (bool, error)
+
 	// RemovePathRuleFunc mocks the RemovePathRule method.
 	RemovePathRuleFunc func(target config.EgressRule, path string) (bool, error)
 
@@ -72,6 +78,9 @@ type EgressRulesStoreMock struct {
 		}
 		// Canonicalize holds details about calls to the Canonicalize method.
 		Canonicalize []struct {
+		}
+		// RemoveAll holds details about calls to the RemoveAll method.
+		RemoveAll []struct {
 		}
 		// RemovePathRule holds details about calls to the RemovePathRule method.
 		RemovePathRule []struct {
@@ -98,6 +107,7 @@ type EgressRulesStoreMock struct {
 	}
 	lockAddRules       sync.RWMutex
 	lockCanonicalize   sync.RWMutex
+	lockRemoveAll      sync.RWMutex
 	lockRemovePathRule sync.RWMutex
 	lockRemoveRule     sync.RWMutex
 	lockRoutes         sync.RWMutex
@@ -160,6 +170,33 @@ func (mock *EgressRulesStoreMock) CanonicalizeCalls() []struct {
 	mock.lockCanonicalize.RLock()
 	calls = mock.calls.Canonicalize
 	mock.lockCanonicalize.RUnlock()
+	return calls
+}
+
+// RemoveAll calls RemoveAllFunc.
+func (mock *EgressRulesStoreMock) RemoveAll() (bool, error) {
+	if mock.RemoveAllFunc == nil {
+		panic("EgressRulesStoreMock.RemoveAllFunc: method is nil but EgressRulesStore.RemoveAll was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockRemoveAll.Lock()
+	mock.calls.RemoveAll = append(mock.calls.RemoveAll, callInfo)
+	mock.lockRemoveAll.Unlock()
+	return mock.RemoveAllFunc()
+}
+
+// RemoveAllCalls gets all the calls that were made to RemoveAll.
+// Check the length with:
+//
+//	len(mockedEgressRulesStore.RemoveAllCalls())
+func (mock *EgressRulesStoreMock) RemoveAllCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockRemoveAll.RLock()
+	calls = mock.calls.RemoveAll
+	mock.lockRemoveAll.RUnlock()
 	return calls
 }
 

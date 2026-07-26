@@ -101,7 +101,6 @@ func TestFirewall_UpDown(t *testing.T) {
 	downRes := h.Run("firewall", "down")
 	require.NoError(t, downRes.Err, "firewall down failed\nstdout: %s\nstderr: %s",
 		downRes.Stdout, downRes.Stderr)
-
 }
 
 func TestFirewall_ICMPBlocked(t *testing.T) {
@@ -253,6 +252,44 @@ func TestFirewall_AddRemove(t *testing.T) {
 	removeNonExistent := h.Run("firewall", "remove", "nonexistent.com")
 	assert.NotEqual(t, 0, removeNonExistent.ExitCode,
 		"removing a non-existent domain should fail with non-zero exit code")
+}
+
+func TestFirewall_Prune(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	// A CLI-added rule the project config does not define.
+	addRes := h.Run("firewall", "add", "example.com")
+	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s",
+		addRes.Stdout, addRes.Stderr)
+
+	// Prune resets the store to the config set: the CLI-added rule dies,
+	// the harness egress floor survives.
+	pruneRes := h.Run("firewall", "prune", "--yes")
+	require.NoError(t, pruneRes.Err, "firewall prune failed\nstdout: %s\nstderr: %s",
+		pruneRes.Stdout, pruneRes.Stderr)
+	assert.Contains(t, pruneRes.Stdout, "Removed all firewall rules")
+	assert.Contains(t, pruneRes.Stdout, "Re-synced")
+
+	blocked := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+	require.Error(t, blocked.Err, "CLI-added rule must be gone after prune")
+
+	allowed := h.RunInContainer("firewall-test",
+		"curl", "-s", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}",
+		"https://api.anthropic.com")
+	require.NoError(t, allowed.Err, "harness floor must survive prune\nstdout: %s\nstderr: %s",
+		allowed.Stdout, allowed.Stderr)
+
+	// --all removes everything and re-syncs nothing. Assert on the store
+	// via `firewall list` — a container start would re-sync config rules,
+	// so a curl probe cannot observe the emptied store.
+	allRes := h.Run("firewall", "prune", "--all", "--yes")
+	require.NoError(t, allRes.Err, "firewall prune --all failed\nstdout: %s\nstderr: %s",
+		allRes.Stdout, allRes.Stderr)
+	listRes := h.Run("firewall", "list")
+	require.NoError(t, listRes.Err, "firewall list failed\nstdout: %s\nstderr: %s",
+		listRes.Stdout, listRes.Stderr)
+	assert.NotContains(t, listRes.Stdout, "api.anthropic.com",
+		"--all must empty the store, floor included")
 }
 
 func TestFirewall_ConfigRules(t *testing.T) {
@@ -566,7 +603,6 @@ security:
 	assert.Empty(t, strings.TrimSpace(digRes.Stdout), "gitlab.com should not resolve (CoreDNS NXDOMAIN)")
 
 	h.Run("container", "stop", "--agent", "ssh-test")
-
 }
 
 func TestFirewall_DockerInternalDNS(t *testing.T) {
@@ -705,7 +741,12 @@ security:
 	// Denied subdomain NXDOMAINs even though the wildcard would otherwise
 	// forward it — the more-specific deny zone wins.
 	denied := h.ExecInContainer("deny-sub", "getent", "hosts", "www.example.com")
-	t.Logf("www.example.com (denied under wildcard): stdout=%q stderr=%q err=%v", denied.Stdout, denied.Stderr, denied.Err)
+	t.Logf(
+		"www.example.com (denied under wildcard): stdout=%q stderr=%q err=%v",
+		denied.Stdout,
+		denied.Stderr,
+		denied.Err,
+	)
 	assert.NotNil(t, denied.Err, "denied subdomain must NXDOMAIN even under a wildcard allow")
 	assert.Empty(t, strings.TrimSpace(denied.Stdout))
 }

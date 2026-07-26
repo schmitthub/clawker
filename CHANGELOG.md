@@ -12,6 +12,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [PENDING]
 
+- **Added:** Reset firewall rules to your project config with `clawker firewall prune` — removes every egress rule, then re-syncs the harness floor and project rules; `--all` removes everything without re-syncing, `--yes` skips the confirmation prompt.
 - **Added:** Shell tab-completion suggests existing worktree branch names — when completing `clawker worktree remove` arguments and the `--worktree` flag value on `run`/`container create`.
 
 ## [2026.7.3] - 2026-07-19

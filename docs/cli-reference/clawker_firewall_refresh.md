@@ -16,7 +16,8 @@ This is how you apply yaml edits live: edit config, then run refresh.
 
 Sync is add/update only (merge, keyed by dst:proto:port). Domains removed
 from config are NOT pruned from the store — use `clawker firewall remove`
-to delete a rule.
+to delete a rule, or `clawker firewall prune` to reset the store to
+what config defines.
 
 ```
 clawker firewall refresh [flags]

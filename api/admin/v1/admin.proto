@@ -238,6 +238,11 @@ message FirewallRemoveRuleRequest {
   // the rule identified by (dst, proto, port); the rule itself remains.
   // When empty, the whole rule is removed.
   string path = 4;
+  // When true, every rule in the store is removed in one mutation (one
+  // stack reload). Mutually exclusive with dst/proto/port/path — the
+  // server rejects a request that sets both. An already-empty store
+  // reports NOT_FOUND, mirroring the single-rule miss.
+  bool all = 5;
 }
 message FirewallRemoveRuleResult {
   // stack_restarted is true when the live stack was reloaded; false when
