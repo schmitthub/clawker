@@ -5,9 +5,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdProjectRegister(t *testing.T) {

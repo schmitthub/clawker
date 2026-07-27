@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
-	"github.com/spf13/cobra"
 )
 
 type RemoveOptions struct {
@@ -88,7 +89,10 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	for _, name := range opts.Names {
 		root, ok := nameToRoot[name]
 		if !ok {
-			return fmt.Errorf("project %q is not registered; use 'clawker project list' to see registered projects", name)
+			return fmt.Errorf(
+				"project %q is not registered; use 'clawker project list' to see registered projects",
+				name,
+			)
 		}
 		targets = append(targets, target{name: name, root: root})
 	}

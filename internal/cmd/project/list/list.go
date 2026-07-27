@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
 )
 
 type ListOptions struct {
@@ -84,7 +85,10 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 
 	if len(states) == 0 {
 		fmt.Fprintln(ios.ErrOut, "No registered projects found.")
-		fmt.Fprintln(ios.ErrOut, "Use 'clawker project init' to create a project or 'clawker project register' to register an existing one.")
+		fmt.Fprintln(
+			ios.ErrOut,
+			"Use 'clawker project init' to create a project or 'clawker project register' to register an existing one.",
+		)
 		return nil
 	}
 

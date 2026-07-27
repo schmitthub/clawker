@@ -8,8 +8,9 @@ import (
 	projectui "github.com/schmitthub/clawker/internal/config/storeui/project"
 	"github.com/schmitthub/clawker/internal/iostreams"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/spf13/cobra"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 // EditOptions holds dependencies for the project edit command.

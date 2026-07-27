@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/google/shlex"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func testFactory(t *testing.T, mgr project.ProjectManager) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
@@ -75,8 +76,16 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 	}{
 		{name: "json flag", input: "--json"},
 		{name: "format json", input: "--format json"},
-		{name: "json and format mutually exclusive", input: "--json --format table", wantErr: "--format and --json are mutually exclusive"},
-		{name: "quiet and json mutually exclusive", input: "-q --json", wantErr: "--quiet and --format/--json are mutually exclusive"},
+		{
+			name:    "json and format mutually exclusive",
+			input:   "--json --format table",
+			wantErr: "--format and --json are mutually exclusive",
+		},
+		{
+			name:    "quiet and json mutually exclusive",
+			input:   "-q --json",
+			wantErr: "--quiet and --format/--json are mutually exclusive",
+		},
 	}
 
 	for _, tt := range tests {
@@ -144,10 +153,17 @@ func TestListRun_Table(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
 	mgr.ListProjectsFunc = func(_ context.Context) ([]project.ProjectState, error) {
 		return []project.ProjectState{
-			{Name: "alpha", Root: "/tmp/does-not-exist-alpha", Status: project.ProjectMissing},
-			{Name: "beta", Root: "/tmp/does-not-exist-beta", Status: project.ProjectOK, Worktrees: []project.WorktreeState{
-				{Branch: "feat-1", Path: "/tmp/wt1"},
-			}},
+			projectmocks.ProjectState(func(s *project.ProjectState) {
+				s.Name, s.Root, s.Status = "alpha", "/tmp/does-not-exist-alpha", project.ProjectMissing
+			}),
+			projectmocks.ProjectState(func(s *project.ProjectState) {
+				s.Name, s.Root, s.Status = "beta", "/tmp/does-not-exist-beta", project.ProjectOK
+				s.Worktrees = []project.WorktreeState{
+					projectmocks.WorktreeState(func(w *project.WorktreeState) {
+						w.Branch, w.Path = "feat-1", "/tmp/wt1"
+					}),
+				}
+			}),
 		}, nil
 	}
 
