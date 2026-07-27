@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/spf13/cobra"
 )
 
 type InfoOptions struct {
@@ -80,7 +81,10 @@ func infoRun(ctx context.Context, opts *InfoOptions) error {
 
 	state, ok := findByName(states, opts.Name)
 	if !ok {
-		return fmt.Errorf("project %q is not registered; use 'clawker project list' to see registered projects", opts.Name)
+		return fmt.Errorf(
+			"project %q is not registered; use 'clawker project list' to see registered projects",
+			opts.Name,
+		)
 	}
 
 	detail := buildDetail(state)

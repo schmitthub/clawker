@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,16 +10,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
 // TestBindMountUID_E2E pins the host-UID-derivation contract end-to-end:
-// CLI process os.Getuid() → bundler bakes image's claude user at that UID
+// CLI process os.Getuid() → bundler bakes the image's container user (consts.ContainerUser) at that UID
 // → CLI emits CLAWKER_HOST_UID on the CP container → CP's userStage
 // drops to consts.HostUID() → a file written from inside the container
 // to ~/.claude/projects lands with the host invoker's UID on the host
@@ -49,19 +46,11 @@ func TestBindMountUID_E2E(t *testing.T) {
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
+			Config:              config.NewConfig,
+			Client:              docker.NewClient,
+			ProjectManager:      project.NewProjectManager,
+			UseRealControlPlane: true,
+			UseRealAdminClient:  true,
 		},
 	}
 	h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "uid-bind"})
@@ -94,7 +83,12 @@ func TestBindMountUID_E2E(t *testing.T) {
 	require.NoError(t, err, "probe file must land on the host bind mount at %s", probePath)
 	st, ok := info.Sys().(*syscall.Stat_t)
 	require.True(t, ok, "stat sys must be *syscall.Stat_t on linux")
-	assert.Equal(t, uint32(os.Getuid()), st.Uid,
+	assert.Equal(
+		t,
+		uint32(os.Getuid()),
+		st.Uid,
 		"bind-mount write must land at the host invoker's UID (got uid=%d, want %d) — host-UID-derivation contract broke somewhere between CLI bundler, CP env, and userStage",
-		st.Uid, os.Getuid())
+		st.Uid,
+		os.Getuid(),
+	)
 }

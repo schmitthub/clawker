@@ -17,7 +17,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -69,6 +68,28 @@ type Harness struct {
 	// Cleanup stores the cleanup report after the test environment is torn down.
 	// Firewall tests can check this to fail if the stack was never running.
 	Cleanup *CleanupReport
+}
+
+// New builds a Harness whose FactoryOptions start at the zero baseline —
+// every dependency mocked, no real CP or admin client. Each mutator opts
+// one dependency into its real production wiring. Cleanup is populated by
+// the harness at teardown.
+func New(t *testing.T, mutators ...func(*FactoryOptions)) *Harness {
+	t.Helper()
+	opts := &FactoryOptions{
+		Config:              nil,
+		Client:              nil,
+		ProjectManager:      nil,
+		GitManager:          nil,
+		HostProxy:           nil,
+		SocketBridge:        nil,
+		UseRealAdminClient:  false,
+		UseRealControlPlane: false,
+	}
+	for _, mutate := range mutators {
+		mutate(opts)
+	}
+	return &Harness{T: t, Opts: opts, Cleanup: nil}
 }
 
 // RunResult holds the outcome of a CLI command execution.
@@ -140,7 +161,10 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		if !h.T.Failed() {
 			return
 		}
-		for _, name := range []string{"clawker.log", consts.CPBootLogFile, consts.ControlPlaneLogFile} {
+		// consts.CPBootLogFile is intentionally absent: nothing writes it
+		// yet (host-side manager logs land in the CLI log) — dumping it
+		// would always ENOENT-skip and imply coverage that isn't there.
+		for _, name := range []string{logger.DefaultLogFileName, consts.HostProxyLogFile, consts.ControlPlaneLogFile} {
 			data, err := os.ReadFile(filepath.Join(logDir, name))
 			if err != nil {
 				continue
@@ -202,13 +226,12 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cfg := resolveCleanupConfig(t, h)
 	report := &CleanupReport{}
 
 	// Snapshot infrastructure state BEFORE tearing anything down.
-	firewallLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), cfg.PurposeFirewall())
-	cpLabel := fmt.Sprintf("%s=%s", cfg.LabelPurpose(), consts.PurposeControlPlane)
-	testLabel := fmt.Sprintf("%s.test.name=%s", cfg.LabelDomain(), t.Name())
+	firewallLabel := fmt.Sprintf("%s=%s", consts.LabelPurpose, consts.PurposeFirewall)
+	cpLabel := fmt.Sprintf("%s=%s", consts.LabelPurpose, consts.PurposeControlPlane)
+	testLabel := fmt.Sprintf("%s=%s", consts.LabelTestName, t.Name())
 
 	if ids, err := dockerListByLabel(ctx, "container", firewallLabel); err == nil {
 		report.FirewallContainers = len(ids)
@@ -280,24 +303,19 @@ func cleanupTestEnvironment(t *testing.T, h *Harness) {
 			}
 		}
 	}
-}
 
-// resolveCleanupConfig returns a config.Config for label accessors during
-// cleanup. It uses the harness' own Config constructor when set so labels
-// match the test's isolated env exactly; otherwise it falls back to a blank
-// config, which still exposes the canonical label/purpose constants. Any
-// failure to construct the configured Config is non-fatal for cleanup —
-// we log and fall back to the blank config.
-func resolveCleanupConfig(t *testing.T, h *Harness) config.Config {
-	t.Helper()
-	if h != nil && h.Opts != nil && h.Opts.Config != nil {
-		if cfg, err := h.Opts.Config(); err == nil && cfg != nil {
-			return cfg
-		} else if err != nil {
-			t.Logf("cleanup: resolving harness config: %v (falling back to blank config)", err)
+	// 5. Remove test-labeled images (built through the harness client, which
+	// stamps LabelConfig.Default onto images too). Last: image removal fails
+	// while a container still references the image.
+	if ids, err := dockerListByLabel(ctx, "image", label); err != nil {
+		t.Logf("cleanup: docker images label=%s: %v (images may leak)", label, err)
+	} else if len(ids) > 0 {
+		args := append([]string{"rmi", "-f"}, ids...)
+		out, rmiErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		if rmiErr != nil {
+			t.Logf("cleanup: docker rmi: %s (%v)", strings.TrimSpace(string(out)), rmiErr)
 		}
 	}
-	return configmocks.NewBlankConfig()
 }
 
 // dockerListByLabel returns IDs of Docker resources matching a label filter.
@@ -313,6 +331,9 @@ func dockerListByLabel(ctx context.Context, resourceType, label string) ([]strin
 		cmd = exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", "label="+label)
 	case "network":
 		cmd = exec.CommandContext(ctx, "docker", "network", "ls", "-q", "--filter", "label="+label)
+	case "image":
+		//nolint:gosec // label is derived from t.Name(), not user input
+		cmd = exec.CommandContext(ctx, "docker", "images", "-q", "--filter", "label="+label)
 	default:
 		return nil, fmt.Errorf("dockerListByLabel: unsupported resource type %q", resourceType)
 	}
@@ -329,8 +350,10 @@ func dockerListByLabel(ctx context.Context, resourceType, label string) ([]strin
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var ids []string
+	seen := map[string]bool{} // docker images -q repeats an ID per tag
 	for _, line := range lines {
-		if id := strings.TrimSpace(line); id != "" {
+		if id := strings.TrimSpace(line); id != "" && !seen[id] {
+			seen[id] = true
 			ids = append(ids, id)
 		}
 	}
@@ -351,11 +374,15 @@ func (h *Harness) RequireServicesWereRunning(t *testing.T, services ...string) {
 		switch svc {
 		case "firewall":
 			if h.Cleanup.FirewallContainers == 0 {
-				t.Fatal("firewall stack was not running during this test (no firewall containers found at cleanup) — test results are invalid")
+				t.Fatal(
+					"firewall stack was not running during this test (no firewall containers found at cleanup) — test results are invalid",
+				)
 			}
 		case "controlplane":
 			if h.Cleanup.CPContainers == 0 {
-				t.Fatal("control plane was not running during this test (no CP container found at cleanup) — test results are invalid")
+				t.Fatal(
+					"control plane was not running during this test (no CP container found at cleanup) — test results are invalid",
+				)
 			}
 		default:
 			t.Fatalf("RequireServicesWereRunning: unknown service %q", svc)
@@ -421,10 +448,13 @@ func (h *Harness) RunInContainer(agent string, cmd ...string) *RunResult {
 	return h.Run(args...)
 }
 
-// ExecInContainer runs a command inside an existing container as the container user (claude).
+// ExecInContainer runs a command inside an existing container as the
+// unprivileged container user (consts.ContainerUser).
 func (h *Harness) ExecInContainer(agent string, cmd ...string) *RunResult {
 	h.T.Helper()
-	args := []string{"container", "exec", "--user", "claude", "--agent", agent}
+	base := []string{"container", "exec", "--user", consts.ContainerUser, "--agent", agent}
+	args := make([]string, 0, len(base)+len(cmd))
+	args = append(args, base...)
 	args = append(args, cmd...)
 	return h.Run(args...)
 }

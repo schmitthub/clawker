@@ -1,6 +1,8 @@
 package project
 
 import (
+	"github.com/spf13/cobra"
+
 	projectedit "github.com/schmitthub/clawker/internal/cmd/project/edit"
 	projectinfo "github.com/schmitthub/clawker/internal/cmd/project/info"
 	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
@@ -8,7 +10,6 @@ import (
 	projectregister "github.com/schmitthub/clawker/internal/cmd/project/register"
 	projectremove "github.com/schmitthub/clawker/internal/cmd/project/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 )
 
 func NewCmdProject(f *cmdutil.Factory) *cobra.Command {

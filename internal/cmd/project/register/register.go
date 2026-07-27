@@ -7,13 +7,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
-	"github.com/spf13/cobra"
 )
 
 // RegisterOptions contains the options for the project register command.
@@ -131,7 +132,10 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	}
 	projectName := cmdutil.ProjectSlugify(raw)
 	if projectName == "" {
-		return fmt.Errorf("project name resolved to empty after normalization (raw input %q); set `name` in your project config or pass a name argument", raw)
+		return fmt.Errorf(
+			"project name resolved to empty after normalization (raw input %q); set `name` in your project config or pass a name argument",
+			raw,
+		)
 	}
 
 	registeredProject, err := projectManager.Register(ctx, projectName, wd)

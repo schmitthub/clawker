@@ -26,7 +26,7 @@ handlers", or `*Domain` symbols. No numbered `// Phase N` comment scaffolding.
 | File | Purpose |
 |------|---------|
 | `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status`/`agents` |
-| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent); when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `firewall.BringUpStack` (idempotent `FirewallInit`) |
+| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent); when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `shared.BringUpStack` (`internal/cmd/firewall/shared`) (idempotent `FirewallInit`) |
 | `down.go` | `controlplane down` — `Manager.Stop` (CP container only); no orphan warning — CP drains its own firewall stack on SIGTERM |
 | `status.go` | `controlplane status` — `Manager.IsRunning` + `Manager.ProbeHealthz` + best-effort `FirewallStatus` RPC |
 | `agents.go` | `controlplane agents` — `AdminClient.ListAgents` snapshot of the agent registry |
@@ -36,7 +36,7 @@ handlers", or `*Domain` symbols. No numbered `// Phase N` comment scaffolding.
 
 | Command | Constructor | Args | Flags | Manager methods |
 |---------|-------------|------|-------|-----------------|
-| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning`; then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`firewall.BringUpStack`) |
+| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning`; then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`shared.BringUpStack`) |
 | `down` | `NewCmdDown(f, runF)` | none | none | `IsRunning`, then `Stop` on the running path |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IsRunning`, `ProbeHealthz`; plus best-effort `FirewallStatus` via `f.AdminClient` |
 | `agents` | `NewCmdAgents(f, runF)` | none | `--format`, `--json`, `--quiet` | none (uses `f.AdminClient` → `ListAgents`) |
@@ -76,7 +76,7 @@ whenever the CP is. Two cooperating mechanisms deliver that:
    CP boots no CLI observes (restart policy, container-start bootstrap).
 2. **CLI-side (idempotent path)**: `upRun` loads config after
    `EnsureRunning` and, when enabled, dials `f.AdminClient` and calls
-   `firewall.BringUpStack` — the same spinner + shared-deadline +
+   `shared.BringUpStack` — the same spinner + shared-deadline +
    exposure-warning UX as `firewall up`. This covers the case where the
    CP was already running with the stack down (e.g. after `firewall
    down`); on a fresh boot it is a fast idempotent no-op because the
@@ -175,8 +175,8 @@ throughout — no raw `cs.Red` / `cs.Green`.
 type) but never import `pkg/whail`. CP lifecycle side effects are reached
 through Manager or AdminClient methods, which is what makes the moq mocks
 complete substitutes. `agents` imports only `api/admin/v1` for the
-`AdminServiceClient` surface. `up` additionally imports the sibling
-command package `internal/cmd/firewall` for the exported
+`AdminServiceClient` surface. `up` additionally imports the firewall group's
+`internal/cmd/firewall/shared` package for the exported
 `BringUpStack` helper so both verbs share one bringup UX (spinner,
 shared RPC deadline, exposure warning, remediation hints) instead of
 duplicating it, and `internal/docker` (via `f.Client` +

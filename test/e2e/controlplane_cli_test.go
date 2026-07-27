@@ -1,14 +1,11 @@
 package e2e
 
 // Break-glass `clawker controlplane up/down/status` CLI E2E coverage.
-// Pins the Task 7 verbs through the full Cobra → Factory → *docker.Client
-// → CP container path. Authored alongside the command implementation and
-// deferred to the final host-side review pass per initiative E2E policy
-// — agents do not run E2E tests.
+// Drives the verbs through the full Cobra → Factory → *docker.Client →
+// CP container path.
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,19 +19,26 @@ import (
 )
 
 // newControlPlaneHarness matches newFirewallHarness: real Config, real
-// docker.Client, real ProjectManager. The CLI binary itself exercises
-// the break-glass verbs end-to-end.
+// docker.Client, real ProjectManager, real ControlPlane manager, and a
+// production-identical AdminClient. The CLI binary itself exercises the
+// break-glass verbs end-to-end.
 func newControlPlaneHarness(t *testing.T) *harness.Harness {
 	t.Helper()
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
+			Config:              config.NewConfig,
+			Client:              docker.NewClient,
+			ProjectManager:      project.NewProjectManager,
+			UseRealControlPlane: true,
+			UseRealAdminClient:  true,
 		},
 	}
 	h.NewIsolatedFS(nil)
+	// A pre-existing CP passes the mTLS-less healthz reuse probe but its
+	// certs chain to another environment's CA — every admin RPC then
+	// fails. Pre-clean so bring-up mints certs against THIS env's CA.
+	harness.EnsureNoControlPlane(t, 30*time.Second)
 	return h
 }
 
@@ -84,7 +88,11 @@ func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 		"status output must parse as JSON: %q", statusUp.Stdout)
 	assert.True(t, running.ContainerRunning, "CP container should be running")
 	assert.True(t, running.HealthzOK, "healthz should be reporting 200")
-	assert.True(t, running.FirewallRunning, "firewall stack should be up after controlplane up (firewall.enable defaults true)")
+	assert.True(
+		t,
+		running.FirewallRunning,
+		"firewall stack should be up after controlplane up (firewall.enable defaults true)",
+	)
 	assert.True(t, running.FirewallReady, "firewall stack should be healthy after controlplane up")
 
 	down := h.Run("controlplane", "down")
@@ -108,18 +116,18 @@ func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 // is a no-op when the CP is not running, preserving the short-circuit
 // contract: no ensureRunning side effect, no error, no warning spam.
 func TestControlPlaneCLI_DownOnAbsentCP(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E CP lifecycle test")
+	}
+	// newControlPlaneHarness already pre-cleans any stray CP.
 	h := newControlPlaneHarness(t)
-
-	// Best-effort pre-clean so the test is robust against stray state
-	// from a previous crashed run.
-	harness.EnsureNoControlPlane(t, 30*time.Second)
 
 	res := h.Run("controlplane", "down")
 	require.NoError(t, res.Err, "down on absent CP should succeed: %s", res.Stderr)
 	assert.Contains(t, res.Stdout, "not running")
 	// The orphan-firewall warning is only emitted when we actually tore
 	// the CP down — a no-op path must stay quiet on stderr.
-	assert.False(t, strings.Contains(res.Stderr, "Envoy and CoreDNS"),
+	assert.NotContains(t, res.Stderr, "Envoy and CoreDNS",
 		"warning must not fire on the no-op path")
 }
 

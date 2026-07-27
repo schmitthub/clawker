@@ -83,10 +83,26 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 		{name: "yes shorthand", args: []string{"-y"}, wantYes: true},
 		{name: "both flags", args: []string{"--force", "--yes"}, wantForce: true, wantYes: true},
 		{name: "with project name", args: []string{"my-project"}, wantName: "my-project"},
-		{name: "name and flags", args: []string{"my-project", "-f", "-y"}, wantName: "my-project", wantForce: true, wantYes: true},
+		{
+			name:       "name and flags",
+			args:       []string{"my-project", "-f", "-y"},
+			wantName:   "my-project",
+			wantPreset: "",
+			wantForce:  true,
+			wantYes:    true,
+			wantErr:    false,
+		},
 		{name: "too many args", args: []string{"project1", "project2"}, wantErr: true},
 		{name: "preset with yes", args: []string{"--yes", "--preset", "Go"}, wantYes: true, wantPreset: "Go"},
-		{name: "preset name and yes", args: []string{"my-project", "--yes", "--preset", "Python"}, wantName: "my-project", wantYes: true, wantPreset: "Python"},
+		{
+			name:       "preset name and yes",
+			args:       []string{"my-project", "--yes", "--preset", "Python"},
+			wantName:   "my-project",
+			wantPreset: "Python",
+			wantForce:  false,
+			wantYes:    true,
+			wantErr:    false,
+		},
 		{name: "preset without yes", args: []string{"--preset", "Go"}, wantErr: true},
 		{name: "vcs with yes", args: []string{"--yes", "--vcs", "github"}, wantYes: true},
 		{name: "vcs gitlab with yes", args: []string{"--yes", "--vcs", "gitlab"}, wantYes: true},
@@ -97,7 +113,15 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 		{name: "no-gpg without yes", args: []string{"--no-gpg"}, wantErr: true},
 		{name: "invalid vcs", args: []string{"--yes", "--vcs", "svn"}, wantErr: true},
 		{name: "invalid git-protocol", args: []string{"--yes", "--git-protocol", "ftp"}, wantErr: true},
-		{name: "all vcs flags", args: []string{"--yes", "--preset", "Go", "--vcs", "gitlab", "--git-protocol", "ssh", "--no-gpg"}, wantYes: true, wantPreset: "Go"},
+		{
+			name:       "all vcs flags",
+			args:       []string{"--yes", "--preset", "Go", "--vcs", "gitlab", "--git-protocol", "ssh", "--no-gpg"},
+			wantName:   "",
+			wantPreset: "Go",
+			wantForce:  false,
+			wantYes:    true,
+			wantErr:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -368,7 +392,7 @@ func TestPerformProjectSetup_OverwriteCreatesIgnore(t *testing.T) {
 
 	// Pre-create ignore file with custom content.
 	ignorePath := filepath.Join(wd, cfg.ClawkerIgnoreName())
-	require.NoError(t, os.WriteFile(ignorePath, []byte("custom\n"), 0644))
+	require.NoError(t, os.WriteFile(ignorePath, []byte("custom\n"), 0o644))
 
 	// Without --force, ignore file should NOT be overwritten.
 	err := performProjectSetup(context.Background(), performSetupInput{
@@ -697,7 +721,7 @@ func TestRunNonInteractive_ExistingConfigNoForce(t *testing.T) {
 	wd := chdirTemp(t)
 
 	// Create an existing config file.
-	require.NoError(t, os.WriteFile(filepath.Join(wd, ".clawker.yaml"), []byte("build:\n  image: test\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, ".clawker.yaml"), []byte("build:\n  image: test\n"), 0o644))
 
 	tio, _, _, errBuf := iostreams.Test()
 	cfg := configmocks.NewIsolatedTestConfig(t)

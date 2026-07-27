@@ -26,7 +26,10 @@ import (
 
 // Rotating file sink defaults.
 const (
-	defaultLogFileName   = "clawker.log"
+	// DefaultLogFileName is the CLI log file name under the logs dir;
+	// exported so tooling (e.g. the e2e harness failure dump) references
+	// the name instead of hard-spelling it.
+	DefaultLogFileName   = "clawker.log"
 	defaultLogMaxSizeMB  = 50
 	defaultLogMaxAgeDays = 7
 	defaultLogMaxBackups = 3
@@ -91,7 +94,7 @@ type Options struct {
 	LogsDir string
 
 	// Filename overrides the log file name within LogsDir.
-	// Defaults to defaultLogFileName when empty.
+	// Defaults to DefaultLogFileName when empty.
 	Filename string
 
 	// File rotation settings.
@@ -127,7 +130,7 @@ type OtelOptions struct {
 	// attribute (routing/trusted, routing/untrusted in otel-config.yaml).
 	// Empty leaves the SDK default ("unknown_service:<binary>") which is
 	// dropped silently at the routing connector. Example caller: "clawker-cli"
-	// (host CLI, set in internal/cmd/factory/default.go).
+	// (host CLI, set in internal/logger/logcfg).
 	ServiceName string
 
 	// mTLS configuration. Two mutually-exclusive shapes:
@@ -254,7 +257,7 @@ func New(opts Options) (*Logger, error) {
 
 	filename := opts.Filename
 	if filename == "" {
-		filename = defaultLogFileName
+		filename = DefaultLogFileName
 	}
 
 	fw := &lumberjack.Logger{

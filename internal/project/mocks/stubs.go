@@ -87,3 +87,36 @@ func NewTestProjectManager(t *testing.T, gitFactory project.GitManagerFactory) p
 	env := testenv.New(t, testenv.WithProjectManager(gitFactory))
 	return env.ProjectManager()
 }
+
+// ProjectState builds the project.ProjectState value a test hands to code that
+// renders or inspects registry state (project list/info, worktree commands).
+//
+// With no mutators it is the empty-registry-row baseline: no name, no root,
+// the zero status, no worktrees, and a nil StatusErr (a healthy row carries
+// none). Tests state only the fields they assert on, so the omitted-field
+// decision lives here once instead of being respelled as a sparse struct
+// literal at every call site:
+//
+//	st := projectmocks.ProjectState(func(s *project.ProjectState) {
+//		s.Name, s.Status = "alpha", project.ProjectMissing
+//	})
+func ProjectState(mutators ...func(*project.ProjectState)) project.ProjectState {
+	var state project.ProjectState
+	for _, mutate := range mutators {
+		mutate(&state)
+	}
+	return state
+}
+
+// WorktreeState is the ProjectState sibling for project.WorktreeState — the
+// same contract, for the worktree rows hanging off a project or returned by
+// ListWorktrees/GetWorktree. The bare call is the "nothing inspected yet"
+// baseline: no branch or path, absent from both registry and git, the zero
+// status, and a nil InspectError (non-nil means a degraded health check).
+func WorktreeState(mutators ...func(*project.WorktreeState)) project.WorktreeState {
+	var state project.WorktreeState
+	for _, mutate := range mutators {
+		mutate(&state)
+	}
+	return state
+}

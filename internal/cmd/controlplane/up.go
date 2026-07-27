@@ -6,15 +6,16 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/spf13/cobra"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
-	"github.com/schmitthub/clawker/internal/cmd/firewall"
+	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/spf13/cobra"
 )
 
 type UpOptions struct {
@@ -89,7 +90,8 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
-	return firewall.BringUpStack(ctx, ios, client)
+	//nolint:wrapcheck // callee already wraps with header + remediation hints
+	return shared.BringUpStack(ctx, ios, client)
 }
 
 // warnIfStackRunning closes the settings/reality gap on the opt-out
@@ -115,6 +117,10 @@ func warnIfStackRunning(ctx context.Context, opts *UpOptions, ios *iostreams.IOS
 		return
 	}
 	if len(result.Items) > 0 {
-		fmt.Fprintf(ios.ErrOut, "%s firewall is disabled in settings but the stack is still running and enforcing — run `clawker firewall down` to remove it\n", cs.WarningIcon())
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s firewall is disabled in settings but the stack is still running and enforcing — run `clawker firewall down` to remove it\n",
+			cs.WarningIcon(),
+		)
 	}
 }

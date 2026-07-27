@@ -82,6 +82,9 @@ type EgressRulesStore interface {
 	// matched=false means either the rule key or the path was absent and
 	// nothing was written.
 	RemovePathRule(target config.EgressRule, path string) (matched bool, err error)
+	// RemoveAll deletes every stored rule in one write. matched=false means
+	// the store held no rules and nothing was written.
+	RemoveAll() (matched bool, err error)
 	// Canonicalize rewrites the stored rules in canonical form when the
 	// on-disk shape differs from it — a legacy file with an unset proto,
 	// action, or port, or a duplicate that dedups away. Reports whether it
@@ -235,6 +238,26 @@ func (s *egressRulesStoreImpl) RemoveRule(target config.EgressRule) (bool, error
 	}
 	if writeErr := s.Write(); writeErr != nil {
 		return false, fmt.Errorf("firewall: remove rule: writing rules: %w", writeErr)
+	}
+	return true, nil
+}
+
+// RemoveAll wipes the stored rule set in a single write. An empty store is a
+// reported no-op — nothing is written, so callers can skip the stack
+// reconcile.
+func (s *egressRulesStoreImpl) RemoveAll() (bool, error) {
+	stored, err := storage.Get[[]config.EgressRule](s.Store, rulesField)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return false, fmt.Errorf("firewall: remove all rules: reading rules: %w", err)
+	}
+	if len(stored) == 0 {
+		return false, nil
+	}
+	if setErr := s.Set([]string{rulesField}, []config.EgressRule{}); setErr != nil {
+		return false, fmt.Errorf("firewall: remove all rules: updating rules: %w", setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return false, fmt.Errorf("firewall: remove all rules: writing rules: %w", writeErr)
 	}
 	return true, nil
 }

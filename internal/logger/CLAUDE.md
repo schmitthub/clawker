@@ -117,6 +117,14 @@ failure mode is benign for an append log (see doc comments).
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 
+### Settings-driven constructor (`logcfg` subpackage)
+
+```go
+func logcfg.New(cfg config.Config) (*logger.Logger, error)  // settings → host CLI logger
+```
+
+`internal/logger/logcfg` assembles the host-side logger from resolved settings: honors the file-logging switch (`Nop()` when disabled), rotation knobs, and the OTEL export lane (OTLP/gRPC port, `service.name` = the CLI telemetry service const). Consumed by the CLI Factory (`internal/cmd/factory`) and the e2e harness — both share the exact assembly, so there is no drift between the shipped path and the tested path. It is a subpackage (not part of `internal/logger`) so the embedded daemon binaries that link the core logger never inherit `internal/config`.
+
 ## Env-Driven OtelOptions
 
 ```go

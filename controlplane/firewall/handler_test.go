@@ -1417,6 +1417,100 @@ func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
 	assert.Empty(t, listResp.GetRules(), "removal durable on disk")
 }
 
+// TestHandler_RemoveRule_All_WipesStore covers the `all` form behind
+// `firewall prune`: every stored rule goes in ONE mutation + ONE reconcile,
+// never a per-rule reload storm.
+func TestHandler_RemoveRule_All_WipesStore(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
+			{Dst: "git.example.com", Proto: "ssh", Port: "22", Action: "allow"},
+		},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "", Proto: "", Port: "", Path: "", All: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED, resp.GetStatus())
+	assert.True(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore+1, stack.reloadCalls, "one reconcile for the whole wipe")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.GetRules(), "store wiped")
+}
+
+// TestHandler_RemoveRule_All_StackDown_PersistsWipe mirrors the single-rule
+// stack-down test for the all form: the wipe is durable on disk even when
+// the stack is down, and stack_restarted reports false so the CLI can emit
+// the "takes effect next firewall up" note.
+func TestHandler_RemoveRule_All_StackDown_PersistsWipe(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
+	})
+	require.NoError(t, err)
+
+	stack.statusResult = Status{Running: false} //nolint:exhaustruct // fixture: only the running gate matters here
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "", Proto: "", Port: "", Path: "", All: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED, resp.GetStatus())
+	assert.False(t, resp.GetStackRestarted(), "stack down: wipe persisted, nothing restarted")
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.GetRules(), "wipe durable on disk")
+}
+
+// TestHandler_RemoveRule_All_EmptyStore_NotFound mirrors the single-rule
+// miss: an already-empty store reports NOT_FOUND on the response and fires
+// no reconcile.
+func TestHandler_RemoveRule_All_EmptyStore_NotFound(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "", Proto: "", Port: "", Path: "", All: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
+	assert.False(t, resp.GetStackRestarted())
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "empty store: no reconcile")
+}
+
+// TestHandler_RemoveRule_All_WithSelector_Rejected pins the mutual
+// exclusion on the wire: all=true alongside a rule selector is a malformed
+// request, not a guess about which one the caller meant.
+func TestHandler_RemoveRule_All_WithSelector_Rejected(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	for _, req := range []*adminv1.FirewallRemoveRuleRequest{
+		{Dst: "example.com", Proto: "", Port: "", Path: "", All: true},
+		{Dst: "", Proto: "https", Port: "", Path: "", All: true},
+		{Dst: "", Proto: "", Port: "443", Path: "", All: true},
+		{Dst: "", Proto: "", Port: "", Path: "/api/", All: true},
+	} {
+		_, err := h.FirewallRemoveRule(context.Background(), req)
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+}
+
 // assertReason inspects a gRPC status error and asserts that at least
 // one errdetails.ErrorInfo carries the expected Reason string. Keeps
 // the CLI wire contract verified: CLI dispatches on Reason, not Go-side

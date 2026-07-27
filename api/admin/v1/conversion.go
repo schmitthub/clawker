@@ -17,12 +17,13 @@ func EgressRuleToProto(r config.EgressRule) *EgressRule {
 		paths = append(paths, &PathRule{Path: p.Path, Action: p.Action, Methods: p.Methods})
 	}
 	return &EgressRule{
-		Dst:         r.Dst,
-		Proto:       r.Proto,
-		Port:        r.Port,
-		Action:      r.Action,
-		PathRules:   paths,
-		PathDefault: r.PathDefault,
+		Dst:                   r.Dst,
+		Proto:                 r.Proto,
+		Port:                  r.Port,
+		Action:                r.Action,
+		PathRules:             paths,
+		PathDefault:           r.PathDefault,
+		InsecureSkipTlsVerify: r.InsecureSkipTLSVerify,
 	}
 }
 
@@ -33,12 +34,13 @@ func EgressRuleFromProto(r *EgressRule) config.EgressRule {
 		paths = append(paths, config.PathRule{Path: p.GetPath(), Action: p.GetAction(), Methods: p.GetMethods()})
 	}
 	return config.EgressRule{
-		Dst:         r.GetDst(),
-		Proto:       r.GetProto(),
-		Port:        r.GetPort(),
-		Action:      r.GetAction(),
-		PathRules:   paths,
-		PathDefault: r.GetPathDefault(),
+		Dst:                   r.GetDst(),
+		Proto:                 r.GetProto(),
+		Port:                  r.GetPort(),
+		Action:                r.GetAction(),
+		PathRules:             paths,
+		PathDefault:           r.GetPathDefault(),
+		InsecureSkipTLSVerify: r.GetInsecureSkipTlsVerify(),
 	}
 }
 

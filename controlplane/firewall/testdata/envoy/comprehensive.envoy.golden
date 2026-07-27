@@ -886,6 +886,18 @@ static_resources:
                                             Forbidden
                                     status: 403
                                   match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
                                     headers:
                                         - name: :method
                                           string_match:
@@ -964,6 +976,18 @@ static_resources:
                                 - 192.168.1.2:80
                               name: "192_168_1_2_80"
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - direct_response:
                                     body:
                                         inline_string: |
@@ -1452,6 +1476,18 @@ static_resources:
                                     key: alt-svc
                                     value: h3=":443"; ma=86400
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - match:
                                     safe_regex:
                                         regex: /users/(clawker|anthropic)/?
@@ -1617,6 +1653,18 @@ static_resources:
                                     key: alt-svc
                                     value: h3=":443"; ma=86400
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - match:
                                     prefix: /schmitthub/clawker/
                                   metadata:
@@ -2040,6 +2088,18 @@ static_resources:
                                 - '*'
                               name: "10_0_0_0_24_8080"
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - direct_response:
                                     body:
                                         inline_string: |
@@ -3033,6 +3093,18 @@ static_resources:
                                 - api.github.com:443
                               name: api_github_com_443
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - match:
                                     safe_regex:
                                         regex: /users/(clawker|anthropic)/?
@@ -3192,6 +3264,18 @@ static_resources:
                                 - raw.githubusercontent.com:443
                               name: raw_githubusercontent_com_443
                               routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: (?i).*%25(2e|2f|5c).*
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - match:
                                     prefix: /schmitthub/clawker/
                                   metadata:

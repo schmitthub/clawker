@@ -31,6 +31,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/logger/logcfg"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -61,10 +62,11 @@ func cacheableState(s connectivity.State) bool {
 
 // FactoryOptions holds dependency constructor overrides.
 // Some nil fields use test fakes (configmocks, mocks.FakeClient,
-// hostproxytest.MockManager, adminv1mocks.AdminServiceClientMock). Logger always
-// uses logger.New (real file logger). ProjectManager, GitManager, and
-// SocketBridge default to nil. Set a field to the real constructor
-// (e.g. config.NewConfig) for integration tests.
+// hostproxytest.MockManager, adminv1mocks.AdminServiceClientMock). Logger is
+// always production-mirroring (settings-driven, once-cached). ProjectManager
+// and GitManager left nil return a descriptive harness error (never
+// (nil, nil)); SocketBridge left nil resolves to a nil manager. Set a field
+// to the real constructor (e.g. config.NewConfig) for integration tests.
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
@@ -82,11 +84,15 @@ type FactoryOptions struct {
 	// CP is down (matching CLI behavior). When false the harness
 	// wires a no-op AdminServiceClientMock.
 	UseRealAdminClient bool
-	// ControlPlane optionally provides a real Manager that drives the
-	// host-side CP container lifecycle. When nil the harness wires a
-	// no-op ManagerMock (every method returns zero values / nil) so
-	// tests that don't exercise the CP verbs never bootstrap a real CP.
-	ControlPlane func(config.Config, *logger.Logger) manager.Manager
+	// UseRealControlPlane, when true, wires the production Manager
+	// exactly as controlPlaneFunc in internal/cmd/factory/default.go
+	// does — manager.NewManager(f.Client, f.Config, f.Logger) — so the
+	// CP manager observes the same cached Docker singleton and settings
+	// snapshot as the rest of the harness Factory. When false the
+	// harness wires a no-op ManagerMock (every method returns zero
+	// values / nil) so tests that don't exercise the CP verbs never
+	// bootstrap a real CP.
+	UseRealControlPlane bool
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -141,18 +147,28 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	f.Config = resolveConfig
 
 	// --- Logger ---
+	// Once-cached like loggerLazy in internal/cmd/factory/default.go, and
+	// the same settings→logger assembly the CLI ships with (logcfg.New:
+	// file switch, rotation knobs, OTEL export). The shared instance is
+	// what the failure dump of clawker.log depends on.
+	var (
+		logOnce sync.Once
+		log     *logger.Logger
+		logErr  error
+	)
 	f.Logger = func() (*logger.Logger, error) {
-		c, err := resolveConfig()
-		if err != nil {
-			return nil, err
-		}
-		dir, err := c.LogsSubdir()
-		if err != nil {
-			return nil, err
-		}
-		return logger.New(logger.Options{
-			LogsDir: dir,
+		logOnce.Do(func() {
+			var c config.Config
+			c, logErr = resolveConfig()
+			if logErr != nil {
+				return
+			}
+			log, logErr = logcfg.New(c)
+			if logErr != nil {
+				logErr = fmt.Errorf("harness: logger: %w", logErr)
+			}
 		})
+		return log, logErr
 	}
 
 	// --- Client ---
@@ -169,7 +185,12 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					clientErr = cErr
 					return
 				}
-				client, clientErr = opts.Client(ctx, c, logger.Nop(),
+				l, lErr := f.Logger()
+				if lErr != nil {
+					clientErr = fmt.Errorf("harness: logger for docker client: %w", lErr)
+					return
+				}
+				client, clientErr = opts.Client(ctx, c, l,
 					docker.WithLabels(docker.TestLabelConfig(c, t.Name())))
 			} else {
 				c, _ := resolveConfig()
@@ -205,28 +226,40 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	)
 	f.ProjectManager = func() (project.ProjectManager, error) {
 		pmOnce.Do(func() {
-			if opts.ProjectManager != nil {
-				c, cErr := resolveConfig()
-				if cErr != nil {
-					pmErr = cErr
-					return
-				}
-				r, rErr := f.ProjectRegistry()
-				if rErr != nil {
-					pmErr = rErr
-					return
-				}
-				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.ProjectName(), r)
+			if opts.ProjectManager == nil {
+				// Production always returns a manager or a real error —
+				// (nil, nil) is a state the CLI can never produce, and a
+				// command that trips it should fail loudly, not nil-deref.
+				pmErr = errors.New("harness: ProjectManager not wired — set FactoryOptions.ProjectManager")
+				return
 			}
+			c, cErr := resolveConfig()
+			if cErr != nil {
+				pmErr = cErr
+				return
+			}
+			l, lErr := f.Logger()
+			if lErr != nil {
+				pmErr = fmt.Errorf("harness: logger for project manager: %w", lErr)
+				return
+			}
+			r, rErr := f.ProjectRegistry()
+			if rErr != nil {
+				pmErr = rErr
+				return
+			}
+			pm, pmErr = opts.ProjectManager(l, nil, c.ProjectName(), r)
 		})
 		return pm, pmErr
 	}
 
 	// --- BundleManager ---
-	// Mirrors bundleManagerFunc in internal/cmd/factory/default.go. With no
-	// ProjectManager option wired, the manager is built without a roots
-	// provider — cache GC stays off, fail-closed, per the
-	// bundle.WithRegisteredRoots contract.
+	// Mirrors bundleManagerFunc in internal/cmd/factory/default.go: the
+	// roots provider is attached unconditionally, exactly as production
+	// does. With no ProjectManager option wired the provider surfaces the
+	// harness's descriptive error on the first GC pass — still fail-closed
+	// (an errored roots union never collects), but loud instead of
+	// silently disabling GC.
 	var (
 		bmOnce sync.Once
 		bm     *bundle.Manager
@@ -237,10 +270,6 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			c, cErr := resolveConfig()
 			if cErr != nil {
 				bmErr = fmt.Errorf("bundle manager: loading config: %w", cErr)
-				return
-			}
-			if opts.ProjectManager == nil {
-				bm = bundle.NewManager(c, componentcheck.Validate)
 				return
 			}
 			bm = bundle.NewManager(
@@ -271,46 +300,79 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 
 	// --- GitManager ---
 	f.GitManager = func() (*git.GitManager, error) {
-		if opts.GitManager != nil {
-			r, rErr := f.ProjectRegistry()
-			if rErr != nil {
-				return nil, rErr
-			}
-			root, rootErr := r.CurrentRoot()
-			if rootErr != nil {
-				return nil, rootErr
-			}
-			return opts.GitManager(root)
+		if opts.GitManager == nil {
+			// Same contract as ProjectManager: never (nil, nil).
+			return nil, errors.New("harness: GitManager not wired — set FactoryOptions.GitManager")
 		}
-		return nil, nil
+		r, rErr := f.ProjectRegistry()
+		if rErr != nil {
+			return nil, fmt.Errorf("harness: project registry: %w", rErr)
+		}
+		root, rootErr := r.CurrentRoot()
+		if rootErr != nil {
+			return nil, fmt.Errorf("harness: resolving project root: %w", rootErr)
+		}
+		return opts.GitManager(root)
 	}
 
 	// --- HostProxy ---
+	// Once-cached like hostProxyFunc in internal/cmd/factory/default.go —
+	// the mock manager is stateful (EnsureRunning flips Running), so a
+	// fresh instance per call would discard the transition and hide
+	// created-vs-started ordering bugs. Panics mirror production: these
+	// closures can resolve off the test goroutine, where t.Fatalf only
+	// runtime.Goexits that goroutine and hangs the test.
+	var (
+		hpOnce sync.Once
+		hpSvc  hostproxy.Service
+	)
 	f.HostProxy = func() hostproxy.Service {
-		if opts.HostProxy != nil {
+		//nolint:forbidigo // the Factory noun returns no error; production hostProxyFunc panics identically, and t.Fatalf off the test goroutine would hang instead of fail
+		hpOnce.Do(func() {
+			if opts.HostProxy == nil {
+				hpSvc = hostproxytest.NewMockManager()
+				return
+			}
 			c, cErr := resolveConfig()
 			if cErr != nil {
-				t.Fatalf("harness: config for host proxy: %v", cErr)
+				panic(fmt.Errorf("harness: config for host proxy: %w", cErr))
 			}
-			m, mErr := opts.HostProxy(c, logger.Nop())
+			l, lErr := f.Logger()
+			if lErr != nil {
+				panic(fmt.Errorf("harness: logger for host proxy: %w", lErr))
+			}
+			m, mErr := opts.HostProxy(c, l)
 			if mErr != nil {
-				t.Fatalf("harness: host proxy: %v", mErr)
+				panic(fmt.Errorf("harness: host proxy: %w", mErr))
 			}
-			return m
-		}
-		return hostproxytest.NewMockManager()
+			hpSvc = m
+		})
+		return hpSvc
 	}
 
 	// --- SocketBridge ---
+	// Once-cached like socketBridgeFunc in internal/cmd/factory/default.go.
+	var (
+		sbOnce sync.Once
+		sbMgr  socketbridge.SocketBridgeManager
+	)
 	f.SocketBridge = func() socketbridge.SocketBridgeManager {
-		if opts.SocketBridge != nil {
+		//nolint:forbidigo // same contract as HostProxy above: no error return, production panics identically
+		sbOnce.Do(func() {
+			if opts.SocketBridge == nil {
+				return
+			}
 			c, cErr := resolveConfig()
 			if cErr != nil {
-				t.Fatalf("harness: config for socket bridge: %v", cErr)
+				panic(fmt.Errorf("harness: config for socket bridge: %w", cErr))
 			}
-			return opts.SocketBridge(c, logger.Nop())
-		}
-		return nil
+			l, lErr := f.Logger()
+			if lErr != nil {
+				panic(fmt.Errorf("harness: logger for socket bridge: %w", lErr))
+			}
+			sbMgr = opts.SocketBridge(c, l)
+		})
+		return sbMgr
 	}
 
 	// --- AdminClient ---
@@ -370,22 +432,18 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	}
 
 	// --- ControlPlane ---
+	// Real branch is byte-for-byte controlPlaneFunc in
+	// internal/cmd/factory/default.go: the Manager shares the Factory's
+	// Client/Config/Logger closures, so it observes the same cached
+	// Docker singleton (with test labels) as every other noun.
 	var (
 		cpOnce sync.Once
 		cpMgr  manager.Manager
 	)
 	f.ControlPlane = func() manager.Manager {
 		cpOnce.Do(func() {
-			if opts.ControlPlane != nil {
-				c, cErr := resolveConfig()
-				if cErr != nil {
-					t.Fatalf("harness: config for control plane: %v", cErr)
-				}
-				log, lErr := f.Logger()
-				if lErr != nil {
-					t.Fatalf("harness: logger for control plane: %v", lErr)
-				}
-				cpMgr = opts.ControlPlane(c, log)
+			if opts.UseRealControlPlane {
+				cpMgr = manager.NewManager(f.Client, f.Config, f.Logger)
 			} else {
 				// Truly no-op: every Manager method wired to return zero
 				// values, so tests that never exercise the CP verbs don't

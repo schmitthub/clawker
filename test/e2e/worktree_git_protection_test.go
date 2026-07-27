@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,10 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
@@ -45,19 +42,11 @@ func TestWorktreeGitProtection_E2E(t *testing.T) {
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
+			Config:              config.NewConfig,
+			Client:              docker.NewClient,
+			ProjectManager:      project.NewProjectManager,
+			UseRealControlPlane: true,
+			UseRealAdminClient:  true,
 		},
 	}
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "wt-protect"})
@@ -98,8 +87,12 @@ func TestWorktreeGitProtection_E2E(t *testing.T) {
 		"worktree containers must default GOFLAGS=-buildvcs=false")
 
 	// Everyday worktree git ops must work against the RW .git mount.
-	gitOpsRes := h.ExecInContainer("wtprobe", "sh", "-c",
-		"git status --porcelain && git -c user.email=e2e@clawker.test -c user.name=e2e commit --allow-empty -m e2e-probe")
+	gitOpsRes := h.ExecInContainer(
+		"wtprobe",
+		"sh",
+		"-c",
+		"git status --porcelain && git -c user.email=e2e@clawker.test -c user.name=e2e commit --allow-empty -m e2e-probe",
+	)
 	require.NoError(t, gitOpsRes.Err, "worktree git status/commit must work\nstdout: %s\nstderr: %s",
 		gitOpsRes.Stdout, gitOpsRes.Stderr)
 

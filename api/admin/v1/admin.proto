@@ -133,6 +133,10 @@ message EgressRule {
   string action = 4;    // "allow" | "deny"
   repeated PathRule path_rules = 5;
   string path_default = 6;
+  // Accept an untrusted/self-signed upstream TLS certificate for this
+  // destination (https/wss only). Mirrors
+  // config.EgressRule.InsecureSkipTLSVerify.
+  bool insecure_skip_tls_verify = 7;
 }
 
 message PathRule {
@@ -238,6 +242,11 @@ message FirewallRemoveRuleRequest {
   // the rule identified by (dst, proto, port); the rule itself remains.
   // When empty, the whole rule is removed.
   string path = 4;
+  // When true, every rule in the store is removed in one mutation (one
+  // stack reload). Mutually exclusive with dst/proto/port/path — the
+  // server rejects a request that sets both. An already-empty store
+  // reports NOT_FOUND, mirroring the single-rule miss.
+  bool all = 5;
 }
 message FirewallRemoveRuleResult {
   // stack_restarted is true when the live stack was reloaded; false when

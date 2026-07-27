@@ -2,73 +2,72 @@
 
 Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreDNS egress firewall that controls outbound traffic from agent containers.
 
-## Contents
+## Layout
 
-| File | Purpose |
-|------|---------|
-| `firewall.go` | Parent command `NewCmdFirewall(f)` — registers all 12 subcommands |
-| `up.go` | `firewall up` — FirewallInit RPC (idempotent stack-up). Also exports `BringUpStack(ctx, ios, client)` — the spinner + shared-deadline + exposure-warning bringup UX — reused by `controlplane up` when `firewall.enable` (settings.yaml) is true |
-| `down.go` | `firewall down` — FirewallRemove RPC (global teardown) |
-| `status.go` | `firewall status` — show firewall health, container IPs, rule count |
-| `list.go` | `firewall list` (alias `ls`) — list active egress rules (sorted alphabetically by domain) |
-| `add.go` | `firewall add <domain>` — add a domain to the allow list |
-| `remove.go` | `firewall remove <domain>` — remove a domain from the allow list |
-| `reload.go` | `firewall reload` — force-reload Envoy/CoreDNS config from rule state |
-| `refresh.go` | `firewall refresh` — re-read the current project's `clawker.yaml` and sync its egress rules into the store (live apply of yaml edits) |
-| `enable.go` | `firewall enable` — re-enroll a container in per-container routing (idempotent; use after `disable`) |
-| `disable.go` | `firewall disable` — remove container from per-container routing (eBPF programs remain attached; fast-path exits to bypass on lookup miss) |
-| `bypass.go` | `firewall bypass <duration>` — temporary unrestricted egress for a container |
-| `rotate_ca.go` | `firewall rotate-ca` — regenerate CA keypair and domain certs |
+One subpackage per subcommand (the `internal/cmd/<noun>/<verb>` pattern); cross-command helpers live in `shared/`.
 
-## Parent Command Pattern
+| Package | Contents |
+|---------|----------|
+| (root) `firewall.go` | Parent command `NewCmdFirewall(f)` — registers the 13 subcommand constructors; no `RunE` of its own. `firewall_test.go` pins the registration list |
+| `up/` | `firewall up` — CP bootstrap (`f.ControlPlane().EnsureRunning`) then `shared.BringUpStack`. One of the explicit CP-bootstrap verbs; all other firewall admin commands fail fast when the CP is down |
+| `down/` | `firewall down` — `FirewallRemove` RPC (global teardown) |
+| `status/` | `firewall status` — health snapshot; `--format`/`--json`/`--quiet` via `cmdutil.AddFormatFlags` |
+| `list/` | `firewall list` (alias `ls`) — rule dump sorted by (domain, proto, port); format flags like `status` |
+| `add/` | `firewall add <domain>` — `--proto`, `--port` (spec validated CLI-side via `shared.ValidatePortFlag`), `--path`+`--action` (required together), `--methods` |
+| `remove/` | `firewall remove <domain>` — key removal, `--path` for single PathRule; domain tab-completion (`domainCompletions`); NOT_FOUND exits non-zero |
+| `reload/` | `firewall reload` — `FirewallReload` with the bringup RPC deadline |
+| `refresh/` | `firewall refresh` — `shared.ComposeProjectRules` → `shared.SyncRules` (live-apply yaml edits; add/update only) |
+| `prune/` | `firewall prune` — one `FirewallRemoveRule{all: true}` wipe, then (unless `--all`) refresh's exact re-sync; `-a/--all`, `-y/--yes`; keep set composed BEFORE the wipe; confirmation default-no |
+| `enable/` `disable/` | Per-container enroll/unenroll; `--agent` required |
+| `bypass/` | `firewall bypass <duration>` — timed unrestricted egress; `--stop`, `--non-interactive`; the live countdown dashboard lives in `bypass_dash.go` |
+| `rotateca/` | `firewall rotate-ca` — regenerate MITM CA + domain certs |
+| `shared/` | The helpers subcommands have in common — see below |
 
-`NewCmdFirewall(f *cmdutil.Factory)` creates the parent command and registers all subcommands via `cmd.AddCommand(...)`. The parent has no `RunE` — it only serves as a grouping command with usage examples.
+## shared/ package
 
-## Subcommand Table
+Imported by every subcommand package (and by `internal/cmd/controlplane` for `BringUpStack`); imports none of them.
 
-Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-process firewall manager. `f.AdminClient` is a pure dial with mTLS + OAuth2 and does NOT bootstrap the CP; admin commands fail fast when the CP is down. `firewall up` is one of the explicit bootstrap verbs — its run function calls `f.ControlPlane().EnsureRunning(ctx)` before dialing, mirroring `controlplane up` and the `container start` pre-start phase.
+| Symbol | Purpose |
+|--------|---------|
+| `CallWithSpinner` / `CallWithSpinnerTimeout` | Spinner-wrapped AdminService RPC with the quick deadline (`rpcTimeout`) / an explicit one (`consts.FirewallStackBringupRPCTimeout` for FirewallInit/FirewallReload) |
+| `WrapRPCError` | gRPC error → header + per-sentinel remediation lines (from `errdetails.ErrorInfo` Reasons) |
+| `WarnStackDownExposure` | Loud stderr security warning on failed stack bringup |
+| `PrintStackRestartedNote` | "takes effect on next `firewall up`" note when `stack_restarted=false` |
+| `BringUpStack` | Idempotent FirewallInit + summary + exposure warning — the bringup UX shared by `firewall up` and `controlplane up` (the CP daemon has its own in-process pre-`SetReady` gate; this CLI path covers the CP-already-running case) |
+| `ComposeProjectRules` | Firewall-enabled + current-project gates, then `bundler.EgressRules(cfg, "")` → wire rules — the container-start sync set |
+| `SyncRules` / `RuleSyncResult` | `FirewallAddRules` push + per-status tally (`Added`/`Modified`/`Unchanged`/`StackRestarted`) |
+| `ValidatePortFlag` | `--port` dynamic-spec validation (`config.ParsePortSpec`) at the CLI boundary |
 
-| Command | Constructor | Args | Flags | RPC |
-|---------|-------------|------|-------|-----|
-| `up` | `NewCmdUp(f, runF)` | none | none | `FirewallInit` |
-| `down` | `NewCmdDown(f, runF)` | none | none | `FirewallRemove` |
-| `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `FirewallStatus` |
-| `list` / `ls` | `NewCmdList(f, runF)` | none | `--format`, `--json`, `--quiet` | `FirewallListRules` |
-| `add` | `NewCmdAdd(f, runF)` | `<domain>` (required) | `--proto` (default `https`; accepts `http` for plaintext, `ssh`/`tcp`/opaque names), `--port` (dynamic spec: a single port `443` or an inclusive range `9000-9100`; empty = protocol default; validated 1..65535, lo<=hi), `--path` (URL path: a literal prefix matched at request time, or — when prefixed with `~` — an RE2 regex matched full-string for exact/anchored matching, guarding the open-prefix bypass; quote regex paths), `--action` (`--path` and `--action` are required together; `--action` accepts `allow`/`deny`), `--methods` (CSV, e.g. `GET,HEAD`; narrows the path rule's action to those HTTP verbs; requires `--path`/`--action`; HTTP-family protos only) | `FirewallAddRules` |
-| `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required, tab-completable) | `--proto` (default `https`; legacy `tls` translated to `https`), `--port` (dynamic spec: single port or `lo-hi` range; must match the stored rule's port spec), `--path` (lookup is exact-string against the stored `Path`; omit to remove the whole entry) | `FirewallRemoveRule` (+ `FirewallListRules` for completion); with `--path` the call removes a single `PathRule` from the matching rule (`p.Path == path`), otherwise the whole rule; result status enum is `REMOVED` / `PATH_REMOVED` / `NOT_FOUND`. The CLI exits non-zero on `NOT_FOUND` (RPC succeeds, status drives the outcome) so a typo, wrong-proto/port, or unknown path never silently succeeds; the `NOT_FOUND` error message names the missing tuple and tells the user to run `clawker firewall list` |
-| `reload` | `NewCmdReload(f, runF)` | none | none | `FirewallReload` |
-| `refresh` | `NewCmdRefresh(f, runF)` | none | none | `FirewallAddRules` (re-syncs `bundler.EgressRules(cfg, "")` → `adminv1.EgressRulesToProto`); global (no `--agent`); requires firewall enabled and a resolvable current project; add/update merge only (no prune — delete via `firewall remove`) |
-| `enable` | `NewCmdEnable(f, runF)` | none | `--agent` (required) | `FirewallEnable` |
-| `disable` | `NewCmdDisable(f, runF)` | none | `--agent` (required) | `FirewallDisable` |
-| `bypass` | `NewCmdBypass(f, runF)` | `<duration>` (required unless `--stop`) | `--agent` (required), `--stop`, `--non-interactive` | `FirewallBypass` (+ `FirewallEnable` for Ctrl+C/`--stop`) |
-| `rotate-ca` | `NewCmdRotateCA(f, runF)` | none | none | `FirewallRotateCA` |
+Callers returning `shared.WrapRPCError(...)` / propagating `ComposeProjectRules`/`SyncRules` errors carry `//nolint:wrapcheck` — the callee already wraps with header + remediation; re-wrapping would double the user-visible prefix.
 
-The hidden `serve` subcommand is intentionally absent — the firewall has no host-side daemon; lifecycle is owned by the CP container.
+## Options + constructor pattern
 
-## Options Pattern
+Every subcommand keeps the `NewCmd<X>(f *cmdutil.Factory, runF func(context.Context, *XOptions) error)` shape: an `XOptions` struct of Factory closures (+ flag fields), `runF` as the test trapdoor, and an unexported `<x>Run(ctx, opts)` holding the logic. RPCs go through `f.AdminClient(ctx)` — a pure dial; no in-process firewall manager, no CP bootstrap except in `up`.
 
-Each subcommand defines a `*Options` struct populated during command construction. All options structs include `IOStreams`. The `AdminClient` field is a lazy Factory closure (`f.AdminClient`) used by every subcommand.
+## Test conventions (every subpackage)
 
-Every constructor follows `NewCmd*(f *cmdutil.Factory, runF func(context.Context, *XOptions) error)` — the `runF` parameter enables test injection.
+In-package test files (`//nolint:testpackage` — they exercise the unexported run function directly) with two table layers:
 
-## Format Flag Support
+1. **Constructor table** — `NewCmd<X>(f, runF)` with a capture-runF; asserts flag/arg parsing populates Options (and that validation failures never invoke runF).
+2. **Run-function table** — drives `<x>Run` against `adminv1mocks.AdminServiceClientMock` (+ `configmocks`/`projectmocks` where config gates exist), asserting request payloads via moq recorded `Calls()[i].In` accessors (never copy proto structs by value — vet lock-copy) and rendered output on `iostreams.Test()` buffers.
 
-Only two commands support `--format`/`--json`/`--quiet` (via `cmdutil.AddFormatFlags`):
+Factories in tests are `&cmdutil.Factory{...}` struct literals — never `factory.New()`. Sparse fixtures/mocks carry `//nolint:exhaustruct` with a reason (repo idiom). Note `.golangci.yml` runs `new-from-merge-base: main` — new files get the full linter surface.
 
-| Command | Format Support |
-|---------|---------------|
-| `status` | Yes — `cmdutil.FormatFlags` on `StatusOptions.Format`; reads `FirewallStatus` response |
-| `list` | Yes — `cmdutil.FormatFlags` on `ListOptions.Format`; reads `FirewallListRules` response; uses `TUI` for table rendering |
+## RPC table
 
-All other commands produce action output only (success/error messages via `fmt.Fprintf` to IOStreams).
+| Command | RPC | Notes |
+|---------|-----|-------|
+| `up` | `FirewallInit` | via `shared.BringUpStack`; bringup deadline |
+| `down` | `FirewallRemove` | global teardown; rules store preserved |
+| `status` | `FirewallStatus` | read-only |
+| `list` | `FirewallListRules` | read-only |
+| `add` | `FirewallAddRules` | merge semantics server-side (`MergeRule`) |
+| `remove` | `FirewallRemoveRule` | keyed `(dst, proto, port)` + optional `path`; `REMOVED`/`PATH_REMOVED`/`NOT_FOUND` status enum |
+| `refresh` | `FirewallAddRules` | config-driven sibling of `add` |
+| `prune` | `FirewallRemoveRule{all:true}` then `FirewallAddRules` | `all` mutually exclusive with dst/proto/port/path (InvalidArgument); empty store → NOT_FOUND, re-sync still runs |
+| `reload` | `FirewallReload` | bringup deadline |
+| `enable`/`disable` | `FirewallEnable`/`FirewallDisable` | `--agent` → container ref |
+| `bypass` | `FirewallBypass` (+ `FirewallEnable` on `--stop`/Ctrl+C) | dead-man timer CP-side |
+| `rotate-ca` | `FirewallRotateCA` | quick deadline |
 
-## Dependency Categories
-
-- **Stack lifecycle** (`up`, `down`): `FirewallInit` / `FirewallRemove` via `AdminClient`
-- **Infrastructure queries** (`status`, `list`, `reload`, `rotate-ca`): read-only RPCs on `AdminClient`
-- **Per-container operations** (`enable`, `disable`, `bypass`): `FirewallEnable` / `FirewallDisable` / `FirewallBypass` on `AdminClient`; `--agent` flag identifies the container
-- **Rule mutations** (`add`, `remove`, `refresh`): `FirewallAddRules` / `FirewallRemoveRule` on `AdminClient`; positional `<domain>` + `--proto`/`--port` flags. `add` also takes `--path`/`--action` (required-together) to attach a path-scoped rule to the entry; `remove --path` removes a single path entry by exact-string match without nuking the rule. Both verbs share one underlying merge semantic — yaml input and CLI input are peers. `refresh` is the config-driven sibling of `add`: it re-reads the current project's `clawker.yaml` egress config (`security.firewall.add_domains` + `security.firewall.rules`) and replays the same `FirewallAddRules` merge that runs at container start, live-applying yaml edits without a restart. Like `add` it is add/update only — removing a domain from yaml does not prune it from the store (use `remove`).
-
-## Shell Completion
-
-`remove` provides `ValidArgsFunction` for tab-completing existing firewall domains. The `domainCompletions` helper calls `FirewallListRules` on `AdminClient` and extracts unique `Dst` values. Domains are deduplicated, sorted, and returned as `[]cobra.Completion` with `ShellCompDirectiveNoFileComp`. Silently returns empty on errors (CP unreachable, dial failure).
+The hidden `serve` subcommand is intentionally absent — the firewall has no host-side daemon; lifecycle is owned by the CP container (`firewall_test.go` pins this).

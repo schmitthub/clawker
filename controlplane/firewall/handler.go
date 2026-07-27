@@ -813,17 +813,21 @@ func (h *Handler) FirewallAddRules(
 	}, nil
 }
 
-// FirewallRemoveRule deletes a single rule matched by (dst, proto, port)
-// via a queued ActionRuleMutate closure (same single-writer funnel as
-// FirewallAddRules) then reconciles the stack. A miss on the store lookup
-// returns Status=REMOVE_RULE_STATUS_NOT_FOUND on the result (NOT a
-// codes.NotFound gRPC error) so a typo or wrong-proto/port surfaces as
-// a typed outcome on the wire — the CLI renders the not-found message
-// and exits non-zero. Genuine store-I/O failures still come back as
-// gRPC errors. No ValidateDst here: anything that fails to match an
-// existing key — typo, malformed hostname, or legitimate absence —
-// collapses into the same NOT_FOUND outcome, which is exactly the
-// behavior the CLI needs to render.
+// FirewallRemoveRule deletes a single rule matched by (dst, proto, port),
+// or — when req.all is set — wipes the entire store in one mutation. Both
+// forms run via a queued ActionRuleMutate closure (same single-writer
+// funnel as FirewallAddRules) then reconcile the stack once. The all form
+// is mutually exclusive with dst/proto/port/path and the combination is
+// rejected with codes.InvalidArgument before anything is queued. A miss on
+// the store lookup (or an already-empty store on the all form) returns
+// Status=REMOVE_RULE_STATUS_NOT_FOUND on the result (NOT a codes.NotFound
+// gRPC error) so it surfaces as a typed outcome on the wire — the remove
+// CLI renders the not-found message and exits non-zero, while prune treats
+// the empty store as an informational no-op because its contract is the
+// end state. Genuine store-I/O failures still come back as gRPC errors.
+// No ValidateDst here: anything that fails to match an existing key —
+// typo, malformed hostname, or legitimate absence — collapses into the
+// same NOT_FOUND outcome, which is exactly the behavior the CLI needs.
 func (h *Handler) FirewallRemoveRule(
 	ctx context.Context,
 	req *adminv1.FirewallRemoveRuleRequest,
@@ -834,6 +838,10 @@ func (h *Handler) FirewallRemoveRule(
 		// queued closure would surface as a panic trace instead of a named
 		// wiring fault.
 		return nil, toStatus(errors.New("firewall remove rule: rules store not wired"))
+	}
+	if req.GetAll() && (req.GetDst() != "" || req.GetProto() != "" || req.GetPort() != "" || req.GetPath() != "") {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"firewall remove rule: all is mutually exclusive with dst/proto/port/path")
 	}
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
@@ -846,6 +854,19 @@ func (h *Handler) FirewallRemoveRule(
 		// operator whichever way the mutation goes — they describe what is on
 		// disk, which exists either way.
 		defer h.logRuleWarnings()
+		if req.GetAll() {
+			matched, removeErr := h.store.RemoveAll()
+			if removeErr == nil && matched {
+				// A full policy wipe must be recoverable from the structured
+				// log surface — an operator finding an empty store later
+				// needs the when and the why without a stack trace.
+				h.log.Info().
+					Str("event", "firewall_rules_wiped").
+					Msg("firewall rules: entire egress rule store removed via remove-all request")
+			}
+			//nolint:wrapcheck // passthrough — the store verb already wraps with its own context, same as the direct returns below
+			return matched, removeErr
+		}
 		if pathMode {
 			return h.store.RemovePathRule(rule, req.GetPath())
 		}
