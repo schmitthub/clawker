@@ -133,6 +133,10 @@ message EgressRule {
   string action = 4;    // "allow" | "deny"
   repeated PathRule path_rules = 5;
   string path_default = 6;
+  // Accept an untrusted/self-signed upstream TLS certificate for this
+  // destination (https/wss only). Mirrors
+  // config.EgressRule.InsecureSkipTLSVerify.
+  bool insecure_skip_tls_verify = 7;
 }
 
 message PathRule {

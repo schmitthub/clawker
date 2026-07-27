@@ -209,12 +209,16 @@ type EgressRule struct {
 	Proto string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"` // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
 	// Dynamic port spec mirroring config.EgressRule.Port: a single port ("443")
 	// or an inclusive range ("9000-9100", lo-hi). Empty = protocol default.
-	Port          string      `protobuf:"bytes,3,opt,name=port,proto3" json:"port,omitempty"`
-	Action        string      `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"` // "allow" | "deny"
-	PathRules     []*PathRule `protobuf:"bytes,5,rep,name=path_rules,json=pathRules,proto3" json:"path_rules,omitempty"`
-	PathDefault   string      `protobuf:"bytes,6,opt,name=path_default,json=pathDefault,proto3" json:"path_default,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Port        string      `protobuf:"bytes,3,opt,name=port,proto3" json:"port,omitempty"`
+	Action      string      `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"` // "allow" | "deny"
+	PathRules   []*PathRule `protobuf:"bytes,5,rep,name=path_rules,json=pathRules,proto3" json:"path_rules,omitempty"`
+	PathDefault string      `protobuf:"bytes,6,opt,name=path_default,json=pathDefault,proto3" json:"path_default,omitempty"`
+	// Accept an untrusted/self-signed upstream TLS certificate for this
+	// destination (https/wss only). Mirrors
+	// config.EgressRule.InsecureSkipTLSVerify.
+	InsecureSkipTlsVerify bool `protobuf:"varint,7,opt,name=insecure_skip_tls_verify,json=insecureSkipTlsVerify,proto3" json:"insecure_skip_tls_verify,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *EgressRule) Reset() {
@@ -287,6 +291,13 @@ func (x *EgressRule) GetPathDefault() string {
 		return x.PathDefault
 	}
 	return ""
+}
+
+func (x *EgressRule) GetInsecureSkipTlsVerify() bool {
+	if x != nil {
+		return x.InsecureSkipTlsVerify
+	}
+	return false
 }
 
 type PathRule struct {
@@ -1846,7 +1857,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\bidentity\x18\x01 \x01(\rR\bidentity\x12\x19\n" +
 	"\bdst_port\x18\x02 \x01(\rR\adstPort\x12\x1d\n" +
 	"\n" +
-	"envoy_port\x18\x03 \x01(\rR\tenvoyPort\"\xbe\x01\n" +
+	"envoy_port\x18\x03 \x01(\rR\tenvoyPort\"\xf7\x01\n" +
 	"\n" +
 	"EgressRule\x12\x10\n" +
 	"\x03dst\x18\x01 \x01(\tR\x03dst\x12\x14\n" +
@@ -1855,7 +1866,8 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x06action\x18\x04 \x01(\tR\x06action\x129\n" +
 	"\n" +
 	"path_rules\x18\x05 \x03(\v2\x1a.clawker.admin.v1.PathRuleR\tpathRules\x12!\n" +
-	"\fpath_default\x18\x06 \x01(\tR\vpathDefault\"P\n" +
+	"\fpath_default\x18\x06 \x01(\tR\vpathDefault\x127\n" +
+	"\x18insecure_skip_tls_verify\x18\a \x01(\bR\x15insecureSkipTlsVerify\"P\n" +
 	"\bPathRule\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12\x18\n" +

@@ -177,6 +177,9 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		// The CLI never sets a path default — an explicit one would flip the
 		// whole entry into allowlist/blocklist mode behind the user's back.
 		PathDefault: "",
+		// Accepting an untrusted upstream cert is a yaml-only opt-in
+		// (security.firewall.rules); the CLI deliberately offers no flag.
+		InsecureSkipTlsVerify: false,
 	}
 	if opts.Path != "" {
 		rule.PathRules = []*adminv1.PathRule{{Path: opts.Path, Action: opts.Action, Methods: opts.Methods}}

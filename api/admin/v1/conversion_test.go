@@ -1,17 +1,22 @@
 package v1
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
-// TestProtoRulesRoundTrip pins the field map between EgressRule/PathRule and
-// config.EgressRule/PathRule via full round-trip equality. A new field on
-// either side without a matching translator update loses data here and fails
-// the test — not just the subset the test happens to sample.
+// TestProtoRulesRoundTrip pins representative rule shapes (path rules, port
+// ranges, mixed protos) through the proto round-trip. Field-completeness is
+// NOT this test's guarantee — its hand-enumerated assertions can only see the
+// fields they name (the InsecureSkipTLSVerify drop lived through it).
+// Completeness is TestEgressRuleConversion_NoFieldDrift's job.
 func TestProtoRulesRoundTrip(t *testing.T) {
 	cases := []struct {
 		name string
@@ -143,4 +148,71 @@ func TestEffectivePathDefault_Inference(t *testing.T) {
 			assert.Equal(t, tt.want, EffectivePathDefault(tt.rule))
 		})
 	}
+}
+
+// fillEveryField recursively sets every settable exported field of v to a
+// distinct non-zero value, so a field the conversion drops cannot hide
+// behind a zero value. It fails the test on any field kind it does not know
+// how to fill — a new field of a new kind must extend the filler, never be
+// silently skipped (zero drift tolerance: an unfilled field is an untested
+// field).
+func fillEveryField(t *testing.T, v reflect.Value, seed *int) {
+	t.Helper()
+	//nolint:exhaustive // default fails the test loudly — that IS the handling for every other kind
+	switch v.Kind() {
+	case reflect.String:
+		*seed++
+		v.SetString(fmt.Sprintf("filled-%d", *seed))
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Slice:
+		elem := reflect.New(v.Type().Elem()).Elem()
+		fillEveryField(t, elem, seed)
+		v.Set(reflect.Append(reflect.MakeSlice(v.Type(), 0, 1), elem))
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		fillEveryField(t, v.Elem(), seed)
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if !v.Type().Field(i).IsExported() {
+				continue // protobuf runtime internals (state, sizeCache, ...)
+			}
+			fillEveryField(t, v.Field(i), seed)
+		}
+	default:
+		t.Fatalf("fillEveryField: unsupported kind %s at %s — extend the filler so the new field is exercised",
+			v.Kind(), v.Type())
+	}
+}
+
+// TestEgressRuleConversion_NoFieldDrift is the drift guard for the
+// config.EgressRule ↔ EgressRule wire boundary. Every field on either side
+// is reflection-filled with a non-zero value and must survive the full
+// round trip: a field added to one type but not propagated through
+// EgressRuleToProto/EgressRuleFromProto (or absent from the wire message
+// entirely) comes back zeroed and fails equality here. This is the
+// Kubernetes apitesting/roundtrip approach sized for one type — rules a
+// user writes in config MUST reach the store byte-identical; silent drops
+// at this boundary are unenforced security config.
+func TestEgressRuleConversion_NoFieldDrift(t *testing.T) {
+	t.Run("config to proto and back", func(t *testing.T) {
+		var rule config.EgressRule
+		seed := 0
+		fillEveryField(t, reflect.ValueOf(&rule).Elem(), &seed)
+
+		got := EgressRuleFromProto(EgressRuleToProto(rule))
+		require.Equal(t, rule, got,
+			"a config.EgressRule field did not survive the wire round trip — update conversion.go AND admin.proto")
+	})
+
+	t.Run("proto to config and back", func(t *testing.T) {
+		wire := &EgressRule{} //nolint:exhaustruct // the very next line reflection-fills every exported field
+		seed := 0
+		fillEveryField(t, reflect.ValueOf(wire).Elem(), &seed)
+
+		got := EgressRuleToProto(EgressRuleFromProto(wire))
+		require.True(t, proto.Equal(wire, got),
+			"a wire EgressRule field did not survive the config round trip — update conversion.go\nwant: %v\ngot:  %v",
+			wire, got)
+	})
 }
