@@ -41,15 +41,12 @@ func TestMonitorSeedUnionAndCollision_E2E(t *testing.T) {
 	// Deliberately NOT bundleHarnessOpts: wiring a real admin client here
 	// would let cleanup's `firewall down` issue a real FirewallRemove
 	// against a foreign host CP that happens to be running.
-	h := &harness.Harness{
-		T: t,
-		//nolint:exhaustruct // monitor verbs touch no CP nouns; the rest stay on harness defaults
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-		},
-	}
+	// Monitor verbs touch no CP nouns; the rest stay on harness defaults.
+	h := harness.New(t, func(o *harness.FactoryOptions) {
+		o.Config = config.NewConfig
+		o.Client = docker.NewClient
+		o.ProjectManager = project.NewProjectManager
+	})
 	// Project A: restates the default claude-code selection explicitly —
 	// the literal anchor rewriteExtensionSelection swaps later.
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "monitor-proj-a"})

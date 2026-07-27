@@ -31,6 +31,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/logger/logcfg"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -146,11 +147,10 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	f.Config = resolveConfig
 
 	// --- Logger ---
-	// Mirrors loggerLazy/newLogger in internal/cmd/factory/default.go:
-	// once-cached, honors logging settings (file switch, rotation knobs,
-	// OTEL export). E2E must exercise the settings→logger path the CLI
-	// ships with, and the shared instance is what the failure dump of
-	// clawker.log depends on.
+	// Once-cached like loggerLazy in internal/cmd/factory/default.go, and
+	// the same settings→logger assembly the CLI ships with (logcfg.New:
+	// file switch, rotation knobs, OTEL export). The shared instance is
+	// what the failure dump of clawker.log depends on.
 	var (
 		logOnce sync.Once
 		log     *logger.Logger
@@ -163,47 +163,11 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			if logErr != nil {
 				return
 			}
-			loggingCfg := c.LoggingConfig()
-			if loggingCfg.FileEnabled != nil && !*loggingCfg.FileEnabled {
-				log = logger.Nop()
-				return
-			}
-			var dir string
-			dir, logErr = c.LogsSubdir()
+			log, logErr = logcfg.New(c)
 			if logErr != nil {
-				return
+				logErr = fmt.Errorf("harness: logger: %w", logErr)
 			}
-			monitoringCfg := c.MonitoringConfig()
-			// OTLP/gRPC port, not the HTTP one — see newLogger in
-			// internal/cmd/factory/default.go.
-			var otelCfg *logger.OtelOptions
-			if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-				//nolint:exhaustruct // mTLS fields are unset here exactly as newLogger leaves them — the CLI lane is insecure OTLP
-				otelCfg = &logger.OtelOptions{
-					Endpoint:       fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelGRPCPort),
-					Insecure:       true,
-					Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
-					MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
-					ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
-					ServiceName:    "clawker-cli",
-				}
-			}
-			compress := true
-			if loggingCfg.Compress != nil {
-				compress = *loggingCfg.Compress
-			}
-			//nolint:exhaustruct // Filename/EchoStdout are left at their defaults, mirroring newLogger
-			log, logErr = logger.New(logger.Options{
-				LogsDir: dir,
-
-				MaxSizeMB:  loggingCfg.MaxSizeMB,
-				MaxAgeDays: loggingCfg.MaxAgeDays,
-				MaxBackups: loggingCfg.MaxBackups,
-				Compress:   compress,
-				Otel:       otelCfg,
-			})
 		})
-		//nolint:wrapcheck // logger.New's error is surfaced verbatim, as newLogger does
 		return log, logErr
 	}
 

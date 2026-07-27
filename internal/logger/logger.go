@@ -130,7 +130,7 @@ type OtelOptions struct {
 	// attribute (routing/trusted, routing/untrusted in otel-config.yaml).
 	// Empty leaves the SDK default ("unknown_service:<binary>") which is
 	// dropped silently at the routing connector. Example caller: "clawker-cli"
-	// (host CLI, set in internal/cmd/factory/default.go).
+	// (host CLI, set in internal/logger/logcfg).
 	ServiceName string
 
 	// mTLS configuration. Two mutually-exclusive shapes:

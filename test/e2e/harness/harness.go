@@ -70,6 +70,28 @@ type Harness struct {
 	Cleanup *CleanupReport
 }
 
+// New builds a Harness whose FactoryOptions start at the zero baseline —
+// every dependency mocked, no real CP or admin client. Each mutator opts
+// one dependency into its real production wiring. Cleanup is populated by
+// the harness at teardown.
+func New(t *testing.T, mutators ...func(*FactoryOptions)) *Harness {
+	t.Helper()
+	opts := &FactoryOptions{
+		Config:              nil,
+		Client:              nil,
+		ProjectManager:      nil,
+		GitManager:          nil,
+		HostProxy:           nil,
+		SocketBridge:        nil,
+		UseRealAdminClient:  false,
+		UseRealControlPlane: false,
+	}
+	for _, mutate := range mutators {
+		mutate(opts)
+	}
+	return &Harness{T: t, Opts: opts, Cleanup: nil}
+}
+
 // RunResult holds the outcome of a CLI command execution.
 type RunResult struct {
 	ExitCode int

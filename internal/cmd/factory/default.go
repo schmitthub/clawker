@@ -24,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/logger/logcfg"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -198,53 +199,7 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
-	loggingCfg := cfg.LoggingConfig()
-
-	// File logging is on by default for user diagnostics.
-	// Only skip if explicitly disabled via settings.yaml.
-	if loggingCfg.FileEnabled != nil && !*loggingCfg.FileEnabled {
-		return logger.Nop(), nil
-	}
-
-	logsDir, err := cfg.LogsSubdir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get logs subdir: %w", err)
-	}
-	monitoringCfg := cfg.MonitoringConfig()
-
-	// Build OTEL config from settings if enabled. CLI runs on the host and
-	// reaches the collector via its host-published OTLP/gRPC port —
-	// logger.New uses otlploggrpc (see internal/logger/logger.go::
-	// newOtelProvider). Dialing the OtelCollectorPort (HTTP, 4318) with
-	// a gRPC exporter returns 415 Unsupported Media Type and silently
-	// drops every record; use OtelGRPCPort (4317) instead.
-	var otelCfg *logger.OtelOptions
-	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelGRPCPort)
-		otelCfg = &logger.OtelOptions{
-			Endpoint:       endpoint,
-			Insecure:       true,
-			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
-			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
-			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
-			ServiceName:    "clawker-cli",
-		}
-	}
-
-	compress := true
-	if loggingCfg.Compress != nil {
-		compress = *loggingCfg.Compress
-	}
-	opts := logger.Options{
-		LogsDir: logsDir,
-
-		MaxSizeMB:  loggingCfg.MaxSizeMB,
-		MaxAgeDays: loggingCfg.MaxAgeDays,
-		MaxBackups: loggingCfg.MaxBackups,
-		Compress:   compress,
-		Otel:       otelCfg,
-	}
-	l, err := logger.New(opts)
+	l, err := logcfg.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}

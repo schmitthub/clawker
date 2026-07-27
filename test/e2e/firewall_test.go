@@ -34,16 +34,13 @@ const fwNoServices = "none"
 // firewallFactoryOpts is the one place the real firewall e2e Factory wiring
 // lives: real Config/Docker/ProjectManager, production ControlPlane manager,
 // production-identical AdminClient. Tests needing extra wiring (host proxy)
-// set the extra field on the returned struct.
-func firewallFactoryOpts() *harness.FactoryOptions {
-	//nolint:exhaustruct // unset fields take the harness defaults; a test opts into GitManager/HostProxy/SocketBridge by setting them
-	return &harness.FactoryOptions{
-		Config:              config.NewConfig,
-		Client:              docker.NewClient,
-		ProjectManager:      project.NewProjectManager,
-		UseRealControlPlane: true,
-		UseRealAdminClient:  true,
-	}
+// pass an additional mutator to harness.New.
+func firewallFactoryOpts(o *harness.FactoryOptions) {
+	o.Config = config.NewConfig
+	o.Client = docker.NewClient
+	o.ProjectManager = project.NewProjectManager
+	o.UseRealControlPlane = true
+	o.UseRealAdminClient = true
 }
 
 // newFirewallHarness wires the real Config/Docker/ControlPlane/AdminClient
@@ -66,11 +63,7 @@ func newFirewallYAMLHarness(t *testing.T, projectYAML string, requiredServices .
 	if len(requiredServices) == 0 {
 		requiredServices = []string{"firewall", "controlplane"}
 	}
-	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
-	h := &harness.Harness{
-		T:    t,
-		Opts: firewallFactoryOpts(),
-	}
+	h := harness.New(t, firewallFactoryOpts)
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
 	// cleanup (t.Cleanup is LIFO). Cleanup populates h.Cleanup, then
 	// this check reads it.
@@ -509,10 +502,9 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 }
 
 func TestFirewall_HostProxyReachable(t *testing.T) {
-	opts := firewallFactoryOpts()
-	opts.HostProxy = hostproxy.NewManager
-	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
-	h := &harness.Harness{T: t, Opts: opts}
+	h := harness.New(t, firewallFactoryOpts, func(o *harness.FactoryOptions) {
+		o.HostProxy = hostproxy.NewManager
+	})
 	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
 	fwSetup(t, h, `
 `)
@@ -744,10 +736,9 @@ security:
 }
 
 func TestFirewall_FirewallDisabled(t *testing.T) {
-	opts := firewallFactoryOpts()
-	opts.HostProxy = hostproxy.NewManager
-	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
-	h := &harness.Harness{T: t, Opts: opts}
+	h := harness.New(t, firewallFactoryOpts, func(o *harness.FactoryOptions) {
+		o.HostProxy = hostproxy.NewManager
+	})
 	// CP is unconditional infrastructure — it boots even with the firewall
 	// disabled. The firewall stack must NOT: assert both via the cleanup
 	// snapshot (registered before NewIsolatedFS; t.Cleanup is LIFO).
