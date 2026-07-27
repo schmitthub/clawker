@@ -121,9 +121,12 @@ func parseBypassArgs(opts *BypassOptions, args []string) error {
 		//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
 		return cmdutil.FlagErrorf("invalid duration %q: %s", args[0], err)
 	}
-	if d <= 0 {
+	// The wire field is whole seconds and 0 is the control plane's
+	// "use default" sentinel, so a sub-second duration would silently widen
+	// the bypass window instead of narrowing it.
+	if d < time.Second || d%time.Second != 0 {
 		//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
-		return cmdutil.FlagErrorf("duration must be positive")
+		return cmdutil.FlagErrorf("duration must be a whole number of seconds, at least 1s (e.g. 30s, 5m, 1h)")
 	}
 	opts.Duration = d
 

@@ -130,6 +130,16 @@ func TestNewCmdBypass(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "sub-second duration",
+			input:   []string{"500ms", "--agent", "dev"},
+			wantErr: true,
+		},
+		{
+			name:    "fractional-second duration",
+			input:   []string{"90.7s", "--agent", "dev"},
+			wantErr: true,
+		},
+		{
 			name:    "missing required agent",
 			input:   []string{"5m"},
 			wantErr: true,
