@@ -287,6 +287,12 @@ func denyAllVHost() map[string]any {
 	}
 }
 
+// doubleEncodedTraversalPath is the regex-marked path (see pathSpecifier) that
+// matches any :path carrying a double-encoded dot, slash, or backslash
+// ("%252e" / "%252f" / "%255c", case-insensitive). RE2 full-string match per
+// safe_regex semantics, hence the .* bookends.
+const doubleEncodedTraversalPath = regexPathMarker + `(?i).*%25(2e|2f|5c).*`
+
 // httpRoutes converts a rule's path rules into Envoy routes, longest-prefix
 // first (Envoy is first-match-wins on prefix). The trailing default comes from
 // EffectivePathDefault. A path rule's Methods narrow the route to a set of HTTP
@@ -305,7 +311,13 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 	prs := append([]config.PathRule(nil), r.PathRules...)
 	sort.SliceStable(prs, func(i, j int) bool { return len(prs[i].Path) > len(prs[j].Path) })
 
-	var routes []any
+	// Path-gated vhosts lead with the double-encoded-traversal deny.
+	// normalize_path percent-decodes UNRESERVED octets only, so "%25" (the
+	// encoded "%") survives normalization and "%252e" prefix-matches straight
+	// through a literal path gate; an upstream that decodes a second time
+	// collapses it into ".." and traverses past the gate. No HCM option covers
+	// double encoding, so the vhost refuses such paths outright.
+	routes := []any{httpDenyRoute(doubleEncodedTraversalPath, nil)}
 	for _, pr := range prs {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, httpAllowRoute(pr.Path, cluster, websocket, pr.Methods))

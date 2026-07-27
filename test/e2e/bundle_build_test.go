@@ -1,4 +1,5 @@
-package e2e_test
+//nolint:testpackage // the e2e suite shares in-package helpers (bundleHarnessOpts, readProjectConfig); every file here is package e2e
+package e2e
 
 import (
 	"context"
@@ -10,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/bundler"
@@ -101,29 +101,18 @@ func TestBundledStackBuild_E2E(t *testing.T) {
 }
 
 // bundleHarnessOpts returns FactoryOptions wired with the production
-// constructors the bundle/monitor E2E tests exercise. Starting a real agent
+// constructors TestBundledStackBuild_E2E exercises. Starting a real agent
 // container needs the real CP/firewall stack (clawkerd only spawns the user
 // CMD after the CP dispatches AgentReady), so the CP manager and admin
 // client are wired production-real — the same shape as the firewall E2E
-// tests. Git/host-proxy/socket-bridge nouns stay on the harness fakes.
+// tests. Host-proxy/socket-bridge nouns stay on the harness defaults.
 func bundleHarnessOpts() *harness.FactoryOptions {
 	return &harness.FactoryOptions{
-		Config:         config.NewConfig,
-		Client:         docker.NewClient,
-		ProjectManager: project.NewProjectManager,
-		GitManager:     nil,
-		HostProxy:      nil,
-		SocketBridge:   nil,
-		ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-			return manager.NewManager(
-				func(ctx context.Context) (*docker.Client, error) {
-					return docker.NewClient(ctx, cfg, log)
-				},
-				func() (config.Config, error) { return cfg, nil },
-				func() (*logger.Logger, error) { return log, nil },
-			)
-		},
-		UseRealAdminClient: true,
+		Config:              config.NewConfig,
+		Client:              docker.NewClient,
+		ProjectManager:      project.NewProjectManager,
+		UseRealControlPlane: true,
+		UseRealAdminClient:  true,
 	}
 }
 
@@ -133,17 +122,11 @@ func bundleHarnessOpts() *harness.FactoryOptions {
 // leaves that registration intact (the registry keys on path, not content).
 func writeBundleProjectConfig(t *testing.T, projectDir, bundleURL string) {
 	t.Helper()
-	doc := `version: "1"
-bundles:
+	doc := `bundles:
   - url: ` + bundleURL + `
     ref: v1.0.0
 build:
   stacks: [acme.tools.extra]
-security:
-  firewall:
-    add_domains:
-      - github.com
-      - api.github.com
 `
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".clawker.yaml"), []byte(doc), 0o600))
 }

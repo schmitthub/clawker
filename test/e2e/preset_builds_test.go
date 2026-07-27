@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
 
 	"github.com/schmitthub/clawker/internal/project"
@@ -176,11 +178,12 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 			sanitized := strings.NewReplacer(" ", "-", "(", "", ")", "").Replace(tt.name)
 			projectName := "vcs-" + sanitized
 
+			// project init touches no Docker resources — Config +
+			// ProjectManager is the whole dependency surface.
 			h := &harness.Harness{
 				T: t,
 				Opts: &harness.FactoryOptions{
 					Config:         config.NewConfig,
-					Client:         docker.NewClient,
 					ProjectManager: project.NewProjectManager,
 				},
 			}
@@ -243,21 +246,43 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 // firewall config that actually allows SSH connections to the VCS provider.
 // Requires real Docker + firewall.
 func TestPresetInit_SSHConnectivity(t *testing.T) {
+	// Starting a real agent container drives the full CP + firewall stack
+	// (container start dispatches FirewallInit through the admin client),
+	// and the HTTPS-git probe exercises host-proxy credential forwarding —
+	// wire all three real, matching newFirewallHarness.
 	h := &harness.Harness{
 		T: t,
 		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
+			Config:              config.NewConfig,
+			Client:              docker.NewClient,
+			ProjectManager:      project.NewProjectManager,
+			HostProxy:           hostproxy.NewManager,
+			UseRealControlPlane: true,
+			UseRealAdminClient:  true,
 		},
 	}
-	setup := h.NewIsolatedFS(&harness.FSOptions{
+	// Registered before NewIsolatedFS (t.Cleanup is LIFO) so it reads the
+	// cleanup snapshot: silently passing with the stack down would make
+	// every connectivity assertion vacuous.
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+	h.NewIsolatedFS(&harness.FSOptions{
 		ProjectDir: "ssh-connectivity",
 	})
-	_ = setup
+	harness.EnsureNoControlPlane(t, 30*time.Second)
 
 	// Init with GitHub SSH preset.
-	initRes := h.Run("project", "init", "ssh-connectivity", "--yes", "--preset", "Bare", "--vcs", "github", "--git-protocol", "ssh")
+	initRes := h.Run(
+		"project",
+		"init",
+		"ssh-connectivity",
+		"--yes",
+		"--preset",
+		"Bare",
+		"--vcs",
+		"github",
+		"--git-protocol",
+		"ssh",
+	)
 	require.NoError(t, initRes.Err,
 		"init failed\nstdout: %s\nstderr: %s", initRes.Stdout, initRes.Stderr)
 
@@ -270,15 +295,19 @@ func TestPresetInit_SSHConnectivity(t *testing.T) {
 	startRes := h.Run("container", "run", "--detach", "--agent", "ssh-test", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err,
 		"container start failed\nstdout: %s\nstderr: %s", startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "ssh-test") })
 
 	// Verify git can talk to GitHub over SSH through the firewall.
 	// GIT_SSH_COMMAND disables host key checking so it doesn't block on prompt.
 	// git ls-remote will fail auth (no keys) but the connection itself proves
 	// the firewall SSH rule works — exit code 128 with "Permission denied" means
 	// TCP connected successfully; a timeout or "connection refused" means blocked.
-	sshRes := h.ExecInContainer("ssh-test",
-		"bash", "-c",
-		`GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5" git ls-remote git@github.com:torvalds/linux.git HEAD 2>&1; exit 0`)
+	sshRes := h.ExecInContainer(
+		"ssh-test",
+		"bash",
+		"-c",
+		`GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5" git ls-remote git@github.com:torvalds/linux.git HEAD 2>&1; exit 0`,
+	)
 	// We don't check sshRes.Err — auth will fail without keys.
 	// What matters: the output should show SSH connected (not a firewall timeout).
 	combinedOutput := sshRes.Stdout + sshRes.Stderr
@@ -298,16 +327,13 @@ func TestPresetInit_SSHConnectivity(t *testing.T) {
 	assert.NoError(t, httpsRes.Err,
 		"HTTPS git ls-remote should succeed for github.com\nstdout: %s\nstderr: %s",
 		httpsRes.Stdout, httpsRes.Stderr)
-
-	// Stop the container.
-	stopRes := h.Run("container", "stop", "--agent", "ssh-test")
-	require.NoError(t, stopRes.Err,
-		"container stop failed\nstdout: %s\nstderr: %s", stopRes.Stdout, stopRes.Stderr)
 }
 
 // userLevelConfigForIsolationTest simulates a user-level ~/.config/clawker/clawker.yaml
 // with build, agent, and firewall settings that should NOT bleed into project init.
 const userLevelConfigForIsolationTest = `build:
+  stacks:
+    - node
   instructions:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -368,7 +394,7 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	// Plant a user-level config in the config dir BEFORE running init.
 	// In production, this is ~/.config/clawker/clawker.yaml.
 	userConfigPath := filepath.Join(setup.Dirs.Config, "clawker.yaml")
-	require.NoError(t, os.WriteFile(userConfigPath, []byte(userLevelConfigForIsolationTest), 0644))
+	require.NoError(t, os.WriteFile(userConfigPath, []byte(userLevelConfigForIsolationTest), 0o644))
 
 	// Run init with Go preset + GitLab SSH — exercises full Cobra pipeline.
 	initRes := h.Run("project", "init", "isolation-test", "--yes",

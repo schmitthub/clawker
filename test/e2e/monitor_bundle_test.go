@@ -1,4 +1,5 @@
-package e2e_test
+//nolint:testpackage // the e2e suite shares in-package helpers (bundleHarnessOpts, readProjectConfig); every file here is package e2e
+package e2e
 
 import (
 	"fmt"
@@ -13,8 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/docker"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
@@ -32,13 +36,22 @@ import (
 // state IS the host-global seed-union surface. Runs at host UAT only; excluded from
 // `make test` by directory.
 func TestMonitorSeedUnionAndCollision_E2E(t *testing.T) {
+	// monitor up/reload/down never touch the CP or admin RPCs — real
+	// Config/Docker/ProjectManager is the whole dependency surface.
+	// Deliberately NOT bundleHarnessOpts: wiring a real admin client here
+	// would let cleanup's `firewall down` issue a real FirewallRemove
+	// against a foreign host CP that happens to be running.
 	h := &harness.Harness{
-		T:       t,
-		Opts:    bundleHarnessOpts(),
-		Cleanup: nil,
+		T: t,
+		//nolint:exhaustruct // monitor verbs touch no CP nouns; the rest stay on harness defaults
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+		},
 	}
-	// Project A: explicitly selects the floor claude-code extension (there is
-	// no default selection — extensions are opt-in).
+	// Project A: restates the default claude-code selection explicitly —
+	// the literal anchor rewriteExtensionSelection swaps later.
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "monitor-proj-a"})
 
 	initA := h.Run("project", "init", "monitor-proj-a", "--yes", "--preset", "Bare", "--vcs", "github")
@@ -211,9 +224,11 @@ func rewriteExtensionSelection(t *testing.T, projectDir, from, to string) {
 	require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
 }
 
-// selectClaudeCodeExtension appends the opt-in claude-code selection to the
-// project's .clawker.yaml — extensions have no default selection, so each
-// project under test declares its own.
+// selectClaudeCodeExtension appends an explicit claude-code selection to the
+// project's .clawker.yaml. claude-code IS the schema default — this restates
+// it so the file carries a literal `extensions:` value that
+// rewriteExtensionSelection can later swap in place. Do not delete as a
+// "semantic no-op": it is the anchor for the collision arc.
 func selectClaudeCodeExtension(t *testing.T, projectDir string) {
 	t.Helper()
 	path := filepath.Join(projectDir, "."+consts.ProjectConfigFile)

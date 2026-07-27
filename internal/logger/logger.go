@@ -26,7 +26,10 @@ import (
 
 // Rotating file sink defaults.
 const (
-	defaultLogFileName   = "clawker.log"
+	// DefaultLogFileName is the CLI log file name under the logs dir;
+	// exported so tooling (e.g. the e2e harness failure dump) references
+	// the name instead of hard-spelling it.
+	DefaultLogFileName   = "clawker.log"
 	defaultLogMaxSizeMB  = 50
 	defaultLogMaxAgeDays = 7
 	defaultLogMaxBackups = 3
@@ -91,7 +94,7 @@ type Options struct {
 	LogsDir string
 
 	// Filename overrides the log file name within LogsDir.
-	// Defaults to defaultLogFileName when empty.
+	// Defaults to DefaultLogFileName when empty.
 	Filename string
 
 	// File rotation settings.
@@ -254,7 +257,7 @@ func New(opts Options) (*Logger, error) {
 
 	filename := opts.Filename
 	if filename == "" {
-		filename = defaultLogFileName
+		filename = DefaultLogFileName
 	}
 
 	fw := &lumberjack.Logger{

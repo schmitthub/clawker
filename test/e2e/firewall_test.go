@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -17,55 +18,77 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
-	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
+
+// fwNoServices disables the cleanup services invariant for tests that
+// deliberately end with the whole stack (CP included) torn down.
+const fwNoServices = "none"
+
+// firewallFactoryOpts is the one place the real firewall e2e Factory wiring
+// lives: real Config/Docker/ProjectManager, production ControlPlane manager,
+// production-identical AdminClient. Tests needing extra wiring (host proxy)
+// set the extra field on the returned struct.
+func firewallFactoryOpts() *harness.FactoryOptions {
+	//nolint:exhaustruct // unset fields take the harness defaults; a test opts into GitManager/HostProxy/SocketBridge by setting them
+	return &harness.FactoryOptions{
+		Config:              config.NewConfig,
+		Client:              docker.NewClient,
+		ProjectManager:      project.NewProjectManager,
+		UseRealControlPlane: true,
+		UseRealAdminClient:  true,
+	}
+}
 
 // newFirewallHarness wires the real Config/Docker/ControlPlane/AdminClient
 // stack. requiredServices names which services must have been running at
 // cleanup time; omit for the default ("firewall", "controlplane"). Tests
 // that intentionally tear the firewall down mid-test (e.g. TestFirewall_UpDown)
 // pass only "controlplane" so the cleanup invariant check doesn't fail on
-// the deliberately-absent firewall containers.
+// the deliberately-absent firewall containers; pass fwNoServices to skip
+// the invariant entirely (tests that also tear the CP down).
 func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harness {
+	t.Helper()
+	return newFirewallYAMLHarness(t, "\n", requiredServices...)
+}
+
+// newFirewallYAMLHarness is newFirewallHarness with a custom project config:
+// real factory wiring, cleanup services invariant, isolated FS, projectYAML
+// written as the project's .clawker.yaml, then register + build.
+func newFirewallYAMLHarness(t *testing.T, projectYAML string, requiredServices ...string) *harness.Harness {
 	t.Helper()
 	if len(requiredServices) == 0 {
 		requiredServices = []string{"firewall", "controlplane"}
 	}
+	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
 	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
+		T:    t,
+		Opts: firewallFactoryOpts(),
 	}
 	// Register the stack check BEFORE NewIsolatedFS so it runs AFTER
 	// cleanup (t.Cleanup is LIFO). Cleanup populates h.Cleanup, then
 	// this check reads it.
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, requiredServices...) })
+	if len(requiredServices) != 1 || requiredServices[0] != fwNoServices {
+		t.Cleanup(func() { h.RequireServicesWereRunning(t, requiredServices...) })
+	}
 
+	fwSetup(t, h, projectYAML)
+	return h
+}
+
+// fwSetup runs the common firewall e2e preamble on an already-constructed
+// harness: isolated FS, project config write, register, build.
+func fwSetup(t *testing.T, h *harness.Harness, projectYAML string) {
+	t.Helper()
 	setup := h.NewIsolatedFS(nil)
 
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
-`)
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, projectYAML)
 
 	regRes := h.Run("project", "register", "testproject")
 	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
@@ -74,8 +97,6 @@ func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harne
 	buildRes := h.Run("build")
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
 		buildRes.Stdout, buildRes.Stderr)
-
-	return h
 }
 
 func TestFirewall_BlockedDomain(t *testing.T) {
@@ -104,39 +125,11 @@ func TestFirewall_UpDown(t *testing.T) {
 }
 
 func TestFirewall_ICMPBlocked(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
   packages:
     - iputils-ping
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	// ICMP must be blocked to prevent ICMP tunneling (ptunnel, icmpsh).
 	// ping sends ICMP echo requests — should fail with the DROP rule in place.
@@ -255,22 +248,29 @@ func TestFirewall_AddRemove(t *testing.T) {
 }
 
 func TestFirewall_Prune(t *testing.T) {
-	h := newFirewallHarness(t)
+	// The test ends with the CP deliberately down (prune-fails-fast arc),
+	// so no services invariant. The store is test-local state: the CP
+	// reads/writes the firewall data dir under this test's isolated XDG
+	// dirs, so nothing needs restoring afterwards.
+	h := newFirewallHarness(t, fwNoServices)
 
-	// The rule store is shared, host-level state that outlives this test —
-	// the final `prune --all` leaves it empty, so restore the config set for
-	// whatever runs next.
-	t.Cleanup(func() {
-		res := h.Run("firewall", "refresh")
-		if res.Err != nil {
-			t.Logf("restoring firewall rules after prune test failed: %v\nstderr: %s", res.Err, res.Stderr)
-		}
-	})
+	// Boot the stack (fresh env has no CP yet).
+	upRes := h.Run("firewall", "up")
+	require.NoError(t, upRes.Err, "firewall up failed\nstdout: %s\nstderr: %s",
+		upRes.Stdout, upRes.Stderr)
 
 	// A CLI-added rule the project config does not define.
 	addRes := h.Run("firewall", "add", "example.com")
 	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s",
 		addRes.Stdout, addRes.Stderr)
+
+	// Non-interactive sessions must not silently no-op: without --yes the
+	// confirmation gate is a flag error, not a default-no exit 0.
+	noYes := h.Run("firewall", "prune")
+	assert.NotEqual(t, 0, noYes.ExitCode,
+		"prune without --yes must fail in a non-interactive session")
+	assert.Contains(t, noYes.Stderr, "--yes",
+		"error must point at the missing --yes flag")
 
 	// Prune resets the store to the config set: the CLI-added rule dies,
 	// the harness egress floor survives.
@@ -280,6 +280,19 @@ func TestFirewall_Prune(t *testing.T) {
 	assert.Contains(t, pruneRes.Stdout, "Removed all firewall rules")
 	assert.Contains(t, pruneRes.Stdout, "Re-synced")
 
+	// Store state is the real assertion surface — a container start
+	// re-syncs the config floor itself, so a curl probe cannot
+	// discriminate "prune re-synced" from "the next container start
+	// re-synced". Assert via `firewall list` BEFORE any container runs.
+	postPrune := h.Run("firewall", "list")
+	require.NoError(t, postPrune.Err, "firewall list failed\nstdout: %s\nstderr: %s",
+		postPrune.Stdout, postPrune.Stderr)
+	assert.Contains(t, postPrune.Stdout, "api.anthropic.com",
+		"harness floor must be re-synced by prune")
+	assert.NotContains(t, postPrune.Stdout, "example.com",
+		"CLI-added rule must be gone after prune")
+
+	// Datapath smoke checks on top of the store assertions.
 	blocked := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
 	require.Error(t, blocked.Err, "CLI-added rule must be gone after prune")
 
@@ -298,33 +311,23 @@ func TestFirewall_Prune(t *testing.T) {
 	listRes := h.Run("firewall", "list")
 	require.NoError(t, listRes.Err, "firewall list failed\nstdout: %s\nstderr: %s",
 		listRes.Stdout, listRes.Stderr)
-	assert.NotContains(t, listRes.Stdout, "api.anthropic.com",
+	assert.Contains(t, listRes.Stdout, "No active firewall rules.",
 		"--all must empty the store, floor included")
+
+	// CP down: prune must fail fast with a non-zero exit, mirroring the
+	// remove-when-CP-down contract.
+	cpDownRes := h.Run("controlplane", "down")
+	require.NoError(t, cpDownRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s",
+		cpDownRes.Stdout, cpDownRes.Stderr)
+	pruneNoCP := h.Run("firewall", "prune", "--yes")
+	assert.NotEqual(t, 0, pruneNoCP.ExitCode, "prune should fail when CP is down")
 }
 
 func TestFirewall_ConfigRules(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Use security.firewall.rules (explicit EgressRule list) instead of add_domains.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	// Ends with the CP deliberately down (remove-fails-fast arc) — no
+	// services invariant.
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -333,15 +336,7 @@ security:
         proto: "https"
         port: 443
         action: "allow"
-`)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
+`, fwNoServices)
 
 	// Concurrent config sync: goroutine A starts a container (full AddRules →
 	// FirewallInit → regenerateAndRestart path with config rules including
@@ -398,7 +393,12 @@ security:
 	// Stack should still be healthy.
 	statusRes := h.Run("firewall", "status", "--json")
 	require.NoError(t, statusRes.Err, "status failed after concurrent sync")
-	assert.Contains(t, statusRes.Stdout, `"running": true`)
+	var syncedStatus struct {
+		Running bool `json:"running"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(statusRes.Stdout), &syncedStatus),
+		"status --json must parse: %q", statusRes.Stdout)
+	assert.True(t, syncedStatus.Running, "stack should still be healthy after concurrent sync")
 
 	// --- Firewall down + immediate remove: queue serializes store mutation
 	// even after Envoy/CoreDNS are torn down. CP stays alive so the
@@ -443,7 +443,15 @@ func TestFirewall_Status(t *testing.T) {
 	statusRes := h.Run("firewall", "status", "--json")
 	require.NoError(t, statusRes.Err, "firewall status failed\nstdout: %s\nstderr: %s",
 		statusRes.Stdout, statusRes.Stderr)
-	assert.Contains(t, statusRes.Stdout, `"running": true`)
+	var status struct {
+		Running bool `json:"running"`
+		//nolint:tagliatelle // mirrors the CLI's snake_case wire output, not ours to rename
+		RuleCount int `json:"rule_count"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(statusRes.Stdout), &status),
+		"status --json must parse: %q", statusRes.Stdout)
+	assert.True(t, status.Running, "firewall stack should report running")
+	assert.Positive(t, status.RuleCount, "harness floor rules should be present")
 }
 
 func TestFirewall_IntraNetworkBypass(t *testing.T) {
@@ -501,37 +509,13 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 }
 
 func TestFirewall_HostProxyReachable(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			HostProxy:      hostproxy.NewManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	opts := firewallFactoryOpts()
+	opts.HostProxy = hostproxy.NewManager
+	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
+	h := &harness.Harness{T: t, Opts: opts}
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+	fwSetup(t, h, `
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	// Agent container with real host proxy — should reach /health via targeted eBPF RETURN.
 	healthRes := h.RunInContainer("hp-test",
@@ -552,29 +536,9 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 }
 
 func TestFirewall_SSHTCPMapping(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Configure an SSH rule for github.com — exercises the TCP mapping path:
 	// eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -585,18 +549,11 @@ security:
         action: "allow"
 `)
 
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
-
 	// Start a long-lived container so we can exec into it.
 	startRes := h.Run("container", "run", "--detach", "--agent", "ssh-test", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
 		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "ssh-test") })
 
 	// ssh-keyscan fetches host keys over SSH (port 22) without authentication.
 	// Full path: DNS → CoreDNS → eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster → github.com:22
@@ -611,8 +568,6 @@ security:
 	digRes := h.ExecInContainer("ssh-test", "dig", "+short", "+timeout=3", "gitlab.com")
 	t.Logf("dig gitlab.com result: stdout=%q stderr=%q err=%v", digRes.Stdout, digRes.Stderr, digRes.Err)
 	assert.Empty(t, strings.TrimSpace(digRes.Stdout), "gitlab.com should not resolve (CoreDNS NXDOMAIN)")
-
-	h.Run("container", "stop", "--agent", "ssh-test")
 }
 
 func TestFirewall_DockerInternalDNS(t *testing.T) {
@@ -701,26 +656,7 @@ func TestFirewall_ExactAllowBlocksSubdomain(t *testing.T) {
 // CoreDNS longest-zone matching. The apex still resolves (wildcard), proving
 // the wildcard is live and the deny is scoped to the denied name.
 func TestFirewall_DenySubdomainUnderWildcard(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) { return docker.NewClient(ctx, cfg, log) },
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
-
-	setup := h.NewIsolatedFS(nil)
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -730,11 +666,6 @@ security:
       - dst: "www.example.com"
         action: deny
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "deny-sub", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -762,29 +693,9 @@ security:
 }
 
 func TestFirewall_HTTPDomainDetection(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Configure an HTTP rule for example.com — exercises the consolidated egress listener:
 	// eBPF --dport 80 → DNAT envoy:10000 → tls_inspector → raw_buffer filter chain → Host header → domain match
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -794,14 +705,6 @@ security:
         port: 80
         action: "allow"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	// Start a long-lived container so we can exec into it.
 	startRes := h.Run("container", "run", "--detach", "--agent", "http-test", "@", "sleep", "infinity")
@@ -841,25 +744,19 @@ security:
 }
 
 func TestFirewall_FirewallDisabled(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			HostProxy:      hostproxy.NewManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
+	opts := firewallFactoryOpts()
+	opts.HostProxy = hostproxy.NewManager
+	//nolint:exhaustruct // Cleanup is populated by the harness at teardown
+	h := &harness.Harness{T: t, Opts: opts}
+	// CP is unconditional infrastructure — it boots even with the firewall
+	// disabled. The firewall stack must NOT: assert both via the cleanup
+	// snapshot (registered before NewIsolatedFS; t.Cleanup is LIFO).
+	t.Cleanup(func() {
+		h.RequireServicesWereRunning(t, "controlplane")
+		require.NotNil(t, h.Cleanup, "cleanup report not populated")
+		assert.Zero(t, h.Cleanup.FirewallContainers,
+			"firewall stack must not start when firewall.enable is false")
+	})
 	setup := h.NewIsolatedFS(nil)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
@@ -886,40 +783,14 @@ firewall:
 	require.NoError(t, runTest.Err, "curl should succeed when firewall is disabled\nstdout: %s\nstderr: %s",
 		runTest.Stdout, runTest.Stderr)
 	assert.Contains(t, runTest.Stdout, "200", "should get HTTP 200 when firewall is disabled")
-
-	// Firewall stack runs inside the CP container; when disabled via config
-	// the CP should not start either. Confirm via the break-glass Docker
-	// container listing rather than a removed in-process manager.
-	ctx := context.Background()
-	_ = ctx
 }
 
 func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Allow example.com on HTTP with path rules: only /test is allowed, default deny.
 	// Path: DNS → CoreDNS → eBPF --dport 80 → DNAT envoy:10000
 	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
 	// /test → LOGICAL_DNS cluster → upstream; anything else → 403 (path_default: deny)
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -933,14 +804,6 @@ security:
             action: "allow"
         path_default: "deny"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "path-default-deny", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -989,31 +852,11 @@ security:
 }
 
 func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Allow example.com on HTTP with path rules: /evil is explicitly denied, default allow.
 	// Path: DNS → CoreDNS → eBPF --dport 80 → DNAT envoy:10000
 	// → tls_inspector → raw_buffer filter chain → Host header → virtual host → path prefix match
 	// /evil → 403; anything else → LOGICAL_DNS cluster → upstream (path_default: allow)
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -1027,14 +870,6 @@ security:
             action: "deny"
         path_default: "allow"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "path-explicit-deny", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -1082,31 +917,11 @@ security:
 }
 
 func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// TLS rule with MITM path inspection: only /test allowed, default deny.
 	// Path: DNS → CoreDNS → eBPF --dport 443 → DNAT envoy:10000
 	// → tls_inspector (SNI) → MITM filter chain (TLS termination + domain cert)
 	// → http_connection_manager → path prefix match → allow or 403
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -1120,14 +935,6 @@ security:
             action: "allow"
         path_default: "deny"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "tls-path-default", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -1184,32 +991,12 @@ security:
 // from `/test/...` to outside-prefix paths must be blocked by clawker
 // (403 with the centralized non-fingerprint body), NOT reach upstream.
 func TestFirewall_PathRuleNormalizationDefeatsSmuggling(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// TLS rule with path inspection: only /allowed/ allowed; default deny.
 	// The smuggle attempts target paths OUTSIDE /allowed/ via URL-encoded
 	// traversal. Without HCM normalize_path the literal prefix match
 	// permits these to reach upstream; with normalize_path they collapse
 	// to paths outside the allow prefix and hit the deny default.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -1224,14 +1011,6 @@ security:
         path_default: "deny"
 `)
 
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
-
 	startRes := h.Run("container", "run", "--detach", "--agent", "smuggle", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
 		startRes.Stdout, startRes.Stderr)
@@ -1242,14 +1021,22 @@ security:
 	// Each smuggle vector — clawker must block all of them with 403.
 	// The path normalizes (via Envoy's UNESCAPE_AND_REDIRECT behavior or
 	// equivalent) to a path outside `/allowed/`, hitting the default deny.
+	// No merged-slash vector here: under normalize_path + merge_slashes,
+	// "/allowed//..//escaped" collapses to "/allowed/escaped" — INSIDE the
+	// allow prefix, so it cannot escape a default-deny gate and forwarding it
+	// is correct. merge_slashes' observable job is the explicit-deny bypass
+	// ("//evil" dodging a "/evil" deny prefix), pinned in
+	// TestFirewall_TLSPathRulesExplicitDeny.
 	smuggleVectors := []struct {
 		name string
 		url  string
 	}{
 		{name: "url-encoded %2e%2e", url: "https://example.com/allowed/%2e%2e/escaped"},
 		{name: "url-encoded ..%2f", url: "https://example.com/allowed/..%2fescaped"},
+		// %25 survives normalize_path (only unreserved octets are decoded), so
+		// this is refused by the vhost's double-encoded-traversal deny route —
+		// a double-decoding upstream would otherwise collapse it past the gate.
 		{name: "double-encoded", url: "https://example.com/allowed/%252e%252e/escaped"},
-		{name: "merged-slash", url: "https://example.com/allowed//..//escaped"},
 	}
 
 	for _, v := range smuggleVectors {
@@ -1285,28 +1072,8 @@ security:
 }
 
 func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// TLS rule with MITM: /evil explicitly denied, default allow.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 security:
   firewall:
@@ -1320,14 +1087,6 @@ security:
             action: "deny"
         path_default: "allow"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "tls-path-explicit", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -1372,6 +1131,20 @@ security:
 		"denied path should return non-fingerprinting Forbidden body")
 	assert.NotContains(t, bodyRes.Stdout, "clawker",
 		"deny body must not disclose enforcement product identity")
+
+	// merge_slashes pin: "//evil" must collapse to "/evil" and hit the deny —
+	// without it the doubled slash dodges the "/evil" prefix match and falls
+	// through to path_default allow (the slash-smuggle bypass).
+	slashRes := h.ExecInContainer("tls-path-explicit",
+		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+		"-o", "/dev/null", "-w", "%{http_code}",
+		"https://example.com//evil")
+	require.NoError(t, slashRes.Err,
+		"curl to slash-smuggled denied path should get a response\nstdout: %s\nstderr: %s",
+		slashRes.Stdout, slashRes.Stderr)
+	assert.Equal(t, "403", strings.TrimSpace(slashRes.Stdout),
+		"//evil must merge to /evil and hit the explicit deny, got %q",
+		strings.TrimSpace(slashRes.Stdout))
 }
 
 // TestFirewall_WildcardAndExactCoexist verifies that a wildcard rule (.example.com)
@@ -1379,32 +1152,12 @@ security:
 // separate PathRules. Both the apex and subdomains get their own path restrictions,
 // ensuring they can coexist without Envoy SNI/filter chain collisions.
 func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
-	h := &harness.Harness{
-		T: t,
-		Opts: &harness.FactoryOptions{
-			Config:         config.NewConfig,
-			Client:         docker.NewClient,
-			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
-				return manager.NewManager(
-					func(ctx context.Context) (*docker.Client, error) {
-						return docker.NewClient(ctx, cfg, log)
-					},
-					func() (config.Config, error) { return cfg, nil },
-					func() (*logger.Logger, error) { return log, nil },
-				)
-			},
-			UseRealAdminClient: true,
-		},
-	}
-	setup := h.NewIsolatedFS(nil)
-
 	// Exact rule: clawker.dev (apex) MITM — only /quickstart allowed.
 	// Wildcard rule: .clawker.dev (subdomains) MITM — only /introduction allowed.
 	// Both are real domains with valid TLS certs (docs.clawker.dev is a real subdomain).
 	// Each gets its own MITM filter chain with independent path restrictions,
 	// proving wildcard and exact rules coexist without Envoy SNI collisions.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+	h := newFirewallYAMLHarness(t, `
 build:
 workspace:
   default_mode: "snapshot"
@@ -1428,14 +1181,6 @@ security:
             action: "allow"
         path_default: "deny"
 `)
-
-	regRes := h.Run("project", "register", "testproject")
-	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
-		regRes.Stdout, regRes.Stderr)
-
-	buildRes := h.Run("build")
-	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
-		buildRes.Stdout, buildRes.Stderr)
 
 	startRes := h.Run("container", "run", "--detach", "--agent", "wildcard-coexist", "@", "sleep", "infinity")
 	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
@@ -1507,11 +1252,16 @@ func resolveInContainer(t *testing.T, h *harness.Harness, agent, domain string) 
 	res := h.RunInContainer(agent, "getent", "ahostsv4", domain)
 	require.NoError(t, res.Err, "resolving %s failed\nstdout: %s\nstderr: %s",
 		domain, res.Stdout, res.Stderr)
-	fields := strings.Fields(res.Stdout)
-	require.NotEmpty(t, fields, "no A record for %s\nstdout: %s", domain, res.Stdout)
-	ip := net.ParseIP(fields[0])
-	require.NotNil(t, ip, "unparseable IP %q for %s", fields[0], domain)
-	return ip.String()
+	// An attached `container run` mixes clawkerd's boot-progress lines into
+	// stdout ahead of the command output, so scan for the first IPv4 token
+	// instead of trusting the first field.
+	for field := range strings.FieldsSeq(res.Stdout) {
+		if ip := net.ParseIP(field); ip != nil && ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	require.FailNowf(t, "no A record", "no parseable IPv4 for %s\nstdout: %s", domain, res.Stdout)
+	return ""
 }
 
 // identityProbeDomain is the destination the identity-stability tests pin:

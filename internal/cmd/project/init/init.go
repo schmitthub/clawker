@@ -418,12 +418,24 @@ func resolveInitEnv(ctx context.Context, opts *ProjectInitOptions) (*initEnv, er
 		return nil, fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Ensure settings.yaml exists with schema defaults. The store's virtual
-	// defaults layer makes the entire file dirty when no physical file exists,
-	// so Write() persists it. If the file already exists, Write() is a no-op.
-	if bsErr := cfg.SettingsStore().Write(); bsErr != nil {
-		log.Warn().Err(bsErr).Msg("settings bootstrap failed")
-		fmt.Fprintf(opts.IOStreams.ErrOut, "Warning: could not create settings file: %s\n", bsErr)
+	// Ensure settings.yaml exists with schema defaults. The store persists
+	// only explicit mutations, so when discovery found no settings file the
+	// defaults layer must be marked for write (MarkSeedForWrite) before
+	// Write() materializes it. An existing file is left untouched.
+	settingsStore := cfg.SettingsStore()
+	hasSettingsFile := false
+	for _, l := range settingsStore.Layers() {
+		if l.Path != "" {
+			hasSettingsFile = true
+			break
+		}
+	}
+	if !hasSettingsFile {
+		settingsStore.MarkSeedForWrite()
+		if bsErr := settingsStore.Write(); bsErr != nil {
+			log.Warn().Err(bsErr).Msg("settings bootstrap failed")
+			fmt.Fprintf(opts.IOStreams.ErrOut, "Warning: could not create settings file: %s\n", bsErr)
+		}
 	}
 
 	configFileName := "." + cfg.ProjectConfigFileName()
