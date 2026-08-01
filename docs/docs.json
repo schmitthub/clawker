@@ -294,6 +294,13 @@
             ]
           },
           {
+            "group": "Prompt",
+            "pages": [
+              "cli-reference/clawker_prompt",
+              "cli-reference/clawker_prompt_print"
+            ]
+          },
+          {
             "group": "Stack",
             "pages": [
               "cli-reference/clawker_stack",

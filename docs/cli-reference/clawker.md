@@ -43,6 +43,7 @@ Workspace modes:
 * [clawker pause](clawker_pause) - Pause all processes within one or more containers
 * [clawker plugin](clawker_plugin) - Manage the clawker agent skills plugin
 * [clawker project](clawker_project) - Manage clawker projects
+* [clawker prompt](clawker_prompt) - Access clawker's managed agent briefing
 * [clawker ps](clawker_ps) - List containers
 * [clawker rename](clawker_rename) - Rename a container
 * [clawker restart](clawker_restart) - Restart one or more containers

@@ -1,6 +1,8 @@
 package root
 
 import (
+	"github.com/spf13/cobra"
+
 	aliascmd "github.com/schmitthub/clawker/internal/cmd/alias"
 	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
@@ -16,13 +18,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/plugin"
 	"github.com/schmitthub/clawker/internal/cmd/project"
+	promptcmd "github.com/schmitthub/clawker/internal/cmd/prompt"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
 	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 )
 
 // NewCmdRoot creates the root command for the clawker CLI.
@@ -75,6 +77,7 @@ Workspace modes:
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
 	cmd.AddCommand(bundlecmd.NewCmdBundle(f))
 	cmd.AddCommand(harnesscmd.NewCmdHarness(f))
+	cmd.AddCommand(promptcmd.NewCmdPrompt(f))
 	cmd.AddCommand(stackcmd.NewCmdStack(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
