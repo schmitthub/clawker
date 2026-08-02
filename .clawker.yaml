@@ -152,6 +152,7 @@ security:
   docker_socket: false
   firewall:
     add_domains:
+      - docs.openclaw.ai
       - registry-1.docker.io
       - vuln.go.dev
       - production.cloudflare.docker.com
@@ -232,6 +233,8 @@ security:
         path_default: deny
         path_rules:
           - action: allow
+            path: /openclaw/
+          - action: allow
             path: ~/nvm-sh/nvm(/.*)?
           - action: allow
             path: /schmitthub/
@@ -264,6 +267,8 @@ security:
         insecure_skip_tls_verify: false
         path_default: allow
         path_rules:
+          - action: allow
+            path: ~/repos/openclaw(/.*)?
           - action: allow
             path: ~/repos/nvm-sh/nvm(/.*)?
           - action: allow
@@ -326,6 +331,8 @@ security:
         insecure_skip_tls_verify: false
         path_default: deny
         path_rules:
+          - action: allow
+            path: ~/openclaw(/.*)?
           - action: allow
             path: ~/nvm-sh/nvm(/.*)?
           - action: allow
