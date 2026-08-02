@@ -107,6 +107,12 @@ is copied.
 The copy happens at **build time**, never at runtime, so the destination must
 not sit under a declared volume (a volume mount would shadow it).
 
+If the agent reads managed context only from runtime-mounted state — a
+declared volume or a bind mount — omit the block: a baked file is not visible
+under the mount. Get the briefing host-side with
+[`clawker prompt print`](/cli-reference/clawker_prompt_print) and place it
+where the agent discovers it.
+
 ### `volumes`
 
 Each entry is a persisted directory that becomes a named volume mounted under

@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.8.1] - 2026-08-02
+
+- **Added:** `clawker prompt print` writes the managed agent briefing to stdout. Use it when your agent reads its context from a mounted directory, where the build cannot bake the file. This is a low-level command for harness developers.
+
 ## [2026.7.4] - 2026-07-26
 
 - **Added:** Reset firewall rules to your project config with `clawker firewall prune` — removes every egress rule, then re-syncs the harness floor and project rules; `--all` removes everything without re-syncing, `--yes` skips the confirmation prompt. A failed prune restores the previous rules, so the store is never left partially reset.
