@@ -16,7 +16,7 @@ Each project gets a shared **base image** plus one **harness image** per coding-
 | Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared stacks, your `instructions` and base-stage `inject` points, the unprivileged container user (`clawker`) |
 | Harness image | `clawker-<project>:<harness>` | Built `FROM` the base: the harness's own stacks and install steps, config seeds, harness-stage `inject` points, and Clawker's runtime assets (`clawkerd`, credential helpers, firewall CA) |
 
-The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, the Docker CLI (for socket-mount workflows), and `git-delta`. Your `build.packages` install into the same apt layer.
+The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, and the Docker CLI (for socket-mount workflows). Your `build.packages` install into the same apt layer.
 
 The harness image adds whatever the selected harness declares — for example, `claude` installs Claude Code (plus the `node` stack it runs on), while `codex` installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`.
 

@@ -164,25 +164,6 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 
 WORKDIR {{.WorkspacePath}}
 
-# Install git-delta
-ARG GIT_DELTA_VERSION=0.19.1
-ARG GIT_DELTA_SHA256_AMD64=3b3064c5e474d120366f5917f54c612bbfd5733a70e5d10988d8028c7c877de9
-ARG GIT_DELTA_SHA256_ARM64=1bd252110eafa1065c0798f9e68de0682127408e4b53db79733efa72c53b68bf
-{{- if $.BuildKitEnabled}}
-RUN --mount=type=cache,target=/tmp/downloads \
-    ARCH=$(dpkg --print-architecture) && \
-{{- else}}
-RUN mkdir -p /tmp/downloads && \
-    ARCH=$(dpkg --print-architecture) && \
-{{- end}}
-    DEB="git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-    [ -f "/tmp/downloads/$DEB" ] || wget -O "/tmp/downloads/$DEB" "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/$DEB" && \
-    if [ "$ARCH" = "amd64" ]; then EXPECTED_SHA="${GIT_DELTA_SHA256_AMD64}"; \
-    elif [ "$ARCH" = "arm64" ]; then EXPECTED_SHA="${GIT_DELTA_SHA256_ARM64}"; \
-    else echo "ERROR: git-delta does not support architecture: $ARCH (only amd64 and arm64)" >&2; exit 1; fi && \
-    echo "$EXPECTED_SHA  /tmp/downloads/$DEB" | sha256sum -c - && \
-    dpkg -i "/tmp/downloads/$DEB"
-
 # Switch to non-root user for ENV/WORKDIR resolution. clawkerd (PID 1)
 # is invoked as root by Docker — the USER directive only affects
 # ENV/WORKDIR/RUN scope below this line. The harness image switches back
