@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.8.2] - 2026-08-03
+
+- **Removed:** The base image does not include git-delta. This dependency is not necessary. Git shows diffs with its standard output.
+
 ## [2026.8.1] - 2026-08-02
 
 - **Added:** `clawker prompt print` writes the managed agent briefing to stdout. Use it when your agent reads its context from a mounted directory, where the build cannot bake the file. This is a low-level command for harness developers.
