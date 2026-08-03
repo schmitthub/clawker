@@ -8,35 +8,29 @@ import (
 
 func TestDockerHostSocketPath(t *testing.T) {
 	tests := []struct {
-		name     string
-		env      string
-		wantPath string
-		wantOK   bool
+		name string
+		env  string
+		want string
 	}{
-		{name: "unset", env: "", wantPath: "", wantOK: false},
+		{name: "unset", env: "", want: ""},
 		{
-			name:     "rootless unix socket",
-			env:      "unix:///run/user/1003/docker.sock",
-			wantPath: "/run/user/1003/docker.sock",
-			wantOK:   true,
+			name: "rootless unix socket",
+			env:  "unix:///run/user/1003/docker.sock",
+			want: "/run/user/1003/docker.sock",
 		},
 		{
-			name:     "default unix socket",
-			env:      "unix:///var/run/docker.sock",
-			wantPath: "/var/run/docker.sock",
-			wantOK:   true,
+			name: "default unix socket",
+			env:  "unix:///var/run/docker.sock",
+			want: "/var/run/docker.sock",
 		},
-		{name: "tcp scheme ignored", env: "tcp://127.0.0.1:2375", wantPath: "", wantOK: false},
-		{name: "ssh scheme ignored", env: "ssh://user@host", wantPath: "", wantOK: false},
-		{name: "unix scheme with empty path ignored", env: "unix://", wantPath: "", wantOK: false},
+		{name: "non-unix value passes through verbatim", env: "tcp://127.0.0.1:2375", want: "tcp://127.0.0.1:2375"},
+		{name: "fd value passes through verbatim", env: "fd://", want: "fd://"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(consts.EnvDockerHost, tt.env)
-			got, ok := consts.DockerHostSocketPath()
-			if ok != tt.wantOK || got != tt.wantPath {
-				t.Errorf("DockerHostSocketPath() = (%q, %v), want (%q, %v)",
-					got, ok, tt.wantPath, tt.wantOK)
+			if got := consts.DockerHostSocketPath(); got != tt.want {
+				t.Errorf("DockerHostSocketPath() = %q, want %q", got, tt.want)
 			}
 		})
 	}

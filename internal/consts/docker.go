@@ -13,12 +13,15 @@ import (
 // daemons put it anywhere). Resolution order (docker CLI parity: environment
 // beats stored configuration):
 //
-//  1. $DOCKER_HOST with a unix:// address → its path (DockerHostSocketPath)
+//  1. $DOCKER_HOST, unix:// prefix stripped (DockerHostSocketPath)
 //  2. settings.yaml docker.socket (config.Config.DockerSocketPath composes this)
 //  3. DefaultDockerSocketPath
 //
-// The mount TARGET is always DefaultDockerSocketPath — in-container tools
-// expect the conventional location regardless of where the host serves it.
+// No value is validated — a non-path $DOCKER_HOST flows through and the
+// Docker daemon rejects the mount naming it, exactly like the CLI's own
+// pass-through contract. The mount TARGET is always DefaultDockerSocketPath —
+// in-container tools expect the conventional location regardless of where
+// the host serves it.
 const (
 	// EnvDockerHost is the standard Docker daemon-address override honored
 	// by the docker CLI and SDK (e.g. unix:///run/user/1003/docker.sock).
@@ -34,16 +37,10 @@ const (
 	unixSocketScheme = "unix://"
 )
 
-// DockerHostSocketPath returns the host socket path named by $DOCKER_HOST
-// and true when the variable holds a unix:// address. The other daemon
-// address schemes (tcp://, npipe://, fd://, and docker/cli's ssh://) return
-// false — none names a host filesystem path a bind mount could carry, so
-// callers fall through to configured/default resolution.
-func DockerHostSocketPath() (string, bool) {
-	host := os.Getenv(EnvDockerHost)
-	path, found := strings.CutPrefix(host, unixSocketScheme)
-	if !found || path == "" {
-		return "", false
-	}
-	return path, true
+// DockerHostSocketPath returns $DOCKER_HOST with a unix:// prefix stripped,
+// or "" when unset. It is a dumb getter — no scheme validation: a non-path
+// value passes through verbatim and the Docker daemon rejects the mount
+// naming that exact value, which is the error surface.
+func DockerHostSocketPath() string {
+	return strings.TrimPrefix(os.Getenv(EnvDockerHost), unixSocketScheme)
 }

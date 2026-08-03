@@ -638,11 +638,12 @@ func TestDockerSocketPath(t *testing.T) {
 		assert.Equal(t, "/run/user/1003/docker.sock", cfg.DockerSocketPath())
 	})
 
-	t.Run("non-unix DOCKER_HOST falls through to settings", func(t *testing.T) {
+	t.Run("non-unix DOCKER_HOST passes through verbatim", func(t *testing.T) {
 		t.Setenv(consts.EnvDockerHost, "tcp://127.0.0.1:2375")
 		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
 		require.NoError(t, err)
-		assert.Equal(t, "/custom/docker.sock", cfg.DockerSocketPath())
+		assert.Equal(t, "tcp://127.0.0.1:2375", cfg.DockerSocketPath(),
+			"no validation — the daemon's mount error names the raw value")
 	})
 }
 

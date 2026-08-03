@@ -131,7 +131,7 @@ func GetDockerSocketMount(hostSocketPath string) mount.Mount
 ```
 
 Only available when `security.docker_socket: true`. Callers pass
-`config.Config.DockerSocketPath()` as the bind source (unix:// `DOCKER_HOST` >
+`config.Config.DockerSocketPath()` as the bind source (`DOCKER_HOST` >
 settings `docker.socket` > default); the target is always
 `consts.DefaultDockerSocketPath`.
 

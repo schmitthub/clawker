@@ -68,7 +68,7 @@
       "properties": {
         "socket": {
           "default": "/var/run/docker.sock",
-          "description": "Host path to the Docker daemon socket; a unix:// DOCKER_HOST env var takes precedence",
+          "description": "Host path to the Docker daemon socket; the DOCKER_HOST env var takes precedence",
           "title": "Docker Socket",
           "type": "string"
         }
