@@ -354,6 +354,8 @@ security:
           - action: allow
             path: /isovalent/ebpf-docs/
           - action: allow
+            path: /torvalds/linux/
+          - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /contributor-assistant/github-action/
