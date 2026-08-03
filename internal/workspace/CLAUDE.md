@@ -127,10 +127,13 @@ func GetGitConfigMount(log *logger.Logger) []mount.Mount
 ## Docker Socket
 
 ```go
-func GetDockerSocketMount() mount.Mount
+func GetDockerSocketMount(hostSocketPath string) mount.Mount
 ```
 
-Only available when `security.docker_socket: true`.
+Only available when `security.docker_socket: true`. Callers pass
+`config.Config.DockerSocketPath()` as the bind source (unix:// `DOCKER_HOST` >
+settings `docker.socket` > default); the target is always
+`consts.DefaultDockerSocketPath`.
 
 ## Share Directory (Bind Mount)
 

@@ -136,6 +136,14 @@ type Config interface {
 	// (`firewall.enable`), defaulting to true when unset.
 	FirewallEnabled() bool
 
+	// DockerSocketPath returns the host-side Docker daemon socket path used
+	// as the bind-mount source for Docker socket mounts. Resolution follows
+	// docker CLI parity — environment beats stored configuration: a unix://
+	// $DOCKER_HOST wins, then settings `docker.socket`, then
+	// consts.DefaultDockerSocketPath. The in-container mount target is
+	// always consts.DefaultDockerSocketPath, independent of this value.
+	DockerSocketPath() string
+
 	// BundleDeclarations returns every declared bundle source paired with the
 	// clawker.yaml layer that declared it, highest-priority layer first. The
 	// union-merged bundles: list loses per-entry provenance; the
@@ -807,4 +815,21 @@ func (c *configImpl) FirewallEnabled() bool {
 		return true
 	}
 	return enabled
+}
+
+// DockerSocketPath resolves the host Docker socket path: $DOCKER_HOST
+// (unix:// only) > settings docker.socket > default. The env override is a
+// deliberate exception to the no-env-value-overrides rule — DOCKER_HOST is
+// the docker CLI's own contract, and a bind source that ignores it breaks
+// any host whose daemon serves the socket away from the conventional path
+// (rootless Docker under $XDG_RUNTIME_DIR being the common case).
+func (c *configImpl) DockerSocketPath() string {
+	if path, ok := consts.DockerHostSocketPath(); ok {
+		return path
+	}
+	socket, err := storage.Get[string](c.settings, keyDocker, keySocket)
+	if err != nil || socket == "" {
+		return consts.DefaultDockerSocketPath
+	}
+	return socket
 }

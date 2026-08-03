@@ -78,6 +78,8 @@ const (
 	keyMonitoring   = "monitoring"
 	keyHostProxy    = "host_proxy"
 	keyControlPlane = "control_plane"
+	keyDocker       = "docker"
+	keySocket       = "socket"
 )
 
 // ---------------------------------------------------------------------------

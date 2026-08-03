@@ -85,7 +85,7 @@ func ErrDockerHealthCheckFailed(err error) *DockerError {
 		NextSteps: []string{
 			"Ensure Docker is installed",
 			"Start Docker Desktop (macOS/Windows) or run 'sudo systemctl start docker' (Linux)",
-			"Check if Docker socket is accessible: ls -la /var/run/docker.sock",
+			"Check if the Docker socket is accessible ($DOCKER_HOST if set, otherwise /var/run/docker.sock)",
 			"Verify your user is in the docker group: groups $USER",
 		},
 	}

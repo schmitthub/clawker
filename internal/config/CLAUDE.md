@@ -105,6 +105,7 @@ default is `true`.
 | `HostProxyConfig()` | `host_proxy` | `HostProxyConfig` |
 | `ControlPlaneSettings()` | `control_plane` | `ControlPlaneSettings` |
 | `FirewallEnabled()` | `firewall.enable` (default **true**) | `bool` |
+| `DockerSocketPath()` | `docker.socket` (unix:// `$DOCKER_HOST` wins; default `/var/run/docker.sock`) | `string` |
 
 `HarnessConfigFor` addresses the map entry as a **key segment**, so a qualified
 harness name (`namespace.bundle.component`) is matched exactly — a dotted key
@@ -196,7 +197,7 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 - **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields on a group struct. `FirewallEnabled()` and the nil-tolerant methods on the group structs (`HostProxyEnabled()`, `MountProjectsEnabled()`, `GitSSHEnabled()`, …) handle nil-to-default conversion.
 - **Unset vs set-empty** — a bare `key:` is unset (transparent: lower layers and defaults show through, `Get` → `ErrKeyNotFound`, accessor → zero value); an explicit `""`/`[]`/`{}` is set-and-empty and wins the merge. Clearing a field is `Remove`, never `Set(key, "")`.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
-- **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
+- **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values. The one deliberate exception: `DockerSocketPath()` honors a unix:// `$DOCKER_HOST` over `docker.socket` — that variable is the docker CLI's own contract.
 - **Registry owned by project** — both the `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types and the `Store[ProjectRegistry]` live in `internal/project`. `config` has no registry surface.
 - **Harness/overlay names fail the whole load, not just the field** — `NewConfig`/`NewFromString`/`NewBlankConfig` all call `validateProjectNodes` after loading the project store; a `harnesses:`/`build.harnesses:` key that fails `internal/consts.ValidateHarnessRef` (not lowercase kebab-case, >32 chars per segment, a bad qualified segment count, or a reserved image-tag alias used bare) returns a hard error from the constructor, not a partial/degraded `Config`.
 - **Cross-process safety** — Storage uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.

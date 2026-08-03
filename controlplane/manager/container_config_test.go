@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/mount"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -229,25 +230,43 @@ func TestINV_B1_020_ConfigDirMounted(t *testing.T) {
 
 // Tests that Docker socket is bind-mounted read-only for container state verification.
 func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
-	testenv.New(t)
-	cfg := configmocks.NewBlankConfig()
+	dockerSocketMount := func(t *testing.T) (mount.Mount, bool) {
+		t.Helper()
+		testenv.New(t)
+		cfg := configmocks.NewBlankConfig()
 
-	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
-	require.NoError(t, err)
+		cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+		require.NoError(t, err)
 
-	found := false
-	for _, m := range cpConfig.Mounts {
-		if m.Target == "/var/run/docker.sock" {
-			found = true
-			assert.Equal(t, "/var/run/docker.sock", m.Source,
-				"Docker socket source must be /var/run/docker.sock")
-			assert.True(t, m.ReadOnly,
-				"Docker socket must be mounted read-only")
-			break
+		for _, m := range cpConfig.Mounts {
+			if m.Target == consts.DefaultDockerSocketPath {
+				return m, true
+			}
 		}
+		return mount.Mount{}, false
 	}
-	assert.True(t, found,
-		"Docker socket must be bind-mounted into the CP container")
+
+	t.Run("default host socket", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "")
+		m, found := dockerSocketMount(t)
+		require.True(t, found,
+			"Docker socket must be bind-mounted into the CP container")
+		assert.Equal(t, consts.DefaultDockerSocketPath, m.Source)
+		assert.True(t, m.ReadOnly,
+			"Docker socket must be mounted read-only")
+	})
+
+	t.Run("rootless DOCKER_HOST socket", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "unix:///run/user/1003/docker.sock")
+		m, found := dockerSocketMount(t)
+		require.True(t, found,
+			"Docker socket must be bind-mounted into the CP container")
+		assert.Equal(t, "/run/user/1003/docker.sock", m.Source,
+			"bind source must follow the host's actual socket path")
+		assert.Equal(t, consts.DefaultDockerSocketPath, m.Target,
+			"in-container target stays the conventional path")
+		assert.True(t, m.ReadOnly)
+	})
 }
 
 // Tests INV-B1-020 [unit]: CLAWKER_CONFIG_DIR env var is set.

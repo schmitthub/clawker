@@ -282,10 +282,13 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).
+		// Source resolves the host's actual socket ($DOCKER_HOST /
+		// settings override aware); target stays the conventional path
+		// the CP daemon's Docker client expects.
 		{
 			Type:     mount.TypeBind,
-			Source:   consts.CPDockerSockPath,
-			Target:   consts.CPDockerSockPath,
+			Source:   cfg.DockerSocketPath(),
+			Target:   consts.DefaultDockerSocketPath,
 			ReadOnly: true,
 		},
 		// Firewall state dir — CP is the sole writer (INV-B2-001). Envoy
