@@ -35,9 +35,10 @@ const (
 )
 
 // DockerHostSocketPath returns the host socket path named by $DOCKER_HOST
-// and true when the variable holds a unix:// address. Non-unix schemes
-// (tcp://, ssh://) return false — they name no host path a bind mount could
-// use, so callers fall through to configured/default resolution.
+// and true when the variable holds a unix:// address. The other daemon
+// address schemes (tcp://, npipe://, fd://, and docker/cli's ssh://) return
+// false — none names a host filesystem path a bind mount could carry, so
+// callers fall through to configured/default resolution.
 func DockerHostSocketPath() (string, bool) {
 	host := os.Getenv(EnvDockerHost)
 	path, found := strings.CutPrefix(host, unixSocketScheme)
