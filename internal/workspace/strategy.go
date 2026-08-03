@@ -210,12 +210,15 @@ func EnsureConfigVolumes(
 	return result, nil
 }
 
-// GetDockerSocketMount returns the Docker socket mount if enabled
-func GetDockerSocketMount() mount.Mount {
+// GetDockerSocketMount returns the Docker socket bind. hostSocketPath is the
+// resolved host-side socket (config.Config.DockerSocketPath — the host may
+// serve it away from the conventional path); the target is always the
+// conventional in-container location.
+func GetDockerSocketMount(hostSocketPath string) mount.Mount {
 	return mount.Mount{
 		Type:     mount.TypeBind,
-		Source:   "/var/run/docker.sock",
-		Target:   "/var/run/docker.sock",
+		Source:   hostSocketPath,
+		Target:   consts.DefaultDockerSocketPath,
 		ReadOnly: false,
 	}
 }

@@ -73,6 +73,9 @@ var _ config.Config = &ConfigMock{}
 //			DataDirEnvVarFunc: func() string {
 //				panic("mock out the DataDirEnvVar method")
 //			},
+//			DockerSocketPathFunc: func() string {
+//				panic("mock out the DockerSocketPath method")
+//			},
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
@@ -308,6 +311,9 @@ type ConfigMock struct {
 	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
 	DataDirEnvVarFunc func() string
 
+	// DockerSocketPathFunc mocks the DockerSocketPath method.
+	DockerSocketPathFunc func() string
+
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
 
@@ -540,6 +546,9 @@ type ConfigMock struct {
 		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
 		DataDirEnvVar []struct {
 		}
+		// DockerSocketPath holds details about calls to the DockerSocketPath method.
+		DockerSocketPath []struct {
+		}
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
 		}
@@ -739,6 +748,7 @@ type ConfigMock struct {
 	lockCoreDNSHealthPath       sync.RWMutex
 	lockCoreDNSIPLastOctet      sync.RWMutex
 	lockDataDirEnvVar           sync.RWMutex
+	lockDockerSocketPath        sync.RWMutex
 	lockDomain                  sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
@@ -1287,6 +1297,33 @@ func (mock *ConfigMock) DataDirEnvVarCalls() []struct {
 	mock.lockDataDirEnvVar.RLock()
 	calls = mock.calls.DataDirEnvVar
 	mock.lockDataDirEnvVar.RUnlock()
+	return calls
+}
+
+// DockerSocketPath calls DockerSocketPathFunc.
+func (mock *ConfigMock) DockerSocketPath() string {
+	if mock.DockerSocketPathFunc == nil {
+		panic("ConfigMock.DockerSocketPathFunc: method is nil but Config.DockerSocketPath was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockDockerSocketPath.Lock()
+	mock.calls.DockerSocketPath = append(mock.calls.DockerSocketPath, callInfo)
+	mock.lockDockerSocketPath.Unlock()
+	return mock.DockerSocketPathFunc()
+}
+
+// DockerSocketPathCalls gets all the calls that were made to DockerSocketPath.
+// Check the length with:
+//
+//	len(mockedConfig.DockerSocketPathCalls())
+func (mock *ConfigMock) DockerSocketPathCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockDockerSocketPath.RLock()
+	calls = mock.calls.DockerSocketPath
+	mock.lockDockerSocketPath.RUnlock()
 	return calls
 }
 

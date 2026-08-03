@@ -609,6 +609,44 @@ func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 		"an unset firewall.enable should default to enabled")
 }
 
+func TestDockerSocketPath(t *testing.T) {
+	t.Run("default when nothing set", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "")
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		assert.Equal(t, consts.DefaultDockerSocketPath, cfg.DockerSocketPath())
+	})
+
+	t.Run("defaults layer supplies default", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "")
+		cfg, err := NewBlankConfig()
+		require.NoError(t, err)
+		assert.Equal(t, consts.DefaultDockerSocketPath, cfg.DockerSocketPath())
+	})
+
+	t.Run("settings docker.socket wins over default", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "")
+		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+		require.NoError(t, err)
+		assert.Equal(t, "/custom/docker.sock", cfg.DockerSocketPath())
+	})
+
+	t.Run("DOCKER_HOST unix socket wins over settings", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "unix:///run/user/1003/docker.sock")
+		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+		require.NoError(t, err)
+		assert.Equal(t, "/run/user/1003/docker.sock", cfg.DockerSocketPath())
+	})
+
+	t.Run("non-unix DOCKER_HOST passes through verbatim", func(t *testing.T) {
+		t.Setenv(consts.EnvDockerHost, "tcp://127.0.0.1:2375")
+		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+		require.NoError(t, err)
+		assert.Equal(t, "tcp://127.0.0.1:2375", cfg.DockerSocketPath(),
+			"no validation — the daemon's mount error names the raw value")
+	})
+}
+
 // TestProjectInit_WritesOnlyWhatItSet reproduces the bug where the file project
 // init wrote carried empty string fields (agent.editor: "", agent.visual: "")
 // that then shadowed the real values in the user-level config (agent.editor:

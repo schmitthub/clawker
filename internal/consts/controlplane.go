@@ -151,9 +151,6 @@ const (
 	// same path in the container's own filesystem.
 	CPLogsPath = "/var/log/clawker"
 
-	// CPDockerSockPath is the host-side Docker socket path.
-	CPDockerSockPath = "/var/run/docker.sock"
-
 	// CPClawkerDataDir is the container-side directory for Clawker data.
 	CPClawkerDataDir = "/usr/local/share/clawker"
 

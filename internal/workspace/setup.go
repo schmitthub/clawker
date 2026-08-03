@@ -257,7 +257,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Add docker socket mount if enabled
 	if cfg.Cfg.SecurityConfig().DockerSocket {
-		mounts = append(mounts, GetDockerSocketMount())
+		mounts = append(mounts, GetDockerSocketMount(cfg.Cfg.DockerSocketPath()))
 	}
 
 	return &SetupMountsResult{
