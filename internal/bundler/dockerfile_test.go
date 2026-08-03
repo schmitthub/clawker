@@ -360,7 +360,7 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 // TestBuildContext_HarnessVersionIsARG pins the ENV→ARG conversion. ARG
 // (not ENV) is required so the ARG-cache behaviour applies: a changed value
 // busts cache at the ARG's declaration line (BuildKit) — so the declaration
-// is placed directly above its only consumer, keeping apt/Node/git-delta/
+// is placed directly above its only consumer, keeping apt/Node/
 // zsh-in-docker cached above. ENV would create a layer whose hash propagates
 // downward and bust every layer below.
 func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
@@ -379,7 +379,7 @@ func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	// consumer (the install RUN), AFTER the expensive upstream layers. BuildKit
 	// busts the cache at an ARG's declaration line (not at first use), so a CC
 	// release that rolls the rendered default must invalidate only the install
-	// layer downward — never the Node/git-delta/zsh-in-docker chain. Hoisting
+	// layer downward — never the Node/zsh-in-docker chain. Hoisting
 	// the declaration up the stage reintroduces a full rebuild on every release.
 	argIdx := strings.Index(content, "ARG CLAUDE_CODE_VERSION=")
 	nvmIdx := strings.Index(content, "raw.githubusercontent.com/nvm-sh/nvm")

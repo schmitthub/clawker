@@ -189,7 +189,7 @@ SHELL ["/bin/zsh", "-o", "pipefail", "-c"]
 # cache at an ARG's DECLARATION line, not at first use — that "first use, not
 # definition" rule is the classic (pre-BuildKit) builder's, and Docker 23+
 # builds with BuildKit by default. Hoisting this declaration up the stage would
-# re-run every layer below it (stacks, git-delta, zsh-in-docker, ...) on
+# re-run every layer below it (stacks, zsh-in-docker, ...) on
 # every CC release. Adjacent placement scopes the CC-version cache miss to the
 # install layer + the late root block alone.
 # Override: clawker build --build-arg CLAUDE_CODE_VERSION=<version>
