@@ -350,6 +350,10 @@ security:
           - action: allow
             path: /cilium/cilium/
           - action: allow
+            path: /cilium/ebpf/
+          - action: allow
+            path: /isovalent/ebpf-docs/
+          - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /contributor-assistant/github-action/
