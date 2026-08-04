@@ -1,4 +1,4 @@
-package clawker
+package clawkercmd
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/changelog"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/update"
@@ -21,7 +22,11 @@ import (
 func sampleEntries() []changelog.Entry {
 	return []changelog.Entry{
 		{Version: "0.12.0", Date: "2026-06-11", Body: "### Added\n\n- **Command aliases.** Define your own shortcuts."},
-		{Version: "0.11.0", Date: "2026-06-10", Body: "### Fixed\n\n- **Worktree masks.** Protect the host repository."},
+		{
+			Version: "0.11.0",
+			Date:    "2026-06-10",
+			Body:    "### Fixed\n\n- **Worktree masks.** Protect the host repository.",
+		},
 	}
 }
 
@@ -56,8 +61,10 @@ func TestNotificationsSuppressed(t *testing.T) {
 			t.Setenv(consts.EnvNoNotifier, tt.noNotify)
 			tio, _, _, _ := iostreams.Test()
 			tio.SetStderrTTY(tt.stderrTTY)
-			if got := notificationsSuppressed(tio); got != tt.want {
-				t.Errorf("notificationsSuppressed = %v, want %v", got, tt.want)
+			session := clawker.NewSession()
+			notificationsSuppressed(tio, session)
+			if got := !session.Notifications(); got != tt.want {
+				t.Errorf("notifications suppressed = %v, want %v", got, tt.want)
 			}
 		})
 	}

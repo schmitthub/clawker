@@ -39,8 +39,8 @@ type ReleaseInfo struct {
 	ReleaseURL     string
 }
 
-// githubRelease is a partial response from the GitHub releases API.
-type githubRelease struct {
+// GithubRelease is a partial response from the GitHub releases API.
+type GithubRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
 }
@@ -94,8 +94,7 @@ func shouldCheckForUpdate(lastCheckedAt time.Time) bool {
 //
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
-func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error) {
-
+func CheckForUpdate(release *GithubRelease, st state.StateStore, currentVersion string) (*ReleaseInfo, error) {
 	if st == nil {
 		// A nil state store is a programming error (the caller wires it via the
 		// factory); without it there is no TTL gate and no persistence.
@@ -111,14 +110,9 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 		return nil, nil
 	}
 
-	release, err := getLatestReleaseInfo(ctx, client, repo)
-	if err != nil {
-		return nil, fmt.Errorf("checking %s: %w", repo, err)
-	}
-
 	lv, err := semver.NewVersion(release.TagName)
 	if err != nil {
-		return nil, fmt.Errorf("parsing release tag %q from %s: %w", release.TagName, repo, err)
+		return nil, fmt.Errorf("parsing release tag %q: %w", release.TagName, err)
 	}
 
 	// Persist on fetch success, BEFORE the newer/not-newer decision, so the TTL
@@ -138,11 +132,11 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 	}, nil
 }
 
-// getLatestReleaseInfo GETs and decodes the latest GitHub release for repo using
+// GetLatestReleaseInfo GETs and decodes the latest GitHub release for repo using
 // the supplied client. The GitHub API URL is built from repo here; there is no
 // URL seam in the signature — tests inject a client whose transport is an
 // internal/httpmock stub, so this reaches no live network.
-func getLatestReleaseInfo(ctx context.Context, client *http.Client, repo string) (*githubRelease, error) {
+func GetLatestReleaseInfo(ctx context.Context, client *http.Client, repo string) (*GithubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -161,7 +155,7 @@ func getLatestReleaseInfo(ctx context.Context, client *http.Client, repo string)
 		return nil, fmt.Errorf("github API returned %d", resp.StatusCode)
 	}
 
-	var release githubRelease
+	var release GithubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
 	}

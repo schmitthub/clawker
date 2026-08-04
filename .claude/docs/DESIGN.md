@@ -475,7 +475,7 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 The CLI layer follows the GitHub CLI's Factory pattern:
 
 ```
-internal/clawker/cmd.go
+internal/clawkercmd/cmd.go
     │ calls factory.New()
     ▼
 internal/cmd/factory/default.go  ──imports──▶  internal/cmdutil  ◀──imports──  internal/cmd/*

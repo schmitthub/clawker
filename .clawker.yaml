@@ -356,6 +356,8 @@ security:
           - action: allow
             path: /torvalds/linux/
           - action: allow
+            path: /moby/moby/
+          - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /contributor-assistant/github-action/

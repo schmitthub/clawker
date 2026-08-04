@@ -6,9 +6,13 @@ state (`internal/state`), and persists the check there itself.
 
 **Dependencies:** stdlib + `net/http` + `internal/state` + `github.com/Masterminds/semver/v3`.
 The package owns ALL semver work — the caller passes raw version strings and imports no semver
-The freshness gate (`shouldCheckForUpdate`) is pure (a timestamp in, no I/O); `CheckForUpdate` 
-owns the semver parse, the newer/not-newer comparison (`!cv.LessThan(lv)`), the state 
-read + write, and the GitHub fetch.
+The freshness gate (`shouldCheckForUpdate`) is pure (a timestamp in, no I/O).
+The package is split so the network hop and the state access can happen at
+different times: `GetLatestReleaseInfo` does the GitHub fetch and nothing else,
+while `CheckForUpdate` owns the semver parse, the newer/not-newer comparison
+(`!cv.LessThan(lv)`), and the state read + write over an already-fetched
+release. The CLI fetches before running the user's command and decides after
+(see `internal/clawkercmd/CLAUDE.md`).
 
 The caller passes the current version string (no dependency on `internal/build`).
 `RecordUpdateCheck` is a field merge that writes only the update-check fields, so
@@ -32,40 +36,52 @@ type ReleaseInfo struct {
 There is no `IsNewer` field: presence of a non-nil `*ReleaseInfo` is itself the
 "newer release exists" signal.
 
-## Exported Function
+## Exported Functions
 
 ```go
-func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error)
+// GithubRelease is the partial "latest release" payload — the fetch half's
+// output and CheckForUpdate's input.
+type GithubRelease struct {
+    TagName string `json:"tag_name"`
+    HTMLURL string `json:"html_url"`
+}
+
+func GetLatestReleaseInfo(ctx context.Context, client *http.Client, repo string) (*GithubRelease, error)
+func CheckForUpdate(release *GithubRelease, st state.StateStore, currentVersion string) (*ReleaseInfo, error)
 ```
 
-Return contract:
+`GetLatestReleaseInfo` is network only — no state, no decisions. The caller
+supplies the `*http.Client` (the Factory's HttpClient noun in production; an
+`internal/httpmock` stub in tests) and the context that bounds the request.
+
+`CheckForUpdate` return contract:
 
 | Return | Meaning |
 |--------|---------|
-| `(nil, nil)` | up-to-date, TTL-fresh, or latest release is **not newer** than `currentVersion` |
+| `(nil, nil)` | up-to-date, TTL-fresh, or the release is **not newer** than `currentVersion` |
 | `(*ReleaseInfo, nil)` | a **strictly newer** release is available |
-| `(nil, error)` | the fetch failed (API/network/decode) |
+| `(nil, error)` | a version string failed to parse, or the persist failed |
 
-`CheckForUpdate` reads `st.CheckedAt()` for the freshness gate. The caller
-supplies the `*http.Client` (the Factory's HttpClient noun in production; an
-`internal/httpmock` stub in tests). A nil `st` is a programming error (the caller
-wires state via the factory) and returns an error before any fetch.
+`CheckForUpdate` reads `st.CheckedAt()` for the freshness gate. Because the
+fetch already happened by then, the gate now throttles the notification and the
+state write rather than the network hop — a caller that fetches unconditionally
+will reach GitHub on every run. A nil `st` is a programming error (the caller
+wires state via the factory) and returns an error.
 
-### Persist on every successful fetch (not on the newer/not-newer comparison)
+### Persist on every parsed release (not on the newer/not-newer comparison)
 
-`st.RecordUpdateCheck(time.Now(), latestVersion)` fires on **every successful
-fetch** — keyed on fetch-success, not on whether a newer release was found — and
-runs **before** the newer/not-newer decision. This is load-bearing: if
-persistence only happened when a newer release was found, `checked_at` would
-never advance on the common not-newer path, the TTL gate would never throttle,
-and clawker would hit the GitHub API on every run. A persistence failure surfaces
-as `(nil, error)`.
+`st.RecordUpdateCheck(time.Now(), latestVersion)` fires on **every release that
+parses** — keyed on the fetch having succeeded, not on whether a newer release
+was found — and runs **before** the newer/not-newer decision. This is
+load-bearing: if persistence only happened when a newer release was found,
+`checked_at` would never advance on the common not-newer path and the TTL gate
+would never throttle. A persistence failure surfaces as `(nil, error)`.
 
 ### Env/CI opt-out is the caller's responsibility
 
 `shouldCheckForUpdate` is the **TTL freshness gate only** — it does not read any
 env var. Opt-out suppression (an env-var kill switch, CI detection) lives in the
-caller (`internal/clawker/cmd.go`), which decides whether to call
+caller (`internal/clawkercmd/cmd.go`), which decides whether to call
 `CheckForUpdate` at all. Defense-in-depth note: a future second caller that
 bypasses that gate would still reach the GitHub API, because the opt-out is not
 enforced inside this package.
@@ -84,14 +100,14 @@ future timestamp (clock skew, later corrected) is treated as stale, not fresh
 (`elapsed >= 0` guard), so it does not spuriously suppress checks.
 
 **Dev-build handling lives at the parse boundary, not in a gate.**
-`CheckForUpdate` parses `currentVersion` with `semver.NewVersion` **before** the
-fetch; a non-release build whose version is not parseable semver (`"DEV"`,
-`"nightly"`) fails there and returns `(nil, error)` without ever touching the
-GitHub API. The release tag from GitHub is parsed the same way
+`CheckForUpdate` parses `currentVersion` with `semver.NewVersion` before
+anything else; a non-release build whose version is not parseable semver
+(`"DEV"`, `"nightly"`) fails there and returns `(nil, error)` without reading or
+writing state. The release tag from GitHub is parsed the same way
 (`semver.NewVersion(release.TagName)`), and the newer/not-newer decision is a
 plain `!cv.LessThan(lv)` on the two parsed `*semver.Version` values — no
 constraint, no string round-trip. There is no separate `isNewer` helper and no
-caller-side dev gate: `internal/clawker/cmd.go` imports no semver, passes the raw
+caller-side dev gate: `internal/clawkercmd/cmd.go` imports no semver, passes the raw
 `buildVersion` string, and lets this package own every parse.
 
 `cacheTTL` and `shouldCheckForUpdate` are unexported — the package surface is
@@ -120,7 +136,7 @@ transport is the seam) plus a `state/mocks` stub where only call counts matter.
 
 ## Integration Point
 
-Wired into `internal/clawker/cmd.go:Main()` (gh CLI pattern):
+Wired into `internal/clawkercmd/cmd.go:Main()` (gh CLI pattern):
 
 - `Main` owns the env/CI opt-out decision (whether to launch the check at all)
 - `context.WithCancel` creates a cancellable context for the HTTP request
@@ -153,7 +169,7 @@ regression test
 (`TestCheckForUpdate_NotNewerAdvancesCheckedAt`) proves a not-newer fetch still
 records the check by asserting `RecordUpdateCheckCalls()` on a
 `internal/state/mocks` stub (`NewBlankState()`) — the persist-on-fetch-success
-contract. Tests drive `CheckForUpdate` (and the unexported `getLatestReleaseInfo`
+contract. Tests drive `CheckForUpdate` (and the unexported `GetLatestReleaseInfo`
 for the decode/cancellation cases) through an `internal/httpmock` client, so they
 exercise the real gate→fetch→persist→assemble path with no live network. State
 persistence/non-clobber internals are covered in `internal/state`.

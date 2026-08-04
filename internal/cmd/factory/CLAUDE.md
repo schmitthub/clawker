@@ -26,7 +26,7 @@ The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 ## Usage
 
 ```go
-// Entry point only (internal/clawker/cmd.go)
+// Entry point only (internal/clawkercmd/cmd.go)
 f := factory.New(build.Version)
 rootCmd, err := root.NewCmdRoot(f, build.Version, build.Date)
 ```

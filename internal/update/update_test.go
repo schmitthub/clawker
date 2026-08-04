@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/httpmock"
 	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
@@ -116,10 +117,9 @@ func TestCheckForUpdate_VersionComparison(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := releaseStub(tt.tag, tt.htmlURL)
 			st := statemocks.NewBlankState()
 
-			info, err := CheckForUpdate(context.Background(), reg.Client(), st, tt.current, consts.GitHubRepo)
+			info, err := CheckForUpdate(&GithubRelease{TagName: tt.tag, HTMLURL: tt.htmlURL}, st, tt.current)
 			if tt.wantErr != nil {
 				if err == nil {
 					t.Fatalf("expected error %v, got nil", tt.wantErr)
@@ -148,37 +148,30 @@ func TestCheckForUpdate_VersionComparison(t *testing.T) {
 	}
 }
 
-// TestCheckForUpdate_Errors covers fetch/parse failures that the public
-// CheckForUpdate must surface as (nil, error).
+// TestCheckForUpdate_Errors covers the parse failures CheckForUpdate must
+// surface as (nil, error) now that it decides over an already-fetched release.
+// Transport failures belong to GetLatestReleaseInfo and are covered there.
 func TestCheckForUpdate_Errors(t *testing.T) {
 	tests := []struct {
-		name string
-		reg  func() *httpmock.Registry
+		name    string
+		release *GithubRelease
 	}{
-		{
-			name: "API 500 surfaces error",
-			reg: func() *httpmock.Registry {
-				reg := &httpmock.Registry{}
-				reg.Register(
-					httpmock.REST(http.MethodGet, "/releases/latest"),
-					httpmock.StatusStringResponse(http.StatusInternalServerError, ""),
-				)
-				return reg
-			},
-		},
 		{
 			// An empty tag_name is rejected at the semver parse inside CheckForUpdate
 			// (there is no separate empty-tag guard — semver.NewVersion("") fails).
-			name: "empty tag_name fails semver parse",
-			reg:  func() *httpmock.Registry { return releaseStub("", "https://example.com") },
+			name:    "empty tag_name fails semver parse",
+			release: &GithubRelease{TagName: "", HTMLURL: "https://example.com"},
+		},
+		{
+			name:    "non-semver tag_name fails semver parse",
+			release: &GithubRelease{TagName: "latest", HTMLURL: "https://example.com"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := tt.reg()
 			st := statemocks.NewBlankState()
 
-			info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
+			info, err := CheckForUpdate(tt.release, st, "1.0.0")
 			if err == nil {
 				t.Error("expected error, got nil")
 			}
@@ -190,7 +183,7 @@ func TestCheckForUpdate_Errors(t *testing.T) {
 }
 
 // TestGetLatestReleaseInfo_Errors covers the decode/transport layer directly:
-// the unexported getLatestReleaseInfo must return (nil, error) on a bad body or
+// GetLatestReleaseInfo must return (nil, error) on a bad body or
 // a dead context.
 func TestGetLatestReleaseInfo_Errors(t *testing.T) {
 	tests := []struct {
@@ -222,7 +215,7 @@ func TestGetLatestReleaseInfo_Errors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			release, err := getLatestReleaseInfo(tt.ctx(), tt.reg().Client(), consts.GitHubRepo)
+			release, err := GetLatestReleaseInfo(tt.ctx(), tt.reg().Client(), consts.GitHubRepo)
 			if err == nil {
 				t.Error("expected error, got nil")
 			}
@@ -234,45 +227,40 @@ func TestGetLatestReleaseInfo_Errors(t *testing.T) {
 }
 
 // TestCheckForUpdate_TTLFreshSuppresses proves a TTL-fresh state short-circuits
-// before any fetch: the registry records zero requests and nothing is persisted.
+// before the release is even looked at: no result, and nothing persisted. The
+// fetch is the caller's now, so the gate throttles the notification and the
+// state write rather than the network hop.
 func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
-	reg := releaseStub("v2.0.0", "https://example.com")
-
 	// TTL-fresh state: CheckedAt is "now", so the freshness gate suppresses
-	// before any fetch or persist.
+	// before any parse or persist.
 	m := statemocks.NewBlankState()
 	m.CheckedAtFunc = time.Now
 
-	info, err := CheckForUpdate(context.Background(), reg.Client(), m, "1.0.0", consts.GitHubRepo)
+	info, err := CheckForUpdate(&GithubRelease{TagName: "v2.0.0", HTMLURL: "https://example.com"}, m, "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if info != nil {
 		t.Errorf("expected nil result when TTL-fresh, got %+v", info)
 	}
-	if got := len(reg.Requests); got != 0 {
-		t.Errorf("fetch happened on TTL-fresh state: %d requests, want 0", got)
-	}
 	if got := len(m.RecordUpdateCheckCalls()); got != 0 {
-		t.Errorf("RecordUpdateCheck calls = %d, want 0 (no fetch, no persist)", got)
+		t.Errorf("RecordUpdateCheck calls = %d, want 0 (TTL-fresh, no persist)", got)
 	}
 }
 
 // TestCheckForUpdate_NotNewerAdvancesCheckedAt is the regression guard for the
-// persist-on-fetch-success contract: a NOT-NEWER fetch must still advance
+// persist-on-fetch-success contract: a NOT-NEWER release must still advance
 // checked_at (and record latest_version). If persistence were keyed on the
 // newer/not-newer comparison, checked_at would never advance on the common
-// not-newer path, the TTL gate would never throttle, and clawker would hit the
-// GitHub API every run.
+// not-newer path and the TTL gate would never throttle.
 func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
-	reg := releaseStub("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
-
 	// Blank state's CheckedAt is zero → never checked → the freshness gate lets
 	// the check run.
 	m := statemocks.NewBlankState()
 
-	// Same version as current → not newer → nil result, but the fetch succeeded.
-	info, err := CheckForUpdate(context.Background(), reg.Client(), m, "1.0.0", consts.GitHubRepo)
+	// Same version as current → not newer → nil result, but the release parsed.
+	release := &GithubRelease{TagName: "v1.0.0", HTMLURL: "https://github.com/schmitthub/clawker/releases/tag/v1.0.0"}
+	info, err := CheckForUpdate(release, m, "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,13 +283,13 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 // --- test helpers ---
 
 // releaseStub registers a GitHub "latest release" responder on a fresh httpmock
-// registry and returns it. reg.Client() is injected into CheckForUpdate, so the
-// test stays off live api.github.com with no URL seam in production code.
+// registry and returns it. reg.Client() is injected into GetLatestReleaseInfo,
+// so the test stays off live api.github.com with no URL seam in production code.
 func releaseStub(tagName, htmlURL string) *httpmock.Registry {
 	reg := &httpmock.Registry{}
 	reg.Register(
 		httpmock.REST(http.MethodGet, "/releases/latest"),
-		httpmock.JSONResponse(githubRelease{TagName: tagName, HTMLURL: htmlURL}),
+		httpmock.JSONResponse(GithubRelease{TagName: tagName, HTMLURL: htmlURL}),
 	)
 	return reg
 }

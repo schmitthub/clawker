@@ -108,6 +108,62 @@ func seedCursor(t *testing.T, st state.StateStore, version string) {
 	}
 }
 
+// fixtureEntries parses the shared changelog fixture into the entry slice the
+// caller now supplies to CheckForChanges. It goes through the real parser
+// rather than hand-built structs so the diff tests stay honest about the shape
+// a live fetch produces.
+func fixtureEntries(t *testing.T) []Entry {
+	t.Helper()
+	entries, err := Parse(changesFixture)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	return entries
+}
+
+// checkFixture runs CheckForChanges over the fixture entries and fails the test
+// on error. Every success-path test wants the gained entries and treats an
+// error as fatal, so folding the check in here keeps the assertions in each
+// test about behavior rather than error plumbing.
+func checkFixture(t *testing.T, st state.StateStore, current string) []Entry {
+	t.Helper()
+	gained, err := CheckForChanges(fixtureEntries(t), st, current)
+	if err != nil {
+		t.Fatalf("CheckForChanges(current=%q): %v", current, err)
+	}
+	return gained
+}
+
+// fixtureCurrent is the newest version in changesFixture. It is the running
+// version every cursor test checks against, and therefore the value the cursor
+// must hold afterwards — whether it got there by first-run seed or by advance.
+const fixtureCurrent = "0.12.0"
+
+// assertCursorAtCurrent asserts the show-once cursor landed on fixtureCurrent in
+// canonical bare-semver form (never v-prefixed, whatever form current arrived
+// in). This is the one post-condition both cursor-store sites share.
+func assertCursorAtCurrent(t *testing.T, st state.StateStore) {
+	t.Helper()
+	if cur := st.LastSeenChangelog(); cur != fixtureCurrent {
+		t.Errorf("cursor = %q, want %q", cur, fixtureCurrent)
+	}
+}
+
+// assertGained asserts the gained entries by version, newest-first. A nil want
+// asserts nothing was gained.
+func assertGained(t *testing.T, gained []Entry, want []string) {
+	t.Helper()
+	got := versions(gained)
+	if len(got) != len(want) {
+		t.Fatalf("gained = %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("entry %d = %q, want %q", i, got[i], v)
+		}
+	}
+}
+
 // --- parser tests ---
 
 func TestParse_Headers(t *testing.T) {
@@ -194,60 +250,35 @@ func TestCheckForChanges_Ranges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			reg := changelogStub(http.StatusOK, changesFixture)
 			st := newTestState(t)
 			seedCursor(t, st, c.cursor)
 
-			gained, err := CheckForChanges(context.Background(), reg.Client(), st, c.current)
-			if err != nil {
-				t.Fatalf("CheckForChanges: %v", err)
-			}
-			if got := versions(gained); len(got) != len(c.wantVers) {
-				t.Fatalf("gained = %v, want %v", got, c.wantVers)
-			}
-			for i, v := range c.wantVers {
-				if gained[i].Version != v {
-					t.Errorf("entry %d = %q, want %q", i, gained[i].Version, v)
-				}
-			}
+			assertGained(t, checkFixture(t, st, c.current), c.wantVers)
 		})
 	}
 }
 
-// TestCheckForChanges_FirstRunReseedNoFetch covers the two inputs that prod
-// treats as a first run — an empty cursor and a non-version (garbage) cursor
-// left in state. Both must reseed the cursor at current and return nil WITHOUT
-// hitting the network: there is no catch-up backfill, and a garbage cursor must
-// not crash or diff against itself.
-func TestCheckForChanges_FirstRunReseedNoFetch(t *testing.T) {
+// TestCheckForChanges_FirstRunReseed covers the two inputs that prod treats as
+// a first run — an empty cursor and a non-version (garbage) cursor left in
+// state. Both must reseed the cursor at current and return nil: there is no
+// catch-up backfill, and a garbage cursor must not crash or diff against
+// itself. Entries are supplied by the caller now, so "did it fetch" is no
+// longer this function's concern.
+func TestCheckForChanges_FirstRunReseed(t *testing.T) {
 	cases := []struct {
 		name   string
-		cursor string // "" = leave empty (true first run); else seeded as-is
+		cursor string // stored at rest as-is; "" is the true-first-run cursor
 	}{
 		{"empty_cursor", ""},
 		{"garbage_cursor", "not-a-version"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			reg := changelogStub(http.StatusOK, changesFixture)
 			st := newTestState(t)
-			if c.cursor != "" {
-				seedCursor(t, st, c.cursor)
-			}
+			seedCursor(t, st, c.cursor)
 
-			gained, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
-			if err != nil {
-				t.Fatalf("CheckForChanges: %v", err)
-			}
-			if len(gained) != 0 {
-				t.Errorf("returned %v, want no entries (first-run reseed)", versions(gained))
-			}
-			if cur := st.LastSeenChangelog(); cur != "0.12.0" {
-				t.Errorf("cursor = %q, want reseeded to 0.12.0", cur)
-			}
-			if len(reg.Requests) != 0 {
-				t.Errorf("hit the changelog endpoint %d times, want 0 (no fetch)", len(reg.Requests))
-			}
+			assertGained(t, checkFixture(t, st, "0.12.0"), nil)
+			assertCursorAtCurrent(t, st)
 		})
 	}
 }
@@ -256,20 +287,11 @@ func TestCheckForChanges_FirstRunReseedNoFetch(t *testing.T) {
 // to current after a successful check. The persist gate is gone — CheckForChanges
 // is only called on a non-suppressed run, so it always advances.
 func TestCheckForChanges_AdvancesCursor(t *testing.T) {
-	reg := changelogStub(http.StatusOK, changesFixture)
 	st := newTestState(t)
 	seedCursor(t, st, "0.10.0")
 
-	gained, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
-	if err != nil {
-		t.Fatalf("CheckForChanges: %v", err)
-	}
-	if len(gained) == 0 {
-		t.Fatal("expected gained entries")
-	}
-	if cur := st.LastSeenChangelog(); cur != "0.12.0" {
-		t.Errorf("cursor = %q, want advanced to 0.12.0", cur)
-	}
+	assertGained(t, checkFixture(t, st, "0.12.0"), []string{"0.12.0", "0.11.0"})
+	assertCursorAtCurrent(t, st)
 }
 
 // TestCheckForChanges_StoresCanonicalCursor: a current parsed from a v-prefixed
@@ -278,38 +300,26 @@ func TestCheckForChanges_AdvancesCursor(t *testing.T) {
 // seed and the advance.
 func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 	t.Run("first_run_seed", func(t *testing.T) {
-		reg := changelogStub(http.StatusOK, changesFixture)
 		st := newTestState(t) // empty cursor → first-run seed path
 
-		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
-			t.Fatalf("CheckForChanges: %v", err)
-		}
-		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
-			t.Errorf("seeded cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
-		}
+		checkFixture(t, st, "v0.12.0")
+		assertCursorAtCurrent(t, st)
 	})
 
 	t.Run("advance", func(t *testing.T) {
-		reg := changelogStub(http.StatusOK, changesFixture)
 		st := newTestState(t)
 		seedCursor(t, st, "0.10.0") // diff path → advance
 
-		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
-			t.Fatalf("CheckForChanges: %v", err)
-		}
-		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
-			t.Errorf("advanced cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
-		}
+		checkFixture(t, st, "v0.12.0")
+		assertCursorAtCurrent(t, st)
 	})
 }
 
 // TestCheckForChanges_NilStateError: a nil state facade is a programming error —
-// it returns the typed nil-StateStore error with no entries and no fetch (the
-// cursor lives in state, so there is nothing to diff against).
+// it returns the typed nil-StateStore error with no entries (the cursor lives
+// in state, so there is nothing to diff against).
 func TestCheckForChanges_NilStateError(t *testing.T) {
-	reg := changelogStub(http.StatusOK, changesFixture)
-
-	gained, err := CheckForChanges(context.Background(), reg.Client(), nil, "0.12.0")
+	gained, err := CheckForChanges(fixtureEntries(t), nil, "0.12.0")
 	wantErr := "state: CheckForChanges: nil StateStore"
 	if err == nil || err.Error() != wantErr {
 		t.Fatalf("CheckForChanges error = %v, want %q", err, wantErr)
@@ -317,23 +327,36 @@ func TestCheckForChanges_NilStateError(t *testing.T) {
 	if len(gained) != 0 {
 		t.Errorf("nil state returned %v, want no entries", versions(gained))
 	}
-	if len(reg.Requests) != 0 {
-		t.Errorf("nil state hit the endpoint %d times, want 0", len(reg.Requests))
-	}
 }
 
-// TestCheckForChanges_FetchErrorNoAdvance: a non-200 surfaces an error and never
-// advances the cursor.
-func TestCheckForChanges_FetchErrorNoAdvance(t *testing.T) {
+// TestGetChangelogEntries_NonOKError: a non-200 from the changelog endpoint is
+// an error, not an empty entry list. The caller never reaches CheckForChanges
+// on this path, so the cursor cannot advance on a failed fetch.
+func TestGetChangelogEntries_NonOKError(t *testing.T) {
 	reg := changelogStub(http.StatusInternalServerError, "boom")
-	st := newTestState(t)
-	seedCursor(t, st, "0.10.0")
 
-	_, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
+	entries, err := GetChangelogEntries(context.Background(), reg.Client())
 	if err == nil {
 		t.Fatal("expected error on non-200 response")
 	}
-	if cur := st.LastSeenChangelog(); cur != "0.10.0" {
-		t.Errorf("cursor advanced to %q on fetch error, want untouched 0.10.0", cur)
+	if len(entries) != 0 {
+		t.Errorf("returned %v on non-200, want no entries", versions(entries))
+	}
+}
+
+// TestGetChangelogEntries_ParsesFixture: the happy path fetches and parses the
+// curated changelog into newest-first entries.
+func TestGetChangelogEntries_ParsesFixture(t *testing.T) {
+	reg := changelogStub(http.StatusOK, changesFixture)
+
+	entries, err := GetChangelogEntries(context.Background(), reg.Client())
+	if err != nil {
+		t.Fatalf("GetChangelogEntries: %v", err)
+	}
+	if got, want := versions(entries), []string{"0.12.0", "0.11.0", "0.5.0"}; len(got) != len(want) {
+		t.Fatalf("entries = %v, want %v", got, want)
+	}
+	if len(reg.Requests) != 1 {
+		t.Errorf("hit the changelog endpoint %d times, want 1", len(reg.Requests))
 	}
 }

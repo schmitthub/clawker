@@ -713,11 +713,11 @@ test-clean:
 # Preview the newest CHANGELOG.md entry rendered exactly as the post-upgrade
 # "what's new" teaser shows it (glamour markdown). Use to eyeball a release
 # section — alerts, bullets, code spans — before shipping. Depends on the
-# embed binaries because internal/clawker links the full cobra tree, which
+# embed binaries because internal/clawkercmd links the full cobra tree, which
 # imports the go:embed-bearing controlplane/manager, controlplane/firewall
 # and clawkerd/embed packages.
 changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawker/ -run TestPreviewLatestChangelogEntry -v 2>&1
+	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawkercmd/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================
 # License Targets

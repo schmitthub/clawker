@@ -13,7 +13,7 @@
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  CLI Layer                                                            │
-│  cmd/clawker → internal/clawker → internal/cmd/root                   │
+│  cmd/clawker → internal/clawkercmd → internal/cmd/root                   │
 │  12 command groups, 50+ subcommands (Cobra + Factory DI)              │
 └──────┬────────────────────────┬────────────────────┬─────────────────┘
        │                        │                    │
@@ -48,7 +48,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 │  factory.New(version) → *cmdutil.Factory                                │
 │    • Creates IOStreams, wires sync.Once closures for all dependencies    │
 │    • Imports everything: config, docker, hostproxy, iostreams, prompts   │
-│    • Called ONCE at entry point (internal/clawker/cmd.go)                │
+│    • Called ONCE at entry point (internal/clawkercmd/cmd.go)                │
 │    • Tests NEVER import this package                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Layer 2: CONTRACT (internal/cmdutil/factory.go)                        │

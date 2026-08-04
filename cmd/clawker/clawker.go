@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"github.com/schmitthub/clawker/internal/clawker"
+	"github.com/schmitthub/clawker/internal/clawkercmd"
 )
 
 func main() {
-	os.Exit(clawker.Main())
+	os.Exit(clawkercmd.Main())
 }

@@ -7,6 +7,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
@@ -63,4 +64,5 @@ type Factory struct {
 	// three-tier component resolution plus the cache-mutating and validation
 	// operations the `clawker bundle` verbs use. Depends on Config.
 	BundleManager func() (*bundle.Manager, error)
+	Session       func() clawker.Session
 }
