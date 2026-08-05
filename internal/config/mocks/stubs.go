@@ -67,7 +67,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
 	mock.ControlPlaneSettingsFunc = cfg.ControlPlaneSettings
 	mock.FirewallEnabledFunc = cfg.FirewallEnabled
-	mock.DockerSocketPathFunc = cfg.DockerSocketPath
+	mock.DockerHostFunc = cfg.DockerHost
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
 
 	// Constants

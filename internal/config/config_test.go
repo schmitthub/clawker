@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -609,41 +612,132 @@ func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 		"an unset firewall.enable should default to enabled")
 }
 
-func TestDockerSocketPath(t *testing.T) {
+// noDockerEnv isolates daemon-address resolution from the developer's own
+// docker install: an exported DOCKER_HOST, or a rootless context in the real
+// ~/.docker, would otherwise decide what these tests resolve. Returns the
+// empty docker config dir, for the cases that seed a context into it.
+func noDockerEnv(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(consts.EnvDockerHost, "")
+	t.Setenv(consts.EnvDockerContext, "")
+	t.Setenv(consts.EnvDockerConfig, dir)
+	return dir
+}
+
+// rootlessContextHost is the address a rootless daemon serves — what the
+// installer records in the docker context, and the value every case below
+// expects resolution to find there.
+const rootlessContextHost = "unix:///run/user/1003/docker.sock"
+
+// seedDockerContext writes the rootless docker context, and points
+// config.json at it — the shape `docker context use` leaves behind, and the
+// only record a rootless install keeps of its daemon address. The context is
+// always named "rootless" because that is the name the rootless installer
+// gives it, and it is the configuration every one of these cases is about.
+func seedDockerContext(t *testing.T, dir string) {
+	t.Helper()
+
+	const name = "rootless"
+
+	config := fmt.Sprintf(`{"auths":{},"currentContext":%q}`, name)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600))
+
+	digest := sha256.Sum256([]byte(name))
+	metaDir := filepath.Join(dir, "contexts", "meta", hex.EncodeToString(digest[:]))
+	require.NoError(t, os.MkdirAll(metaDir, 0o700))
+
+	meta := fmt.Sprintf(`{"Name":%q,"Endpoints":{"docker":{"Host":%q}}}`, name, rootlessContextHost)
+	require.NoError(t, os.WriteFile(filepath.Join(metaDir, "meta.json"), []byte(meta), 0o600))
+}
+
+func TestDockerHost(t *testing.T) {
 	t.Run("default when nothing set", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "")
+		noDockerEnv(t)
 		cfg, err := NewFromString("", "")
 		require.NoError(t, err)
-		assert.Equal(t, consts.DefaultDockerSocketPath, cfg.DockerSocketPath())
+		assert.Equal(t, consts.DefaultDockerHost, cfg.DockerHost())
 	})
 
-	t.Run("defaults layer supplies default", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "")
+	t.Run("default with the defaults layer active", func(t *testing.T) {
+		noDockerEnv(t)
 		cfg, err := NewBlankConfig()
 		require.NoError(t, err)
-		assert.Equal(t, consts.DefaultDockerSocketPath, cfg.DockerSocketPath())
+		assert.Equal(t, consts.DefaultDockerHost, cfg.DockerHost())
 	})
 
-	t.Run("settings docker.socket wins over default", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "")
-		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+	t.Run("the docker context is reached with the defaults layer active", func(t *testing.T) {
+		// Regression: the settings field carried a `default` struct tag, so
+		// the defaults layer materialized a value on every install, the
+		// settings tier always matched, and the context below it was dead
+		// code — the exact configuration this whole chain exists to support.
+		dir := noDockerEnv(t)
+		seedDockerContext(t, dir)
+
+		cfg, err := NewBlankConfig()
 		require.NoError(t, err)
-		assert.Equal(t, "/custom/docker.sock", cfg.DockerSocketPath())
+		assert.Equal(t, rootlessContextHost, cfg.DockerHost(),
+			"an unset docker.host must fall through to the context, not to a materialized default")
 	})
 
-	t.Run("DOCKER_HOST unix socket wins over settings", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "unix:///run/user/1003/docker.sock")
-		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+	t.Run("settings docker.host wins over the default", func(t *testing.T) {
+		noDockerEnv(t)
+		cfg, err := NewFromString("", "docker:\n  host: /custom/docker.sock\n")
 		require.NoError(t, err)
-		assert.Equal(t, "/run/user/1003/docker.sock", cfg.DockerSocketPath())
+		assert.Equal(t, "/custom/docker.sock", cfg.DockerHost())
 	})
 
-	t.Run("non-unix DOCKER_HOST passes through verbatim", func(t *testing.T) {
+	t.Run("the active docker context supplies the address", func(t *testing.T) {
+		dir := noDockerEnv(t)
+		seedDockerContext(t, dir)
+
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		assert.Equal(t, rootlessContextHost, cfg.DockerHost(),
+			"a stock rootless install records its address here and nowhere else")
+	})
+
+	t.Run("settings outranks the docker context", func(t *testing.T) {
+		dir := noDockerEnv(t)
+		seedDockerContext(t, dir)
+
+		cfg, err := NewFromString("", "docker:\n  host: /custom/docker.sock\n")
+		require.NoError(t, err)
+		assert.Equal(t, "/custom/docker.sock", cfg.DockerHost(),
+			"an explicit clawker setting is not outranked by ambient docker state")
+	})
+
+	t.Run("DOCKER_HOST outranks everything", func(t *testing.T) {
+		dir := noDockerEnv(t)
+		seedDockerContext(t, dir)
+		t.Setenv(consts.EnvDockerHost, "unix:///run/user/9999/docker.sock")
+
+		cfg, err := NewFromString("", "docker:\n  host: /custom/docker.sock\n")
+		require.NoError(t, err)
+		assert.Equal(t, "unix:///run/user/9999/docker.sock", cfg.DockerHost())
+	})
+
+	t.Run("values are returned raw", func(t *testing.T) {
+		noDockerEnv(t)
 		t.Setenv(consts.EnvDockerHost, "tcp://127.0.0.1:2375")
-		cfg, err := NewFromString("", "docker:\n  socket: /custom/docker.sock\n")
+		cfg, err := NewFromString("", "")
 		require.NoError(t, err)
-		assert.Equal(t, "tcp://127.0.0.1:2375", cfg.DockerSocketPath(),
-			"no validation — the daemon's mount error names the raw value")
+		assert.Equal(t, "tcp://127.0.0.1:2375", cfg.DockerHost(),
+			"no stripping and no validation — a caller that needs a path strips it itself")
+	})
+
+	t.Run("a broken docker context falls through to the default", func(t *testing.T) {
+		dir := noDockerEnv(t)
+		// config.json names a context whose file was never written — the
+		// state that makes the docker CLI itself refuse to run.
+		config := `{"auths":{},"currentContext":"rootless"}`
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600))
+
+		cfg, err := NewFromString("", "")
+		require.NoError(t, err)
+		assert.Equal(t, consts.DefaultDockerHost, cfg.DockerHost(),
+			"every read failure means the same thing here: no address to use")
 	})
 }
 

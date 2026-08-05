@@ -12,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/consts"
+	dockercontext "github.com/schmitthub/clawker/internal/docker/context"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -136,14 +137,14 @@ type Config interface {
 	// (`firewall.enable`), defaulting to true when unset.
 	FirewallEnabled() bool
 
-	// DockerSocketPath returns the host-side Docker daemon socket path used
-	// as the bind-mount source for Docker socket mounts. Resolution follows
-	// docker CLI parity — environment beats stored configuration:
-	// $DOCKER_HOST (unix:// prefix stripped) wins, then settings
-	// `docker.socket`, then consts.DefaultDockerSocketPath. Values are not
-	// validated. The in-container mount target is always
-	// consts.DefaultDockerSocketPath, independent of this value.
-	DockerSocketPath() string
+	// DockerHost returns the address of the host's Docker daemon. Resolution,
+	// highest first: $DOCKER_HOST, settings `docker.host`, the active docker
+	// context, then consts.DefaultDockerHost. The docker CLI honors the first
+	// and the third; the setting is slotted above the context so an explicit
+	// clawker value is never outranked by ambient state. Values are not
+	// validated — a malformed address fails at the point of use, naming
+	// itself, which is the same pass-through contract the docker CLI has.
+	DockerHost() string
 
 	// BundleDeclarations returns every declared bundle source paired with the
 	// clawker.yaml layer that declared it, highest-priority layer first. The
@@ -818,21 +819,32 @@ func (c *configImpl) FirewallEnabled() bool {
 	return enabled
 }
 
-// DockerSocketPath resolves the host Docker socket path: $DOCKER_HOST
-// (unix:// prefix stripped, otherwise verbatim) > settings docker.socket >
-// default. The env override is a deliberate exception to the
-// no-env-value-overrides rule — DOCKER_HOST is the docker CLI's own
-// contract, and a bind source that ignores it breaks any host whose daemon
-// serves the socket away from the conventional path (rootless Docker under
-// $XDG_RUNTIME_DIR being the common case). Values are not validated; a
-// non-path value surfaces in the daemon's own mount error.
-func (c *configImpl) DockerSocketPath() string {
-	if path := consts.DockerHostSocketPath(); path != "" {
-		return path
+// DockerHost resolves the host Docker daemon address. The env override is a
+// deliberate exception to the no-env-value-overrides rule — DOCKER_HOST is the
+// docker CLI's own contract, and ignoring it breaks any host whose daemon does
+// not serve the conventional path.
+//
+// The docker context is read last because it is ambient: it belongs to the
+// docker CLI, and an explicit clawker setting must outrank it. Reading it at
+// all is what makes clawker work on a stock rootless install, where the
+// address is recorded in the context and nowhere else.
+func (c *configImpl) DockerHost() string {
+	if host := consts.DockerHostEnv(); host != "" {
+		return host
 	}
-	socket, err := storage.Get[string](c.settings, keyDocker, keySocket)
-	if err != nil || socket == "" {
-		return consts.DefaultDockerSocketPath
+
+	host, err := storage.Get[string](c.settings, keyDocker, keyHost)
+	if err == nil && host != "" {
+		return host
 	}
-	return socket
+
+	// Every failure to produce an address means the same thing here — there
+	// is no address to use — and the default below is what the docker CLI
+	// itself falls back to. A caller wanting to tell a missing context from a
+	// broken one calls the reader directly; see internal/docker/context.
+	dockerCtx, ctxErr := dockercontext.Current()
+	if ctxErr == nil {
+		return dockerCtx.Host
+	}
+	return consts.DefaultDockerHost
 }

@@ -40,8 +40,16 @@ All label keys come from `config.Config` interface methods (`LabelManaged()`, `L
 ```go
 func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts ...ClientOption) (*Client, error)
 func NewClientFromEngine(engine *whail.Engine, cfg config.Config, log *logger.Logger) *Client  // test constructor
-type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
+type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig), WithEnvHost()
 ```
+
+`NewClient` dials `cfg.DockerHost()` (the resolved daemon address). A
+schemeless address fails client construction with an add-a-scheme hint.
+`WithEnvHost()` skips that resolution entirely and leaves the address to the
+SDK's own env lookup (`$DOCKER_HOST`, else the SDK default) — the CP daemon's
+option: its socket is bind-mounted at the conventional path and `DOCKER_HOST`
+is pinned on its container, so host-side settings/context must never be
+consulted in-container.
 
 `Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `ChownImage string`.
 
@@ -70,6 +78,36 @@ type Container struct {
 ## Builder (`builder.go`)
 
 `NewBuilder(cli *Client, buildCfg config.BuildConfig, workDir, projectName string)` — the builder reads only the project's `build:` block (user image labels from `build.instructions.labels`). `Build(ctx, tag, opts)` is **two-phase**: it first ensures the per-project shared base image (`BaseImageTag(project)` = `clawker-<project>:base`) exists and is fresh — comparing `bundler.BaseContentHash` against the image's `consts.LabelBaseContentHash` label, rebuilding on miss/drift or `--no-cache` — then builds the harness image `FROM` it. Base failure aborts before the harness build. `--pull` applies to the base build only (the harness parent is the local-only `:base` tag). `OnComplete` fires only for the harness build (`--iidfile` = runnable image). Base labels: `ImageLabels` + content hash + `LabelPurpose=PurposeBaseImage`, never user labels or `LabelHarness`; the harness image also records the base content hash. Legacy-stream progress events from the base build are namespaced via `phaseProgress` (`base:` StepID prefix, `[base]` StepName prefix; `[internal]` steps left intact for downstream filtering). In-image layer cache invalidation stays delegated to the daemon-side builder (BuildKit layer cache or classic `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/OnProgress/OnComplete/HarnessVersion/HarnessName`.
+
+## Docker CLI contexts (`context/`)
+
+`internal/docker/context` reads the docker CLI's own context files — the
+`currentContext` pointer in `config.json` and the stored entry under
+`contexts/meta/<sha256 of the name>/meta.json`. A rootless install records its
+daemon address there and nowhere else, so this is what lets clawker reach a
+daemon the `DOCKER_HOST` env var says nothing about. Read-only: it never
+writes, creates, or repairs those files, and holds no state between calls.
+
+```go
+import dockercontext "github.com/schmitthub/clawker/internal/docker/context"
+
+type Context struct{ Name, Description, Host string; SkipTLSVerify bool }
+func Current() (Context, error)          // what the docker CLI would use now
+func Read(name string) (Context, error)  // a specific stored context
+const DefaultName = "default"
+```
+
+Every path that yields no address names itself: `ErrConfigNotFound` (no
+`config.json`), `ErrNoCurrentContext` (it selects nothing, or the synthesized
+`default`), `ErrContextNotFound` (a named context whose file is missing — the
+state that makes the docker CLI itself refuse to run), `ErrNoDockerEndpoint`
+(the context configures something else, e.g. kubernetes). Read and parse
+failures wrap the underlying `os`/`json` error and match none of the four.
+`Host` is non-empty whenever the error is nil.
+
+It is a leaf (stdlib + `internal/consts`), so `internal/config` imports it
+without a cycle — `config.Config.DockerHost()` composes it into the address
+chain.
 
 ## Test Labels (`defaults.go`)
 

@@ -38,7 +38,49 @@ func ProjectMigrations() []storage.Migration[Project] {
 func SettingsMigrations() []storage.Migration[Settings] {
 	return []storage.Migration[Settings]{
 		migrateRemoveLegacyMonitoringKeys,
+		migrateDockerSocketToHost,
 	}
+}
+
+// migrateDockerSocketToHost renames docker.socket to docker.host. The setting
+// always named a daemon address — the same thing $DOCKER_HOST names — and
+// "socket" made a URL look like it did not belong there.
+func migrateDockerSocketToHost(s *storage.Store[Settings]) (bool, error) {
+	const legacyKey = "socket"
+
+	old, err := storage.Get[any](s, keyDocker, legacyKey)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading docker.%s: %w", legacyKey, err)
+	}
+	if rErr := s.Remove(keyDocker, legacyKey); rErr != nil {
+		return false, fmt.Errorf("removing docker.%s: %w", legacyKey, rErr)
+	}
+
+	if slices.Contains(s.Keys(keyDocker), keyHost) {
+		s.Noticef(
+			"warning: %s: both docker.%s (%v) and docker.%s present; keeping docker.%s, dropping docker.%s",
+			s.MigratingLayerPath(), legacyKey, old, keyHost, keyHost, legacyKey,
+		)
+		return true, nil
+	}
+	// The old key held a socket PATH; the new one holds an ADDRESS, and the
+	// Docker SDK rejects a schemeless value outright. A carried path is
+	// prefixed so it arrives as the address naming the same socket; anything
+	// already scheme-qualified is carried verbatim.
+	if path, ok := old.(string); ok && strings.HasPrefix(path, "/") {
+		old = "unix://" + path
+	}
+	if sErr := s.Set([]string{keyDocker, keyHost}, old); sErr != nil {
+		return false, fmt.Errorf("setting docker.%s: %w", keyHost, sErr)
+	}
+	s.Noticef(
+		"notice: %s: docker.%s renamed to docker.%s; carried value %v forward",
+		s.MigratingLayerPath(), legacyKey, keyHost, old,
+	)
+	return true, nil
 }
 
 // legacyMonitoringKeys is the set of monitoring.* keys removed in the

@@ -7,6 +7,14 @@ builds and runs the command tree lives in `internal/clawkercmd`.
 Leaf package by construction: it imports nothing from `internal/`. Anything that
 needs a dependency belongs in the package that owns that dependency, not here.
 
+**Admission rule: declarations only.** Schema structs, interfaces, typed
+values, and domain vocabulary data (e.g. `MountableHostSchemes`). No
+validators, no text helpers, no error types, no constructors beyond trivial
+ones like `NewSession` — behavior belongs to the package that enforces it.
+The packages that consume a vocabulary here each enforce their own constraint
+against it and declare their own errors (`os.ErrNotExist` convention: an error
+lives where it is returned).
+
 ## Exported Symbols
 
 ```go
@@ -18,6 +26,9 @@ type Session interface {
 }
 
 func NewSession() Session
+
+// docker.go — Docker daemon-address vocabulary
+var MountableHostSchemes = []string{"unix://"}  // schemes whose remainder is a filesystem path a socket bind mount can take; expanding socket-mount support starts here
 ```
 
 ## Session

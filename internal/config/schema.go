@@ -389,7 +389,10 @@ type Settings struct {
 // socket exposure to agent containers lives separately under
 // SecurityConfig.DockerSocket — these knobs are unrelated.
 type DockerSettings struct {
-	Socket string `yaml:"socket,omitempty" label:"Docker Socket" desc:"Host path to the Docker daemon socket; the DOCKER_HOST env var takes precedence" default:"/var/run/docker.sock"`
+	// No default tag on purpose: a materialized default would satisfy the
+	// settings tier on every install, so DockerHost would never reach the
+	// docker context below it. The fallback lives in code, as the last tier.
+	Host string `yaml:"host,omitempty" label:"Docker Host" desc:"Address of the Docker daemon, scheme included (e.g. unix:///run/user/1000/docker.sock or tcp://10.0.0.5:2376); the DOCKER_HOST env var takes precedence, and the active docker context is used when neither is set"`
 }
 
 // ControlPlaneSettings configures the control plane in settings.yaml.

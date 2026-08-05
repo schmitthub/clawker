@@ -66,10 +66,9 @@
     "docker": {
       "additionalProperties": false,
       "properties": {
-        "socket": {
-          "default": "/var/run/docker.sock",
-          "description": "Host path to the Docker daemon socket; the DOCKER_HOST env var takes precedence",
-          "title": "Docker Socket",
+        "host": {
+          "description": "Address of the Docker daemon, scheme included (e.g. unix:///run/user/1000/docker.sock or tcp://10.0.0.5:2376); the DOCKER_HOST env var takes precedence, and the active docker context is used when neither is set",
+          "title": "Docker Host",
           "type": "string"
         }
       },

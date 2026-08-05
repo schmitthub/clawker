@@ -11,6 +11,9 @@ import (
 	"github.com/moby/moby/api/types/volume"
 	moby "github.com/moby/moby/client"
 
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -20,8 +23,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	projectpkg "github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
-	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/require"
 )
 
 // testNotFoundError satisfies errdefs.IsNotFound for test fakes.
@@ -170,6 +171,50 @@ func TestCreateContainer_RejectsWorktreeInSnapshotMode(t *testing.T) {
 			fake.AssertNotCalled(t, "ContainerCreate")
 		})
 	}
+}
+
+// TestCreateContainer_RejectsUnmountableDockerHost locks in the entrypoint
+// gate: with security.docker_socket enabled, a daemon address that cannot
+// back a bind mount must be rejected before any volume or container work,
+// and the error must name the setting that turns the mount off.
+func TestCreateContainer_RejectsUnmountableDockerHost(t *testing.T) {
+	setupAuthEnv(t)
+	t.Setenv(consts.EnvDockerHost, "tcp://10.0.0.5:2376")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	project := configmocks.NewFromString("security:\n  docker_socket: true\n", "")
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, project, containerOpts, testFlags()))
+
+	require.ErrorIs(t, err, ErrUnsupportedDockerHost)
+	require.ErrorContains(t, err, "security.docker_socket",
+		"the remediation must name the setting that disables the mount")
+	fake.AssertNotCalled(t, "ContainerCreate")
+	fake.AssertNotCalled(t, "VolumeCreate")
+}
+
+// The gate must not fire when the docker-socket feature is off — a tcp://
+// daemon address is a working configuration for everything except the mount.
+func TestCreateContainer_NonUnixHostFineWithoutSocketMount(t *testing.T) {
+	setupAuthEnv(t)
+	t.Setenv(consts.EnvDockerHost, "tcp://10.0.0.5:2376")
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, testFlags()))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
 }
 
 func TestCreateContainer_ContainerCreateError(t *testing.T) {

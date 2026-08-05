@@ -126,14 +126,14 @@ func GetGitConfigMount(log *logger.Logger) []mount.Mount
 
 ## Docker Socket
 
-```go
-func GetDockerSocketMount(hostSocketPath string) mount.Mount
-```
-
-Only available when `security.docker_socket: true`. Callers pass
-`config.Config.DockerSocketPath()` as the bind source (`DOCKER_HOST` >
-settings `docker.socket` > default); the target is always
-`consts.DefaultDockerSocketPath`.
+No helper — `SetupMounts` builds the bind inline when
+`security.docker_socket: true`: source is `config.Config.DockerHost()`
+(`DOCKER_HOST` > settings `docker.host` > the active docker context >
+`consts.DefaultDockerHost`) with the `unix://` prefix dropped, target is
+always the conventional in-container location. The address is validated
+mountable (`shared`'s own check over `clawker.MountableHostSchemes`) at the command entrypoint
+(`shared.CreateContainer`), before any volume work — SetupMounts itself
+does not re-check.
 
 ## Share Directory (Bind Mount)
 

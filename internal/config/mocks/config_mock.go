@@ -73,8 +73,8 @@ var _ config.Config = &ConfigMock{}
 //			DataDirEnvVarFunc: func() string {
 //				panic("mock out the DataDirEnvVar method")
 //			},
-//			DockerSocketPathFunc: func() string {
-//				panic("mock out the DockerSocketPath method")
+//			DockerHostFunc: func() string {
+//				panic("mock out the DockerHost method")
 //			},
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
@@ -311,8 +311,8 @@ type ConfigMock struct {
 	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
 	DataDirEnvVarFunc func() string
 
-	// DockerSocketPathFunc mocks the DockerSocketPath method.
-	DockerSocketPathFunc func() string
+	// DockerHostFunc mocks the DockerHost method.
+	DockerHostFunc func() string
 
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
@@ -546,8 +546,8 @@ type ConfigMock struct {
 		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
 		DataDirEnvVar []struct {
 		}
-		// DockerSocketPath holds details about calls to the DockerSocketPath method.
-		DockerSocketPath []struct {
+		// DockerHost holds details about calls to the DockerHost method.
+		DockerHost []struct {
 		}
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
@@ -748,7 +748,7 @@ type ConfigMock struct {
 	lockCoreDNSHealthPath       sync.RWMutex
 	lockCoreDNSIPLastOctet      sync.RWMutex
 	lockDataDirEnvVar           sync.RWMutex
-	lockDockerSocketPath        sync.RWMutex
+	lockDockerHost              sync.RWMutex
 	lockDomain                  sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
@@ -1300,30 +1300,30 @@ func (mock *ConfigMock) DataDirEnvVarCalls() []struct {
 	return calls
 }
 
-// DockerSocketPath calls DockerSocketPathFunc.
-func (mock *ConfigMock) DockerSocketPath() string {
-	if mock.DockerSocketPathFunc == nil {
-		panic("ConfigMock.DockerSocketPathFunc: method is nil but Config.DockerSocketPath was just called")
+// DockerHost calls DockerHostFunc.
+func (mock *ConfigMock) DockerHost() string {
+	if mock.DockerHostFunc == nil {
+		panic("ConfigMock.DockerHostFunc: method is nil but Config.DockerHost was just called")
 	}
 	callInfo := struct {
 	}{}
-	mock.lockDockerSocketPath.Lock()
-	mock.calls.DockerSocketPath = append(mock.calls.DockerSocketPath, callInfo)
-	mock.lockDockerSocketPath.Unlock()
-	return mock.DockerSocketPathFunc()
+	mock.lockDockerHost.Lock()
+	mock.calls.DockerHost = append(mock.calls.DockerHost, callInfo)
+	mock.lockDockerHost.Unlock()
+	return mock.DockerHostFunc()
 }
 
-// DockerSocketPathCalls gets all the calls that were made to DockerSocketPath.
+// DockerHostCalls gets all the calls that were made to DockerHost.
 // Check the length with:
 //
-//	len(mockedConfig.DockerSocketPathCalls())
-func (mock *ConfigMock) DockerSocketPathCalls() []struct {
+//	len(mockedConfig.DockerHostCalls())
+func (mock *ConfigMock) DockerHostCalls() []struct {
 } {
 	var calls []struct {
 	}
-	mock.lockDockerSocketPath.RLock()
-	calls = mock.calls.DockerSocketPath
-	mock.lockDockerSocketPath.RUnlock()
+	mock.lockDockerHost.RLock()
+	calls = mock.calls.DockerHost
+	mock.lockDockerHost.RUnlock()
 	return calls
 }
 

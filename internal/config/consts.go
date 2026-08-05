@@ -79,7 +79,7 @@ const (
 	keyHostProxy    = "host_proxy"
 	keyControlPlane = "control_plane"
 	keyDocker       = "docker"
-	keySocket       = "socket"
+	keyHost         = "host"
 )
 
 // ---------------------------------------------------------------------------

@@ -33,11 +33,12 @@ import (
 
 // IsolatedDirs holds the four XDG-style directory paths created for the test.
 type IsolatedDirs struct {
-	Base   string // temp root (parent of all dirs)
-	Config string // CLAWKER_CONFIG_DIR
-	Data   string // CLAWKER_DATA_DIR
-	State  string // CLAWKER_STATE_DIR
-	Cache  string // CLAWKER_CACHE_DIR
+	Base         string // temp root (parent of all dirs)
+	Config       string // CLAWKER_CONFIG_DIR
+	Data         string // CLAWKER_DATA_DIR
+	State        string // CLAWKER_STATE_DIR
+	Cache        string // CLAWKER_CACHE_DIR
+	DockerConfig string // DOCKER_CONFIG — the docker CLI's own config dir
 }
 
 // Env is a unified test environment with isolated directories and optional
@@ -124,14 +125,15 @@ func New(t *testing.T, opts ...Option) *Env {
 	}
 
 	dirs := IsolatedDirs{
-		Base:   base,
-		Config: filepath.Join(base, "config"),
-		Data:   filepath.Join(base, "data"),
-		State:  filepath.Join(base, "state"),
-		Cache:  filepath.Join(base, "cache"),
+		Base:         base,
+		Config:       filepath.Join(base, "config"),
+		Data:         filepath.Join(base, "data"),
+		State:        filepath.Join(base, "state"),
+		Cache:        filepath.Join(base, "cache"),
+		DockerConfig: filepath.Join(base, "docker"),
 	}
 
-	for _, dir := range []string{dirs.Config, dirs.Data, dirs.State, dirs.Cache} {
+	for _, dir := range []string{dirs.Config, dirs.Data, dirs.State, dirs.Cache, dirs.DockerConfig} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("testenv: creating dir %s: %v", dir, err)
 		}
@@ -148,6 +150,15 @@ func New(t *testing.T, opts ...Option) *Env {
 	t.Setenv(consts.EnvDataDir, dirs.Data)
 	t.Setenv(consts.EnvStateDir, dirs.State)
 	t.Setenv(consts.EnvCacheDir, dirs.Cache)
+
+	// Docker daemon-address resolution reads all three of these, so a
+	// developer's own daemon — a rootless socket, a remote context — would
+	// otherwise decide what a test resolves. DockerConfig is pointed at an
+	// empty directory rather than cleared: a test that wants a context seeds
+	// one there, and every other test sees a host with no docker config.
+	t.Setenv(consts.EnvDockerHost, "")
+	t.Setenv(consts.EnvDockerContext, "")
+	t.Setenv(consts.EnvDockerConfig, dirs.DockerConfig)
 
 	env := &Env{Dirs: dirs}
 

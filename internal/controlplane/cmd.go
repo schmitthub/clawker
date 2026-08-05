@@ -616,8 +616,11 @@ func buildEnforcement(
 	err error,
 ) {
 	// Docker client serves the container resolver, the firewall stack (Envoy +
-	// CoreDNS siblings over DooD), and the AgentWatcher poll loop.
-	dockerCli, err = docker.NewClient(ctx, cfg, log)
+	// CoreDNS siblings over DooD), and the AgentWatcher poll loop. WithEnvHost:
+	// the socket is bind-mounted at the conventional path and DOCKER_HOST is
+	// pinned on this container; the host-side resolution chain (settings,
+	// docker context) names the wrong side of the mount in here.
+	dockerCli, err = docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}

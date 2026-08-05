@@ -28,6 +28,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -1670,9 +1671,51 @@ type CreateContainerResult struct {
 // Developer diagnostics go to zerolog. Callers own all terminal output.
 // On any failure past the resource-tracking point, each error return reclaims
 // the container and volumes created during the attempt; a panic does not.
+// ErrUnsupportedDockerHost reports a daemon address the docker-socket feature
+// (security.docker_socket) cannot mount into the agent container: a bind
+// source is a filesystem path, and only the schemes in
+// clawker.MountableHostSchemes carry one.
+var ErrUnsupportedDockerHost = errors.New("docker daemon address cannot be bind-mounted into the container")
+
+// validateMountableHost enforces the docker-socket feature's constraint on
+// the resolved daemon address, naming the offending address and the fixes.
+func validateMountableHost(dockerHost string) error {
+	for _, scheme := range clawker.MountableHostSchemes {
+		if !strings.HasPrefix(dockerHost, scheme) {
+			continue
+		}
+		if path := strings.TrimPrefix(dockerHost, scheme); !filepath.IsAbs(path) {
+			return fmt.Errorf(
+				"%w: %q resolves to the non-absolute socket path %q "+
+					"(a unix address takes three slashes, e.g. unix:///var/run/docker.sock)",
+				ErrUnsupportedDockerHost, dockerHost, path)
+		}
+		return nil
+	}
+	if filepath.IsAbs(dockerHost) {
+		return fmt.Errorf(
+			"%w: %q carries no scheme — write it as unix://%s",
+			ErrUnsupportedDockerHost, dockerHost, dockerHost)
+	}
+	return fmt.Errorf(
+		"%w: %q is not a unix:// address; set security.docker_socket: false in clawker.yaml to stop mounting it, "+
+			"or point the daemon address ($DOCKER_HOST, the docker.host setting, or the active docker context) "+
+			"at a unix socket",
+		ErrUnsupportedDockerHost, dockerHost)
+}
+
 func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*CreateContainerResult, error) {
 	containerOpts := opts.Options
 	log := opts.Log
+
+	// Entrypoint gate: the docker-socket feature bind-mounts the daemon
+	// socket, which only a unix:// address can back. Checked before any
+	// volume or container work so a bad address strands nothing.
+	if opts.Config.SecurityConfig().DockerSocket {
+		if err := validateMountableHost(opts.Config.DockerHost()); err != nil {
+			return nil, err
+		}
+	}
 
 	agentName := containerOpts.GetAgentName()
 	if agentName == "" {

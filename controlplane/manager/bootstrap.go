@@ -191,6 +191,12 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	if err := opts.HostDirs.Validate(); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
+	// Checked before any image or container work: the CP cannot exist
+	// without bind-mounting the daemon socket, so an unmountable address
+	// must fail here in milliseconds, not after an image build.
+	if err := validateMountableHost(opts.Config.DockerHost()); err != nil {
+		return fmt.Errorf("controlplane: %w", err)
+	}
 
 	dc := opts.Docker
 	cfg := opts.Config

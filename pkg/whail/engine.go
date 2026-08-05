@@ -21,6 +21,14 @@ type EngineOptions struct {
 
 	// Labels configures labels for different resource types.
 	Labels LabelConfig
+
+	// Host is the Docker daemon address as a URL
+	// (e.g. unix:///run/user/1000/docker.sock, tcp://10.0.0.5:2376). Empty
+	// means the environment decides, which honors $DOCKER_HOST and nothing
+	// else — notably not the docker CLI's contexts, which is where a
+	// rootless install records its address. A caller that resolves the
+	// address itself passes it here.
+	Host string
 }
 
 // DefaultManagedLabel is the default label suffix for marking managed resources.
@@ -62,7 +70,16 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 	// Create the underlying Docker client (moby/moby/client; version pinned in go.mod).
 	// client.New is lazy — it only configures the client, not connecting to
 	// the daemon. Connection errors surface at HealthCheck (Ping) below.
-	realClient, err := client.New(client.FromEnv)
+	//
+	// FromEnv supplies the TLS material and API version, and the address when
+	// $DOCKER_HOST is set. WithHost comes after so an address the caller
+	// resolved wins: the caller knows about sources FromEnv cannot see.
+	clientOpts := []client.Opt{client.FromEnv}
+	if opts.Host != "" {
+		clientOpts = append(clientOpts, client.WithHost(opts.Host))
+	}
+
+	realClient, err := client.New(clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
