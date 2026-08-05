@@ -43,7 +43,12 @@ func AdminMethodScopes() map[string]AdminScope {
 		// listener still authenticates the channel.
 		svc + "GetSystemTime": consts.ScopePublic,
 
-		// Privileged RPCs on this service are admin-only.
+		// Privileged RPCs on this service are admin-only. WatchSOS is
+		// admin-scoped like the rest — recoverable startup failures only
+		// happen after the Ory stack is up (anything earlier exits 1), so
+		// the CLI can always mint a token by the time there is something
+		// to watch. It is exempted from the READY gate, not from auth —
+		// see the ready-gate exemption set in controlplane/server.
 		svc + "FirewallInit":            ScopeAdmin,
 		svc + "FirewallRemove":          ScopeAdmin,
 		svc + "FirewallEnable":          ScopeAdmin,
@@ -58,5 +63,6 @@ func AdminMethodScopes() map[string]AdminScope {
 		svc + "FirewallSyncRoutes":      ScopeAdmin,
 		svc + "FirewallResolveHostname": ScopeAdmin,
 		svc + "ListAgents":              ScopeAdmin,
+		svc + "WatchSOS":                ScopeAdmin,
 	}
 }

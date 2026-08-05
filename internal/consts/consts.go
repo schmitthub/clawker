@@ -533,6 +533,15 @@ const (
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
 )
 
+// CPSOSIdleTTL is the shared clock of the WatchSOS channel, used on both
+// sides so neither outlives the other: a CP holding a recoverable startup
+// failure with no watcher stream connected shuts down after this long (a
+// connected watcher holds the clock at zero), and the CLI keeps
+// re-attempting the WatchSOS connection for the same window before giving
+// up and disconnecting. It matches the 30s an idle CP already waits
+// before drain-to-zero.
+const CPSOSIdleTTL = 30 * time.Second
+
 // Host-proxy egress-rules readiness gate. The host-proxy daemon serves
 // /health immediately, then runs a staged wait — firewall container running →
 // Envoy health answering → egress rules file readable — before it trusts the

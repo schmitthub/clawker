@@ -34,6 +34,7 @@ const (
 	AdminService_FirewallResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/FirewallResolveHostname"
 	AdminService_ListAgents_FullMethodName              = "/clawker.admin.v1.AdminService/ListAgents"
 	AdminService_GetSystemTime_FullMethodName           = "/clawker.admin.v1.AdminService/GetSystemTime"
+	AdminService_WatchSOS_FullMethodName                = "/clawker.admin.v1.AdminService/WatchSOS"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -134,6 +135,24 @@ type AdminServiceClient interface {
 	// CLI's client cert is long-lived (1y), so the handshake survives a lagging
 	// CP clock.
 	GetSystemTime(ctx context.Context, in *GetSystemTimeRequest, opts ...grpc.CallOption) (*GetSystemTimeResult, error)
+	// WatchSOS is the CLI's window into a boot that needs assistance.
+	// The CLI keeps (re-)establishing this stream from a goroutine while
+	// the CP boots. The stream carries an error or nothing: when the
+	// startup flow hits a failure it cannot resolve alone but the CLI can
+	// assist with, that failure is delivered on every open stream —
+	// including streams that connect after it was published. When the
+	// failure is resolved, or startup completes, the server ends the
+	// stream cleanly. Unrecoverable failures never appear here — the CP
+	// exits non-zero as usual and the dropped connection is the signal.
+	//
+	// Admin-scoped like every privileged RPC: recoverable failures only
+	// happen after the auth stack is up (anything earlier exits non-zero),
+	// so the CLI can always mint a token by the time there is something to
+	// watch. It is exempt from the server's READY gate — it must serve
+	// while the startup flow is still running. A CP holding a recoverable
+	// failure with no watcher connected shuts down after its recovery idle
+	// TTL rather than waiting forever; a connected watcher holds it open.
+	WatchSOS(ctx context.Context, in *WatchSOSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SOS], error)
 }
 
 type adminServiceClient struct {
@@ -294,6 +313,25 @@ func (c *adminServiceClient) GetSystemTime(ctx context.Context, in *GetSystemTim
 	return out, nil
 }
 
+func (c *adminServiceClient) WatchSOS(ctx context.Context, in *WatchSOSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SOS], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AdminService_ServiceDesc.Streams[0], AdminService_WatchSOS_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchSOSRequest, SOS]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AdminService_WatchSOSClient = grpc.ServerStreamingClient[SOS]
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -392,6 +430,24 @@ type AdminServiceServer interface {
 	// CLI's client cert is long-lived (1y), so the handshake survives a lagging
 	// CP clock.
 	GetSystemTime(context.Context, *GetSystemTimeRequest) (*GetSystemTimeResult, error)
+	// WatchSOS is the CLI's window into a boot that needs assistance.
+	// The CLI keeps (re-)establishing this stream from a goroutine while
+	// the CP boots. The stream carries an error or nothing: when the
+	// startup flow hits a failure it cannot resolve alone but the CLI can
+	// assist with, that failure is delivered on every open stream —
+	// including streams that connect after it was published. When the
+	// failure is resolved, or startup completes, the server ends the
+	// stream cleanly. Unrecoverable failures never appear here — the CP
+	// exits non-zero as usual and the dropped connection is the signal.
+	//
+	// Admin-scoped like every privileged RPC: recoverable failures only
+	// happen after the auth stack is up (anything earlier exits non-zero),
+	// so the CLI can always mint a token by the time there is something to
+	// watch. It is exempt from the server's READY gate — it must serve
+	// while the startup flow is still running. A CP holding a recoverable
+	// failure with no watcher connected shuts down after its recovery idle
+	// TTL rather than waiting forever; a connected watcher holds it open.
+	WatchSOS(*WatchSOSRequest, grpc.ServerStreamingServer[SOS]) error
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -446,6 +502,9 @@ func (UnimplementedAdminServiceServer) ListAgents(context.Context, *ListAgentsRe
 }
 func (UnimplementedAdminServiceServer) GetSystemTime(context.Context, *GetSystemTimeRequest) (*GetSystemTimeResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSystemTime not implemented")
+}
+func (UnimplementedAdminServiceServer) WatchSOS(*WatchSOSRequest, grpc.ServerStreamingServer[SOS]) error {
+	return status.Error(codes.Unimplemented, "method WatchSOS not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -738,6 +797,17 @@ func _AdminService_GetSystemTime_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_WatchSOS_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchSOSRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(AdminServiceServer).WatchSOS(m, &grpc.GenericServerStream[WatchSOSRequest, SOS]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AdminService_WatchSOSServer = grpc.ServerStreamingServer[SOS]
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -806,6 +876,12 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AdminService_GetSystemTime_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchSOS",
+			Handler:       _AdminService_WatchSOS_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "admin/v1/admin.proto",
 }

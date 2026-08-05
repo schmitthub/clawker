@@ -20,6 +20,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	fwcp "github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/auth"
@@ -51,6 +52,11 @@ const (
 
 	// cpStopTimeout (seconds) is the grace period before SIGKILL on Stop.
 	cpStopTimeout = 30
+
+	// sosRetryInterval paces the WatchSOS connection spam: any failed
+	// dial/stream attempt retries this fast for the shared
+	// consts.CPSOSIdleTTL window.
+	sosRetryInterval = 500 * time.Millisecond
 )
 
 // ensureMu serializes concurrent EnsureRunning calls within a single
@@ -73,6 +79,8 @@ var (
 	healthzFn       = waitForCPHealthz
 	clockSyncFn     = waitForCPClockSync
 	probeCPTimeFn   = adminclient.ProbeCPTime
+	//nolint:gochecknoglobals // test seam, same contract as the sibling seams in this block
+	watchSOSFn = watchSOS
 )
 
 // errCPRecoveryRetry is returned by recoverFromNameConflict when it
@@ -230,7 +238,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 					return fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
-			return cpReady(ctx, dc, cfg, log)
+			return awaitCPReady(ctx, dc, cfg, log)
 		}
 
 		cpRunning := summary.State == container.StateRunning
@@ -301,7 +309,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	return cpReady(ctx, dc, cfg, log)
+	return awaitCPReady(ctx, dc, cfg, log)
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -760,6 +768,130 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 // drifted from the host would let clawkerd exchange an assertion whose
 // (host-clock) iat is in the CP's future, so clock sync is a first-class
 // readiness condition, not an afterthought.
+// CPSOSError reports that the CP sent an SOS mid-boot on the WatchSOS
+// stream: a recoverable startup failure it cannot fix alone and is alive
+// waiting for the CLI's assistance on. Message carries the CP's own
+// description of what is needed. Typed so callers can discriminate it
+// from readiness timeouts and container exits without string matching.
+type CPSOSError struct {
+	Message string
+}
+
+func (e *CPSOSError) Error() string {
+	return "control plane needs assistance: " + e.Message
+}
+
+// awaitCPReady runs the readiness gate and the SOS watch concurrently
+// from the moment the CP container is running. The watch is the CLI's
+// window into a boot waiting for assistance: an SOS delivered while the
+// readiness gate is still waiting wins and surfaces as *CPSOSError —
+// today's consumer aborts the wait with the CP's own words (the heal
+// orchestration replaces this consumption when it lands); the closed
+// stream then leaves the CP unwatched, and it shuts itself down
+// fail-closed after the shared consts.CPSOSIdleTTL. A watch that ends
+// with nothing to deliver leaves the outcome to the readiness gate
+// alone.
+func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	sosCh := watchSOSFn(watchCtx, cfg, log)
+
+	readyCh := make(chan error, 1)
+	readyCtx, stopReady := context.WithCancel(ctx)
+	defer stopReady()
+	go func() { readyCh <- cpReady(readyCtx, dc, cfg, log) }()
+
+	select {
+	case err := <-readyCh:
+		return err
+	case msg, ok := <-sosCh:
+		if !ok {
+			// Watch ended with nothing to deliver (clean end-of-stream,
+			// gave up, or cancelled) — the readiness gate decides.
+			return <-readyCh
+		}
+		return &CPSOSError{Message: msg}
+	}
+}
+
+// watchSOS is the CLI half of the WatchSOS channel: from the moment it
+// is called it spams connection attempts at the CP's admin surface —
+// dial, open the stream, block on receive; any failure retries after
+// sosRetryInterval — for the shared consts.CPSOSIdleTTL window, the same
+// clock after which an unwatched CP holding a failure shuts itself
+// down. No pre-checks before dialing: probing anything else first only
+// delays the connection. At most one SOS message is delivered on the
+// returned channel; the channel closes without a message when the
+// stream ends cleanly (nothing to report), the window expires (hung
+// CP — give up and disconnect), or ctx is cancelled.
+func watchSOS(ctx context.Context, cfg config.Config, log *logger.Logger) <-chan string {
+	sosCh := make(chan string, 1)
+	go func() {
+		defer close(sosCh)
+		watchCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
+		defer cancel()
+		cp := cfg.ControlPlaneSettings()
+		for {
+			msg, terminal := watchSOSOnce(watchCtx, cp.AdminPort, cp.HydraPublicPort, log)
+			if msg != "" {
+				log.Info().
+					Str("event", "cp_sos_received").
+					Str("component", "manager.bootstrap").
+					Str("message", msg).
+					Msg("control plane sent an SOS during boot")
+				sosCh <- msg
+				return
+			}
+			if terminal {
+				return
+			}
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-time.After(sosRetryInterval):
+			}
+		}
+	}()
+	return sosCh
+}
+
+// watchSOSOnce is one WatchSOS connection attempt: dial the admin
+// surface, open the stream, block on the first receive. It returns the
+// received SOS message (terminal), terminal=true with no message on a
+// clean end-of-stream (the CP resolved the failure or completed boot
+// with nothing to report — stop watching), and terminal=false on any
+// failure (CP not up yet, token mint rejected while the CP clock lags,
+// stream dropped) so the caller retries — a dropped gRPC stream never
+// reconnects on its own.
+func watchSOSOnce(ctx context.Context, adminPort, hydraPort int, log *logger.Logger) (string, bool) {
+	adminClient, conn, err := adminclient.Dial(ctx, adminPort, hydraPort)
+	if err != nil {
+		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: dial attempt failed; retrying")
+		return "", false
+	}
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			log.Debug().Err(cerr).Str("component", "manager.bootstrap").Msg("sos watch: closing connection")
+		}
+	}()
+
+	stream, err := adminClient.WatchSOS(ctx, &adminv1.WatchSOSRequest{})
+	if err != nil {
+		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: stream open failed; retrying")
+		return "", false
+	}
+	sos, err := stream.Recv()
+	switch {
+	case err == nil:
+		return sos.GetMessage(), true
+	case errors.Is(err, io.EOF):
+		return "", true
+	default:
+		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: stream ended; retrying")
+		return "", false
+	}
+}
+
 func cpReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
 	if err := healthzFn(ctx, dc, cfg); err != nil {
 		return err

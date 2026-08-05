@@ -119,7 +119,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origImage, origHealthz, origClockSync := ensureCPImageFn, healthzFn, clockSyncFn
+	origImage, origHealthz, origClockSync, origWatchSOS := ensureCPImageFn, healthzFn, clockSyncFn, watchSOSFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
 		return cpImageRef(), nil
@@ -133,11 +133,18 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		calls.clockSync.Add(1)
 		return nil
 	}
+	// Stub the SOS watch (real impl spams gRPC dials at localhost) with a
+	// channel that never delivers — the readiness gate decides, matching
+	// a boot with nothing to report.
+	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan string {
+		return make(chan string)
+	}
 
 	t.Cleanup(func() {
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
 		clockSyncFn = origClockSync
+		watchSOSFn = origWatchSOS
 	})
 	return &bootstrapFixture{cfg: cfg, fake: fake, calls: calls}
 }
@@ -362,6 +369,53 @@ func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
 		"clock-sync gate failure must propagate out of EnsureRunning")
 	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container created before the clock-sync gate")
+}
+
+// TestEnsureRunning_SOS_SurfacesCPSOSError pins the SOS-wins contract:
+// an SOS delivered while the readiness gate is still waiting aborts the
+// wait and surfaces as *CPSOSError carrying the CP's own message —
+// instead of the user staring at a wait that can only time out. The
+// healthz stub blocks until its ctx dies, proving both that the SOS
+// preempts an in-flight wait and that the readiness goroutine is
+// cancelled rather than leaked.
+func TestEnsureRunning_SOS_SurfacesCPSOSError(t *testing.T) {
+	f := newBootstrapFixture(t)
+	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan string {
+		ch := make(chan string, 1)
+		ch <- "the kernel denied eBPF setup (test sentinel)"
+		close(ch)
+		return ch
+	}
+	healthzFn = func(ctx context.Context, _ *docker.Client, _ config.Config) error {
+		f.calls.healthz.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	var sos *CPSOSError
+	require.ErrorAs(t, err, &sos)
+	assert.Equal(t, "the kernel denied eBPF setup (test sentinel)", sos.Message)
+	assert.Equal(t, int32(1), f.calls.create.Load(), "container created before the SOS arrived")
+}
+
+// TestEnsureRunning_QuietWatch_ReadinessDecides pins the no-SOS path: a
+// watch that ends with nothing to deliver (closed channel — clean
+// end-of-stream or give-up) must leave the outcome entirely to the
+// readiness gate. A regression that treated the closed channel as a
+// failure would break every healthy boot.
+func TestEnsureRunning_QuietWatch_ReadinessDecides(t *testing.T) {
+	f := newBootstrapFixture(t)
+	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan string {
+		ch := make(chan string)
+		close(ch)
+		return ch
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	assert.Equal(t, int32(1), f.calls.healthz.Load(), "readiness gate ran")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
 }
 
 func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {

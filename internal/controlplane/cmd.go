@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -46,6 +47,24 @@ const (
 
 const healthCacheTTL = 2 * time.Second
 
+// serviceProbeTimeout bounds each /healthz service-port probe dial.
+const serviceProbeTimeout = 2 * time.Second
+
+// recoveryRetryInterval is how often the recovery wait loop retries the
+// failed startup step while waiting for assistance. The give-up clock is
+// the shared consts.CPSOSIdleTTL — the CLI spams WatchSOS connection
+// attempts for that same window, so neither side outlives the other.
+const recoveryRetryInterval = 2 * time.Second
+
+// recoveryMsgEBPFPermission travels to the CLI on the WatchSOS
+// stream when eBPF load is denied by the kernel — the rootless-Docker
+// shape the CLI can assist with.
+const recoveryMsgEBPFPermission = "the kernel denied eBPF setup (rootless Docker) — waiting for BPF filesystem delegation"
+
+// errRecoveryAbandoned marks a recovery wait that timed out because no
+// WatchSOS stream was connected within consts.CPSOSIdleTTL.
+var errRecoveryAbandoned = errors.New("recovery assistance never arrived")
+
 // ControlPlane manages the control plane's subprocess startup
 // sequence and health reporting. The /healthz endpoint actively probes
 // all internal service ports — it only returns 200 when every service
@@ -68,6 +87,18 @@ type ControlPlane struct {
 	healthOK     bool
 	healthFailed string // name of first failed probe, empty if all OK
 	healthAt     time.Time
+
+	// Recovery queue state for the WatchSOS stream: a single
+	// pending recoverable-failure slot the startup flow publishes into
+	// when it hits a failure the CLI can assist with, the set of
+	// connected watcher channels it fans out to, and the idle clock — a
+	// waiting CP with no watcher connected shuts down instead of waiting
+	// forever, and a connected watcher holds the clock at zero.
+	recoveryMu         sync.Mutex
+	recoveryPending    bool
+	recoveryMessage    string
+	recoverySubs       map[chan string]struct{}
+	recoveryAttendedAt time.Time
 }
 
 // serviceProbe defines a TCP or HTTPS endpoint to check. A non-nil check is
@@ -85,7 +116,8 @@ type serviceProbe struct {
 // values are available.
 func NewControlPlane() *ControlPlane {
 	return &ControlPlane{
-		timeout: 2 * time.Second,
+		timeout:      serviceProbeTimeout,
+		recoverySubs: make(map[chan string]struct{}),
 	}
 }
 
@@ -115,10 +147,10 @@ func (o *ControlPlane) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *
 
 // SetAdminServingCheck installs the predicate the grpc-admin probe consults
 // before dialing. The admin listener socket is bound at gRPC stack
-// construction and only starts serving after the startup gates and SetReady,
-// so a bare dial completes from the accept backlog even when no goroutine is
-// in Serve — /healthz would report healthy while every admin RPC hangs.
-// A nil predicate is ignored, leaving the probe fail-closed.
+// construction before anything serves on it, so a bare dial completes from
+// the accept backlog even when no goroutine is in Serve — /healthz would
+// report healthy while every admin RPC hangs. A nil predicate is ignored,
+// leaving the probe fail-closed.
 func (o *ControlPlane) SetAdminServingCheck(check func() bool) {
 	if check == nil {
 		return
@@ -142,9 +174,111 @@ func (o *ControlPlane) IsReady() bool {
 }
 
 // SetReady marks the CP as ready. Called after all startup steps
-// (subprocesses, eBPF load, gRPC server) have succeeded.
+// (subprocesses, eBPF load, gRPC server) have succeeded. Readiness is
+// terminal for the recovery queue: every connected watcher stream ends
+// cleanly — there is nothing left for a watcher to assist with.
 func (o *ControlPlane) SetReady() {
 	o.ready.Store(true)
+	o.recoveryMu.Lock()
+	defer o.recoveryMu.Unlock()
+	o.closeRecoverySubsLocked()
+}
+
+// PublishRecovery publishes a recoverable startup failure: one the CP
+// cannot resolve alone but the CLI can assist with. The startup flow
+// publishes it ONCE, keeps the CP alive, and retries; every connected
+// WatchSOS stream — and any that connects later — receives it.
+// Only one failure is pending at a time (startup is sequential); a later
+// publish replaces the slot. Publishing also starts the idle clock: the
+// CLI gets a full idle TTL to connect before the wait loop may give up.
+func (o *ControlPlane) PublishRecovery(message string) {
+	o.recoveryMu.Lock()
+	defer o.recoveryMu.Unlock()
+	o.recoveryPending = true
+	o.recoveryMessage = message
+	o.recoveryAttendedAt = time.Now()
+	for ch := range o.recoverySubs {
+		select {
+		case ch <- message:
+		default:
+			// The watcher hasn't drained the previous message; the slot
+			// semantics make the undelivered one stale anyway.
+		}
+	}
+}
+
+// ClearRecovery empties the pending recovery slot and ends every
+// connected watcher stream cleanly. The startup flow calls it when the
+// awaited assistance landed and the failed step succeeded on retry.
+func (o *ControlPlane) ClearRecovery() {
+	o.recoveryMu.Lock()
+	defer o.recoveryMu.Unlock()
+	o.recoveryPending = false
+	o.recoveryMessage = ""
+	o.closeRecoverySubsLocked()
+}
+
+// closeRecoverySubsLocked closes and forgets every watcher channel — the
+// clean end-of-stream on the wire. Callers hold recoveryMu.
+func (o *ControlPlane) closeRecoverySubsLocked() {
+	for ch := range o.recoverySubs {
+		close(ch)
+	}
+	o.recoverySubs = make(map[chan string]struct{})
+}
+
+// SubscribeRecovery implements server.RecoverySource for the
+// WatchSOS stream. The returned channel delivers the pending
+// recoverable failure (current or later-published) and is closed when
+// the failure resolves or startup completes. The cancel func is
+// idempotent and must be called when the watcher disconnects — a
+// connected watcher holds the idle clock at zero, and the disconnect
+// restarts it.
+func (o *ControlPlane) SubscribeRecovery() (<-chan string, func()) {
+	o.recoveryMu.Lock()
+	defer o.recoveryMu.Unlock()
+
+	ch := make(chan string, 1)
+	if o.ready.Load() {
+		// Terminal: nothing left to assist with — instant end-of-stream.
+		close(ch)
+		return ch, func() {}
+	}
+	o.recoverySubs[ch] = struct{}{}
+	o.recoveryAttendedAt = time.Now()
+	if o.recoveryPending {
+		ch <- o.recoveryMessage
+	}
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			o.recoveryMu.Lock()
+			defer o.recoveryMu.Unlock()
+			if _, live := o.recoverySubs[ch]; !live {
+				// Already closed by ClearRecovery/SetReady.
+				return
+			}
+			delete(o.recoverySubs, ch)
+			o.recoveryAttendedAt = time.Now()
+		})
+	}
+	return ch, cancel
+}
+
+// RecoveryIdle reports how long the recovery surface has gone
+// unattended: zero while any watcher is connected, otherwise the time
+// since the last publish, connect, or disconnect. The recovery wait
+// loop compares it against the idle TTL: a CP waiting for assistance
+// that nobody is watching is abandoned — shut down rather than wait
+// forever.
+func (o *ControlPlane) RecoveryIdle() time.Duration {
+	o.recoveryMu.Lock()
+	defer o.recoveryMu.Unlock()
+	if len(o.recoverySubs) > 0 {
+		return 0
+	}
+	return time.Since(o.recoveryAttendedAt)
 }
 
 // HealthzHandler returns an http.Handler for the /healthz endpoint.
@@ -427,35 +561,6 @@ func runDrainSequence(ctx context.Context, d drainDeps) error {
 	return errors.Join(errs...)
 }
 
-// startOryStack the Ory auth stack (Kratos, Hydra, Oathkeeper) —
-// startup GATE 1. NewOryStack builds the single CLI CA pool + caTLS up front;
-// Start runs the Ory choreography. It returns the single CA surface
-// (caCertPool, caTLS) every downstream consumer reuses — never rebuilt — and
-// configures the orchestrator's aggregate /healthz service probes. A failure
-// fails CP startup (pre-SetReady, code 1) WITHOUT an eBPF flush.
-func startOryStack(
-	ctx context.Context,
-	cfg config.Config,
-	subMgr *subprocess.SubprocessManager,
-	orchestrator *ControlPlane,
-	cp config.ControlPlaneSettings,
-	caCertPath, jwkPath string,
-	log *logger.Logger,
-) (*x509.CertPool, *tls.Config, error) {
-	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
-	if err != nil {
-		return nil, nil, fmt.Errorf("ory stack: %w", err)
-	}
-	if err := oryStack.Start(ctx); err != nil {
-		return nil, nil, err
-	}
-	caCertPool := oryStack.CACertPool()
-	caTLS := oryStack.CATLS()
-	// /healthz actively probes ALL service ports — 200 only when every responds.
-	orchestrator.SetServiceProbes(cp, caTLS)
-	return caCertPool, caTLS, nil
-}
-
 // buildAgentInfra builds the durable sqlite agent registry (CP is the
 // SOLE writer; EnsureSchema before NewSQLiteWriter so its SELECT COUNT sees the
 // table), the peer-IP→Docker→labels resolver (grounds identity trust on a
@@ -649,14 +754,54 @@ func buildEnforcement(
 	}
 	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, identityAlloc.IdentityFor)
 
+	// Construction only: the manager exists but loads nothing here. BPF
+	// pins are created by the ebpfLoadFlow startup step, after the admin
+	// listener is serving — never as a construction side effect. Closing
+	// an unloaded manager is a no-op, so the joined cleanup is installed
+	// now and covers every arm.
 	ebpfMgr = ebpf.NewManager(log)
-	if err := ebpfMgr.Load(); err != nil {
-		return dockerCli, containerResolver, rulesStore, stack, nil, identityAlloc, cleanup,
-			fmt.Errorf("ebpf load: %w", err)
-	}
-	// Extend cleanup to also close the eBPF manager (join its error so a partial
-	// teardown is investigated, not silently blessed).
 	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
+	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+}
+
+// enforcementCleanup closes the eBPF manager and the Docker client, joining
+// the eBPF close error so a partial teardown is investigated, not silently
+// blessed.
+// ebpfLoadFlow is the startup-flow step that creates the CP's BPF state:
+// Load() attaches programs and creates the pins, then CleanupStaleBypass
+// clears leftover bypass_map entries from a crashed previous CP
+// (INV-B2-013). Both remain hard pre-SetReady gates. It is a ControlPlane
+// method because the recovery protocol — publish once, wait for a
+// watcher, clear on success — is the orchestrator's own state
+// management.
+//
+// A permission-denied Load is the one recoverable failure: it means the
+// kernel refused BPF operations to this container — the rootless-Docker
+// shape, where the CP runs in the daemon's user namespace without
+// init-namespace privileges. The CLI can assist (BPF filesystem token
+// delegation), so instead of exiting, the flow publishes the failure
+// ONCE on the recovery queue — where it sits until cleared, delivered to
+// every WatchSOS stream — and retries the load until the assistance
+// lands (see awaitEBPFLoadRecovery for the wait/give-up contract). Every
+// other Load failure, first or mid-retry, is unrecoverable and returns —
+// pre-SetReady exit 1, nothing attached, fail-closed unchanged.
+func (o *ControlPlane) ebpfLoadFlow(ctx context.Context, ebpfMgr *ebpf.Manager, log *logger.Logger) error {
+	if err := ebpfMgr.Load(); err != nil {
+		if !errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("ebpf load: %w", err)
+		}
+
+		o.PublishRecovery(recoveryMsgEBPFPermission)
+		log.Warn().Err(err).
+			Str("event", "ebpf_load_awaiting_recovery").
+			Dur("idle_ttl", consts.CPSOSIdleTTL).
+			Msg("eBPF load denied by the kernel (rootless Docker); waiting for CLI assistance via the recovery surface")
+
+		if waitErr := o.awaitEBPFLoadRecovery(ctx, ebpfMgr); waitErr != nil {
+			return waitErr
+		}
+		o.ClearRecovery()
+	}
 	log.Info().Msg("eBPF programs loaded")
 
 	// Defensive startup cleanup (INV-B2-013): cgroup IDs are reusable across
@@ -664,18 +809,44 @@ func buildEnforcement(
 	// previous CP could grant a fresh unrelated container unrestricted egress.
 	cleared, err := ebpfMgr.CleanupStaleBypass()
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup,
-			fmt.Errorf("defensive bypass cleanup: %w", err)
+		return fmt.Errorf("defensive bypass cleanup: %w", err)
 	}
 	if cleared > 0 {
 		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
 	}
-	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+	return nil
 }
 
-// enforcementCleanup closes the eBPF manager and the Docker client, joining
-// the eBPF close error so a partial teardown is investigated, not silently
-// blessed.
+// awaitEBPFLoadRecovery retries the eBPF load on an interval after a
+// recoverable (permission-denied) failure was published, until one of:
+// the load succeeds (assistance landed — return nil), the ctx is
+// cancelled, the recovery surface goes unwatched for consts.CPSOSIdleTTL (an
+// abandoned CP shuts down rather than waiting forever — a connected
+// WatchSOS stream holds the clock at zero), or the load fails with
+// a non-permission error (the failure class changed; unrecoverable).
+func (o *ControlPlane) awaitEBPFLoadRecovery(ctx context.Context, ebpfMgr *ebpf.Manager) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("ebpf load: cancelled while awaiting recovery: %w", ctx.Err())
+		case <-time.After(recoveryRetryInterval):
+		}
+		if idle := o.RecoveryIdle(); idle > consts.CPSOSIdleTTL {
+			return fmt.Errorf(
+				"ebpf load: recovery surface unwatched for %s (idle TTL %s) — abandoned, shutting down: %w",
+				idle.Round(time.Second), consts.CPSOSIdleTTL, errRecoveryAbandoned,
+			)
+		}
+		err := ebpfMgr.Load()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("ebpf load: %w", err)
+		}
+	}
+}
+
 func enforcementCleanup(dockerCli *docker.Client, ebpfMgr *ebpf.Manager, log *logger.Logger) func() error {
 	return func() error {
 		var errs []error
@@ -705,6 +876,7 @@ type grpcStackDeps struct {
 	agentPeerLookup   *agent.MobyPeerLookup
 	lister            *agent.ContainerLister
 	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+	orchestrator      *ControlPlane
 	caCertPool        *x509.CertPool
 	caTLS             *tls.Config
 	cp                config.ControlPlaneSettings
@@ -754,6 +926,8 @@ func buildGRPCStack(d grpcStackDeps) (
 	grpcStack, err = server.NewGRPCStack(server.GRPCDeps{
 		Handler:        handler,
 		Registry:       d.agentReg,
+		Recovery:       d.orchestrator,
+		Ready:          d.orchestrator.IsReady,
 		PeerLookup:     d.agentPeerLookup,
 		ServerCertPath: d.serverCertPath,
 		ServerKeyPath:  d.serverKeyPath,
@@ -772,9 +946,9 @@ func buildGRPCStack(d grpcStackDeps) (
 	// failure without blocking before the serve select is reached.
 	//
 	// Only the AGENT listener serves here — clawkerd dial-back and agent
-	// registration are boot-time flows. The admin listener serves after the
-	// startup gates and SetReady (run() calls ServeAdmin), so no admin RPC
-	// can land while the CP is still booting.
+	// registration are boot-time flows. run() serves the admin listener
+	// right after this returns; its ready-gate interceptor keeps every
+	// non-public RPC out until SetReady.
 	serveFailed = make(chan error, 4)
 	grpcStack.ServeAgent(serveFailed)
 	return actionQueue, handler, grpcStack, serveFailed, cleanup, nil
@@ -1113,17 +1287,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	watcherCtx, watcherCancel := context.WithCancel(ctx)
 	defer watcherCancel()
 
-	// Ory auth stack (Kratos, Hydra, Oathkeeper) — startup GATE 1 (see
-	// startOryStack). caCertPool/caTLS are the single CA surface reused
-	// everywhere downstream; never rebuilt.
-	caCertPool, caTLS, err := startOryStack(signalCtx, cfg, subMgr, orchestrator, cp, caCertPath, jwkPath, log)
+	// Ory stack CONSTRUCTION only — the CA pool + CA TLS config (the single
+	// CA surface reused everywhere downstream, never rebuilt) come from
+	// caCertPath up front. Subprocess bringup is a startup-flow step below,
+	// after the admin listener is serving.
+	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
 	if err != nil {
-		return err
+		return fmt.Errorf("ory stack: %w", err)
 	}
+	caCertPool, caTLS := oryStack.CACertPool(), oryStack.CATLS()
 
-	// Docker client + firewall stack + eBPF load — startup GATES (see
-	// buildEnforcement; ebpf Load + CleanupStaleBypass are pre-SetReady gates
-	// that exit 1 without flush). enforcementCleanup closes the eBPF manager
+	// Docker client + firewall stack + eBPF manager CONSTRUCTION (see
+	// buildEnforcement — no BPF state is created here; ebpfLoadFlow below is
+	// the step that loads). enforcementCleanup closes the eBPF manager
 	// (error joined into retErr) then the Docker client, on every return arm.
 	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
@@ -1181,6 +1357,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		agentPeerLookup:   agentPeerLookup,
 		lister:            lister,
 		enrolledTopic:     enrolledTopic,
+		orchestrator:      orchestrator,
 		caCertPool:        caCertPool,
 		caTLS:             caTLS,
 		cp:                cp,
@@ -1197,6 +1374,41 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// serves. Gate it on the stack's own serving signal instead.
 	orchestrator.SetAdminServingCheck(grpcStack.AdminServing)
 
+	// The admin surface serves NOW, mid-boot: the bootstrap RPCs
+	// (WatchSOS, GetSystemTime) must answer while the startup flow
+	// below runs — WatchSOS is the CLI's window into a boot waiting
+	// for assistance. The ready gate in the interceptor chain rejects every
+	// other admin RPC until SetReady, so no mutation is accepted mid-boot.
+	// The agent listener has been serving since buildGRPCStack (boot-time
+	// clawkerd flows need it).
+	grpcStack.ServeAdmin(serveFailed)
+
+	// /healthz server (see startHealthz) — answers 503 not_ready until the
+	// flow below completes. Returns the server so the shutdown sequence can
+	// GracefulStop it.
+	healthServer := startHealthz(cp, log, orchestrator, serveFailed)
+
+	// --- startup flow. Construction above built the objects; the ordered
+	// method calls below create the side effects (subprocesses, BPF state,
+	// firewall bringup). Every failure is a pre-SetReady exit 1 without an
+	// eBPF flush (fail-closed), except the one recoverable arm inside
+	// ebpfLoadFlow. ---
+
+	// Ory auth stack bringup (Kratos, Hydra, Oathkeeper) — startup GATE 1.
+	if err = oryStack.Start(signalCtx); err != nil {
+		return fmt.Errorf("ory stack start: %w", err)
+	}
+	// /healthz actively probes ALL service ports — 200 only when every
+	// responds. Installed once the Ory ports exist to probe.
+	orchestrator.SetServiceProbes(cp, caTLS)
+
+	// eBPF load + stale-bypass cleanup (INV-B2-013) — startup gate. The
+	// permission-denied arm publishes on the recovery queue and waits for
+	// CLI assistance instead of exiting (see ebpfLoadFlow).
+	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
+		return err
+	}
+
 	// settings-driven firewall bringup — startup GATE, pre-SetReady
 	// (see firewallBringupGate). A failure exits 1 without an eBPF flush.
 	if err := firewallBringupGate(cfg, log, handler); err != nil {
@@ -1204,16 +1416,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 
 	orchestrator.SetReady()
-
-	// Admin surface opens only now — after the startup gates and the ready
-	// flip — so mutating RPCs cannot be accepted mid-boot. The agent
-	// listener has been serving since buildGRPCStack (boot-time clawkerd
-	// flows need it).
-	grpcStack.ServeAdmin(serveFailed)
-
-	// /healthz server (see startHealthz). Returns the server so the
-	// shutdown sequence can GracefulStop it.
-	healthServer := startHealthz(cp, log, orchestrator, serveFailed)
 
 	// dockerevents feeder — the sole producer of DockerEvent (see
 	// startFeeder). feederCancel is the drain sequence's stop-before-topic-close

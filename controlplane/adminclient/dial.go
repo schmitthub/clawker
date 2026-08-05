@@ -101,6 +101,10 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 		// single-slot caveat. Deadline interceptor runs first so auth
 		// token fetch inherits the same deadline as the RPC.
 		grpc.WithChainUnaryInterceptor(deadlineInterceptor(rpcDeadline), ts.unaryInterceptor()),
+		// Streaming calls run a disjoint interceptor chain: same bearer
+		// token, deliberately NO deadline — a watch stream is long-lived
+		// and bounded by the caller's context.
+		grpc.WithChainStreamInterceptor(ts.streamInterceptor()),
 	)
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
@@ -276,6 +280,31 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 		}
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
 		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+// streamInterceptor is unaryInterceptor's streaming twin: the bearer
+// token rides the stream's opening metadata. Registered separately
+// because grpc-go routes unary and streaming calls through disjoint
+// interceptor chains — without this, a streaming RPC (WatchSOS) would
+// reach the CP with no authorization metadata at all. No deadline is
+// applied here: a watch stream is long-lived by design, bounded by the
+// caller's context, not a per-RPC timer.
+func (ts *tokenSource) streamInterceptor() grpc.StreamClientInterceptor {
+	return func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		tok, err := ts.token(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("refreshing access token for %s: %w", method, err)
+		}
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
+		return streamer(ctx, desc, cc, method, opts...)
 	}
 }
 
