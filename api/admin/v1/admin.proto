@@ -349,11 +349,30 @@ message GetSystemTimeResult {
 
 message WatchSOSRequest {}
 
+// SOSKind names the recoverable failure an SOS carries. It is the CLI's
+// dispatch discriminator: the CLI switches on kind and runs the matching
+// assistance, and never parses message, which is human prose free to
+// change. A kind the CLI does not know — an older CLI against a newer CP
+// — is surfaced as the failure using message and the boot is abandoned;
+// an unassisted SOS still ends the boot, it never hangs waiting for
+// assistance that cannot come.
+enum SOSKind {
+  SOS_KIND_UNSPECIFIED = 0;
+  // BPFFS_DELEGATION: the CP cannot create its own BPF filesystem
+  // because the kernel demands init-namespace privileges for the
+  // delegation options — the rootless-Docker shape, where the CP lives
+  // in the daemon's user namespace. The CP holds the open filesystem
+  // context and waits for an elevated process to configure and create
+  // it.
+  SOS_KIND_BPFFS_DELEGATION = 1;
+}
+
 // SOS is one recoverable startup failure: the CP cannot fix it alone and
-// is alive waiting for the CLI's assistance. message describes the
-// failure and what is needed.
+// is alive waiting for the CLI's assistance. kind selects the assistance
+// to run; message describes the failure and what is needed.
 message SOS {
   string message = 1;
+  SOSKind kind = 2;
 }
 
 message Agent {

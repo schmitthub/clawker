@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
-	"github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -29,7 +29,7 @@ import (
 // without reaching into the Factory struct.
 type testBed struct {
 	F      *cmdutil.Factory
-	Mock   *mocks.ManagerMock
+	Mock   *cpmanagermocks.ManagerMock
 	Stdout *bytes.Buffer
 	Stderr *bytes.Buffer
 }
@@ -41,10 +41,10 @@ type testBed struct {
 func newTestBed(t *testing.T) *testBed {
 	t.Helper()
 	ios, _, stdout, stderr := iostreams.Test()
-	mgr := &mocks.ManagerMock{}
+	mgr := &cpmanagermocks.ManagerMock{} //nolint:exhaustruct // test double: only the methods this path exercises are programmed
 	f := &cmdutil.Factory{
 		IOStreams:    ios,
-		ControlPlane: func() manager.Manager { return mgr },
+		ControlPlane: func(context.Context) (cpmanager.Manager, error) { return mgr, nil },
 	}
 	return &testBed{F: f, Mock: mgr, Stdout: stdout, Stderr: stderr}
 }
@@ -98,7 +98,7 @@ func withAdminMock(tb *testBed) *adminv1mocks.AdminServiceClientMock {
 // up (and its own startup bringup hook therefore never re-fires).
 func TestUpRun_FirewallEnabled_BringsUpStack(t *testing.T) {
 	tb := newTestBed(t)
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+	tb.Mock.StartFunc = func(_ context.Context) error { return nil }
 	withSettings(tb, "") // defaults — firewall enabled
 	adminMock := withAdminMock(tb)
 	adminMock.FirewallInitFunc = func(_ context.Context, _ *adminv1.FirewallInitRequest, _ ...grpc.CallOption) (*adminv1.FirewallInitResult, error) {
@@ -106,7 +106,7 @@ func TestUpRun_FirewallEnabled_BringsUpStack(t *testing.T) {
 	}
 
 	require.NoError(t, upRun(context.Background(), upOptsFrom(tb)))
-	assert.Len(t, tb.Mock.EnsureRunningCalls(), 1, "EnsureRunning must be invoked once")
+	assert.Len(t, tb.Mock.StartCalls(), 1, "EnsureRunning must be invoked once")
 	assert.Len(t, adminMock.FirewallInitCalls(), 1, "FirewallInit must be invoked once when firewall.enable is true")
 	out := tb.Stdout.String()
 	assert.Contains(t, out, "Control plane is up")
@@ -120,7 +120,7 @@ func TestUpRun_FirewallEnabled_BringsUpStack(t *testing.T) {
 // would be a policy violation, not a convenience.
 func TestUpRun_FirewallDisabled_SkipsStack(t *testing.T) {
 	tb := newTestBed(t)
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+	tb.Mock.StartFunc = func(_ context.Context) error { return nil }
 	withSettings(tb, "firewall:\n  enable: false\n")
 	withDockerFake(tb) // no stack containers — no warning expected
 	dialed := false
@@ -146,7 +146,7 @@ func TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning(t *testing.T) {
 	for _, name := range []string{consts.ContainerEnvoy, consts.ContainerCoreDNS} {
 		t.Run(name, func(t *testing.T) {
 			tb := newTestBed(t)
-			tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+			tb.Mock.StartFunc = func(_ context.Context) error { return nil }
 			withSettings(tb, "firewall:\n  enable: false\n")
 			withDockerFake(tb, container.Summary{
 				ID:     name + "-id",
@@ -169,7 +169,7 @@ func TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning(t *testing.T) {
 // settings say the firewall should be enforcing.
 func TestUpRun_FirewallInitError_WarnsAndFails(t *testing.T) {
 	tb := newTestBed(t)
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+	tb.Mock.StartFunc = func(_ context.Context) error { return nil }
 	withSettings(tb, "")
 	adminMock := withAdminMock(tb)
 	rpcErr := errors.New("envoy unhealthy")
@@ -187,7 +187,7 @@ func TestUpRun_FirewallInitError_WarnsAndFails(t *testing.T) {
 func TestUpRun_WrapsEnsureRunningError(t *testing.T) {
 	tb := newTestBed(t)
 	bootErr := errors.New("healthz timed out")
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return bootErr }
+	tb.Mock.StartFunc = func(_ context.Context) error { return bootErr }
 	// Config + AdminClient left nil — the CP bootstrap failure must
 	// short-circuit before either is touched.
 

@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -14,7 +14,7 @@ import (
 
 type StatusOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() manager.Manager
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 	Format       *cmdutil.FormatFlags
 }
@@ -75,7 +75,10 @@ the firewall fields are omitted and the CP is reported as down.`,
 }
 
 func statusRun(ctx context.Context, opts *StatusOptions) error {
-	mgr := opts.ControlPlane()
+	mgr, err := opts.ControlPlane(ctx)
+	if err != nil {
+		return fmt.Errorf("reaching control plane: %w", err)
+	}
 
 	var row statusRow
 	running, err := mgr.IsRunning(ctx)

@@ -12,8 +12,8 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -29,7 +29,7 @@ func newTestFactory(t *testing.T) *cmdutil.Factory {
 			return logger.Nop(), nil
 		},
 		//nolint:exhaustruct // mock wires only the lifecycle calls up drives
-		ControlPlane: func() manager.Manager { return &cpbootmocks.ManagerMock{} },
+		ControlPlane: func(context.Context) (cpmanager.Manager, error) { return &cpmanagermocks.ManagerMock{}, nil },
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			return initClient(), nil
 		},
@@ -140,13 +140,13 @@ func TestUpRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ios, _, stdout, _ := iostreams.Test()
 			//nolint:exhaustruct // mock wires only the lifecycle calls up drives
-			mgr := &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(_ context.Context) error { return tt.ensureErr },
+			mgr := &cpmanagermocks.ManagerMock{
+				StartFunc: func(_ context.Context) error { return tt.ensureErr },
 			}
 			adminCalled := false
 			opts := &UpOptions{
 				IOStreams:    ios,
-				ControlPlane: func() manager.Manager { return mgr },
+				ControlPlane: func(context.Context) (cpmanager.Manager, error) { return mgr, nil },
 				AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 					adminCalled = true
 					if tt.dialErr != nil {
@@ -164,7 +164,7 @@ func TestUpRun(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			assert.Len(t, mgr.EnsureRunningCalls(), 1, "EnsureRunning must fire exactly once")
+			assert.Len(t, mgr.StartCalls(), 1, "EnsureRunning must fire exactly once")
 			assert.Equal(t, tt.wantAdminCalled, adminCalled)
 			if tt.wantStdout != "" {
 				assert.Contains(t, stdout.String(), tt.wantStdout)

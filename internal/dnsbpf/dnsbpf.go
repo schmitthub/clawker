@@ -6,7 +6,7 @@
 //
 // The plugin uses nonwriter to capture responses from the next plugin in
 // the chain (typically "forward"), extracts A records, and writes each
-// resolved IP to the pinned BPF map at /sys/fs/bpf/clawker/dns_cache.
+// resolved IP to the pinned dns_cache map under clawker's BPF filesystem.
 //
 // The route identity is allocated CP-side (firewall.IdentityAllocator) and
 // delivered as the directive's argument by the Corefile generator — the

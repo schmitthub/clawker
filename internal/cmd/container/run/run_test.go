@@ -3,6 +3,7 @@ package run
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,8 +18,8 @@ import (
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -781,10 +782,10 @@ agent:
 		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
-		ControlPlane: func() manager.Manager {
-			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) error { return nil },
-			}
+		ControlPlane: func(context.Context) (cpmanager.Manager, error) {
+			return &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+				StartFunc: func(context.Context) error { return nil },
+			}, nil
 		},
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			return &adminv1mocks.AdminServiceClientMock{}, nil
@@ -869,10 +870,10 @@ func TestRunRun(t *testing.T) {
 		fake.SetupContainerInspectReapState(true, false)
 
 		f, in, out, errOut := testFactory(t, fake)
-		f.ControlPlane = func() manager.Manager {
-			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
-			}
+		f.ControlPlane = func(context.Context) (cpmanager.Manager, error) {
+			return &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+				StartFunc: func(context.Context) error { return errors.New("cp boom") },
+			}, nil
 		}
 		cmd := NewCmdRun(f, nil)
 

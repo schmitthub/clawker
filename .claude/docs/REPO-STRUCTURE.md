@@ -10,6 +10,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
 │   ├── clawkercp/            # Control plane daemon (PID 1 in CP container)
+│   ├── bpffs-delegate/        # Elevated one-shot BPF filesystem helper (Linux); runs on the host under sudo when the daemon is rootless
 │   ├── clawkerd/              # Thin agent-daemon entrypoint (Linux): os.Exit(clawkerd.Main())
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
 │   └── gen-docs/              # CLI doc generator

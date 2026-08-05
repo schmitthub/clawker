@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -25,7 +25,7 @@ import (
 
 // EnsureNoControlPlane stops and removes any pre-existing CP container so the
 // test's own bring-up creates a CP whose certs chain to THIS test env's
-// freshly minted CLI CA (manager.EnsureRunning seeds via
+// freshly minted CLI CA (cpmanager.EnsureRunning seeds via
 // auth.EnsureAuthMaterial before create). Reusing a foreign CP passes the
 // mTLS-less healthz reuse probe but fails every admin RPC — its certs chain
 // to another environment's CA. Call it after NewIsolatedFS, before the first
@@ -46,8 +46,8 @@ func EnsureNoControlPlane(t *testing.T, timeout time.Duration) {
 		return
 	}
 	defer func() { _ = dc.Close() }()
-	if stopErr := manager.Stop(ctx, dc); stopErr != nil {
-		t.Logf("harness: cp pre-clean: manager.Stop: %v (ignoring)", stopErr)
+	if stopErr := cpmanager.Stop(ctx, dc); stopErr != nil {
+		t.Logf("harness: cp pre-clean: cpmanager.Stop: %v (ignoring)", stopErr)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -488,19 +488,40 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 }
 
 // controlPlaneFunc returns a lazy closure that constructs a
-// manager.Manager once. The Manager shares the Factory's Client,
-// Config, and Logger closures so every caller — `clawker controlplane
-// up/down/status` and any future break-glass verb — observes the same
-// cached Docker singleton and settings snapshot as the rest of the CLI.
-func controlPlaneFunc(f *cmdutil.Factory) func() manager.Manager {
+// cpmanager.Manager once, over the Factory's own Docker client, config, and
+// logger — so every caller (`clawker controlplane up/down/status` and any
+// future break-glass verb) drives the CP through the same Docker singleton
+// and settings snapshot as the rest of the CLI.
+//
+// Resolution happens here rather than inside the Manager: a Manager is a
+// handle on a running control plane, and wiring is the Factory's job. A
+// caller that never touches the CP never enters this closure, so nothing is
+// resolved on its behalf.
+func controlPlaneFunc(f *cmdutil.Factory) func(context.Context) (cpmanager.Manager, error) {
 	var (
-		once sync.Once
-		mgr  manager.Manager
+		once   sync.Once
+		mgr    cpmanager.Manager
+		mgrErr error
 	)
-	return func() manager.Manager {
+	return func(ctx context.Context) (cpmanager.Manager, error) {
 		once.Do(func() {
-			mgr = manager.NewManager(f.Client, f.Config, f.Logger)
+			cfg, err := f.Config()
+			if err != nil {
+				mgrErr = fmt.Errorf("loading config: %w", err)
+				return
+			}
+			log, err := f.Logger()
+			if err != nil {
+				mgrErr = fmt.Errorf("initializing logger: %w", err)
+				return
+			}
+			dc, err := f.Client(ctx)
+			if err != nil {
+				mgrErr = fmt.Errorf("connecting to Docker: %w", err)
+				return
+			}
+			mgr = cpmanager.NewManager(dc, cfg, log)
 		})
-		return mgr
+		return mgr, mgrErr
 	}
 }

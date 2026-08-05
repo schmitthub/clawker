@@ -114,7 +114,7 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 ## Used by
 
 - `internal/cmd/factory` — `adminClientFunc` calls `adminclient.Dial` to mint the gRPC `AdminServiceClient` (cached + re-dialed on transient gRPC failures)
-- `internal/controlplane/cpboot` — `EnsureRunning` calls `EnsureAuthMaterial` so the CP container boots with a populated config dir
+- `controlplane/manager` — `ensureRunning` calls `EnsureAuthMaterial` so the CP container boots with a populated config dir
 - `internal/cmd/auth` — `rotate` subcommand calls `RotateAuthMaterial`
 - `internal/cmd/project/init` — calls `EnsureAuthMaterial` before container creation
 - `internal/cmd/monitor/init` — calls `EnsureAuthMaterial` to provision OTel mTLS material before mounting it into the monitoring stack

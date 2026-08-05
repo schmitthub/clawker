@@ -758,11 +758,20 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			ReadOnly: true,
 		},
 		{
-			// The dnsbpf plugin updates the pinned dns_cache map
-			// under the clawker BPF pin path in real time.
+			// The dnsbpf plugin updates the pinned dns_cache map under
+			// clawker's own BPF filesystem in real time. CoreDNS only ever
+			// receives that mount — the CP or the elevated helper creates
+			// it — so slave propagation is all it needs.
 			Type:   mount.TypeBind,
-			Source: "/sys/fs/bpf",
-			Target: "/sys/fs/bpf",
+			Source: consts.HostBPFFSSubdir(),
+			Target: consts.CPBPFFSPath,
+			BindOptions: &mount.BindOptions{
+				Propagation:            mount.PropagationRSlave,
+				NonRecursive:           false,
+				CreateMountpoint:       false,
+				ReadOnlyNonRecursive:   false,
+				ReadOnlyForceRecursive: false,
+			},
 		},
 	}
 	var env []string

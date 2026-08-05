@@ -7,11 +7,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"sync"
@@ -27,6 +27,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
@@ -50,20 +51,11 @@ const healthCacheTTL = 2 * time.Second
 // serviceProbeTimeout bounds each /healthz service-port probe dial.
 const serviceProbeTimeout = 2 * time.Second
 
-// recoveryRetryInterval is how often the recovery wait loop retries the
-// failed startup step while waiting for assistance. The give-up clock is
-// the shared consts.CPSOSIdleTTL — the CLI spams WatchSOS connection
-// attempts for that same window, so neither side outlives the other.
-const recoveryRetryInterval = 2 * time.Second
-
-// recoveryMsgEBPFPermission travels to the CLI on the WatchSOS
-// stream when eBPF load is denied by the kernel — the rootless-Docker
-// shape the CLI can assist with.
-const recoveryMsgEBPFPermission = "the kernel denied eBPF setup (rootless Docker) — waiting for BPF filesystem delegation"
-
-// errRecoveryAbandoned marks a recovery wait that timed out because no
-// WatchSOS stream was connected within consts.CPSOSIdleTTL.
-var errRecoveryAbandoned = errors.New("recovery assistance never arrived")
+// recoveryMsgBPFFSDelegation travels to the CLI on the WatchSOS stream when
+// the kernel refuses this process the BPF filesystem setup it needs — the
+// rootless-Docker shape, where an elevated helper must perform the mount
+// and the delegation options on its behalf.
+const recoveryMsgBPFFSDelegation = "the kernel denied BPF filesystem setup (rootless Docker) — waiting for delegation"
 
 // ControlPlane manages the control plane's subprocess startup
 // sequence and health reporting. The /healthz endpoint actively probes
@@ -95,9 +87,8 @@ type ControlPlane struct {
 	// waiting CP with no watcher connected shuts down instead of waiting
 	// forever, and a connected watcher holds the clock at zero.
 	recoveryMu         sync.Mutex
-	recoveryPending    bool
-	recoveryMessage    string
-	recoverySubs       map[chan string]struct{}
+	recoveryPending    *adminv1.SOS
+	recoverySubs       map[chan *adminv1.SOS]struct{}
 	recoveryAttendedAt time.Time
 }
 
@@ -117,7 +108,7 @@ type serviceProbe struct {
 func NewControlPlane() *ControlPlane {
 	return &ControlPlane{
 		timeout:      serviceProbeTimeout,
-		recoverySubs: make(map[chan string]struct{}),
+		recoverySubs: make(map[chan *adminv1.SOS]struct{}),
 	}
 }
 
@@ -185,21 +176,23 @@ func (o *ControlPlane) SetReady() {
 }
 
 // PublishRecovery publishes a recoverable startup failure: one the CP
-// cannot resolve alone but the CLI can assist with. The startup flow
-// publishes it ONCE, keeps the CP alive, and retries; every connected
-// WatchSOS stream — and any that connects later — receives it.
-// Only one failure is pending at a time (startup is sequential); a later
-// publish replaces the slot. Publishing also starts the idle clock: the
-// CLI gets a full idle TTL to connect before the wait loop may give up.
-func (o *ControlPlane) PublishRecovery(message string) {
+// cannot resolve alone but the CLI can assist with. kind selects the
+// assistance the CLI runs and message is the human prose it falls back
+// to when it does not know the kind. The startup flow publishes it
+// ONCE, keeps the CP alive, and waits; every connected WatchSOS stream
+// — and any that connects later — receives it. Only one failure is
+// pending at a time (startup is sequential); a later publish replaces
+// the slot. Publishing also starts the idle clock: the CLI gets a full
+// idle TTL to connect before the wait may give up.
+func (o *ControlPlane) PublishRecovery(kind adminv1.SOSKind, message string) {
 	o.recoveryMu.Lock()
 	defer o.recoveryMu.Unlock()
-	o.recoveryPending = true
-	o.recoveryMessage = message
+	sos := &adminv1.SOS{Kind: kind, Message: message}
+	o.recoveryPending = sos
 	o.recoveryAttendedAt = time.Now()
 	for ch := range o.recoverySubs {
 		select {
-		case ch <- message:
+		case ch <- sos:
 		default:
 			// The watcher hasn't drained the previous message; the slot
 			// semantics make the undelivered one stale anyway.
@@ -213,8 +206,7 @@ func (o *ControlPlane) PublishRecovery(message string) {
 func (o *ControlPlane) ClearRecovery() {
 	o.recoveryMu.Lock()
 	defer o.recoveryMu.Unlock()
-	o.recoveryPending = false
-	o.recoveryMessage = ""
+	o.recoveryPending = nil
 	o.closeRecoverySubsLocked()
 }
 
@@ -224,7 +216,7 @@ func (o *ControlPlane) closeRecoverySubsLocked() {
 	for ch := range o.recoverySubs {
 		close(ch)
 	}
-	o.recoverySubs = make(map[chan string]struct{})
+	o.recoverySubs = make(map[chan *adminv1.SOS]struct{})
 }
 
 // SubscribeRecovery implements server.RecoverySource for the
@@ -234,11 +226,11 @@ func (o *ControlPlane) closeRecoverySubsLocked() {
 // idempotent and must be called when the watcher disconnects — a
 // connected watcher holds the idle clock at zero, and the disconnect
 // restarts it.
-func (o *ControlPlane) SubscribeRecovery() (<-chan string, func()) {
+func (o *ControlPlane) SubscribeRecovery() (<-chan *adminv1.SOS, func()) {
 	o.recoveryMu.Lock()
 	defer o.recoveryMu.Unlock()
 
-	ch := make(chan string, 1)
+	ch := make(chan *adminv1.SOS, 1)
 	if o.ready.Load() {
 		// Terminal: nothing left to assist with — instant end-of-stream.
 		close(ch)
@@ -246,8 +238,8 @@ func (o *ControlPlane) SubscribeRecovery() (<-chan string, func()) {
 	}
 	o.recoverySubs[ch] = struct{}{}
 	o.recoveryAttendedAt = time.Now()
-	if o.recoveryPending {
-		ch <- o.recoveryMessage
+	if o.recoveryPending != nil {
+		ch <- o.recoveryPending
 	}
 
 	var once sync.Once
@@ -764,43 +756,140 @@ func buildEnforcement(
 	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
 }
 
+// bpffsFlow is the startup-flow step that puts a usable BPF filesystem in
+// place. It runs BEFORE ebpfLoadFlow, and that order is load-bearing rather
+// than stylistic: cilium/ebpf mints its token lazily on the first BPF
+// syscall and caches the result — including a nil one — for the lifetime of
+// the process. A filesystem that appears after that first syscall can never
+// be picked up, so "load, then fix it up on failure and retry" cannot work.
+// The filesystem exists first or the control plane does not start.
+//
+// The kernel version is checked before any of it is attempted. An older
+// kernel's behaviour when handed delegation options it does not recognise
+// is not something to characterise in a user's environment, and no
+// assistance can conjure the feature, so it fails startup outright rather
+// than asking the CLI for help that cannot exist.
+//
+// Two filesystems are involved, and only the second ever needs help:
+//
+//   - the PIN filesystem, which holds clawker's maps and programs and is
+//     shared with the CoreDNS container;
+//   - the TOKEN filesystem, which carries the delegated privileges and is
+//     private to this mount namespace.
+//
+// Which deployment this is gets DISCOVERED, never detected. On a rootful
+// host both succeed in-process and nothing else happens. Inside a user
+// namespace the kernel refuses both — mounting a bpffs and setting
+// delegation options each demand init-namespace CAP_SYS_ADMIN — and that
+// refusal is the trigger: one SOS is published, one elevated helper does
+// both jobs, and the flow continues.
+func (o *ControlPlane) bpffsFlow(ctx context.Context, log *logger.Logger) error {
+	if err := ebpf.CheckKernelSupport(); err != nil {
+		return fmt.Errorf("bpf filesystem: %w", err)
+	}
+
+	// Both attempts run before anything is published, so a single SOS can
+	// cover both jobs. Neither is fatal yet: a refusal here is the expected
+	// rootless shape.
+	pinErr := ebpf.MountPinFS(ebpf.PinPath, os.Getuid(), os.Getgid())
+	if pinErr != nil && !errors.Is(pinErr, ebpf.ErrDelegationRequired) {
+		return fmt.Errorf("bpf filesystem: pin filesystem: %w", pinErr)
+	}
+
+	tokenFS, tokenErr := ebpf.OpenTokenFS(ebpf.TokenMountPath)
+	if tokenErr != nil && !errors.Is(tokenErr, ebpf.ErrDelegationRequired) {
+		return fmt.Errorf("bpf filesystem: token filesystem: %w", tokenErr)
+	}
+	defer tokenFS.Close()
+
+	if pinErr != nil || tokenErr != nil {
+		if err := o.awaitBPFFSDelegation(ctx, tokenFS, log); err != nil {
+			return err
+		}
+	}
+
+	// Mounting the token filesystem also proves it can mint a token, which
+	// is the only evidence that the delegation actually landed.
+	if err := tokenFS.Mount(); err != nil {
+		return fmt.Errorf("bpf filesystem: attaching the token filesystem: %w", err)
+	}
+	if err := ebpf.AwaitPinFS(ctx, ebpf.PinPath); err != nil {
+		return fmt.Errorf("bpf filesystem: pin filesystem never appeared: %w", err)
+	}
+
+	log.Info().
+		Str("event", "bpffs_ready").
+		Bool("delegated", tokenFS.Delegated()).
+		Str("pin_path", ebpf.PinPath).
+		Msg("BPF filesystem ready")
+	return nil
+}
+
+// awaitBPFFSDelegation publishes the SOS and blocks on the handoff while an
+// elevated helper completes the work this process is not privileged to do.
+//
+// The wait is bounded by consts.CPSOSIdleTTL, the same clock the CLI spams
+// WatchSOS connection attempts for, so neither side outlives the other. A
+// control plane nobody is listening to shuts down instead of waiting
+// forever — pre-SetReady, nothing attached, fail-closed.
+func (o *ControlPlane) awaitBPFFSDelegation(
+	ctx context.Context, tokenFS *ebpf.TokenFS, log *logger.Logger,
+) error {
+	socketPath, err := bpffsHandoffSocketPath()
+	if err != nil {
+		return err
+	}
+
+	o.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, recoveryMsgBPFFSDelegation)
+	log.Warn().
+		Str("event", "bpffs_awaiting_delegation").
+		Str("socket", socketPath).
+		Dur("idle_ttl", consts.CPSOSIdleTTL).
+		Msg("the kernel denied BPF filesystem setup (rootless Docker); waiting for CLI assistance")
+
+	waitCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
+	defer cancel()
+
+	if delegateErr := tokenFS.Delegate(waitCtx, socketPath); delegateErr != nil {
+		return fmt.Errorf("bpf filesystem delegation: %w", delegateErr)
+	}
+
+	// The failure is resolved: every connected WatchSOS stream ends cleanly.
+	o.ClearRecovery()
+	log.Info().Str("event", "bpffs_delegation_complete").Msg("BPF filesystem delegation completed")
+	return nil
+}
+
+// bpffsHandoffSocketPath places the handoff socket in the firewall data
+// directory, which is already bind-mounted from the host — the helper runs
+// out there and has to be able to reach it.
+func bpffsHandoffSocketPath() (string, error) {
+	dir, err := consts.FirewallDataSubdir()
+	if err != nil {
+		return "", fmt.Errorf("bpf filesystem: resolving the handoff socket directory: %w", err)
+	}
+	return filepath.Join(dir, delegation.SocketName), nil
+}
+
 // enforcementCleanup closes the eBPF manager and the Docker client, joining
 // the eBPF close error so a partial teardown is investigated, not silently
 // blessed.
 // ebpfLoadFlow is the startup-flow step that creates the CP's BPF state:
 // Load() attaches programs and creates the pins, then CleanupStaleBypass
 // clears leftover bypass_map entries from a crashed previous CP
-// (INV-B2-013). Both remain hard pre-SetReady gates. It is a ControlPlane
-// method because the recovery protocol — publish once, wait for a
-// watcher, clear on success — is the orchestrator's own state
-// management.
+// (INV-B2-013). Both are hard pre-SetReady gates.
 //
-// A permission-denied Load is the one recoverable failure: it means the
-// kernel refused BPF operations to this container — the rootless-Docker
-// shape, where the CP runs in the daemon's user namespace without
-// init-namespace privileges. The CLI can assist (BPF filesystem token
-// delegation), so instead of exiting, the flow publishes the failure
-// ONCE on the recovery queue — where it sits until cleared, delivered to
-// every WatchSOS stream — and retries the load until the assistance
-// lands (see awaitEBPFLoadRecovery for the wait/give-up contract). Every
-// other Load failure, first or mid-retry, is unrecoverable and returns —
-// pre-SetReady exit 1, nothing attached, fail-closed unchanged.
-func (o *ControlPlane) ebpfLoadFlow(ctx context.Context, ebpfMgr *ebpf.Manager, log *logger.Logger) error {
+// It has no recoverable arm. Permission failures are handled earlier, by
+// bpffsFlow, which puts a usable BPF filesystem in place before this runs;
+// by the time Load is called there is nothing left for the CLI to assist
+// with, and a failure here means something genuinely wrong. Retrying would
+// be worse than useless: cilium/ebpf caches its token decision on the first
+// BPF syscall, so a retry loop around Load can never succeed once that
+// syscall has happened — it would spin to its deadline and exit with
+// nothing to explain why.
+func (o *ControlPlane) ebpfLoadFlow(ebpfMgr *ebpf.Manager, log *logger.Logger) error {
 	if err := ebpfMgr.Load(); err != nil {
-		if !errors.Is(err, fs.ErrPermission) {
-			return fmt.Errorf("ebpf load: %w", err)
-		}
-
-		o.PublishRecovery(recoveryMsgEBPFPermission)
-		log.Warn().Err(err).
-			Str("event", "ebpf_load_awaiting_recovery").
-			Dur("idle_ttl", consts.CPSOSIdleTTL).
-			Msg("eBPF load denied by the kernel (rootless Docker); waiting for CLI assistance via the recovery surface")
-
-		if waitErr := o.awaitEBPFLoadRecovery(ctx, ebpfMgr); waitErr != nil {
-			return waitErr
-		}
-		o.ClearRecovery()
+		return fmt.Errorf("ebpf load: %w", err)
 	}
 	log.Info().Msg("eBPF programs loaded")
 
@@ -815,36 +904,6 @@ func (o *ControlPlane) ebpfLoadFlow(ctx context.Context, ebpfMgr *ebpf.Manager, 
 		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
 	}
 	return nil
-}
-
-// awaitEBPFLoadRecovery retries the eBPF load on an interval after a
-// recoverable (permission-denied) failure was published, until one of:
-// the load succeeds (assistance landed — return nil), the ctx is
-// cancelled, the recovery surface goes unwatched for consts.CPSOSIdleTTL (an
-// abandoned CP shuts down rather than waiting forever — a connected
-// WatchSOS stream holds the clock at zero), or the load fails with
-// a non-permission error (the failure class changed; unrecoverable).
-func (o *ControlPlane) awaitEBPFLoadRecovery(ctx context.Context, ebpfMgr *ebpf.Manager) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("ebpf load: cancelled while awaiting recovery: %w", ctx.Err())
-		case <-time.After(recoveryRetryInterval):
-		}
-		if idle := o.RecoveryIdle(); idle > consts.CPSOSIdleTTL {
-			return fmt.Errorf(
-				"ebpf load: recovery surface unwatched for %s (idle TTL %s) — abandoned, shutting down: %w",
-				idle.Round(time.Second), consts.CPSOSIdleTTL, errRecoveryAbandoned,
-			)
-		}
-		err := ebpfMgr.Load()
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, fs.ErrPermission) {
-			return fmt.Errorf("ebpf load: %w", err)
-		}
-	}
 }
 
 func enforcementCleanup(dockerCli *docker.Client, ebpfMgr *ebpf.Manager, log *logger.Logger) func() error {
@@ -1402,10 +1461,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// responds. Installed once the Ory ports exist to probe.
 	orchestrator.SetServiceProbes(cp, caTLS)
 
-	// eBPF load + stale-bypass cleanup (INV-B2-013) — startup gate. The
-	// permission-denied arm publishes on the recovery queue and waits for
-	// CLI assistance instead of exiting (see ebpfLoadFlow).
-	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
+	// BPF filesystem — startup gate, and it MUST precede the load: the
+	// token decision is cached on the first BPF syscall, so a filesystem
+	// that arrives afterwards is never seen (see bpffsFlow). This is the
+	// step that publishes an SOS and waits for CLI assistance when the
+	// kernel refuses it.
+	if err = orchestrator.bpffsFlow(signalCtx, log); err != nil {
+		return err
+	}
+
+	// eBPF load + stale-bypass cleanup (INV-B2-013) — startup gate, with no
+	// recoverable arm: bpffsFlow above already resolved anything the CLI
+	// could help with.
+	if err = orchestrator.ebpfLoadFlow(ebpfMgr, log); err != nil {
 		return err
 	}
 

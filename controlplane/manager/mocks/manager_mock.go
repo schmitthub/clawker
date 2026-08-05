@@ -19,14 +19,14 @@ var _ manager.Manager = &ManagerMock{}
 //
 //		// make and configure a mocked manager.Manager
 //		mockedManager := &ManagerMock{
-//			EnsureRunningFunc: func(ctx context.Context) error {
-//				panic("mock out the EnsureRunning method")
-//			},
 //			IsRunningFunc: func(ctx context.Context) (bool, error) {
 //				panic("mock out the IsRunning method")
 //			},
 //			ProbeHealthzFunc: func(ctx context.Context) (int, error) {
 //				panic("mock out the ProbeHealthz method")
+//			},
+//			StartFunc: func(ctx context.Context) error {
+//				panic("mock out the Start method")
 //			},
 //			StopFunc: func(ctx context.Context) error {
 //				panic("mock out the Stop method")
@@ -38,25 +38,20 @@ var _ manager.Manager = &ManagerMock{}
 //
 //	}
 type ManagerMock struct {
-	// EnsureRunningFunc mocks the EnsureRunning method.
-	EnsureRunningFunc func(ctx context.Context) error
-
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(ctx context.Context) (bool, error)
 
 	// ProbeHealthzFunc mocks the ProbeHealthz method.
 	ProbeHealthzFunc func(ctx context.Context) (int, error)
 
+	// StartFunc mocks the Start method.
+	StartFunc func(ctx context.Context) error
+
 	// StopFunc mocks the Stop method.
 	StopFunc func(ctx context.Context) error
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// EnsureRunning holds details about calls to the EnsureRunning method.
-		EnsureRunning []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-		}
 		// IsRunning holds details about calls to the IsRunning method.
 		IsRunning []struct {
 			// Ctx is the ctx argument value.
@@ -67,48 +62,21 @@ type ManagerMock struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 		}
+		// Start holds details about calls to the Start method.
+		Start []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
 		// Stop holds details about calls to the Stop method.
 		Stop []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 		}
 	}
-	lockEnsureRunning sync.RWMutex
-	lockIsRunning     sync.RWMutex
-	lockProbeHealthz  sync.RWMutex
-	lockStop          sync.RWMutex
-}
-
-// EnsureRunning calls EnsureRunningFunc.
-func (mock *ManagerMock) EnsureRunning(ctx context.Context) error {
-	if mock.EnsureRunningFunc == nil {
-		panic("ManagerMock.EnsureRunningFunc: method is nil but Manager.EnsureRunning was just called")
-	}
-	callInfo := struct {
-		Ctx context.Context
-	}{
-		Ctx: ctx,
-	}
-	mock.lockEnsureRunning.Lock()
-	mock.calls.EnsureRunning = append(mock.calls.EnsureRunning, callInfo)
-	mock.lockEnsureRunning.Unlock()
-	return mock.EnsureRunningFunc(ctx)
-}
-
-// EnsureRunningCalls gets all the calls that were made to EnsureRunning.
-// Check the length with:
-//
-//	len(mockedManager.EnsureRunningCalls())
-func (mock *ManagerMock) EnsureRunningCalls() []struct {
-	Ctx context.Context
-} {
-	var calls []struct {
-		Ctx context.Context
-	}
-	mock.lockEnsureRunning.RLock()
-	calls = mock.calls.EnsureRunning
-	mock.lockEnsureRunning.RUnlock()
-	return calls
+	lockIsRunning    sync.RWMutex
+	lockProbeHealthz sync.RWMutex
+	lockStart        sync.RWMutex
+	lockStop         sync.RWMutex
 }
 
 // IsRunning calls IsRunningFunc.
@@ -172,6 +140,38 @@ func (mock *ManagerMock) ProbeHealthzCalls() []struct {
 	mock.lockProbeHealthz.RLock()
 	calls = mock.calls.ProbeHealthz
 	mock.lockProbeHealthz.RUnlock()
+	return calls
+}
+
+// Start calls StartFunc.
+func (mock *ManagerMock) Start(ctx context.Context) error {
+	if mock.StartFunc == nil {
+		panic("ManagerMock.StartFunc: method is nil but Manager.Start was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockStart.Lock()
+	mock.calls.Start = append(mock.calls.Start, callInfo)
+	mock.lockStart.Unlock()
+	return mock.StartFunc(ctx)
+}
+
+// StartCalls gets all the calls that were made to Start.
+// Check the length with:
+//
+//	len(mockedManager.StartCalls())
+func (mock *ManagerMock) StartCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockStart.RLock()
+	calls = mock.calls.Start
+	mock.lockStart.RUnlock()
 	return calls
 }
 

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/config"
@@ -52,7 +52,11 @@ type Factory struct {
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
-	ControlPlane    func() manager.Manager
+	// ControlPlane is the host-side CP lifecycle noun. It takes a context and
+	// returns an error because the Manager it hands back is built over live
+	// dependencies — resolving Docker, config, and the logger happens here,
+	// once, so the Manager itself holds nothing lazy.
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 	// HttpClient returns the *http.Client used for outbound HTTP from the
 	// CLI (first consumer: npm registry lookups for Claude Code version
 	// resolution). Tests substitute by setting this field to a closure that

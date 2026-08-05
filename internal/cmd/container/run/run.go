@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
@@ -41,7 +41,7 @@ type RunOptions struct {
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
-	ControlPlane    func() manager.Manager
+	ControlPlane    func(context.Context) (cpmanager.Manager, error)
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter

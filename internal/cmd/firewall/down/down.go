@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -65,7 +65,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		if err != nil {
 			return fmt.Errorf("connecting to Docker: %w", err)
 		}
-		running, err := manager.CPRunning(ctx, dc)
+		running, err := cpmanager.CPRunning(ctx, dc)
 		if err != nil {
 			return fmt.Errorf("checking control plane: %w", err)
 		}

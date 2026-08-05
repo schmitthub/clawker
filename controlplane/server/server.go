@@ -27,13 +27,13 @@ import (
 // SubscribeRecovery registers a watcher and returns its receive channel
 // plus a cancel func (idempotent; must be called when the watcher goes
 // away). Channel contract: the pending recoverable failure — current or
-// later-published — is delivered as a message; the channel is CLOSED
-// when the failure is resolved or startup completes (the stream's clean
-// EOF). A connected watcher also holds the orchestrator's recovery idle
-// clock — a CP holding a failure with no watcher shuts down after its
-// idle TTL.
+// later-published — is delivered as a ready-to-send SOS; the channel is
+// CLOSED when the failure is resolved or startup completes (the
+// stream's clean EOF). A connected watcher also holds the
+// orchestrator's recovery idle clock — a CP holding a failure with no
+// watcher shuts down after its idle TTL.
 type RecoverySource interface {
-	SubscribeRecovery() (<-chan string, func())
+	SubscribeRecovery() (<-chan *adminv1.SOS, func())
 }
 
 // adminServer composes the domain-specific handlers into the single
@@ -175,12 +175,12 @@ func (s *adminServer) WatchSOS(
 			// orchestrator's idle clock via the deferred cancel. Not an
 			// error worth surfacing.
 			return nil
-		case msg, ok := <-ch:
+		case sos, ok := <-ch:
 			if !ok {
 				// Resolved, or startup completed — clean end-of-stream.
 				return nil
 			}
-			if err := stream.Send(&adminv1.SOS{Message: msg}); err != nil {
+			if err := stream.Send(sos); err != nil {
 				return fmt.Errorf("watch sos send: %w", err)
 			}
 		}

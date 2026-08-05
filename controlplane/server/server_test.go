@@ -149,11 +149,11 @@ func TestAdminServer_ListAgents_SnapshotError_ReturnsCodesInternal(t *testing.T)
 // fakeRecoverySource is an in-test RecoverySource handing out a fixed
 // channel and counting cancels.
 type fakeRecoverySource struct {
-	ch      chan string
+	ch      chan *adminv1.SOS
 	cancels int
 }
 
-func (f *fakeRecoverySource) SubscribeRecovery() (<-chan string, func()) {
+func (f *fakeRecoverySource) SubscribeRecovery() (<-chan *adminv1.SOS, func()) {
 	return f.ch, func() { f.cancels++ }
 }
 
@@ -193,8 +193,11 @@ func TestAdminServer_WatchSOS(t *testing.T) {
 	}
 
 	t.Run("delivers failure then clean EOF on close", func(t *testing.T) {
-		src := &fakeRecoverySource{ch: make(chan string, 1), cancels: 0}
-		src.ch <- "bpffs delegation needed"
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS, 1), cancels: 0}
+		src.ch <- &adminv1.SOS{
+			Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
+			Message: "bpffs delegation needed",
+		}
 		close(src.ch)
 
 		stream := &fakeRecoveryStream{ServerStream: nil, ctx: context.Background(), sent: nil}
@@ -202,11 +205,13 @@ func TestAdminServer_WatchSOS(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stream.sent, 1)
 		assert.Equal(t, "bpffs delegation needed", stream.sent[0].GetMessage())
+		assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, stream.sent[0].GetKind(),
+			"kind must ride the wire — it is what the CLI dispatches on")
 		assert.Equal(t, 1, src.cancels, "subscription must be released")
 	})
 
 	t.Run("closed channel with no message is clean EOF", func(t *testing.T) {
-		src := &fakeRecoverySource{ch: make(chan string), cancels: 0}
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS), cancels: 0}
 		close(src.ch)
 
 		stream := &fakeRecoveryStream{ServerStream: nil, ctx: context.Background(), sent: nil}
@@ -217,7 +222,7 @@ func TestAdminServer_WatchSOS(t *testing.T) {
 	})
 
 	t.Run("watcher context done ends stream and releases subscription", func(t *testing.T) {
-		src := &fakeRecoverySource{ch: make(chan string), cancels: 0}
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS), cancels: 0}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 

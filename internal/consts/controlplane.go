@@ -144,12 +144,24 @@ var (
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
+// HostBPFFSSubdir returns the host-FS mount point of clawker's own BPF
+// filesystem — the bind source shared by the CP and the CoreDNS container,
+// which reach the same pinned dns_cache map through it. Pure composition
+// like the vars above; a function because it needs no package-level state
+// and nothing evaluates it at init.
+func HostBPFFSSubdir() string { return filepath.Join(HostDataDir, bpffsDir) }
+
 const (
 	// CPLogsPath is the container-side clawker log directory. In the CP
 	// container it is bind-mounted from the host's state/logs directory;
 	// agent-container helpers (the socket server) write theirs to the
 	// same path in the container's own filesystem.
 	CPLogsPath = "/var/log/clawker"
+
+	// CPBPFFSPath is the container-side mount point of clawker's own BPF
+	// filesystem, identical in the CP and CoreDNS containers so a pin path
+	// written by one is the path the other opens. It backs ebpf.PinPath.
+	CPBPFFSPath = "/var/lib/" + NamePrefix + "/" + bpffsDir
 
 	// CPClawkerDataDir is the container-side directory for Clawker data.
 	CPClawkerDataDir = "/usr/local/share/clawker"

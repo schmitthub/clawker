@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -32,7 +32,7 @@ type StartOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.Service
-	ControlPlane   func() manager.Manager
+	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
@@ -148,6 +148,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		// then handles attach + docker start + post-start without re-running
 		// pre-start.
 		cmdOpts := shared.CommandOpts{
+			IOStreams:    ios,
 			Client:       opts.Client,
 			Config:       opts.Config,
 			HostProxy:    opts.HostProxy,
@@ -410,6 +411,7 @@ func startContainersWithoutAttach(
 	for _, name := range containers {
 		_, err := shared.ContainerStart(ctx,
 			shared.CommandOpts{
+				IOStreams:    opts.IOStreams,
 				Client:       opts.Client,
 				Config:       opts.Config,
 				HostProxy:    opts.HostProxy,

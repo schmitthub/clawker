@@ -1,6 +1,7 @@
 package term
 
 import (
+	"fmt"
 	"os"
 
 	"golang.org/x/term"
@@ -95,4 +96,20 @@ func GetStdinSize() (width, height int, err error) {
 // importing golang.org/x/term directly.
 func GetTerminalSize(fd int) (width, height int, err error) {
 	return term.GetSize(fd)
+}
+
+// ReadPassword reads a line from the terminal with echo disabled, returning
+// it without the trailing newline. The canonical wrapper for
+// x/term.ReadPassword — use this instead of importing golang.org/x/term
+// directly.
+//
+// The descriptor must be a terminal: echo is a property of the line
+// discipline, so there is nothing to suppress on a pipe or a file and the
+// call fails rather than reading a secret that was never hidden.
+func ReadPassword(fd int) ([]byte, error) {
+	secret, err := term.ReadPassword(fd)
+	if err != nil {
+		return nil, fmt.Errorf("reading from the terminal: %w", err)
+	}
+	return secret, nil
 }

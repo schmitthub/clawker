@@ -3,13 +3,16 @@ package restart
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	mobyClient "github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	"github.com/stretchr/testify/require"
+
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -18,7 +21,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdRestart(t *testing.T) {
@@ -164,7 +166,10 @@ func TestCmdRestart_MultipleContainers(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testRestartFactory(
+	t *testing.T,
+	fake *mocks.FakeClient,
+) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 
@@ -177,10 +182,10 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 		Config: func() (config.Config, error) {
 			return configmocks.NewFromString("", `firewall: { enable: false }`), nil
 		},
-		ControlPlane: func() manager.Manager {
-			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) error { return nil },
-			}
+		ControlPlane: func(context.Context) (cpmanager.Manager, error) {
+			return &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+				StartFunc: func(context.Context) error { return nil },
+			}, nil
 		},
 	}, in, out, errOut
 }
@@ -198,10 +203,10 @@ func TestRestartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
 	fake.SetupContainerInspectReapState(true, false)
 
 	f, in, out, errOut := testRestartFactory(t, fake)
-	f.ControlPlane = func() manager.Manager {
-		return &cpbootmocks.ManagerMock{
-			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
-		}
+	f.ControlPlane = func(context.Context) (cpmanager.Manager, error) {
+		return &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+			StartFunc: func(context.Context) error { return errors.New("cp boom") },
+		}, nil
 	}
 
 	cmd := NewCmdRestart(f, nil)

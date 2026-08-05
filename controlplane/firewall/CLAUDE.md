@@ -31,7 +31,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
     └── EnrolledTopic → EBPFContainerEnrolled (drives netlogger LabelCache hydration)
 ```
 
-- **No host-side daemon**: `internal/firewall/` is gone. Lifecycle authority is the `clawker-controlplane` container (see `../CLAUDE.md` for startup sequencing). First CLI call triggers `controlplane.EnsureRunning` via `adminClientFunc`; when the `AgentWatcher` observes drain-to-zero + grace, the CP self-shuts-down (INV-B2-007).
+- **No host-side daemon**: `internal/firewall/` is gone. Lifecycle authority is the `clawker-controlplane` container (see `../CLAUDE.md` for startup sequencing). CP bringup is owned by the explicit bootstrap verbs (`controlplane up`, `firewall up`, container start) via `Manager.Start`; when the `AgentWatcher` observes drain-to-zero + grace, the CP self-shuts-down (INV-B2-007).
 - **Composite server**: `controlplane.adminServer` embeds `*firewall.Handler`; Go method promotion surfaces all 13 RPCs. Future domain handlers (monitor, hostproxy, clawkerd) embed alongside.
 - **Per-container RPCs carry only `container_id`**: path resolution is hidden behind the injected `ContainerResolver`. The wiring in `cmd/clawkercp/main.go::containerResolverFromDocker` calls `DetectCgroupDriver` once at CP startup and captures the driver string in the resolver closure; every RPC call goes through the resolver, which invokes `ResolveContainerID` + `EBPFCgroupPath(driver, cid)` (INV-B2-016 drift guard). The Handler itself holds no cgroup driver state.
 

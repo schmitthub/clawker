@@ -17,8 +17,8 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -86,7 +86,7 @@ type FactoryOptions struct {
 	UseRealAdminClient bool
 	// UseRealControlPlane, when true, wires the production Manager
 	// exactly as controlPlaneFunc in internal/cmd/factory/default.go
-	// does — manager.NewManager(f.Client, f.Config, f.Logger) — so the
+	// does — cpmanager.NewManager(f.Client, f.Config, f.Logger) — so the
 	// CP manager observes the same cached Docker singleton and settings
 	// snapshot as the rest of the harness Factory. When false the
 	// harness wires a no-op ManagerMock (every method returns zero
@@ -438,25 +438,41 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// Docker singleton (with test labels) as every other noun.
 	var (
 		cpOnce sync.Once
-		cpMgr  manager.Manager
+		cpMgr  cpmanager.Manager
+		cpErr  error
 	)
-	f.ControlPlane = func() manager.Manager {
+	f.ControlPlane = func(ctx context.Context) (cpmanager.Manager, error) {
 		cpOnce.Do(func() {
 			if opts.UseRealControlPlane {
-				cpMgr = manager.NewManager(f.Client, f.Config, f.Logger)
+				cpCfg, cpCfgErr := f.Config()
+				if cpCfgErr != nil {
+					cpErr = fmt.Errorf("loading config: %w", cpCfgErr)
+					return
+				}
+				cpLog, cpLogErr := f.Logger()
+				if cpLogErr != nil {
+					cpErr = fmt.Errorf("initializing logger: %w", cpLogErr)
+					return
+				}
+				dc, dcErr := f.Client(ctx)
+				if dcErr != nil {
+					cpErr = fmt.Errorf("connecting to Docker: %w", dcErr)
+					return
+				}
+				cpMgr = cpmanager.NewManager(dc, cpCfg, cpLog)
 			} else {
 				// Truly no-op: every Manager method wired to return zero
 				// values, so tests that never exercise the CP verbs don't
 				// panic on a nil moq func (and never bootstrap a real CP).
-				cpMgr = &cpbootmocks.ManagerMock{
-					EnsureRunningFunc: func(context.Context) error { return nil },
-					StopFunc:          func(context.Context) error { return nil },
-					IsRunningFunc:     func(context.Context) (bool, error) { return false, nil },
-					ProbeHealthzFunc:  func(context.Context) (int, error) { return 0, nil },
+				cpMgr = &cpmanagermocks.ManagerMock{
+					StartFunc:        func(context.Context) error { return nil },
+					StopFunc:         func(context.Context) error { return nil },
+					IsRunningFunc:    func(context.Context) (bool, error) { return false, nil },
+					ProbeHealthzFunc: func(context.Context) (int, error) { return 0, nil },
 				}
 			}
 		})
-		return cpMgr
+		return cpMgr, cpErr
 	}
 
 	// --- CLIState ---

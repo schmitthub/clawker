@@ -96,6 +96,7 @@ func IsColorDisabled() bool                                    // NO_COLOR != ""
 func IsColorForced() bool                                      // CLICOLOR_FORCE != "" && != "0"
 func GetStdinSize() (width, height int, err error)             // GetTerminalSize(stdin)
 func GetTerminalSize(fd int) (width, height int, err error)    // wraps x/term.GetSize
+func ReadPassword(fd int) ([]byte, error)                      // wraps x/term.ReadPassword (echo off; fd must be a terminal)
 ```
 
 ## Test Infrastructure
@@ -115,3 +116,4 @@ func GetTerminalSize(fd int) (width, height int, err error)    // wraps x/term.G
 
 - `internal/iostreams` — uses `FromEnv`, `IsTerminalFd`, `GetTerminalSize`, `mocks.FakeTerm`
 - `internal/docker` — uses `RawMode`, `NewRawModeStdin`, `NewRawMode`, `IsTerminalFd`
+- `internal/prompter` — uses `ReadPassword` for the no-echo credential prompt

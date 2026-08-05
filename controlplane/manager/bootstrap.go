@@ -20,6 +20,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	fwcp "github.com/schmitthub/clawker/controlplane/firewall"
@@ -44,7 +45,7 @@ const (
 	// against the CP clock with zero leeway. A lagging Docker Desktop VM clock
 	// (e.g. after host sleep, before it re-syncs to the host) would otherwise
 	// put a host-domain iat in the CP's future — a "token used before issued"
-	// rejection. Because EnsureRunning is the every-start precondition,
+	// rejection. Because the bringup is the every-start precondition,
 	// polling GetSystemTime until the CP clock is no longer behind the host
 	// guarantees it has caught up before assertion exchange begins.
 	cpClockSyncTimeout  = 30 * time.Second
@@ -59,19 +60,19 @@ const (
 	sosRetryInterval = 500 * time.Millisecond
 )
 
-// ensureMu serializes concurrent EnsureRunning calls within a single
+// ensureMu serializes concurrent ensureRunning calls within a single
 // process. Cross-process concurrency is guarded by Docker's
 // container-name uniqueness — the "already in use" recovery path below
 // catches that race and reconciles to the existing container.
 var ensureMu sync.Mutex
 
-// Test seams for the side-effecting steps of EnsureRunning. Tests
+// Test seams for the side-effecting steps of ensureRunning. Tests
 // overwrite these to stub crypto (auth ensure), Docker image builds,
 // and /healthz polling.
 //
 // `ensureAuthFn` is the load-bearing pre-step: bind mounts in
 // BuildCPContainerConfig point at on-disk PEM files. `auth.EnsureAuthMaterial`
-// is idempotent — safe to call on every EnsureRunning invocation. Without
+// is idempotent — safe to call on every ensureRunning invocation. Without
 // it, ContainerCreate fails with a missing bind source.
 var (
 	ensureAuthFn    = auth.EnsureAuthMaterial
@@ -160,7 +161,7 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 		"CMD [\"/usr/local/bin/clawkercp\"]\n"
 }
 
-// EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
+// EnsureOpts bundles the inputs ensureRunning needs. HostDirs is required;
 // callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
 // CacheDir} before invoking. The CP container reads the host paths back
 // from the CLAWKER_HOST_*_DIR env vars injected by BuildCPContainerConfig
@@ -173,15 +174,15 @@ type EnsureOpts struct {
 	HostDirs HostDirs
 }
 
-// EnsureRunning is the host-side entry point for bringing up the control
-// plane. Idempotent and concurrency-safe. It builds the image, creates/starts
+// ensureRunning brings the control plane up on this host. Idempotent and
+// concurrency-safe. It builds the image, creates/starts
 // the container, then runs the readiness gate (see cpReady): it returns nil
 // only when the CP container is running, /healthz is green, AND the CP clock
 // has caught up to the host. A green /healthz with the CP clock still behind
 // the host returns a clock-sync error, not nil — so a container start blocks
 // until the CP clock has reconverged with the host before clawkerd exchanges
 // its (host-clock-minted) agent assertion. The clock-sync step's value is the
-// wait: EnsureRunning returns only error, no offset; assertions are minted in
+// wait: it returns only error, no offset; assertions are minted in
 // the host clock with no correction.
 //
 // Drift gate: an existing CP container whose consts.LabelCPBinarySHA matches
@@ -195,22 +196,23 @@ type EnsureOpts struct {
 // On partial failure (container created but /healthz or the clock-sync gate
 // timed out) the next call observes the running/unhealthy container and re-runs
 // the readiness gate (clock sync self-heals once the VM clock re-syncs).
-func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
+func ensureRunning(ctx context.Context, opts EnsureOpts) error {
+	dc, cfg := opts.Docker, opts.Config
+	// File logging is diagnostics: a caller that could not build a logger
+	// still gets its control plane, it just gets no log lines about it.
+	log := opts.Logger
+	if log == nil {
+		log = logger.Nop()
+	}
+
 	if err := opts.HostDirs.Validate(); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 	// Checked before any image or container work: the CP cannot exist
 	// without bind-mounting the daemon socket, so an unmountable address
 	// must fail here in milliseconds, not after an image build.
-	if err := validateMountableHost(opts.Config.DockerHost()); err != nil {
-		return fmt.Errorf("controlplane: %w", err)
-	}
-
-	dc := opts.Docker
-	cfg := opts.Config
-	log := opts.Logger
-	if log == nil {
-		log = logger.Nop()
+	if hostErr := validateMountableHost(cfg.DockerHost()); hostErr != nil {
+		return fmt.Errorf("controlplane: %w", hostErr)
 	}
 
 	ensureMu.Lock()
@@ -225,91 +227,154 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	summary, err := findCPContainer(ctx, dc)
+	adopted, err := reconcileExistingCP(ctx, dc, log)
 	if err != nil {
-		return fmt.Errorf("controlplane: find cp: %w", err)
+		return err
 	}
-	if summary != nil {
-		desired, _ := cpBinaryHash()
-		actual := summary.Labels[consts.LabelCPBinarySHA]
-		if actual == desired {
-			if summary.State != container.StateRunning {
-				if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-					return fmt.Errorf("controlplane: start existing cp: %w", err)
-				}
-			}
-			return awaitCPReady(ctx, dc, cfg, log)
-		}
-
-		cpRunning := summary.State == container.StateRunning
-
-		activeAgents, err := dc.ContainerList(ctx, client.ContainerListOptions{
-			Filters: client.Filters{}.
-				Add("label", consts.LabelPurpose+"="+consts.PurposeAgent).
-				Add("status", "running"),
-		})
-		if err != nil {
-			return fmt.Errorf("controlplane: list active agents: %w", err)
-		}
-
-		if cpRunning || len(activeAgents.Items) > 0 {
-			log.Error().
-				Str("event", "cp_container_upgrade_blocked").
-				Str("component", "manager.bootstrap").
-				Str("container", consts.ContainerCP).
-				Bool("cp_running", cpRunning).
-				Int("active_agent_count", len(activeAgents.Items)).
-				Msg("control plane upgrade blocked — active CP or agent containers present")
-			return fmt.Errorf("clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
-				len(activeAgents.Items),
-				map[bool]string{true: "still running", false: "stopped"}[cpRunning])
-		}
-
-		// Drift: either binary hash changed (host clawker was rebuilt)
-		// or the container predates this label (legacy / orphaned).
-		// Force-remove and recreate regardless of State — works on
-		// stopped post-drain containers and on still-running stale ones
-		// alike.
-		log.Info().
-			Str("event", "cp_container_spec_drift").
-			Str("component", "manager.bootstrap").
-			Str("container", consts.ContainerCP).
-			Str("state", string(summary.State)).
-			Str("desired_binary_sha256", desired).
-			Str("running_binary_sha256", actual).
-			Msg("recreating CP container — embedded binary or spec changed")
-		if err := stopAndRemoveCP(ctx, dc, summary.ID); err != nil {
-			log.Error().
-				Str("event", "cp_container_force_remove_failed").
-				Str("component", "manager.bootstrap").
-				Str("container", consts.ContainerCP).
-				Err(err).
-				Msg("drift detected but force-remove failed; next EnsureRunning will retry")
-			return fmt.Errorf("controlplane: %w", err)
-		}
+	if adopted {
+		return awaitCPReady(ctx, dc, cfg, log)
 	}
 
-	if _, err := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); err != nil {
-		return fmt.Errorf("controlplane: ensure clawker-net: %w", err)
+	networkID, cpIP, err := placeCPOnNetwork(ctx, dc, cfg)
+	if err != nil {
+		return err
+	}
+
+	if createErr := createCPContainer(ctx, dc, cfg, networkID, cpIP, opts.HostDirs, imageRef, log); createErr != nil {
+		return fmt.Errorf("controlplane: %w", createErr)
+	}
+
+	return awaitCPReady(ctx, dc, cfg, log)
+}
+
+// placeCPOnNetwork settles where a new CP container will live: it ensures the
+// clawker network exists, reads back its topology, and derives the CP's static
+// address from the gateway plus the configured last octet. The subnet check is
+// the reason this is computed rather than configured — an address outside the
+// network would fail at container create with a Docker error that names
+// neither the setting nor the subnet.
+func placeCPOnNetwork(
+	ctx context.Context, dc *docker.Client, cfg config.Config,
+) (string, netip.Addr, error) {
+	//nolint:exhaustruct // Name is the only required field; the embedded moby NetworkCreateOptions is optional and omitted at every EnsureNetwork call site.
+	if _, netErr := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); netErr != nil {
+		return "", netip.Addr{}, fmt.Errorf("controlplane: ensure clawker-net: %w", netErr)
 	}
 
 	netInfo, err := fwcp.DiscoverNetwork(ctx, dc, cfg)
 	if err != nil {
-		return fmt.Errorf("controlplane: discover clawker-net: %w", err)
+		return "", netip.Addr{}, fmt.Errorf("controlplane: discover clawker-net: %w", err)
 	}
 	cpIP, err := fwcp.ComputeStaticIP(netInfo.Gateway, cfg.CPIPLastOctet())
 	if err != nil {
-		return fmt.Errorf("controlplane: compute cp static ip: %w", err)
+		return "", netip.Addr{}, fmt.Errorf("controlplane: compute cp static ip: %w", err)
 	}
 	if netInfo.Subnet.IsValid() && !netInfo.Subnet.Contains(cpIP) {
-		return fmt.Errorf("controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)", cpIP, netInfo.Subnet)
+		return "", netip.Addr{}, fmt.Errorf(
+			"controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)",
+			cpIP,
+			netInfo.Subnet,
+		)
+	}
+	return netInfo.NetworkID, cpIP, nil
+}
+
+// refuseUpgradeWhileActive blocks replacing a drifted CP container while
+// anything still depends on it. Returns the operator-facing error when a CP or
+// any agent container is running, nil when the replacement is safe to do.
+//
+// Removing the supervisor out from under live agents is a worse outcome than
+// asking the operator to drain first: those agents keep running filtered by a
+// rule set nothing is left to update.
+func refuseUpgradeWhileActive(
+	ctx context.Context, dc *docker.Client, log *logger.Logger, cpRunning bool,
+) error {
+	//nolint:exhaustruct // a label+status filter is the whole query; the remaining fields are paging and time windows
+	activeAgents, err := dc.ContainerList(ctx, client.ContainerListOptions{
+		Filters: client.Filters{}.
+			Add("label", consts.LabelPurpose+"="+consts.PurposeAgent).
+			Add("status", "running"),
+	})
+	if err != nil {
+		return fmt.Errorf("controlplane: list active agents: %w", err)
+	}
+	if !cpRunning && len(activeAgents.Items) == 0 {
+		return nil
 	}
 
-	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs, imageRef, log); err != nil {
-		return fmt.Errorf("controlplane: %w", err)
+	log.Error().
+		Str("event", "cp_container_upgrade_blocked").
+		Str("component", "manager.bootstrap").
+		Str("container", consts.ContainerCP).
+		Bool("cp_running", cpRunning).
+		Int("active_agent_count", len(activeAgents.Items)).
+		Msg("control plane upgrade blocked — active CP or agent containers present")
+	return fmt.Errorf(
+		"clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
+		len(activeAgents.Items),
+		map[bool]string{true: "still running", false: "stopped"}[cpRunning],
+	)
+}
+
+// reconcileExistingCP decides what happens to a CP container that is already
+// there. It reports adopted=true when that container is this clawker's own
+// (its consts.LabelCPBinarySHA matches the embedded binaries) and is now
+// running — all the caller has left to do is wait for readiness. It reports
+// adopted=false when there was nothing there, or once a drifted container has
+// been removed, leaving the caller to create a fresh one.
+//
+// The drift case is a host clawker that was rebuilt, or a container predating
+// the label. Replacing it is refused while a CP or any agent is still running:
+// removing the supervisor out from under live agents is a worse outcome than
+// telling the operator to drain first.
+func reconcileExistingCP(ctx context.Context, dc *docker.Client, log *logger.Logger) (bool, error) {
+	summary, err := findCPContainer(ctx, dc)
+	if err != nil {
+		return false, fmt.Errorf("controlplane: find cp: %w", err)
+	}
+	if summary == nil {
+		return false, nil
 	}
 
-	return awaitCPReady(ctx, dc, cfg, log)
+	desired, _ := cpBinaryHash()
+	actual := summary.Labels[consts.LabelCPBinarySHA]
+	if actual == desired {
+		if summary.State != container.StateRunning {
+			//nolint:exhaustruct // ContainerID is the only field a plain start needs; the rest are checkpoint/network options
+			if _, startErr := dc.ContainerStart(
+				ctx, whail.ContainerStartOptions{ContainerID: summary.ID},
+			); startErr != nil {
+				return false, fmt.Errorf("controlplane: start existing cp: %w", startErr)
+			}
+		}
+		return true, nil
+	}
+
+	cpRunning := summary.State == container.StateRunning
+	if blockedErr := refuseUpgradeWhileActive(ctx, dc, log, cpRunning); blockedErr != nil {
+		return false, blockedErr
+	}
+
+	// Force-remove regardless of State — works on stopped post-drain
+	// containers and on still-running stale ones alike.
+	log.Info().
+		Str("event", "cp_container_spec_drift").
+		Str("component", "manager.bootstrap").
+		Str("container", consts.ContainerCP).
+		Str("state", string(summary.State)).
+		Str("desired_binary_sha256", desired).
+		Str("running_binary_sha256", actual).
+		Msg("recreating CP container — embedded binary or spec changed")
+	if removeErr := stopAndRemoveCP(ctx, dc, summary.ID); removeErr != nil {
+		log.Error().
+			Str("event", "cp_container_force_remove_failed").
+			Str("component", "manager.bootstrap").
+			Str("container", consts.ContainerCP).
+			Err(removeErr).
+			Msg("drift detected but force-remove failed; next bringup will retry")
+		return false, fmt.Errorf("controlplane: %w", removeErr)
+	}
+	return false, nil
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -349,7 +414,7 @@ func findCPContainer(ctx context.Context, dc *docker.Client) (*container.Summary
 
 // CPRunning reports whether the CP container exists AND is in the running
 // state. Used by CLI commands (`firewall status`, `firewall down`) that
-// observe or tear down the CP without wanting to trigger EnsureRunning's
+// observe or tear down the CP without wanting to trigger the bringup's
 // creation path as a side effect. Returns (false, nil) when absent; errors
 // only on Docker API failures.
 func CPRunning(ctx context.Context, dc *docker.Client) (bool, error) {
@@ -762,18 +827,15 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 	return &buf, nil
 }
 
-// cpReady is the composite readiness gate run before EnsureRunning
-// returns success: /healthz green first, then host↔CP clock alignment.
-// Both must pass — a start that proceeds while the CP clock is still
-// drifted from the host would let clawkerd exchange an assertion whose
-// (host-clock) iat is in the CP's future, so clock sync is a first-class
-// readiness condition, not an afterthought.
 // CPSOSError reports that the CP sent an SOS mid-boot on the WatchSOS
 // stream: a recoverable startup failure it cannot fix alone and is alive
-// waiting for the CLI's assistance on. Message carries the CP's own
-// description of what is needed. Typed so callers can discriminate it
-// from readiness timeouts and container exits without string matching.
+// waiting for the CLI's assistance on. Kind is what the assistance
+// dispatches on and Message carries the CP's own description of what is
+// needed — the error text for a kind no assistance handles. Typed so
+// callers can discriminate it from readiness timeouts and container
+// exits without string matching.
 type CPSOSError struct {
+	Kind    adminv1.SOSKind
 	Message string
 }
 
@@ -784,13 +846,13 @@ func (e *CPSOSError) Error() string {
 // awaitCPReady runs the readiness gate and the SOS watch concurrently
 // from the moment the CP container is running. The watch is the CLI's
 // window into a boot waiting for assistance: an SOS delivered while the
-// readiness gate is still waiting wins and surfaces as *CPSOSError —
-// today's consumer aborts the wait with the CP's own words (the heal
-// orchestration replaces this consumption when it lands); the closed
-// stream then leaves the CP unwatched, and it shuts itself down
-// fail-closed after the shared consts.CPSOSIdleTTL. A watch that ends
-// with nothing to deliver leaves the outcome to the readiness gate
-// alone.
+// readiness gate is still waiting wins and surfaces as *CPSOSError, which
+// the caller renders or acts on — assisting the CP means prompting a human
+// and running something privileged, and neither belongs in the package that
+// merely interfaces with it. The closed stream then leaves the CP unwatched,
+// and it shuts itself down fail-closed after the shared consts.CPSOSIdleTTL.
+// A watch that ends with nothing to deliver leaves the outcome to the
+// readiness gate alone.
 func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
@@ -804,13 +866,13 @@ func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log
 	select {
 	case err := <-readyCh:
 		return err
-	case msg, ok := <-sosCh:
+	case sos, ok := <-sosCh:
 		if !ok {
 			// Watch ended with nothing to deliver (clean end-of-stream,
 			// gave up, or cancelled) — the readiness gate decides.
 			return <-readyCh
 		}
-		return &CPSOSError{Message: msg}
+		return &CPSOSError{Kind: sos.GetKind(), Message: sos.GetMessage()}
 	}
 }
 
@@ -824,22 +886,23 @@ func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log
 // returned channel; the channel closes without a message when the
 // stream ends cleanly (nothing to report), the window expires (hung
 // CP — give up and disconnect), or ctx is cancelled.
-func watchSOS(ctx context.Context, cfg config.Config, log *logger.Logger) <-chan string {
-	sosCh := make(chan string, 1)
+func watchSOS(ctx context.Context, cfg config.Config, log *logger.Logger) <-chan *adminv1.SOS {
+	sosCh := make(chan *adminv1.SOS, 1)
 	go func() {
 		defer close(sosCh)
 		watchCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
 		defer cancel()
 		cp := cfg.ControlPlaneSettings()
 		for {
-			msg, terminal := watchSOSOnce(watchCtx, cp.AdminPort, cp.HydraPublicPort, log)
-			if msg != "" {
+			sos, terminal := watchSOSOnce(watchCtx, cp.AdminPort, cp.HydraPublicPort, log)
+			if sos != nil {
 				log.Info().
 					Str("event", "cp_sos_received").
 					Str("component", "manager.bootstrap").
-					Str("message", msg).
+					Str("kind", sos.GetKind().String()).
+					Str("message", sos.GetMessage()).
 					Msg("control plane sent an SOS during boot")
-				sosCh <- msg
+				sosCh <- sos
 				return
 			}
 			if terminal {
@@ -857,17 +920,17 @@ func watchSOS(ctx context.Context, cfg config.Config, log *logger.Logger) <-chan
 
 // watchSOSOnce is one WatchSOS connection attempt: dial the admin
 // surface, open the stream, block on the first receive. It returns the
-// received SOS message (terminal), terminal=true with no message on a
-// clean end-of-stream (the CP resolved the failure or completed boot
-// with nothing to report — stop watching), and terminal=false on any
+// received SOS (terminal), terminal=true with a nil SOS on a clean
+// end-of-stream (the CP resolved the failure or completed boot with
+// nothing to report — stop watching), and terminal=false on any
 // failure (CP not up yet, token mint rejected while the CP clock lags,
 // stream dropped) so the caller retries — a dropped gRPC stream never
 // reconnects on its own.
-func watchSOSOnce(ctx context.Context, adminPort, hydraPort int, log *logger.Logger) (string, bool) {
+func watchSOSOnce(ctx context.Context, adminPort, hydraPort int, log *logger.Logger) (*adminv1.SOS, bool) {
 	adminClient, conn, err := adminclient.Dial(ctx, adminPort, hydraPort)
 	if err != nil {
 		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: dial attempt failed; retrying")
-		return "", false
+		return nil, false
 	}
 	defer func() {
 		if cerr := conn.Close(); cerr != nil {
@@ -878,20 +941,26 @@ func watchSOSOnce(ctx context.Context, adminPort, hydraPort int, log *logger.Log
 	stream, err := adminClient.WatchSOS(ctx, &adminv1.WatchSOSRequest{})
 	if err != nil {
 		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: stream open failed; retrying")
-		return "", false
+		return nil, false
 	}
 	sos, err := stream.Recv()
 	switch {
 	case err == nil:
-		return sos.GetMessage(), true
+		return sos, true
 	case errors.Is(err, io.EOF):
-		return "", true
+		return nil, true
 	default:
 		log.Debug().Err(err).Str("component", "manager.bootstrap").Msg("sos watch: stream ended; retrying")
-		return "", false
+		return nil, false
 	}
 }
 
+// cpReady is the composite readiness gate run before the bringup
+// returns success: /healthz green first, then host↔CP clock alignment.
+// Both must pass — a start that proceeds while the CP clock is still
+// drifted from the host would let clawkerd exchange an assertion whose
+// (host-clock) iat is in the CP's future, so clock sync is a first-class
+// readiness condition, not an afterthought.
 func cpReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
 	if err := healthzFn(ctx, dc, cfg); err != nil {
 		return err
@@ -1094,11 +1163,14 @@ func (e *CPExitedError) Error() string {
 	if e.ExitCode == 0 {
 		return fmt.Sprintf(
 			"control plane container %s exited cleanly (code 0) during startup — likely a concurrent shutdown (drain-to-zero or `clawker controlplane down`); re-run `clawker controlplane up`",
-			consts.ContainerCP)
+			consts.ContainerCP,
+		)
 	}
 	msg := fmt.Sprintf(
 		"control plane container exited (code %d) during startup — inspect `docker logs %s` for the failing startup step",
-		e.ExitCode, consts.ContainerCP)
+		e.ExitCode,
+		consts.ContainerCP,
+	)
 	if e.FirewallEnabled {
 		msg += ". A firewall bringup failure exits by design when the firewall is enabled in settings; fix the cause, or disable the firewall in settings.yaml to run unprotected"
 	}
@@ -1116,7 +1188,8 @@ type CPGoneError struct{}
 func (e *CPGoneError) Error() string {
 	return fmt.Sprintf(
 		"control plane container %s no longer exists — it was removed while the readiness wait was in progress (concurrent `clawker controlplane down`?); re-run `clawker controlplane up`",
-		consts.ContainerCP)
+		consts.ContainerCP,
+	)
 }
 
 // cpTerminalError checks the CP container and returns a terminal error

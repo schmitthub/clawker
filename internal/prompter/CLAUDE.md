@@ -14,6 +14,7 @@ Interactive user prompts with TTY and CI awareness. Access via `f.Prompter()` fr
 `String(cfg PromptConfig) (string, error)` -- prompt for string value with optional default/validation
 `Confirm(message string, defaultYes bool) (bool, error)` -- y/N confirmation prompt
 `Select(message string, options []SelectOption, defaultIdx int) (int, error)` -- numbered selection, returns index
+`Password(message string) (string, error)` -- no-echo secret prompt; returns the value and does nothing with it (the caller decides what it is for, e.g. feeding `sudo -S`). Echo suppression is a terminal property, so a non-interactive session is an **error**, not a default -- reading a secret in the clear is never the fallback. Reads via `term.ReadPassword` (the sole `x/term` gateway) on `ios.In`'s descriptor.
 
 ## Standalone Functions
 
@@ -25,6 +26,7 @@ In CI or non-TTY environments (checked via `ios.IsInteractive()`):
 - `String`: returns default (or error if `Required` with no default)
 - `Confirm`: returns the `defaultYes` value
 - `Select`: returns `defaultIdx`
+- `Password`: returns an error (there is no safe default for a secret)
 
 ## Usage
 

@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
@@ -38,11 +38,11 @@ func okClientProvider(t *testing.T) func(context.Context) (*docker.Client, error
 // noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
 // Bootstrap tests need it because CP is unconditionally brought up in
 // BootstrapServicesPreStart (CP is core infra, not a firewall feature).
-func noopCPManager() func() manager.Manager {
-	m := &cpbootmocks.ManagerMock{
-		EnsureRunningFunc: func(context.Context) error { return nil },
+func noopCPManager() func(context.Context) (cpmanager.Manager, error) {
+	m := &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+		StartFunc: func(context.Context) error { return nil },
 	}
-	return func() manager.Manager { return m }
+	return func(context.Context) (cpmanager.Manager, error) { return m, nil }
 }
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {

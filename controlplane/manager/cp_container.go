@@ -223,6 +223,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
 	}
 
+	// clawker's own BPF filesystem mount point. Resolving it creates the
+	// directory, so the bind source always exists; the bpffs itself is
+	// mounted onto it by the CP at startup (or, on a rootless host, by the
+	// elevated helper) and is shared with the CoreDNS container.
+	bpffsDir, err := consts.BPFFSSubdir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve bpffs dir: %w", err)
+	}
+
 	// Control-plane data dir — the CP daemon is the sole writer of
 	// the sqlite DB that lives under this dir (agentregistry today;
 	// future CP-owned tables alongside).
@@ -316,11 +325,25 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Target:   "/sys/fs/cgroup",
 			ReadOnly: true,
 		},
-		// BPF filesystem for pinned maps.
+		// clawker's own BPF filesystem, holding the pinned maps and
+		// programs. Shared propagation in BOTH directions is load-bearing
+		// and the direction depends on the deployment: on a rootful host
+		// the CP mounts the bpffs itself and the mount must travel OUT so
+		// the CoreDNS container can see it; on a rootless host the
+		// elevated helper mounts it and it must travel IN to this
+		// already-running container. A shared peer group carries both,
+		// which is why this is rshared rather than rslave.
 		{
 			Type:   mount.TypeBind,
-			Source: "/sys/fs/bpf",
-			Target: "/sys/fs/bpf",
+			Source: bpffsDir,
+			Target: consts.CPBPFFSPath,
+			BindOptions: &mount.BindOptions{
+				Propagation:            mount.PropagationRShared,
+				NonRecursive:           false,
+				CreateMountpoint:       false,
+				ReadOnlyNonRecursive:   false,
+				ReadOnlyForceRecursive: false,
+			},
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).

@@ -391,6 +391,74 @@ security:
             path: /manual/
         port: 443
         proto: https
+      # Kernel BPF token / bpffs delegation research (rootless eBPF support):
+      # how bpffs ownership and pinning are meant to work for unprivileged
+      # containers, and how other runtimes already ship it.
+      - action: allow
+        dst: docs.kernel.org
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /bpf/
+        port: 443
+        proto: https
+      - action: allow
+        dst: lwn.net
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /Articles/
+        port: 443
+        proto: https
+      - action: allow
+        dst: docs.ebpf.io
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /linux/
+        port: 443
+        proto: https
+      - action: allow
+        dst: next.redhat.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /2023/
+        port: 443
+        proto: https
+      - action: allow
+        dst: www.spinics.net
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /lists/bpf/
+        port: 443
+        proto: https
+      # Prior art: the two container runtimes that already ship bpffs
+      # delegation as a first-class instance option.
+      - action: allow
+        dst: documentation.ubuntu.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /lxd/
+        port: 443
+        proto: https
+      - action: allow
+        dst: linuxcontainers.org
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /incus/docs/
+        port: 443
+        proto: https
   git_credentials:
     copy_git_config: true
     forward_gpg: true

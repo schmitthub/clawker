@@ -1,6 +1,6 @@
 .PHONY: help \
         clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
-        bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
+        bpf-deps ebpf ebpf-binary coredns-binary cp-binary bpffs-delegate-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
         changelog-preview \
@@ -113,7 +113,7 @@ help:
 # a `.c` retriggers bpf2go; editing host-side Go triggers only the Go
 # build. Collapsed from the previous `clawker → clawker-build` indirection,
 # which added a hop with no second consumer.
-clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
@@ -122,9 +122,12 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 # Embedded firewall stack binaries
 # =============================================================================
 #
-# The clawker CLI go:embed's three Linux binaries: clawkercp (CP daemon),
+# The clawker CLI go:embed's these Linux binaries: clawkercp (CP daemon),
 # ebpf-manager (break-glass, with compiled BPF bytecode baked in via bpf2go),
-# and coredns-clawker (with the dnsbpf plugin baked in). At clawker-run time
+# coredns-clawker (with the dnsbpf plugin baked in), clawkerd (the per-agent
+# daemon), and bpffs-delegate (the elevated one-shot BPF filesystem helper —
+# the only one that runs on the host rather than in a container). At
+# clawker-run time
 # controlplane/bootstrap.go builds the clawkercp image (bundling
 # clawkercp + ebpf-manager) and controlplane/firewall/stack.go
 # (corednsImageTag, ensureCorednsImage) builds the clawker-coredns image.
@@ -138,6 +141,7 @@ EBPF_BINARY := controlplane/manager/assets/ebpf-manager
 COREDNS_BINARY := controlplane/firewall/assets/coredns-clawker
 CP_BINARY := controlplane/manager/assets/clawkercp
 CLAWKERD_BINARY := clawkerd/embed/assets/clawkerd
+BPFFS_DELEGATE_BINARY := controlplane/manager/assets/bpffs-delegate
 
 # Proto inputs + generated outputs. Declared early so targets that use
 # $(PROTO_GENERATED) further down in the file get a non-empty expansion
@@ -439,6 +443,20 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
 
+# bpffs-delegate-binary builds the elevated one-shot helper that completes
+# BPF filesystem setup on a rootless Docker host. Pure Go, no BPF: it links
+# the delegation contract (controlplane/firewall/ebpf/delegation) and x/sys,
+# deliberately NOT the eBPF loader — it runs under sudo, and a root-run binary
+# should carry the syscalls it makes and nothing else. The artifact is
+# go:embed'd into the clawker CLI via controlplane/manager/embed_bpffs.go and
+# written to a private temp directory at heal time.
+.PHONY: bpffs-delegate-binary
+bpffs-delegate-binary: $(BPFFS_DELEGATE_BINARY)
+$(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard controlplane/firewall/ebpf/delegation/*.go)
+	@echo "Building bpffs-delegate for linux/$(BUILDX_TARGETARCH)..."
+	@mkdir -p $(@D)
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/bpffs-delegate
+
 # ============================================================================
 # Release pipeline support
 # ============================================================================
@@ -449,7 +467,7 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 #
 #   - embeds/ lives OUTSIDE dist/ so `goreleaser release --clean` cannot
 #     wipe staged binaries mid-release.
-#   - All four embeds are plain CGO_ENABLED=0 Go cross-compiles. The BPF
+#   - Every embed is a plain CGO_ENABLED=0 Go cross-compile. The BPF
 #     bytecode is produced once by `make ebpf` (Linux: native bpf2go;
 #     macOS: via Dockerfile.controlplane) and lands in the source tree as
 #     clawker_*_bpfel.{go,o} where `//go:embed` pulls it into the binary.
@@ -466,21 +484,23 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 release-embeds: $(PROTO_GENERATED)
 	@rm -rf $(RELEASE_EMBED_STAGE)/amd64 $(RELEASE_EMBED_STAGE)/arm64
 	@echo "==> Building linux/amd64 embed set"
-	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
-	$(MAKE) BUILDX_TARGETARCH=amd64 ebpf-binary coredns-binary cp-binary clawkerd-binary
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=amd64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary
 	@mkdir -p $(RELEASE_EMBED_STAGE)/amd64
 	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager
 	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker
 	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/amd64/clawkercp
 	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/amd64/clawkerd
+	cp $(BPFFS_DELEGATE_BINARY) $(RELEASE_EMBED_STAGE)/amd64/bpffs-delegate
 	@echo "==> Building linux/arm64 embed set"
-	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
-	$(MAKE) BUILDX_TARGETARCH=arm64 ebpf-binary coredns-binary cp-binary clawkerd-binary
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=arm64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary
 	@mkdir -p $(RELEASE_EMBED_STAGE)/arm64
 	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager
 	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker
 	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/arm64/clawkercp
 	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/arm64/clawkerd
+	cp $(BPFFS_DELEGATE_BINARY) $(RELEASE_EMBED_STAGE)/arm64/bpffs-delegate
 	@$(MAKE) verify-release-embeds
 	@echo "==> Embed sets staged under $(RELEASE_EMBED_STAGE)/ (verified)"
 
@@ -502,7 +522,7 @@ release-embeds: $(PROTO_GENERATED)
 verify-release-embeds:
 	@for arch in amd64 arm64; do \
 		case $$arch in amd64) want=3e00 ;; arm64) want=b700 ;; esac; \
-		for bin in ebpf-manager coredns-clawker clawkercp clawkerd; do \
+		for bin in ebpf-manager coredns-clawker clawkercp clawkerd bpffs-delegate; do \
 			f=$(RELEASE_EMBED_STAGE)/$$arch/$$bin; \
 			test -f $$f || { echo "ERROR: missing $$f" >&2; exit 1; }; \
 			hdr=$$(dd if=$$f bs=1 count=20 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n'); \
@@ -536,21 +556,23 @@ verify-release-embeds:
 # the previous arch's bytes. Either every asset is the requested arch, or
 # the build fails before `go build` runs.
 stage-embeds-amd64:
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager     $(EBPF_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker  $(COREDNS_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/clawkercp       $(CP_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/clawkerd         $(CLAWKERD_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/bpffs-delegate   $(BPFFS_DELEGATE_BINARY)
 
 stage-embeds-arm64:
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY)
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager     $(EBPF_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker  $(COREDNS_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/clawkercp       $(CP_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/clawkerd         $(CLAWKERD_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/bpffs-delegate   $(BPFFS_DELEGATE_BINARY)
 
 # Run Clawker tests with coverage
-clawker-test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+clawker-test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running Clawker tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -559,12 +581,12 @@ endif
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 # Run short tests (skip internals tests)
-clawker-test-short: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+clawker-test-short: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running short Clawker tests..."
 	$(TEST_CMD) -short ./...
 
 # Run linter
-clawker-lint: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+clawker-lint: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
@@ -574,7 +596,7 @@ clawker-lint: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENER
 	fi
 
 # Run staticcheck
-clawker-staticcheck: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+clawker-staticcheck: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running staticcheck..."
 	@if command -v staticcheck >/dev/null 2>&1; then \
 		staticcheck ./...; \
@@ -611,7 +633,7 @@ clawker-install-global: clawker
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
 	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) coverage.out coverage.html
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
 
 # ============================================================================
@@ -627,7 +649,7 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 # uses go:embed on assets/clawkercp + assets/ebpf-manager, and
 # controlplane/firewall uses go:embed on assets/coredns-clawker —
 # tests that compile those packages will fail without the binaries on disk.
-test: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -640,13 +662,13 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -654,7 +676,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
-test-whail: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test-whail: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running whail integration tests (requires Docker + BuildKit)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -667,7 +689,7 @@ endif
 # agentregistry, auth/agent_*, container start agent-bootstrap).
 # Excludes test/e2e and test/whail so this stays safe to run inside
 # a clawker container (e2e tears down the host CP).
-test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running clawkerd-focused unit tests..."
 	$(TEST_CMD) \
 		./clawkerd/... \
@@ -692,7 +714,7 @@ test-bpf: ebpf
 test-all: test test-e2e test-whail
 
 # Unit tests with coverage
-test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Running unit tests with coverage..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -716,7 +738,7 @@ test-clean:
 # embed binaries because internal/clawkercmd links the full cobra tree, which
 # imports the go:embed-bearing controlplane/manager, controlplane/firewall
 # and clawkerd/embed packages.
-changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawkercmd/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================
@@ -729,12 +751,12 @@ changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_
 # in the module — controlplane/manager and controlplane/firewall
 # need go:embed targets, and controlplane/firewall/ebpf needs the
 # bpf2go-generated Go wrappers to compile.
-licenses: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+licenses: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Generating NOTICE file..."
 	bash scripts/gen-notice.sh
 
 # Check NOTICE file is up to date (used by CI)
-licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Checking NOTICE freshness..."
 	@bash scripts/gen-notice.sh
 	@if ! git diff --quiet NOTICE; then \
@@ -754,12 +776,12 @@ licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GEN
 # Depends on the embedded control plane binaries because cmd/gen-docs links
 # the full cobra tree, which imports controlplane/manager and
 # controlplane/firewall (both carry go:embed assets).
-docs: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+docs: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Generating CLI reference + config reference docs + config JSON schemas..."
 	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 
 # Check all generated docs are up to date (used by CI)
-docs-check: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
+docs-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
 	@echo "Checking generated docs freshness..."
 	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx docs/schemas/; then \

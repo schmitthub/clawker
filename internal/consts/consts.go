@@ -303,6 +303,7 @@ const (
 const (
 	monitorDir      = "monitor"
 	firewallDir     = "firewall"
+	bpffsDir        = "bpffs"
 	firewallCertDir = "certs"
 	// OtelClientsDirName is the per-service mTLS material subdirectory
 	// under firewallDir: clients/<svc>/{client.pem,client.key} plus a
@@ -966,6 +967,22 @@ func CacheDir() string {
 
 // FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
 func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataDir) }
+
+// BPFFSSubdir ensures and returns the mount point of clawker's own BPF
+// filesystem, which holds the pinned maps and programs. The control plane
+// mounts a bpffs here and both it and the CoreDNS container bind-mount the
+// path, so CoreDNS can open the pinned dns_cache map.
+//
+// This is deliberately NOT /sys/fs/bpf. That filesystem belongs to the
+// system, is root-owned mode 0700, and reaching into it from an
+// unprivileged container would mean loosening permissions on a path clawker
+// does not own. A bpffs of our own is born owned by the right user through
+// uid/gid mount options instead.
+//
+// The directory persists; the filesystem mounted on it does not. A mount
+// cannot outlive the user namespace it was created for, so it is
+// re-established on each control-plane start.
+func BPFFSSubdir() (string, error) { return subdirPath(bpffsDir, DataDir) }
 
 // OtelClientsDir ensures and returns the directory under
 // FirewallDataSubdir where the otelcerts.Service writes mTLS client

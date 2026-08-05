@@ -553,7 +553,7 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
 | `UseRealAdminClient` | `bool` | `false` (wires no-op `AdminServiceClientMock`) |
-| `ControlPlane` | `func(cfg, log) manager.Manager` | nil (wires no-op `ManagerMock`) |
+| `ControlPlane` | `func(ctx) (cpmanager.Manager, error)` | nil (wires no-op `ManagerMock`) |
 
 `CLIState` and `HttpClient` have no `FactoryOptions` field — the harness mirrors the real factory: `state.New()` resolves under the test's isolated XDG dirs, and `HttpClient` is the stdlib client.
 

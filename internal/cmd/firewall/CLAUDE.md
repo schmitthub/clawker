@@ -9,7 +9,7 @@ One subpackage per subcommand (the `internal/cmd/<noun>/<verb>` pattern); cross-
 | Package | Contents |
 |---------|----------|
 | (root) `firewall.go` | Parent command `NewCmdFirewall(f)` — registers the 13 subcommand constructors; no `RunE` of its own. `firewall_test.go` pins the registration list |
-| `up/` | `firewall up` — CP bootstrap (`f.ControlPlane().EnsureRunning`) then `shared.BringUpStack`. One of the explicit CP-bootstrap verbs; all other firewall admin commands fail fast when the CP is down |
+| `up/` | `firewall up` — CP bootstrap (`Manager.Start` via `f.ControlPlane(ctx)`, with `cpshared.AssistSOS` + one retry on a `*CPSOSError`) then `shared.BringUpStack`. One of the explicit CP-bootstrap verbs; all other firewall admin commands fail fast when the CP is down |
 | `down/` | `firewall down` — `FirewallRemove` RPC (global teardown) |
 | `status/` | `firewall status` — health snapshot; `--format`/`--json`/`--quiet` via `cmdutil.AddFormatFlags` |
 | `list/` | `firewall list` (alias `ls`) — rule dump sorted by (domain, proto, port); format flags like `status` |

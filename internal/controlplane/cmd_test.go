@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -44,8 +45,10 @@ func TestRecoveryQueue_SubscribeThenPublish(t *testing.T) {
 	ch, cancel := orchestrator.SubscribeRecovery()
 	defer cancel()
 
-	orchestrator.PublishRecovery("bpffs delegation needed")
-	assert.Equal(t, "bpffs delegation needed", <-ch)
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "bpffs delegation needed")
+	sos := <-ch
+	assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, sos.GetKind())
+	assert.Equal(t, "bpffs delegation needed", sos.GetMessage())
 
 	orchestrator.ClearRecovery()
 	_, open := <-ch
@@ -58,11 +61,13 @@ func TestRecoveryQueue_SubscribeThenPublish(t *testing.T) {
 // establish the stream at any point during boot.
 func TestRecoveryQueue_SubscribeAfterPublish(t *testing.T) {
 	orchestrator := NewControlPlane()
-	orchestrator.PublishRecovery("bpffs delegation needed")
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "bpffs delegation needed")
 
 	ch, cancel := orchestrator.SubscribeRecovery()
 	defer cancel()
-	assert.Equal(t, "bpffs delegation needed", <-ch)
+	sos := <-ch
+	assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, sos.GetKind())
+	assert.Equal(t, "bpffs delegation needed", sos.GetMessage())
 }
 
 // TestRecoveryQueue_ReadyEndsStreams pins that readiness is terminal for
@@ -93,7 +98,7 @@ func TestRecoveryQueue_ReadyEndsStreams(t *testing.T) {
 func TestRecoveryIdle_WatcherHoldsClock(t *testing.T) {
 	orchestrator := NewControlPlane()
 
-	orchestrator.PublishRecovery("waiting")
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "waiting")
 	assert.Less(t, orchestrator.RecoveryIdle(), consts.CPSOSIdleTTL,
 		"publish must start the idle clock at now, not the zero time")
 
@@ -104,7 +109,7 @@ func TestRecoveryIdle_WatcherHoldsClock(t *testing.T) {
 	cancel()
 	assert.Less(t, orchestrator.RecoveryIdle(), consts.CPSOSIdleTTL,
 		"a disconnect restarts the clock")
-	assert.Equal(t, "waiting", <-ch, "the pending failure was delivered before disconnect")
+	assert.Equal(t, "waiting", (<-ch).GetMessage(), "the pending failure was delivered before disconnect")
 }
 
 // ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *Ag
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
-The assertion's `iat` is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); there is **no** iat correction and **no** CP boot at create time. The container only needs the CP clock converged before it STARTS — the every-start `BootstrapServicesPreStart` CP-ensure (`EnsureRunning`, which blocks until the CP clock is in sync) handles that before clawkerd ever exchanges this baked assertion. Creating a container must not spin up CP.
+The assertion's `iat` is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); there is **no** iat correction and **no** CP boot at create time. The container only needs the CP clock converged before it STARTS — the every-start `BootstrapServicesPreStart` CP-ensure (`Manager.Start`, which blocks until the CP clock is in sync) handles that before clawkerd ever exchanges this baked assertion. Creating a container must not spin up CP.
 
 `project` + `agent` (user-typed short identifiers) feed `auth.AgentFullName` to compose the per-agent identity (`clawker.<project>.<agent>`), which rides in a `urn:clawker:agent:<full-name>` URI SAN on the minted cert. The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity), not a per-agent value.
 
@@ -85,7 +85,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 | `Client` | `func(ctx) (*docker.Client, error)` | Docker client provider |
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
 | `HostProxy` | `func() hostproxy.Service` | Host proxy provider |
-| `ControlPlane` | `func() cpboot.Manager` | CP container lifecycle |
+| `ControlPlane` | `func(ctx) (cpmanager.Manager, error)` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
@@ -151,7 +151,7 @@ The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree ad
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/controlplane` (for `ensureRunning` seam), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
+Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `controlplane/manager` (the `Manager` noun) + `internal/cmd/controlplane/shared` (`AssistSOS`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
 
 ## Testing
 
