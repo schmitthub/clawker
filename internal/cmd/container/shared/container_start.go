@@ -428,6 +428,9 @@ func startSocketBridge(
 		return nil
 	}
 	gpgEnabled := security.GitCredentials != nil && security.GitCredentials.GPGEnabled()
+	if gpgEnabled {
+		gpgEnabled = probeHostGPG(sb, cmdOpts, log)
+	}
 	if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
 		if log != nil {
 			log.Error().Err(err).Msg("failed to start socket bridge")
@@ -435,6 +438,33 @@ func startSocketBridge(
 		return fmt.Errorf("bootstrapping services: starting socket bridge: %w", err)
 	}
 	return nil
+}
+
+// probeHostGPG reports whether GPG forwarding stays enabled. It probes the
+// host before the daemon spawns: the bridge runs detached, so a GPG failure
+// inside it lands in the daemon log where the user never looks. The default
+// config enables GPG forwarding without knowing the host, so a GPG-less host
+// degrades to SSH-only forwarding with a warning, not an error.
+func probeHostGPG(
+	sb socketbridge.SocketBridgeManager,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) bool {
+	probeErr := sb.ProbeHostGPG()
+	if probeErr == nil {
+		return true
+	}
+	if log != nil {
+		log.Warn().
+			Err(probeErr).
+			Msg("GPG forwarding unavailable on this host; continuing with SSH-only forwarding")
+	}
+	if ios := cmdOpts.IOStreams; ios != nil {
+		cs := ios.ColorScheme()
+		fmt.Fprintf(ios.ErrOut, "%s GPG forwarding unavailable (%v); continuing with SSH-only forwarding\n",
+			cs.WarningIcon(), probeErr)
+	}
+	return false
 }
 
 // ReapedNotice is appended to a start error when ReapFailedStart removed the

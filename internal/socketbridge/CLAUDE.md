@@ -70,11 +70,12 @@ Constants: `ProtocolVersion`, `readBufSize` (64KB), `maxMessageSize` (1MB).
 
 ## Manager Lifecycle
 
-1. `EnsureBridge(containerID, gpgEnabled)` -- idempotent; checks in-memory tracking, then PID file, then spawns new daemon
-2. Daemon runs `clawker bridge serve --container <id> --pid-file <path> [--gpg]`
-3. Daemon is detached (`Setsid: true`), persists across CLI invocations
-4. `StopBridge(containerID)` -- kills process, removes PID file
-5. `StopAll()` -- scans bridges directory for all PID files
+1. `ProbeHostGPG()` -- host GPG lookup (`gpg --export`) exposed on the interface; the command layer runs it before `EnsureBridge` and degrades to SSH-only forwarding (with a stderr warning) when the host has no GPG material
+2. `EnsureBridge(containerID, gpgEnabled)` -- idempotent; checks in-memory tracking, then PID file, then spawns new daemon
+3. Daemon runs `clawker bridge serve --container <id> --pid-file <path> [--gpg]`
+4. Daemon is detached (`Setsid: true`), persists across CLI invocations
+5. `StopBridge(containerID)` -- kills process, removes PID file
+6. `StopAll()` -- scans bridges directory for all PID files
 
 **Lifecycle integration with container commands:**
 - `run`, `start`, `exec` call `EnsureBridge` to start the daemon

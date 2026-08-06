@@ -23,6 +23,8 @@ import (
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
+	sbmocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -196,6 +198,68 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "injecting pre-run script") {
 			t.Fatalf("expected pre-run injection error, got %v", err)
 		}
+	})
+}
+
+// TestBootstrapServicesPostStart_GPGPrecheck proves the CLI-side GPG probe
+// contract: a host without GPG material degrades the bridge to SSH-only
+// forwarding with a visible warning on stderr, a host with material keeps
+// GPG forwarding on silently, and an SSH-only config never probes at all.
+func TestBootstrapServicesPostStart_GPGPrecheck(t *testing.T) {
+	t.Parallel()
+
+	const gpgProjectYAML = `security: { git_credentials: { forward_gpg: true, forward_ssh: false } }`
+	const sshProjectYAML = `security: { git_credentials: { forward_gpg: false, forward_ssh: true } }`
+
+	// bridgeOpts builds the minimal post-start CommandOpts the bridge path needs.
+	bridgeOpts := func(sb *sbmocks.SocketBridgeManagerMock, tio *iostreams.IOStreams, projectYAML string) CommandOpts {
+		return CommandOpts{ //nolint:exhaustruct // sparse by design: only the bridge path runs
+			IOStreams:    tio,
+			Config:       testRuntimeConfig(projectYAML, `firewall: { enable: false }`),
+			SocketBridge: func() socketbridge.SocketBridgeManager { return sb },
+		}
+	}
+
+	t.Run("probe failure degrades to SSH-only with a warning", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		sb.ProbeHostGPGFunc = func() error { return errors.New("no GPG public keys found") }
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", bridgeOpts(sb, tio, gpgProjectYAML))
+		require.NoError(t, err)
+
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.False(t, calls[0].GpgEnabled, "bridge must spawn with GPG forwarding off")
+		assert.Contains(t, errOut.String(), "GPG forwarding unavailable")
+	})
+
+	t.Run("probe success keeps GPG forwarding on", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", bridgeOpts(sb, tio, gpgProjectYAML))
+		require.NoError(t, err)
+
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.True(t, calls[0].GpgEnabled)
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("SSH-only config never probes", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", bridgeOpts(sb, testIOStreams(), sshProjectYAML))
+		require.NoError(t, err)
+
+		assert.Empty(t, sb.ProbeHostGPGCalls(), "probe must not run when GPG forwarding is off")
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.False(t, calls[0].GpgEnabled)
 	})
 }
 

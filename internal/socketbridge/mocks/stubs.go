@@ -20,6 +20,7 @@ func NewMockManager() *SocketBridgeManagerMock {
 		StopBridgeFunc:   func(containerID string) error { return nil },
 		StopAllFunc:      func() error { return nil },
 		IsRunningFunc:    func(containerID string) bool { return false },
+		ProbeHostGPGFunc: func() error { return nil },
 	}
 }
 

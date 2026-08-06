@@ -33,6 +33,11 @@ type SocketBridgeManager interface {
 	StopAll() error
 	// IsRunning returns true if a bridge daemon is running for the given container.
 	IsRunning(containerID string) bool
+	// ProbeHostGPG reports whether the host has usable GPG material for
+	// forwarding: a nil error means `gpg --export` produced at least one
+	// public key. Callers use it to degrade to SSH-only forwarding — and
+	// tell the user — before the bridge daemon spawns.
+	ProbeHostGPG() error
 }
 
 // Manager tracks per-container bridge daemon processes.
@@ -181,6 +186,13 @@ func (m *Manager) IsRunning(containerID string) bool {
 	}
 	pid := readPIDFile(pidFile)
 	return pid > 0 && isProcessAlive(pid)
+}
+
+// ProbeHostGPG implements SocketBridgeManager by running the same host
+// GPG lookup the bridge daemon performs at startup.
+func (m *Manager) ProbeHostGPG() error {
+	_, err := getHostGPGPubkey()
+	return err
 }
 
 // startBridge spawns a detached "clawker bridge serve" subprocess.

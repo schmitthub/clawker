@@ -24,6 +24,9 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //			IsRunningFunc: func(containerID string) bool {
 //				panic("mock out the IsRunning method")
 //			},
+//			ProbeHostGPGFunc: func() error {
+//				panic("mock out the ProbeHostGPG method")
+//			},
 //			StopAllFunc: func() error {
 //				panic("mock out the StopAll method")
 //			},
@@ -42,6 +45,9 @@ type SocketBridgeManagerMock struct {
 
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(containerID string) bool
+
+	// ProbeHostGPGFunc mocks the ProbeHostGPG method.
+	ProbeHostGPGFunc func() error
 
 	// StopAllFunc mocks the StopAll method.
 	StopAllFunc func() error
@@ -63,6 +69,9 @@ type SocketBridgeManagerMock struct {
 			// ContainerID is the containerID argument value.
 			ContainerID string
 		}
+		// ProbeHostGPG holds details about calls to the ProbeHostGPG method.
+		ProbeHostGPG []struct {
+		}
 		// StopAll holds details about calls to the StopAll method.
 		StopAll []struct {
 		}
@@ -74,6 +83,7 @@ type SocketBridgeManagerMock struct {
 	}
 	lockEnsureBridge sync.RWMutex
 	lockIsRunning    sync.RWMutex
+	lockProbeHostGPG sync.RWMutex
 	lockStopAll      sync.RWMutex
 	lockStopBridge   sync.RWMutex
 }
@@ -143,6 +153,33 @@ func (mock *SocketBridgeManagerMock) IsRunningCalls() []struct {
 	mock.lockIsRunning.RLock()
 	calls = mock.calls.IsRunning
 	mock.lockIsRunning.RUnlock()
+	return calls
+}
+
+// ProbeHostGPG calls ProbeHostGPGFunc.
+func (mock *SocketBridgeManagerMock) ProbeHostGPG() error {
+	if mock.ProbeHostGPGFunc == nil {
+		panic("SocketBridgeManagerMock.ProbeHostGPGFunc: method is nil but SocketBridgeManager.ProbeHostGPG was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProbeHostGPG.Lock()
+	mock.calls.ProbeHostGPG = append(mock.calls.ProbeHostGPG, callInfo)
+	mock.lockProbeHostGPG.Unlock()
+	return mock.ProbeHostGPGFunc()
+}
+
+// ProbeHostGPGCalls gets all the calls that were made to ProbeHostGPG.
+// Check the length with:
+//
+//	len(mockedSocketBridgeManager.ProbeHostGPGCalls())
+func (mock *SocketBridgeManagerMock) ProbeHostGPGCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProbeHostGPG.RLock()
+	calls = mock.calls.ProbeHostGPG
+	mock.lockProbeHostGPG.RUnlock()
 	return calls
 }
 
