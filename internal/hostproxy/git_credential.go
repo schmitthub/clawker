@@ -3,7 +3,10 @@ package hostproxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -261,4 +264,20 @@ func parseGitCredentialOutput(output string, log *logger.Logger) gitCredentials 
 	}
 
 	return creds
+}
+
+// PrecheckGitCredential implements Service. It checks the exact host
+// prerequisites handleGitCredential relies on: the `git` binary it execs,
+// and a configured credential helper — without one, a headless
+// `git credential fill` has no credential source.
+func (m *Manager) PrecheckGitCredential(ctx context.Context) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git not found on host: %w", err)
+	}
+	// --get-regexp also matches URL-scoped helpers (credential.<url>.helper).
+	out, err := exec.CommandContext(ctx, "git", "config", "--get-regexp", `^credential\.`).Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return errors.New("no git credential helper configured on host")
+	}
+	return nil
 }

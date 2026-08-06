@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/workspace"
 )
 
 type CommandOpts struct {
@@ -396,6 +397,8 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 		}
 	}
 
+	precheckForwarders(ctx, security, cmdOpts, log)
+
 	if NeedsSocketBridge(security) {
 		if bridgeErr := startSocketBridge(container, security, cmdOpts, log); bridgeErr != nil {
 			return bridgeErr
@@ -428,9 +431,6 @@ func startSocketBridge(
 		return nil
 	}
 	gpgEnabled := security.GitCredentials != nil && security.GitCredentials.GPGEnabled()
-	if gpgEnabled {
-		gpgEnabled = probeHostGPG(sb, cmdOpts, log)
-	}
 	if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
 		if log != nil {
 			log.Error().Err(err).Msg("failed to start socket bridge")
@@ -440,31 +440,97 @@ func startSocketBridge(
 	return nil
 }
 
-// probeHostGPG reports whether GPG forwarding stays enabled. It probes the
-// host before the daemon spawns: the bridge runs detached, so a GPG failure
-// inside it lands in the daemon log where the user never looks. The default
-// config enables GPG forwarding without knowing the host, so a GPG-less host
-// degrades to SSH-only forwarding with a warning, not an error.
-func probeHostGPG(
-	sb socketbridge.SocketBridgeManager,
+// precheckForwarders checks every configured credential-forwarding lane
+// against the host, before any forwarding service starts. Each check mirrors
+// the exact deterministic lookup the serving component performs (socket
+// bridge lanes, host proxy git credential, gitconfig mount), and each
+// configured lane the host cannot serve gets one stderr warning — so a later
+// forwarding failure has a visible cause. Prechecks never change behavior:
+// they warn, nothing else.
+func precheckForwarders(
+	ctx context.Context,
+	security config.SecurityConfig,
 	cmdOpts CommandOpts,
 	log *logger.Logger,
-) bool {
-	probeErr := sb.ProbeHostGPG()
-	if probeErr == nil {
-		return true
+) {
+	gc := security.GitCredentials
+	if gc == nil {
+		return
 	}
+	precheckBridgeLanes(ctx, gc, cmdOpts, log)
+	if gc.CopyGitConfigEnabled() && !workspace.GitConfigExists() {
+		warnForwarderLane(cmdOpts, log,
+			"Git config copy is configured but no ~/.gitconfig was found on this host")
+	}
+	precheckHTTPSLane(ctx, security, cmdOpts, log)
+}
+
+// precheckBridgeLanes checks the GPG and SSH lanes through the socket
+// bridge manager's own host precheck. An unwired provider means nothing
+// serves those lanes in this process — nothing to check.
+func precheckBridgeLanes(
+	ctx context.Context,
+	gc *config.GitCredentialsConfig,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) {
+	if !gc.GPGEnabled() && !gc.GitSSHEnabled() {
+		return
+	}
+	if cmdOpts.SocketBridge == nil {
+		return
+	}
+	sb := cmdOpts.SocketBridge()
+	if sb == nil {
+		return
+	}
+	err := sb.Precheck(ctx)
+	if err == nil {
+		return
+	}
+	if gc.GPGEnabled() && errors.Is(err, socketbridge.ErrGPGUnavailable) {
+		warnForwarderLane(cmdOpts, log,
+			"GPG forwarding is configured but no usable GPG keys or gpg-agent were found on this host")
+	}
+	if gc.GitSSHEnabled() && errors.Is(err, socketbridge.ErrSSHAgentUnavailable) {
+		warnForwarderLane(cmdOpts, log,
+			"SSH forwarding is configured but no SSH agent was found on this host")
+	}
+}
+
+// precheckHTTPSLane checks the HTTPS credential lane through the host
+// proxy's own precheck. An unwired provider means nothing serves the lane
+// in this process — nothing to check.
+func precheckHTTPSLane(
+	ctx context.Context,
+	security config.SecurityConfig,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) {
+	if !security.GitCredentials.GitHTTPSEnabled(security.HostProxyEnabled()) {
+		return
+	}
+	if cmdOpts.HostProxy == nil {
+		return
+	}
+	hp := cmdOpts.HostProxy()
+	if hp == nil {
+		return
+	}
+	if err := hp.PrecheckGitCredential(ctx); err != nil {
+		warnForwarderLane(cmdOpts, log,
+			"HTTPS credential forwarding is configured but the host cannot serve it: "+err.Error())
+	}
+}
+
+// warnForwarderLane emits a lane warning to both the user (stderr) and the log.
+func warnForwarderLane(cmdOpts CommandOpts, log *logger.Logger, msg string) {
 	if log != nil {
-		log.Warn().
-			Err(probeErr).
-			Msg("GPG forwarding unavailable on this host; continuing with SSH-only forwarding")
+		log.Warn().Msg(msg)
 	}
 	if ios := cmdOpts.IOStreams; ios != nil {
-		cs := ios.ColorScheme()
-		fmt.Fprintf(ios.ErrOut, "%s GPG forwarding unavailable (%v); continuing with SSH-only forwarding\n",
-			cs.WarningIcon(), probeErr)
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", ios.ColorScheme().WarningIcon(), msg)
 	}
-	return false
 }
 
 // ReapedNotice is appended to a start error when ReapFailedStart removed the

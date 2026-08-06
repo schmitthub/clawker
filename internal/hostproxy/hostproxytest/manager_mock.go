@@ -1,6 +1,10 @@
 package hostproxytest
 
-import "github.com/schmitthub/clawker/internal/hostproxy"
+import (
+	"context"
+
+	"github.com/schmitthub/clawker/internal/hostproxy"
+)
 
 // Compile-time interface check.
 var _ hostproxy.Service = (*MockManager)(nil)
@@ -8,9 +12,10 @@ var _ hostproxy.Service = (*MockManager)(nil)
 // MockManager is a test double for hostproxy.Service.
 // It never spawns subprocesses, making it safe for unit tests.
 type MockManager struct {
-	EnsureErr error  // Error returned by EnsureRunning
-	Running   bool   // Value returned by IsRunning
-	URL       string // Value returned by ProxyURL
+	EnsureErr   error  // Error returned by EnsureRunning
+	Running     bool   // Value returned by IsRunning
+	URL         string // Value returned by ProxyURL
+	PrecheckErr error  // Error returned by PrecheckGitCredential
 }
 
 // NewMockManager returns a MockManager that starts not running.
@@ -38,3 +43,6 @@ func (m *MockManager) EnsureRunning() error {
 }
 func (m *MockManager) IsRunning() bool  { return m.Running }
 func (m *MockManager) ProxyURL() string { return m.URL }
+func (m *MockManager) PrecheckGitCredential(context.Context) error {
+	return m.PrecheckErr
+}

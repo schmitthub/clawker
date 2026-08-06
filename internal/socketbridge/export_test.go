@@ -2,6 +2,7 @@ package socketbridge
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"time"
 )
@@ -80,4 +81,9 @@ var IsProcessAliveForTest = isProcessAlive
 // WaitForPIDFileForTest exposes the private waitForPIDFile function.
 var WaitForPIDFileForTest = func(path string, timeout time.Duration) error {
 	return waitForPIDFile(path, timeout)
+}
+
+// CheckHostSSHAgentForTest exposes the private checkHostSSHAgent function.
+func CheckHostSSHAgentForTest(ctx context.Context) error {
+	return checkHostSSHAgent(ctx)
 }

@@ -69,6 +69,10 @@ type Service interface {
     EnsureRunning() error
     IsRunning() bool
     ProxyURL() string
+    // Mirrors handleGitCredential's host prerequisites: `git` on PATH +
+    // a configured credential helper. The command layer warns before
+    // container start when the configured HTTPS lane cannot be served.
+    PrecheckGitCredential(ctx context.Context) error
 }
 ```
 

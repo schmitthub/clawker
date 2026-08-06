@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"sync"
 )
@@ -24,8 +25,8 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //			IsRunningFunc: func(containerID string) bool {
 //				panic("mock out the IsRunning method")
 //			},
-//			ProbeHostGPGFunc: func() error {
-//				panic("mock out the ProbeHostGPG method")
+//			PrecheckFunc: func(ctx context.Context) error {
+//				panic("mock out the Precheck method")
 //			},
 //			StopAllFunc: func() error {
 //				panic("mock out the StopAll method")
@@ -46,8 +47,8 @@ type SocketBridgeManagerMock struct {
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(containerID string) bool
 
-	// ProbeHostGPGFunc mocks the ProbeHostGPG method.
-	ProbeHostGPGFunc func() error
+	// PrecheckFunc mocks the Precheck method.
+	PrecheckFunc func(ctx context.Context) error
 
 	// StopAllFunc mocks the StopAll method.
 	StopAllFunc func() error
@@ -69,8 +70,10 @@ type SocketBridgeManagerMock struct {
 			// ContainerID is the containerID argument value.
 			ContainerID string
 		}
-		// ProbeHostGPG holds details about calls to the ProbeHostGPG method.
-		ProbeHostGPG []struct {
+		// Precheck holds details about calls to the Precheck method.
+		Precheck []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 		}
 		// StopAll holds details about calls to the StopAll method.
 		StopAll []struct {
@@ -83,7 +86,7 @@ type SocketBridgeManagerMock struct {
 	}
 	lockEnsureBridge sync.RWMutex
 	lockIsRunning    sync.RWMutex
-	lockProbeHostGPG sync.RWMutex
+	lockPrecheck     sync.RWMutex
 	lockStopAll      sync.RWMutex
 	lockStopBridge   sync.RWMutex
 }
@@ -156,30 +159,35 @@ func (mock *SocketBridgeManagerMock) IsRunningCalls() []struct {
 	return calls
 }
 
-// ProbeHostGPG calls ProbeHostGPGFunc.
-func (mock *SocketBridgeManagerMock) ProbeHostGPG() error {
-	if mock.ProbeHostGPGFunc == nil {
-		panic("SocketBridgeManagerMock.ProbeHostGPGFunc: method is nil but SocketBridgeManager.ProbeHostGPG was just called")
+// Precheck calls PrecheckFunc.
+func (mock *SocketBridgeManagerMock) Precheck(ctx context.Context) error {
+	if mock.PrecheckFunc == nil {
+		panic("SocketBridgeManagerMock.PrecheckFunc: method is nil but SocketBridgeManager.Precheck was just called")
 	}
 	callInfo := struct {
-	}{}
-	mock.lockProbeHostGPG.Lock()
-	mock.calls.ProbeHostGPG = append(mock.calls.ProbeHostGPG, callInfo)
-	mock.lockProbeHostGPG.Unlock()
-	return mock.ProbeHostGPGFunc()
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockPrecheck.Lock()
+	mock.calls.Precheck = append(mock.calls.Precheck, callInfo)
+	mock.lockPrecheck.Unlock()
+	return mock.PrecheckFunc(ctx)
 }
 
-// ProbeHostGPGCalls gets all the calls that were made to ProbeHostGPG.
+// PrecheckCalls gets all the calls that were made to Precheck.
 // Check the length with:
 //
-//	len(mockedSocketBridgeManager.ProbeHostGPGCalls())
-func (mock *SocketBridgeManagerMock) ProbeHostGPGCalls() []struct {
+//	len(mockedSocketBridgeManager.PrecheckCalls())
+func (mock *SocketBridgeManagerMock) PrecheckCalls() []struct {
+	Ctx context.Context
 } {
 	var calls []struct {
+		Ctx context.Context
 	}
-	mock.lockProbeHostGPG.RLock()
-	calls = mock.calls.ProbeHostGPG
-	mock.lockProbeHostGPG.RUnlock()
+	mock.lockPrecheck.RLock()
+	calls = mock.calls.Precheck
+	mock.lockPrecheck.RUnlock()
 	return calls
 }
 
