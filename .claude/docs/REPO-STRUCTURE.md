@@ -11,6 +11,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── clawker/               # Main CLI binary
 │   ├── clawkercp/            # Control plane daemon (PID 1 in CP container)
 │   ├── bpffs-delegate/        # Elevated one-shot BPF filesystem helper (Linux); runs on the host under sudo when the daemon is rootless
+│   ├── idmap-mount/          # Elevated one-shot ID-mapped mount helper (Linux); attaches a workspace view whose IDs the container user owns
 │   ├── clawkerd/              # Thin agent-daemon entrypoint (Linux): os.Exit(clawkerd.Main())
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
 │   └── gen-docs/              # CLI doc generator
@@ -57,6 +58,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── docs/                  # CLI doc generation
 │   ├── git/                   # Git operations, worktree management (leaf)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
+│   ├── idmap/                 # ID-mapped workspace views for rootless daemons: mapping math, view paths, bind rewriting (leaf)
 │   ├── iostreams/             # I/O streams, colors, styles, spinners, layout
 │   ├── keyring/               # Credential storage
 │   ├── logger/                # Struct-based zerolog; Factory noun

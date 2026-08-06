@@ -113,7 +113,7 @@ help:
 # a `.c` retriggers bpf2go; editing host-side Go triggers only the Go
 # build. Collapsed from the previous `clawker → clawker-build` indirection,
 # which added a hop with no second consumer.
-clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
@@ -142,6 +142,7 @@ COREDNS_BINARY := controlplane/firewall/assets/coredns-clawker
 CP_BINARY := controlplane/manager/assets/clawkercp
 CLAWKERD_BINARY := clawkerd/embed/assets/clawkerd
 BPFFS_DELEGATE_BINARY := controlplane/manager/assets/bpffs-delegate
+IDMAP_MOUNT_BINARY := internal/cmd/container/shared/assets/idmap-mount
 
 # Proto inputs + generated outputs. Declared early so targets that use
 # $(PROTO_GENERATED) further down in the file get a non-empty expansion
@@ -457,6 +458,20 @@ $(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard control
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/bpffs-delegate
 
+# idmap-mount-binary builds the elevated one-shot helper that attaches an
+# ID-mapped view of a workspace on a rootless Docker host. Pure Go: it links
+# the mapping contract (internal/idmap) and x/sys, nothing else — it runs
+# under sudo, and a root-run binary should carry the syscalls it makes and no
+# more. The artifact is go:embed'd into the clawker CLI via
+# internal/cmd/container/shared/embed_idmap.go and written to a private temp
+# directory when a container create needs a view.
+.PHONY: idmap-mount-binary
+idmap-mount-binary: $(IDMAP_MOUNT_BINARY)
+$(IDMAP_MOUNT_BINARY): $(wildcard cmd/idmap-mount/*.go) $(wildcard internal/idmap/*.go)
+	@echo "Building idmap-mount for linux/$(BUILDX_TARGETARCH)..."
+	@mkdir -p $(@D)
+	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/idmap-mount
+
 # ============================================================================
 # Release pipeline support
 # ============================================================================
@@ -484,23 +499,25 @@ $(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard control
 release-embeds: $(PROTO_GENERATED)
 	@rm -rf $(RELEASE_EMBED_STAGE)/amd64 $(RELEASE_EMBED_STAGE)/arm64
 	@echo "==> Building linux/amd64 embed set"
-	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
-	$(MAKE) BUILDX_TARGETARCH=amd64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=amd64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary
 	@mkdir -p $(RELEASE_EMBED_STAGE)/amd64
 	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager
 	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker
 	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/amd64/clawkercp
 	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/amd64/clawkerd
 	cp $(BPFFS_DELEGATE_BINARY) $(RELEASE_EMBED_STAGE)/amd64/bpffs-delegate
+	cp $(IDMAP_MOUNT_BINARY)    $(RELEASE_EMBED_STAGE)/amd64/idmap-mount
 	@echo "==> Building linux/arm64 embed set"
-	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
-	$(MAKE) BUILDX_TARGETARCH=arm64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary
+	@rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY)
+	$(MAKE) BUILDX_TARGETARCH=arm64 ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary
 	@mkdir -p $(RELEASE_EMBED_STAGE)/arm64
 	cp $(EBPF_BINARY)     $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager
 	cp $(COREDNS_BINARY)  $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker
 	cp $(CP_BINARY)       $(RELEASE_EMBED_STAGE)/arm64/clawkercp
 	cp $(CLAWKERD_BINARY) $(RELEASE_EMBED_STAGE)/arm64/clawkerd
 	cp $(BPFFS_DELEGATE_BINARY) $(RELEASE_EMBED_STAGE)/arm64/bpffs-delegate
+	cp $(IDMAP_MOUNT_BINARY)    $(RELEASE_EMBED_STAGE)/arm64/idmap-mount
 	@$(MAKE) verify-release-embeds
 	@echo "==> Embed sets staged under $(RELEASE_EMBED_STAGE)/ (verified)"
 
@@ -522,7 +539,7 @@ release-embeds: $(PROTO_GENERATED)
 verify-release-embeds:
 	@for arch in amd64 arm64; do \
 		case $$arch in amd64) want=3e00 ;; arm64) want=b700 ;; esac; \
-		for bin in ebpf-manager coredns-clawker clawkercp clawkerd bpffs-delegate; do \
+		for bin in ebpf-manager coredns-clawker clawkercp clawkerd bpffs-delegate idmap-mount; do \
 			f=$(RELEASE_EMBED_STAGE)/$$arch/$$bin; \
 			test -f $$f || { echo "ERROR: missing $$f" >&2; exit 1; }; \
 			hdr=$$(dd if=$$f bs=1 count=20 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n'); \
@@ -556,20 +573,22 @@ verify-release-embeds:
 # the previous arch's bytes. Either every asset is the requested arch, or
 # the build fails before `go build` runs.
 stage-embeds-amd64:
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/ebpf-manager     $(EBPF_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/coredns-clawker  $(COREDNS_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/clawkercp       $(CP_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/clawkerd         $(CLAWKERD_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/amd64/bpffs-delegate   $(BPFFS_DELEGATE_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/amd64/idmap-mount     $(IDMAP_MOUNT_BINARY)
 
 stage-embeds-arm64:
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY)
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/ebpf-manager     $(EBPF_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/coredns-clawker  $(COREDNS_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/clawkercp       $(CP_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/clawkerd         $(CLAWKERD_BINARY)
 	cp $(RELEASE_EMBED_STAGE)/arm64/bpffs-delegate   $(BPFFS_DELEGATE_BINARY)
+	cp $(RELEASE_EMBED_STAGE)/arm64/idmap-mount     $(IDMAP_MOUNT_BINARY)
 
 # Run Clawker tests with coverage
 clawker-test-coverage: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
@@ -633,7 +652,7 @@ clawker-install-global: clawker
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
 	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
-	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) coverage.out coverage.html
+	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
 
 # ============================================================================

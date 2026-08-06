@@ -25,12 +25,62 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
     ProjectManager: opts.ProjectManager,
     HostProxy:      opts.HostProxy,
     Log:            log,
+    IOStreams:      ios,
 })
 ```
 
 **Steps** (streamed via events): workspace, config, environment, container (validate+build+create+inject).
 
 **Volume cleanup on failure**: Deferred cleanup via named returns. Tracks newly-created volumes; removes only those on error. Pre-existing volumes untouched.
+
+**`IOStreams` is required** — `CreateContainer` refuses a nil up front. A nil is
+always a forgotten field, never a headless caller (headless runs carry a non-TTY
+IOStreams, and prompt-suitability is `CanPrompt`'s call at the point of asking),
+and it would silently turn an answerable authorization prompt into an
+unexplained permission failure inside the container.
+
+### ID-mapped workspace views (`idmap.go`)
+
+A rootless daemon's user namespace maps the invoking user to container root, so
+a bind-mounted workspace arrives root-owned inside the container and the
+unprivileged clawker user cannot read or write it. Docker exposes no per-mount
+ID mapping ([moby#52061](https://github.com/moby/moby/issues/52061) closed
+unimplemented), and the kernel reserves idmapped-mount creation for
+init-namespace CAP_SYS_ADMIN, so clawker provisions one itself.
+
+`ensureIDMappedWorkspace(ctx, client, hostConfig, roots, ios, log)` runs inside
+`buildContainerConfigs`, right after `BuildConfigs` — the one moment when every
+host bind the container will ever have exists in one place (workspace, harness,
+gitconfig, the user's own `-v` flags), because Docker fixes mounts at create.
+
+Order of decisions, each cheap before the next:
+
+1. Not Linux → no-op. The mount has to be made on the daemon's own kernel.
+2. Nothing binds anything under a candidate root (snapshot workspaces, binds
+   living elsewhere) → no-op, and the daemon is never even queried.
+3. The daemon reports itself rootful (`Info.SecurityOptions` lacks
+   `name=rootless`) → no-op. The daemon's own answer is the only trustworthy
+   source; the CLI's privileges say nothing about how the daemon runs.
+4. Otherwise, per root, deepest first: if no view is mounted at
+   `consts.IDMapSubdir()/<basename>-<hash>`, run the embedded `idmap-mount`
+   helper under sudo (via `cmdutil.RunElevated`) to attach one; then repoint
+   every bind source at or under that root into the view.
+
+Roots are `ws.wd` (the workspace — a worktree in `--worktree` mode) and
+`ws.projectRootDir` (the main repository, bound for its git directory in
+worktree mode). Deepest-first ordering keeps a worktree living inside its own
+repository from being swallowed by the repository's view.
+
+The mapping comes from `internal/idmap`: the workspace owner's on-disk IDs, and
+the kernel IDs those occupy in the daemon's user namespace per the documented
+rootless formula (container id 0 = the daemon user; id n≥1 = subuid base + n−1,
+read from `/etc/subuid` + `/etc/subgid`). The container's clawker user carries
+the host user's uid, so the owner's IDs are also the container-side IDs.
+
+The view is state, not configuration: it survives daemon restarts and dies at
+reboot, so its absence is simply re-provisioned — one sudo prompt on the first
+create after a boot. A non-interactive run declines and returns the exact
+`sudo clawker-idmap-mount …` command instead of a bare failure.
 
 ### Agent Bootstrap Delivery (`agent_bootstrap.go`)
 
@@ -107,7 +157,7 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 |------|---------|
 | `ContainerCreateOptions` | All container CLI flags |
 | `CommandOpts` | DI container with lazy closures + AgentName/Project |
-| `CreateContainerOptions` | Inputs: Client, Config, ProjectName, Options, Flags, Version, ProjectManager, HostProxy, Log, Is256Color, IsTrueColor |
+| `CreateContainerOptions` | Inputs: Client, Config, ProjectName, Options, Flags, Version, ProjectManager, ProjectRegistry, HostProxy, Log, IOStreams (**required**), Is256Color, IsTrueColor |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |

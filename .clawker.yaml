@@ -262,6 +262,12 @@ security:
             path: ~/addyosmani/agent-skills(/.*)?
           - action: allow
             path: ~/obra/superpowers(/.*)?
+          - action: allow
+            path: /moby/moby/
+          - action: allow
+            path: /containerd/containerd/
+          - action: allow
+            path: /opencontainers/runc/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -293,6 +299,12 @@ security:
             path: /repos/actions/checkout/
           - action: allow
             path: /repos/charmbracelet/
+          - action: allow
+            path: /repos/moby/moby/
+          - action: allow
+            path: /repos/containerd/containerd/
+          - action: allow
+            path: /repos/opencontainers/runc/
           - action: deny
             path: /gists
           - action: deny

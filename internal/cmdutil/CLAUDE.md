@@ -24,7 +24,7 @@ Heavy command helpers have been extracted to dedicated packages:
 | `inventory.go` | `NewInventoryListCommand`, `InventorySpec`, `InventoryOptions` -- shared read-only per-type component inventory command (`stack list`/`harness list`/`monitor extensions`): NAME/VERSION/SOURCE over `bundle.Manager.Inventory`, `!` shadow markers, bundle-sourced rows name their owning bundle |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 | `slugify.go` | `ProjectSlugify` -- normalizes raw project-name candidates into slugs safe for Docker/x509/gRPC |
-| `sudo.go` | `SudoPassword(ios)` -- generic no-echo sudo credential prompt (via `prompter.Password`); asks for and RETURNS the credential, runs nothing — callers feed it to `sudo -S` themselves |
+| `sudo.go` | `SudoPassword(ios)` -- generic no-echo sudo credential prompt (via `prompter.Password`); asks for and RETURNS the credential, runs nothing. `RunElevated(ctx, ios, ElevatedHelper{Name, Binary, Args})` -- the whole privileged one-shot: stage the embedded binary into a fresh 0700 temp dir, stop the spinner, prompt, run once under `sudo -S -p ''`, remove it. `ErrSudoUnavailable` when sudo is not on PATH. Used by the bpffs delegation heal (`internal/cmd/controlplane/shared`) and the ID-mapped workspace view (`internal/cmd/container/shared`) |
 
 ## Factory (`factory.go`)
 

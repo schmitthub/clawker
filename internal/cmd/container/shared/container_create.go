@@ -36,6 +36,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -1644,8 +1645,14 @@ type CreateContainerOptions struct {
 	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
 	Log             *logger.Logger
-	Is256Color      bool
-	IsTrueColor     bool
+	// IOStreams is required. It is what lets the create path ask the person
+	// for authorization when a host step needs elevation (the ID-mapped
+	// workspace view on a rootless daemon). A nil value always means a
+	// forgotten field, never a headless caller: headless runs carry a
+	// non-TTY IOStreams and are filtered by CanPrompt at the point of asking.
+	IOStreams   *iostreams.IOStreams
+	Is256Color  bool
+	IsTrueColor bool
 
 	// harnessBundle is the container's harness identity, resolved once at
 	// the top of CreateContainer from the image's harness label (registry
@@ -1707,6 +1714,15 @@ func validateMountableHost(dockerHost string) error {
 func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*CreateContainerResult, error) {
 	containerOpts := opts.Options
 	log := opts.Log
+
+	// A nil IOStreams is always a wiring mistake, never a headless caller:
+	// non-interactive runs carry a non-TTY IOStreams and are filtered by
+	// CanPrompt where authorization is actually asked for. Failing loud here
+	// keeps a forgotten field from silently turning an answerable prompt
+	// into an unexplained permission failure inside the container.
+	if opts.IOStreams == nil {
+		return nil, errors.New("creating container: no IOStreams provided")
+	}
 
 	// Entrypoint gate: the docker-socket feature bind-mounts the daemon
 	// socket, which only a unix:// address can back. Checked before any
@@ -2259,6 +2275,15 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 		opts.Flags, workspaceMounts, security)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Every host bind this container will ever have now exists on hostConfig
+	// — the workspace, the harness's, the user's own -v flags — because
+	// Docker fixes mounts at create. That makes this the one place that can
+	// make them all usable on a rootless daemon.
+	if err = ensureIDMappedWorkspace(ctx, opts.Client, hostConfig,
+		[]string{ws.wd, ws.projectRootDir}, opts.IOStreams, log); err != nil {
+		return nil, err
 	}
 
 	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.

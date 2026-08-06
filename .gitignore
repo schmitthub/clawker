@@ -47,6 +47,7 @@ embeds/
 /clawker-generate
 /gen-docs
 /bpffs-delegate
+/idmap-mount
 
 # Binaries for programs and plugins
 *.exe
@@ -155,3 +156,4 @@ test/adversarial/attacker-server/attacker-server
 firewall-tests-debug.log
 
 .claude/scheduled_tasks.lock
+internal/cmd/container/shared/assets/idmap-mount

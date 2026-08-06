@@ -22,6 +22,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerimage "github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/api/types/volume"
 	moby "github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -110,6 +111,14 @@ func NewFakeClient(cfg config.Config, opts ...FakeClientOption) *FakeClient {
 	// Default ContainerList returns an empty list.
 	fakeAPI.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
 		return moby.ContainerListResult{}, nil
+	}
+
+	// Default Info describes an ordinary rootful daemon — the shape most
+	// tests mean when they say "a daemon". Tests that care about rootless
+	// behavior call SetupRootlessDaemon.
+	fakeAPI.InfoFn = func(_ context.Context, _ moby.InfoOptions) (moby.SystemInfoResult, error) {
+		//nolint:exhaustruct // fixture: only the fields production reads are meaningful
+		return moby.SystemInfoResult{Info: system.Info{SecurityOptions: []string{"name=seccomp,profile=builtin"}}}, nil
 	}
 
 	// Override whailtest's default ImageInspect to return clawker labels.

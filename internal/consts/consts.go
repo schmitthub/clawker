@@ -323,6 +323,7 @@ const (
 	monitorDir      = "monitor"
 	firewallDir     = "firewall"
 	bpffsDir        = "bpffs"
+	idmapDir        = "idmap"
 	firewallCertDir = "certs"
 	// OtelClientsDirName is the per-service mTLS material subdirectory
 	// under firewallDir: clients/<svc>/{client.pem,client.key} plus a
@@ -1002,6 +1003,18 @@ func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataD
 // cannot outlive the user namespace it was created for, so it is
 // re-established on each control-plane start.
 func BPFFSSubdir() (string, error) { return subdirPath(bpffsDir, DataDir) }
+
+// IDMapSubdir ensures and returns the directory holding clawker's ID-mapped
+// workspace views. On a rootless daemon the user namespace maps the daemon
+// user to container root, so a bind-mounted workspace reaches the container
+// root-owned and the unprivileged clawker user cannot use it. An ID-mapped
+// bind of the workspace is attached here instead, presenting the owner's
+// files as the IDs that user occupies, and container specs bind the view.
+//
+// The directories persist; the mounts on them do not — an ID-mapped mount
+// lives until it is replaced or the host reboots, so each view is
+// re-established on demand.
+func IDMapSubdir() (string, error) { return subdirPath(idmapDir, DataDir) }
 
 // OtelClientsDir ensures and returns the directory under
 // FirewallDataSubdir where the otelcerts.Service writes mTLS client

@@ -97,6 +97,7 @@ func testCreateConfig(
 		Options:     containerOpts,
 		Flags:       cmd.Flags(),
 		Log:         logger.Nop(),
+		IOStreams:   testIOStreams(),
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
 		},

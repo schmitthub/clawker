@@ -15,6 +15,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerimage "github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -186,6 +187,25 @@ func (f *FakeClient) SetupContainerCreate() {
 		return client.ContainerCreateResult{
 			ID: FakeContainerID,
 		}, nil
+	}
+}
+
+// SetupRootlessDaemon makes the fake describe itself as a rootless daemon,
+// which is what code paths that translate bind-mount ownership key on. The
+// default fake is rootful.
+func (f *FakeClient) SetupRootlessDaemon() {
+	f.FakeAPI.InfoFn = func(_ context.Context, _ client.InfoOptions) (client.SystemInfoResult, error) {
+		//nolint:exhaustruct // fixture: only the fields production reads are meaningful
+		return client.SystemInfoResult{Info: system.Info{
+			SecurityOptions: []string{"name=seccomp,profile=builtin", "name=rootless", "name=cgroupns"},
+		}}, nil
+	}
+}
+
+// SetupInfoError configures the fake to fail when asked about the daemon.
+func (f *FakeClient) SetupInfoError(err error) {
+	f.FakeAPI.InfoFn = func(_ context.Context, _ client.InfoOptions) (client.SystemInfoResult, error) {
+		return client.SystemInfoResult{}, err
 	}
 }
 

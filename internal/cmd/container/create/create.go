@@ -198,6 +198,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			ProjectRegistry: opts.ProjectRegistry,
 			HostProxy:       opts.HostProxy,
 			Log:             log,
+			IOStreams:       ios,
 			Is256Color:      ios.Is256ColorSupported(),
 			IsTrueColor:     ios.IsTrueColorSupported(),
 		})

@@ -5,11 +5,8 @@ package shared
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
@@ -19,15 +16,9 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
-const (
-	// helperFileMode is the mode of the staged helper binary. Only the
-	// invoking user can read or execute it; root ignores the mode entirely.
-	helperFileMode = 0o700
-
-	// helperBinaryName is what the staged helper is called on disk. It shows
-	// up in the sudo prompt and in the audit log, so it says what it does.
-	helperBinaryName = consts.NamePrefix + "-bpffs-delegate"
-)
+// helperBinaryName is what the staged helper is called on disk. It shows up
+// in the sudo prompt and in the audit log, so it says what it does.
+const helperBinaryName = consts.NamePrefix + "-bpffs-delegate"
 
 // AssistSOS resolves one control plane SOS, reporting nil only when the
 // assistance actually landed. Callers catch the *CPSOSError a Manager.Start
@@ -93,69 +84,16 @@ func delegateBPFFS(ctx context.Context, sos *cpmanager.CPSOSError, ios *iostream
 		return fmt.Errorf("resolving the BPF filesystem directory: %w", err)
 	}
 
-	sudoPath, err := exec.LookPath("sudo")
-	if err != nil {
-		return fmt.Errorf("%w\n\nCompleting it needs sudo, which is not on PATH", sos)
-	}
-
-	helperPath, cleanup, err := stageDelegateHelper()
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
-	// The container-start path runs this bootstrap under a spinner, which
-	// renders to the same stream the prompt is about to land on. Stopping it
-	// is a no-op when nothing is spinning, and the caller's own deferred stop
-	// stays safe either way.
-	ios.StopSpinner()
-
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), sos.Message)
 	fmt.Fprintf(ios.ErrOut, "%s Completing it needs %s.\n", cs.InfoIcon(), cs.Muted("sudo"))
 
-	credential, err := cmdutil.SudoPassword(ios)
-	if err != nil {
-		return fmt.Errorf("%w\n\n%w", sos, err)
-	}
-
-	// -S reads the credential from stdin and -p silences sudo's own prompt,
-	// which was already asked above. The helper reads nothing from stdin, so
-	// what it inherits is a reader sudo has already drained.
-	cmd := exec.CommandContext(ctx, sudoPath, "-S", "-p", "", helperPath,
-		filepath.Join(firewallDir, delegation.SocketName), pinPath)
-	cmd.Stdin = strings.NewReader(credential + "\n")
-	cmd.Stdout, cmd.Stderr = ios.Out, ios.ErrOut
-	if runErr := cmd.Run(); runErr != nil {
-		return fmt.Errorf("%w\n\nThe elevated helper failed: %w", sos, runErr)
+	if runErr := cmdutil.RunElevated(ctx, ios, cmdutil.ElevatedHelper{
+		Name:   helperBinaryName,
+		Binary: cpmanager.BPFFSDelegateBinary,
+		Args:   []string{filepath.Join(firewallDir, delegation.SocketName), pinPath},
+	}); runErr != nil {
+		return fmt.Errorf("%w\n\n%w", sos, runErr)
 	}
 	return nil
-}
-
-// stageDelegateHelper writes the embedded helper to a fresh private directory
-// and returns its path plus a cleanup.
-//
-// A fresh directory rather than a fixed path in the temp root: this binary is
-// about to be executed as root, and a fixed path in a world-writable
-// directory is a name another local user can win a race for. The directory is
-// created 0700 by MkdirTemp and holds nothing else.
-func stageDelegateHelper() (string, func(), error) {
-	dir, err := os.MkdirTemp("", consts.NamePrefix+"-bpffs-")
-	if err != nil {
-		return "", nil, fmt.Errorf("creating a directory for the elevated helper: %w", err)
-	}
-	cleanup := func() {
-		if rerr := os.RemoveAll(dir); rerr != nil {
-			// Nothing actionable: the helper has already run or failed, and
-			// the leftover is a temp directory the OS reclaims.
-			_ = rerr
-		}
-	}
-
-	path := filepath.Join(dir, helperBinaryName)
-	if werr := os.WriteFile(path, cpmanager.BPFFSDelegateBinary, helperFileMode); werr != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("writing the elevated helper: %w", werr)
-	}
-	return path, cleanup, nil
 }
