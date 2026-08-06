@@ -260,9 +260,10 @@ migration's self-reported `changed`.
   compute between calls. The invariant a caller must hold is **one writer per
   file at a time**, established architecturally — never with locks in a domain
   impl. CP funnels its writers through the ActionQueue; the CLI runs its
-  background checks sequentially on a single goroutine (`internal/clawker.Main`
-  runs the update check and then the changelog check, both against the one
-  `f.CLIState()` store), so no two Set→Write cycles interleave. Same-path
+  background checks sequentially on one goroutine after the command returns
+  (`internal/clawkercmd.Main` runs the update check and then the changelog
+  check, both against the one `f.CLIState()` store), so no two Set→Write cycles
+  interleave. Same-path
   writes that still overlap (e.g. another process) resolve to last-writer-wins
   by design; each write itself is atomic and grafts onto a fresh read of the
   destination file inside the flock.

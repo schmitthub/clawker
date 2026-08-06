@@ -74,8 +74,13 @@ func NewManager(log *logger.Logger) *Manager {
 	}
 }
 
-// Load loads BPF programs from embedded ELF objects, pins maps and programs
-// to /sys/fs/bpf/clawker/. Called once at container startup (daemon mode).
+// Load loads BPF programs from embedded ELF objects and pins maps and
+// programs under PinPath. Called once at container startup (daemon mode).
+//
+// The BPF filesystem at PinPath must already be mounted: cilium/ebpf mints
+// its token on the first BPF syscall and caches the result for the process
+// lifetime, so a filesystem appearing afterwards is never picked up. The
+// control plane's bpffsFlow startup step guarantees the ordering.
 //
 // Existing pinned maps are reused (PinByName) so container_map entries from
 // a previous CP lifetime survive. Stale links (whose target cgroups no
@@ -179,7 +184,7 @@ func (m *Manager) Load() error {
 	return nil
 }
 
-// OpenPinned opens already-pinned maps and programs from /sys/fs/bpf/clawker/.
+// OpenPinned opens already-pinned maps and programs from PinPath.
 // Used by command-mode instances (docker exec) that operate on maps without
 // re-loading the BPF programs.
 func (m *Manager) OpenPinned() error {
@@ -1321,11 +1326,6 @@ func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
 		cfg.HostProxyIp = IPToUint32(hp)
 	}
 	return cfg, nil
-}
-
-// CgroupPath returns the cgroup v2 path for a Docker container.
-func CgroupPath(containerID string) string {
-	return filepath.Join("/sys/fs/cgroup/system.slice", "docker-"+containerID+".scope")
 }
 
 // cgroupRoot is the only legitimate filesystem root for cgroup v2 paths.

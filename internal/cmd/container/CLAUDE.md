@@ -16,7 +16,7 @@ Where to add logic that must run at a lifecycle point. The deciding axis is **on
 
 `ContainerStart` (`shared/container_start.go`) runs three phases in order; every start path funnels through them — `run`, `start`, and `restart --signal` go via `ContainerStart`, while plain `restart` (`restart/restart.go`) calls the two Bootstrap phases directly around `client.ContainerRestart`:
 
-1. `BootstrapServicesPreStart` — before Docker start: host proxy + CP ensure, firewall rules sync (if enabled), every-start `pre_run` hook delivery. Use for host-side prep that must precede the container process.
+1. `BootstrapServicesPreStart` — before Docker start: host proxy + CP ensure, firewall rules sync (if enabled), ID-mapped workspace view re-establishment (rootless daemons; the views die at reboot and Docker resolves bind sources at start — see `shared/CLAUDE.md`), every-start `pre_run` hook delivery. Use for host-side prep that must precede the container process.
 2. Docker start (`client.ContainerStart` / `ContainerRestart`).
 3. `BootstrapServicesPostStart` — after Docker start: eBPF cgroup enroll (cgroup exists only now), GPG/SSH socket bridge. Use for anything needing the running container's cgroup/PID.
 

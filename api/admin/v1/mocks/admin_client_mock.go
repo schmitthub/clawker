@@ -65,6 +65,9 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //			ListAgentsFunc: func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error) {
 //				panic("mock out the ListAgents method")
 //			},
+//			WatchSOSFunc: func(ctx context.Context, in *v1.WatchSOSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[v1.SOS], error) {
+//				panic("mock out the WatchSOS method")
+//			},
 //		}
 //
 //		// use mockedAdminServiceClient in code that requires v1.AdminServiceClient
@@ -116,6 +119,9 @@ type AdminServiceClientMock struct {
 
 	// ListAgentsFunc mocks the ListAgents method.
 	ListAgentsFunc func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error)
+
+	// WatchSOSFunc mocks the WatchSOS method.
+	WatchSOSFunc func(ctx context.Context, in *v1.WatchSOSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[v1.SOS], error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -254,6 +260,15 @@ type AdminServiceClientMock struct {
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
+		// WatchSOS holds details about calls to the WatchSOS method.
+		WatchSOS []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In *v1.WatchSOSRequest
+			// Opts is the opts argument value.
+			Opts []grpc.CallOption
+		}
 	}
 	lockFirewallAddRules        sync.RWMutex
 	lockFirewallBypass          sync.RWMutex
@@ -270,6 +285,7 @@ type AdminServiceClientMock struct {
 	lockFirewallSyncRoutes      sync.RWMutex
 	lockGetSystemTime           sync.RWMutex
 	lockListAgents              sync.RWMutex
+	lockWatchSOS                sync.RWMutex
 }
 
 // FirewallAddRules calls FirewallAddRulesFunc.
@@ -869,5 +885,45 @@ func (mock *AdminServiceClientMock) ListAgentsCalls() []struct {
 	mock.lockListAgents.RLock()
 	calls = mock.calls.ListAgents
 	mock.lockListAgents.RUnlock()
+	return calls
+}
+
+// WatchSOS calls WatchSOSFunc.
+func (mock *AdminServiceClientMock) WatchSOS(ctx context.Context, in *v1.WatchSOSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[v1.SOS], error) {
+	if mock.WatchSOSFunc == nil {
+		panic("AdminServiceClientMock.WatchSOSFunc: method is nil but AdminServiceClient.WatchSOS was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		In   *v1.WatchSOSRequest
+		Opts []grpc.CallOption
+	}{
+		Ctx:  ctx,
+		In:   in,
+		Opts: opts,
+	}
+	mock.lockWatchSOS.Lock()
+	mock.calls.WatchSOS = append(mock.calls.WatchSOS, callInfo)
+	mock.lockWatchSOS.Unlock()
+	return mock.WatchSOSFunc(ctx, in, opts...)
+}
+
+// WatchSOSCalls gets all the calls that were made to WatchSOS.
+// Check the length with:
+//
+//	len(mockedAdminServiceClient.WatchSOSCalls())
+func (mock *AdminServiceClientMock) WatchSOSCalls() []struct {
+	Ctx  context.Context
+	In   *v1.WatchSOSRequest
+	Opts []grpc.CallOption
+} {
+	var calls []struct {
+		Ctx  context.Context
+		In   *v1.WatchSOSRequest
+		Opts []grpc.CallOption
+	}
+	mock.lockWatchSOS.RLock()
+	calls = mock.calls.WatchSOS
+	mock.lockWatchSOS.RUnlock()
 	return calls
 }

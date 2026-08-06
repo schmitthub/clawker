@@ -101,6 +101,10 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 		// single-slot caveat. Deadline interceptor runs first so auth
 		// token fetch inherits the same deadline as the RPC.
 		grpc.WithChainUnaryInterceptor(deadlineInterceptor(rpcDeadline), ts.unaryInterceptor()),
+		// Streaming calls run a disjoint interceptor chain: same bearer
+		// token, deliberately NO deadline — a watch stream is long-lived
+		// and bounded by the caller's context.
+		grpc.WithChainStreamInterceptor(ts.streamInterceptor()),
 	)
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
@@ -279,6 +283,31 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 	}
 }
 
+// streamInterceptor is unaryInterceptor's streaming twin: the bearer
+// token rides the stream's opening metadata. Registered separately
+// because grpc-go routes unary and streaming calls through disjoint
+// interceptor chains — without this, a streaming RPC (WatchSOS) would
+// reach the CP with no authorization metadata at all. No deadline is
+// applied here: a watch stream is long-lived by design, bounded by the
+// caller's context, not a per-RPC timer.
+func (ts *tokenSource) streamInterceptor() grpc.StreamClientInterceptor {
+	return func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		tok, err := ts.token(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("refreshing access token for %s: %w", method, err)
+		}
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
+		return streamer(ctx, desc, cc, method, opts...)
+	}
+}
+
 // probeCPTime dials a short-lived mTLS connection (no bearer token —
 // GetSystemTime is the public bootstrap RPC) and returns the CP's current
 // wall-clock time as a UTC instant (the int64 nanos parsed and normalized to
@@ -335,7 +364,15 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	// The exchange itself is detached from the caller's cancellation and
+	// bounded only by the client's own timeout. A mint is a sub-second
+	// round trip, and a caller cancelling mid-flight (command finished,
+	// watch abandoned, Ctrl+C) aborts Hydra's transaction mid-commit —
+	// observed to destroy its in-memory SQLite database outright, leaving
+	// a running CP whose every later token exchange fails. Letting the
+	// mint complete and discarding the result costs nothing.
+	req, err := http.NewRequestWithContext(
+		context.WithoutCancel(ctx), http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", 0, err
 	}

@@ -1,9 +1,11 @@
 // Package changelog fetches the curated CHANGELOG.md (Keep a Changelog format)
-// and surfaces the entries gained since a cursor version. The single exported
-// entry point is CheckForChanges (changelog.go); Entry is the parsed unit. The
-// parser (parse.go) and the cursor range query (between) are pure, unexported
-// helpers — they operate on bytes/slices and the package keeps them internal
-// because nothing outside the package composes them independently.
+// and surfaces the entries gained since a cursor version. The two halves are
+// separate entry points so a caller can fetch and decide at different times:
+// GetChangelogEntries does the network hop, CheckForChanges owns the cursor
+// over entries already fetched. Entry is the parsed unit. Parse (parse.go) is
+// exported so tooling can render a local CHANGELOG.md through the same path;
+// the cursor range query (between) stays an unexported helper, since nothing
+// outside the package composes it independently.
 package changelog
 
 import (
@@ -28,25 +30,22 @@ type Entry struct {
 	Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
-// CheckForChanges owns the show-once changelog cursor end to end. It reads the
-// cursor from CLI state and:
+// CheckForChanges owns the show-once changelog cursor end to end, over entries
+// the caller already fetched (see GetChangelogEntries). It reads the cursor
+// from CLI state and:
 //
 //   - First run (no cursor, or an unparseable one): seeds the cursor at current
-//     and returns nil — there is NO catch-up backfill across a changelog-blind
-//     upgrade; the cursor IS "last seen" from here on.
-//   - Otherwise: GETs the curated CHANGELOG.md (ChangelogURL) with the
-//     caller-supplied client, parses it, returns the entries gained in
-//     (cursor, current] (newest first), and advances the cursor to current.
+//     and returns nil, ignoring entries — there is NO catch-up backfill across a
+//     changelog-blind upgrade; the cursor IS "last seen" from here on.
+//   - Otherwise: returns the entries gained in (cursor, current] (newest first)
+//     and advances the cursor to current.
 //
 // current is the running-binary version string; it is parsed here (v-tolerant),
 // and an unparseable current — e.g. a non-release "DEV" build — returns an error
-// so the caller shows nothing. The request is context-aware (cancel ctx to abort)
-// and bounded by the supplied client's timeout; a non-200 is an error. A nil st
-// is a programming error (the caller wires state) and returns an error. When the
-// cursor advance fails after a successful fetch, the gained entries are still
-// returned so the teaser can render.
-func CheckForChanges(ctx context.Context, client *http.Client, st state.StateStore, current string) ([]Entry, error) {
-
+// so the caller shows nothing. A nil st is a programming error (the caller wires
+// state) and returns an error. When the cursor advance fails, the gained entries
+// are still returned so the teaser can render.
+func CheckForChanges(entries []Entry, st state.StateStore, current string) ([]Entry, error) {
 	if st == nil {
 		return nil, fmt.Errorf("state: CheckForChanges: nil StateStore")
 	}
@@ -67,11 +66,6 @@ func CheckForChanges(ctx context.Context, client *http.Client, st state.StateSto
 		return nil, nil
 	}
 
-	entries, err := getChangelogEntries(ctx, client)
-	if err != nil {
-		return nil, fmt.Errorf("getting changelog entries: %w", err)
-	}
-
 	gained, err := between(entries, cursor, cv)
 	if err != nil {
 		return nil, err
@@ -83,12 +77,12 @@ func CheckForChanges(ctx context.Context, client *http.Client, st state.StateSto
 	return gained, nil
 }
 
-// getChangelogEntries GETs the curated CHANGELOG.md (ChangelogURL) with the
+// GetChangelogEntries GETs the curated CHANGELOG.md (ChangelogURL) with the
 // supplied client and parses it into entries (newest-first, as authored). The
 // request is context-aware and bounded by the client's own timeout; a non-200 is
 // an error. It is the package's only network hop — CheckForChanges owns the
 // cursor logic wrapped around it.
-func getChangelogEntries(ctx context.Context, client *http.Client) ([]Entry, error) {
+func GetChangelogEntries(ctx context.Context, client *http.Client) ([]Entry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ChangelogURL, nil)
 	if err != nil {
 		return nil, err

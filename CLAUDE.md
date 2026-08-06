@@ -108,17 +108,19 @@ make pre-commit                        # Run all hooks
 
 ### `make clawker` — only when embeds are missing
 
-`make clawker` builds the four `//go:embed` binaries the pre-commit go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
+`make clawker` builds the `//go:embed` binaries the pre-commit go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
 
 ```bash
 ls clawkerd/embed/assets/clawkerd \
    controlplane/manager/assets/clawkercp \
    controlplane/manager/assets/ebpf-manager \
+   controlplane/manager/assets/bpffs-delegate \
    controlplane/firewall/assets/coredns-clawker \
+   internal/cmd/container/shared/assets/idmap-mount \
   || make clawker
 ```
 
-(Paths are the Makefile's `CLAWKERD_BINARY`/`CP_BINARY`/`EBPF_BINARY`/`COREDNS_BINARY` vars — check there if this list drifts.)
+(Paths are the Makefile's `CLAWKERD_BINARY`/`CP_BINARY`/`EBPF_BINARY`/`BPFFS_DELEGATE_BINARY`/`COREDNS_BINARY`/`IDMAP_MOUNT_BINARY` vars — check there if this list drifts.)
 
 Embeds persist for the container's lifetime — they are only absent in a fresh container. Editing Go source does not invalidate them for hook purposes.
 

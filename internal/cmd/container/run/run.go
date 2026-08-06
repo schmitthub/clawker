@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
@@ -41,7 +41,7 @@ type RunOptions struct {
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
-	ControlPlane    func() manager.Manager
+	ControlPlane    func(context.Context) (cpmanager.Manager, error)
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
@@ -249,6 +249,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			ProjectRegistry: opts.ProjectRegistry,
 			HostProxy:       opts.HostProxy,
 			Log:             log,
+			IOStreams:       ios,
 			Is256Color:      ios.Is256ColorSupported(),
 			IsTrueColor:     ios.IsTrueColorSupported(),
 		})
@@ -273,6 +274,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
+		IOStreams:    ios,
 		Client:       opts.Client,
 		Config:       opts.Config,
 		HostProxy:    opts.HostProxy,

@@ -87,6 +87,12 @@ type FakeAPIClient struct {
 	PingFn  func(ctx context.Context, options client.PingOptions) (client.PingResult, error)
 	InfoFn  func(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error)
 	CloseFn func() error
+
+	// DaemonHostFn overrides the reported daemon address. Unlike the other
+	// fields it defaults to a local unix socket instead of panicking —
+	// DaemonHost is an accessor on the connection, not a daemon call, and
+	// a local daemon is the baseline every test assumes.
+	DaemonHostFn func() string
 }
 
 // record appends a method name to the call log (thread-safe).
@@ -480,6 +486,17 @@ func (f *FakeAPIClient) Info(ctx context.Context, options client.InfoOptions) (c
 	}
 	f.record("Info")
 	return f.InfoFn(ctx, options)
+}
+
+// DaemonHost implements the APIClient accessor of the same name. Defaults to
+// a local unix socket rather than panicking — it reports connection state,
+// not daemon behavior, and the embedded nil *client.Client would panic.
+func (f *FakeAPIClient) DaemonHost() string {
+	f.record("DaemonHost")
+	if f.DaemonHostFn != nil {
+		return f.DaemonHostFn()
+	}
+	return client.DefaultDockerHost
 }
 
 // Close implements the APIClient Close method.

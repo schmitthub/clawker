@@ -3,12 +3,14 @@ package up
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpshared "github.com/schmitthub/clawker/internal/cmd/controlplane/shared"
 	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -17,7 +19,7 @@ import (
 // UpOptions holds the options for the firewall up command.
 type UpOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() manager.Manager
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
 
@@ -54,8 +56,20 @@ Idempotent — safe to invoke while the stack is already running.`,
 }
 
 func upRun(ctx context.Context, opts *UpOptions) error {
-	if err := opts.ControlPlane().EnsureRunning(ctx); err != nil {
+	mgr, err := opts.ControlPlane(ctx)
+	if err != nil {
 		return fmt.Errorf("bringing control plane up: %w", err)
+	}
+	startErr := mgr.Start(ctx)
+	var sos *cpmanager.CPSOSError
+	if errors.As(startErr, &sos) {
+		if assistErr := cpshared.AssistSOS(ctx, sos, opts.IOStreams); assistErr != nil {
+			return fmt.Errorf("bringing control plane up: %w", assistErr)
+		}
+		startErr = mgr.Start(ctx)
+	}
+	if startErr != nil {
+		return fmt.Errorf("bringing control plane up: %w", startErr)
 	}
 
 	client, err := opts.AdminClient(ctx)

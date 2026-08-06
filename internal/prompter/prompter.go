@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/term"
 )
 
 // PromptForConfirmation prompts the user for y/N confirmation.
@@ -125,6 +126,31 @@ func (p *Prompter) Confirm(message string, defaultYes bool) (bool, error) {
 	}
 
 	return response == "y" || response == "yes", nil
+}
+
+// Password prompts for a secret and returns it. Input is not echoed, and the
+// value is returned to the caller rather than acted on here — this is the
+// generic "ask for a credential" prompt, and what the credential is for is the
+// caller's business.
+//
+// Requires an interactive session. Echo suppression is a property of the
+// terminal, so there is nothing to suppress when stdin is a pipe; rather than
+// read a secret in the clear, a non-interactive session is an error the caller
+// handles (typically by declining to do the privileged thing at all).
+func (p *Prompter) Password(message string) (string, error) {
+	if !p.ios.IsInteractive() {
+		return "", fmt.Errorf("cannot prompt for %s: not an interactive session", message)
+	}
+
+	fmt.Fprintf(p.ios.ErrOut, "%s: ", message)
+	secret, err := term.ReadPassword(int(p.ios.In.Fd()))
+	// The typed newline was swallowed with the echo; without this the next
+	// output lands on the prompt line.
+	fmt.Fprintln(p.ios.ErrOut)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", message, err)
+	}
+	return string(secret), nil
 }
 
 // SelectOption represents an option in a selection prompt.

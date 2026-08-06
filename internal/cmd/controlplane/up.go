@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/moby/moby/api/types/container"
@@ -9,7 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpshared "github.com/schmitthub/clawker/internal/cmd/controlplane/shared"
 	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -22,12 +24,13 @@ type UpOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Config       func() (config.Config, error)
 	Client       func(context.Context) (*docker.Client, error)
-	ControlPlane func() manager.Manager
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
 
 // NewCmdUp creates the controlplane up command. Wraps
-// Manager.EnsureRunning — idempotent — and, when firewall.enable
+// Manager.Start — idempotent, with SOS assistance on a boot the CP
+// cannot finish alone — and, when firewall.enable
 // (settings.yaml) is true, brings the firewall stack up via the same
 // idempotent FirewallInit the `firewall up` verb sends. A freshly
 // booted CP starts the stack itself as a pre-ready startup gate (boot
@@ -67,8 +70,20 @@ default), the Envoy + CoreDNS firewall stack is brought up as well.`,
 }
 
 func upRun(ctx context.Context, opts *UpOptions) error {
-	if err := opts.ControlPlane().EnsureRunning(ctx); err != nil {
+	mgr, err := opts.ControlPlane(ctx)
+	if err != nil {
 		return fmt.Errorf("bringing control plane up: %w", err)
+	}
+	startErr := mgr.Start(ctx)
+	var sos *cpmanager.CPSOSError
+	if errors.As(startErr, &sos) {
+		if assistErr := cpshared.AssistSOS(ctx, sos, opts.IOStreams); assistErr != nil {
+			return fmt.Errorf("bringing control plane up: %w", assistErr)
+		}
+		startErr = mgr.Start(ctx)
+	}
+	if startErr != nil {
+		return fmt.Errorf("bringing control plane up: %w", startErr)
 	}
 	ios := opts.IOStreams
 	fmt.Fprintf(ios.Out, "%s Control plane is up\n", ios.ColorScheme().SuccessIcon())

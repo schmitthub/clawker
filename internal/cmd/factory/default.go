@@ -12,9 +12,11 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/schmitthub/clawker/internal/clawker"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -54,13 +56,14 @@ func cacheableState(s connectivity.State) bool {
 }
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
-// Called exactly once at the CLI entry point (internal/clawker/cmd.go).
+// Called exactly once at the CLI entry point (internal/clawkercmd/cmd.go).
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
 		Version:         version,
 		ProjectRegistry: projectRegistryFunc(), // no dependencies; sole constructor of registry storage
 		CLIState:        cliStateFunc(),        // no dependencies; state.New is self-contained
+		Session:         sessionFunc(),
 	}
 
 	f.Config = configFunc(f)                 // depends on ProjectRegistry (walk-up anchor)
@@ -79,6 +82,19 @@ func New(version string) *cmdutil.Factory {
 	f.BundleManager = bundleManagerFunc(f) // depends on Config
 
 	return f
+}
+
+func sessionFunc() func() clawker.Session {
+	var (
+		once    sync.Once
+		session clawker.Session
+	)
+	return func() clawker.Session {
+		once.Do(func() {
+			session = clawker.NewSession()
+		})
+		return session
+	}
 }
 
 // bundleManagerFunc returns a lazy constructor for the bundle-model facade. It
@@ -188,22 +204,25 @@ func loggerLazy(f *cmdutil.Factory) func() (*logger.Logger, error) {
 	)
 	return func() (*logger.Logger, error) {
 		once.Do(func() {
-			log, err = newLogger(f)
+			// A run with file logging off must not create the log directory or
+			// rotate a log file: under sudo those land in the invoking user's
+			// home owned by root and break every later unprivileged run.
+			// Gating here rather than at each caller keeps every existing log
+			// site working — they just log to nowhere.
+			if !f.Session().FileLogging() {
+				log = logger.Nop()
+				return
+			}
+
+			var cfg config.Config
+			if cfg, err = f.Config(); err != nil {
+				err = fmt.Errorf("logger: loading config: %w", err)
+				return
+			}
+			log, err = logcfg.New(cfg)
 		})
 		return log, err
 	}
-}
-
-func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
-	cfg, err := f.Config()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get config: %w", err)
-	}
-	l, err := logcfg.New(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize logger: %w", err)
-	}
-	return l, nil
 }
 
 func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {
@@ -469,19 +488,40 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 }
 
 // controlPlaneFunc returns a lazy closure that constructs a
-// manager.Manager once. The Manager shares the Factory's Client,
-// Config, and Logger closures so every caller — `clawker controlplane
-// up/down/status` and any future break-glass verb — observes the same
-// cached Docker singleton and settings snapshot as the rest of the CLI.
-func controlPlaneFunc(f *cmdutil.Factory) func() manager.Manager {
+// cpmanager.Manager once, over the Factory's own Docker client, config, and
+// logger — so every caller (`clawker controlplane up/down/status` and any
+// future break-glass verb) drives the CP through the same Docker singleton
+// and settings snapshot as the rest of the CLI.
+//
+// Resolution happens here rather than inside the Manager: a Manager is a
+// handle on a running control plane, and wiring is the Factory's job. A
+// caller that never touches the CP never enters this closure, so nothing is
+// resolved on its behalf.
+func controlPlaneFunc(f *cmdutil.Factory) func(context.Context) (cpmanager.Manager, error) {
 	var (
-		once sync.Once
-		mgr  manager.Manager
+		once   sync.Once
+		mgr    cpmanager.Manager
+		mgrErr error
 	)
-	return func() manager.Manager {
+	return func(ctx context.Context) (cpmanager.Manager, error) {
 		once.Do(func() {
-			mgr = manager.NewManager(f.Client, f.Config, f.Logger)
+			cfg, err := f.Config()
+			if err != nil {
+				mgrErr = fmt.Errorf("loading config: %w", err)
+				return
+			}
+			log, err := f.Logger()
+			if err != nil {
+				mgrErr = fmt.Errorf("initializing logger: %w", err)
+				return
+			}
+			dc, err := f.Client(ctx)
+			if err != nil {
+				mgrErr = fmt.Errorf("connecting to Docker: %w", err)
+				return
+			}
+			mgr = cpmanager.NewManager(dc, cfg, log)
 		})
-		return mgr
+		return mgr, mgrErr
 	}
 }

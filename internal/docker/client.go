@@ -36,7 +36,8 @@ type Client struct {
 // It configures the whail.Engine with clawker's label prefix and conventions.
 // clientOptions holds configuration for NewClient.
 type clientOptions struct {
-	labels whail.LabelConfig
+	labels  whail.LabelConfig
+	envHost bool
 }
 
 // ClientOption configures a NewClient call.
@@ -51,6 +52,18 @@ func WithLabels(labels whail.LabelConfig) ClientOption {
 	}
 }
 
+// WithEnvHost leaves the daemon address to the SDK's own environment lookup
+// ($DOCKER_HOST, else the SDK default) instead of the host-side resolution
+// chain. The CP daemon uses this: its socket is bind-mounted at the
+// conventional path and DOCKER_HOST is pinned on its container, so settings
+// and docker contexts — host-side concerns — must never be consulted
+// in-container.
+func WithEnvHost() ClientOption {
+	return func(o *clientOptions) {
+		o.envHost = true
+	}
+}
+
 func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts ...ClientOption) (*Client, error) {
 	if log == nil {
 		log = logger.Nop()
@@ -61,14 +74,32 @@ func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts 
 		opt(&o)
 	}
 
+	// The SDK's own environment lookup sees $DOCKER_HOST and nothing
+	// else. Passing the resolved address is what reaches a daemon whose
+	// address lives in a docker context, as a rootless install's does.
+	host := ""
+	if !o.envHost {
+		host = cfg.DockerHost()
+	}
 	engineOpts := whail.EngineOptions{
 		LabelPrefix:  cfg.EngineLabelPrefix(),
 		ManagedLabel: cfg.EngineManagedLabel(),
 		Labels:       o.labels,
+		Host:         host,
 	}
 
 	engine, err := whail.NewWithOptions(ctx, engineOpts)
 	if err != nil {
+		if strings.HasPrefix(host, "/") {
+			// The SDK rejects a schemeless address outright; a leading slash
+			// means someone wrote a socket path where an address belongs.
+			return nil, fmt.Errorf(
+				"docker host %q is a path, not an address — write it as unix://%s: %w",
+				host,
+				host,
+				err,
+			)
+		}
 		return nil, err
 	}
 
@@ -685,7 +716,7 @@ func isNotFoundError(err error) bool {
 
 // parseContainers converts Docker container list to Container slice.
 func (cl *Client) parseContainers(containers []container.Summary) []Container {
-	var result = make([]Container, 0, len(containers))
+	result := make([]Container, 0, len(containers))
 	for _, c := range containers {
 		// Extract container name (remove leading slash)
 		name := ""

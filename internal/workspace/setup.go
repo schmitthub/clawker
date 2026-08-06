@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/moby/moby/api/types/mount"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -255,9 +257,20 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		mounts = append(mounts, GetShareVolumeMount(sharePath))
 	}
 
-	// Add docker socket mount if enabled
+	// Add docker socket mount if enabled. The address was validated
+	// mountable at the command entrypoint (shared.CreateContainer), before
+	// any volume work; a unix:// prefix is dropped because a bind source is
+	// a path. The target is always the conventional in-container location.
 	if cfg.Cfg.SecurityConfig().DockerSocket {
-		mounts = append(mounts, GetDockerSocketMount(cfg.Cfg.DockerSocketPath()))
+		mounts = append(
+			mounts,
+			mount.Mount{ //nolint:exhaustruct // mount options beyond type/source/target intentionally zero
+				Type:     mount.TypeBind,
+				Source:   strings.TrimPrefix(cfg.Cfg.DockerHost(), "unix://"),
+				Target:   strings.TrimPrefix(consts.DefaultDockerHost, "unix://"),
+				ReadOnly: false,
+			},
+		)
 	}
 
 	return &SetupMountsResult{

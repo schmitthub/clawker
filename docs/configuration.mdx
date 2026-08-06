@@ -567,8 +567,8 @@ control_plane:
   # In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only)
   agent_port: <integer>  # default: 7444 | required: false
 docker:
-  # Host path to the Docker daemon socket; the DOCKER_HOST env var takes precedence
-  socket: <string>  # default: /var/run/docker.sock | required: false
+  # Address of the Docker daemon, scheme included (e.g. unix:///run/user/1000/docker.sock or tcp://10.0.0.5:2376); the DOCKER_HOST env var takes precedence, and the active docker context is used when neither is set
+  host: <string>  # default: n/a | required: false
 
 ```
 
@@ -672,7 +672,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `socket` | string | `/var/run/docker.sock` | Host path to the Docker daemon socket; the DOCKER_HOST env var takes precedence |
+| `host` | string | — | Address of the Docker daemon, scheme included (e.g. unix:///run/user/1000/docker.sock or tcp://10.0.0.5:2376); the DOCKER_HOST env var takes precedence, and the active docker context is used when neither is set |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

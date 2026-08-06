@@ -15,7 +15,7 @@
 //   - getpeername6: IPv6 UDP (report the original dst as the connected peer)
 //   - sock_create:  Raw socket blocking (ICMP prevention)
 //
-// All programs share pinned BPF maps at /sys/fs/bpf/clawker/ for cross-process
+// All programs share pinned BPF maps under PinPath for cross-process
 // access (eBPF Manager + CoreDNS plugin both read/write maps).
 package ebpf
 
@@ -27,8 +27,14 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// PinPath is the filesystem path where BPF maps are pinned.
-const PinPath = "/sys/fs/bpf/" + consts.NamePrefix
+// PinPath is where BPF maps and programs are pinned: the clawker
+// subdirectory of the BPF filesystem bind-mounted into the control plane
+// and the CoreDNS container at consts.SysFSBPFPath — the same container
+// path in both, so a pin written by one is the path the other opens. Which
+// filesystem sits behind that path is the container spec's decision: the
+// host's own /sys/fs/bpf by default, or clawker's delegated bpffs after a
+// rootless heal.
+const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix
 
 // Pinned map names. MUST match the `ebpf:` struct tags in the generated
 // bpfel bindings (which come from the map names in bpf/common.h).

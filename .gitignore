@@ -46,6 +46,8 @@ embeds/
 /clawker-socket-server
 /clawker-generate
 /gen-docs
+/bpffs-delegate
+/idmap-mount
 
 # Binaries for programs and plugins
 *.exe
@@ -104,6 +106,7 @@ RALPH-TEST.md
 # multi-stage build; not committed).
 controlplane/manager/assets/ebpf-manager
 controlplane/manager/assets/clawkercp
+controlplane/manager/assets/bpffs-delegate
 controlplane/firewall/assets/coredns-clawker
 internal/controlplane/cpboot/assets/ebpf-manager
 internal/controlplane/cpboot/assets/clawker-cp
@@ -153,3 +156,4 @@ test/adversarial/attacker-server/attacker-server
 firewall-tests-debug.log
 
 .claude/scheduled_tasks.lock
+internal/cmd/container/shared/assets/idmap-mount

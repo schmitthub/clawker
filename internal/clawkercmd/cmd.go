@@ -1,4 +1,4 @@
-package clawker
+package clawkercmd
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/schmitthub/clawker/internal/clawker"
 
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/changelog"
@@ -43,9 +45,9 @@ func Main() int {
 	}
 
 	// CLI runtime state (the update-check cache + changelog cursor) is resolved
-	// lazily inside checkForUpdate/checkForChanges via f.CLIState(). A state-store
-	// error there aborts that one background check and is logged to the file log,
-	// never surfaced.
+	// lazily inside checkForUpdate/checkForChanges via f.CLIState(), which run
+	// AFTER the command. A state-store error there aborts that one check and is
+	// reported as a warning on stderr.
 
 	// Single root context for the process. The SIGINT/SIGTERM signal context
 	// (below) and the background-notification context all derive from it as
@@ -54,34 +56,46 @@ func Main() int {
 	// not be a child of the signal context to abort its I/O on Ctrl+C.
 	ctx := context.Background()
 
-	// notificationsSuppressed is the single gate for BOTH background notifications
-	// (update notifier + changelog teaser). When it is true the background
-	// goroutine is not launched at all, so a suppressed run does ZERO network I/O
-	// and no cursor persist. The env/CI opt-out lives here in the caller;
-	// internal/update and internal/changelog do not enforce it.
-	suppressed := notificationsSuppressed(f.IOStreams)
-
-	// Background update check + changelog teaser, both gated by `suppressed`.
-	// Pattern from gh CLI: goroutine + buffered channel + blocking read. Context
+	// Background FETCH for the update notifier and the changelog teaser. Pattern
+	// from gh CLI: goroutine + buffered channel + blocking read. Context
 	// cancellation aborts in-flight I/O when the command finishes first. The
 	// buffered(1) channel lets the goroutine send and exit even if Main() returns
 	// early (e.g. root command creation fails) without reading from it.
 	//
-	// ONE goroutine runs BOTH checks, in sequence. They share the one
-	// f.CLIState() facade, and each check's persist is a Set+Set+Write cycle the
-	// store cannot make atomic across calls (see internal/storage/CLAUDE.md).
-	// Serializing them onto a single goroutine is what makes the CLI a single
-	// writer of the state file, so a Write can never flush another check's
-	// half-staged fields. The cost is latency: the changelog fetch starts only
-	// after the update fetch finishes. Both are background work whose result is
-	// drained after the command returns, and both are abandoned on cancel, so
-	// the serial path costs the user nothing.
+	// This half is network ONLY — it touches no config, no state file, nothing on
+	// disk. Everything that reads or writes state (the update TTL gate, the
+	// changelog cursor) runs after the command in drainNotifications, so a
+	// command can turn notifications off for itself mid-run and nothing will
+	// have been persisted behind its back.
+	//
+	// ONE goroutine runs both fetches, in sequence. Nothing here writes, so the
+	// serialization is no longer about being a single writer — it keeps the CLI
+	// to one background goroutine and one outbound request at a time. The cost
+	// is latency: the changelog fetch starts only after the release fetch
+	// finishes. Both are abandoned on cancel and their result is drained after
+	// the command returns, so the serial path costs the user nothing.
 	notifyCtx, notifyCancel := context.WithCancel(ctx)
 	defer notifyCancel()
 
 	notifyChan := make(chan notifications, 1)
 
-	if !suppressed {
+	// Create root command with build metadata
+	rootCmd, err := root.NewCmdRoot(f, buildVersion, buildDate)
+	if err != nil {
+		fmt.Fprintf(f.IOStreams.ErrOut, "failed to create root command: %v\n", err)
+		return 1
+	}
+
+	// notificationsSuppressed applies the env/CI/TTY opt-out to the session, the
+	// single gate for BOTH background notifications (update notifier + changelog
+	// teaser). With notifications off the fetch goroutine is not launched at all,
+	// so a suppressed run does ZERO network I/O and, because the tail is skipped
+	// too, no cursor persist. The opt-out lives here in the caller;
+	// internal/update and internal/changelog do not enforce it.
+	session := f.Session()
+	notificationsSuppressed(f.IOStreams, session)
+
+	if session.Notifications() {
 		go func() {
 			// Guarantee exactly one send on the buffered(1) channel on every path,
 			// including a panic: the deferred func always runs, runs once, and is
@@ -91,24 +105,14 @@ func Main() int {
 			var n notifications
 			defer func() {
 				if r := recover(); r != nil {
-					if log, logErr := f.Logger(); logErr == nil {
-						// TODO: CLAWKER_DEBUG env → stderr ConsoleWriter sink so devs
-						// see logs live.
-						log.Warn().Interface("panic", r).Msg("notification goroutine panicked")
-					}
+					cs := f.IOStreams.ColorScheme()
+					fmt.Fprintf(f.IOStreams.ErrOut, "%s notification goroutine panicked: %v\n", cs.WarningIcon(), r)
 				}
 				notifyChan <- n
 			}()
-			n.release = runUpdateCheck(notifyCtx, f, buildVersion)
-			n.gained = runChangelogCheck(notifyCtx, f, buildVersion)
+			n.release, n.releaseErr = getLatestReleaseInfo(notifyCtx, f, consts.GitHubRepo)
+			n.entries, n.entriesErr = getChangelogEntries(notifyCtx, f)
 		}()
-	}
-
-	// Create root command with build metadata
-	rootCmd, err := root.NewCmdRoot(f, buildVersion, buildDate)
-	if err != nil {
-		fmt.Fprintf(f.IOStreams.ErrOut, "failed to create root command: %v\n", err)
-		return 1
 	}
 
 	// Silence Cobra's built-in error printing — we handle it in printError.
@@ -119,6 +123,8 @@ func Main() int {
 	signalCtx, signalStop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer signalStop()
 	rootCmd.SetContext(signalCtx)
+
+	cmd, err := rootCmd.ExecuteC()
 
 	// Flush buffered logs + the OTEL provider on exit. loggerCtx is a child of the
 	// signal context, and loggerCancel() is called below (before draining the
@@ -136,33 +142,38 @@ func Main() int {
 		}
 	}()
 
-	cmd, err := rootCmd.ExecuteC()
-
-	// gh CLI pattern: cancel the background checks now, before draining their
+	// gh CLI pattern: cancel the background fetches now, before draining their
 	// channel. Cancelling aborts any in-flight HTTP so the drain returns promptly
 	// instead of blocking up to the 30s HTTP client timeout — most importantly
 	// after a Ctrl+C, where the command was already interrupted and the user wants
-	// out. A check that had not finished contributes its zero value and is simply
-	// retried next run; its update cache / changelog cursor only advances on a
-	// completed check. The deferred cancel above remains for the early-return
-	// paths that never reach here (e.g. root command creation failing).
+	// out. An aborted fetch contributes its zero value; with nothing fetched
+	// there is nothing to decide, so the state file is left untouched and the
+	// whole check is simply retried next run. The deferred cancel above remains
+	// for the early-return paths that never reach here (e.g. root command
+	// creation failing).
 	notifyCancel()
 	// Cancel the logger context now that the command has returned, so the
 	// deferred Close above unwinds its OTEL shutdown immediately instead of
 	// blocking exit on a final export.
 	loggerCancel()
 
-	// drainNotifications blocks on the channel (only when the goroutine was
-	// launched) and renders both notifications. printUpdateNotification and
-	// printChangelogTeaser each self-guard on nil/empty, so calling them
-	// unconditionally on a suppressed run is a safe no-op.
+	// drainNotifications collects what was fetched and only then reads and
+	// writes the state file to decide what is worth showing. A session that
+	// turned notifications off — including one the command itself turned off
+	// while running, such as an elevated command that must not leave
+	// root-owned files behind — skips the whole tail: no drain, no state read,
+	// no cursor write, nothing printed. Any goroutine already in flight sends
+	// into the buffered channel and exits on its own.
 	drainNotifications := func() {
-		var n notifications
-		if !suppressed {
-			n = <-notifyChan
+		if !session.Notifications() {
+			return
 		}
-		printUpdateNotification(f.IOStreams, n.release)
-		printChangelogTeaser(f.IOStreams, n.gained)
+		n := <-notifyChan
+
+		printFetchWarnings(f.IOStreams, n)
+
+		printUpdateNotification(f.IOStreams, runUpdateCheck(f, buildVersion, n.release))
+		printChangelogTeaser(f.IOStreams, runChangelogCheck(f, buildVersion, n.entries))
 	}
 
 	if err != nil {
@@ -191,96 +202,148 @@ func Main() int {
 // notifications carries the results of the two background checks from the one
 // goroutine that runs them to the drain in Main. A zero value renders nothing:
 // both renderers self-guard, so an abandoned (cancelled) run needs no sentinel.
+// notifications carries what the pre-command goroutine FETCHED — raw upstream
+// data and the fetch errors, nothing decided. Interpreting it needs the state
+// file (the update TTL gate, the changelog cursor), so that work happens after
+// the command returns, where the session flags are final.
 type notifications struct {
-	release *update.ReleaseInfo
-	gained  []changelog.Entry
+	release    *update.GithubRelease
+	releaseErr error
+	entries    []changelog.Entry
+	entriesErr error
 }
 
-// runUpdateCheck runs the update check and reports the newer release, or nil
-// when there is nothing to report. It carries its own recover so a panic here
-// cannot skip the changelog check that follows it on the same goroutine, and
-// logs its own failures — a background check never surfaces an error to the
-// user.
+// printFetchWarnings reports the background fetches' failures on stderr. A
+// [context.Canceled] error is deliberately silent: it is Main's own doing — the
+// command finished first and notifyCancel aborted the in-flight request. That
+// is the normal outcome for any command faster than the network, not a
+// failure; the aborted check simply retries next run. Real fetch failures
+// (DNS, HTTP, parse) still surface.
+func printFetchWarnings(ios *iostreams.IOStreams, n notifications) {
+	cs := ios.ColorScheme()
+	if n.releaseErr != nil && !errors.Is(n.releaseErr, context.Canceled) {
+		fmt.Fprintf(ios.ErrOut, "%s update check failed: %v\n", cs.WarningIcon(), n.releaseErr)
+	}
+	if n.entriesErr != nil && !errors.Is(n.entriesErr, context.Canceled) {
+		fmt.Fprintf(ios.ErrOut, "%s changelog check failed: %v\n", cs.WarningIcon(), n.entriesErr)
+	}
+}
+
+// runUpdateCheck interprets an already-fetched release and reports the newer
+// version, or nil when there is nothing to report. It runs after the command,
+// so this is where the state file is read (the TTL gate) and written
+// (RecordUpdateCheck). A nil release means the fetch failed or never ran —
+// the caller has already reported that, so there is nothing to decide.
 //
 // CheckForUpdate validates currentVersion as semver (a non-release "DEV" build
-// is not parseable semver and returns an error before any fetch), reads the
-// freshness gate from the state facade, and persists the result there itself
-// (RecordUpdateCheck). It returns (nil, nil) when not newer or TTL-fresh; a
-// non-nil release only when a newer release exists. A non-nil error may
-// accompany a nil release — log it, report nothing.
-func runUpdateCheck(ctx context.Context, f *cmdutil.Factory, currentVersion string) *update.ReleaseInfo {
-	// A recovered panic returns the zero value: the results are unnamed, so
-	// nothing was assigned to them when the stack unwound.
+// is not parseable semver), applies the freshness gate, and persists the
+// result itself. It returns (nil, nil) when not newer or TTL-fresh.
+func runUpdateCheck(f *cmdutil.Factory, currentVersion string, release *update.GithubRelease) *update.ReleaseInfo {
+	if release == nil {
+		return nil
+	}
+	// A recovered panic returns the zero value: the result is unnamed, so
+	// nothing was assigned to it when the stack unwound.
 	defer func() {
 		if r := recover(); r != nil {
-			if log, logErr := f.Logger(); logErr == nil {
-				log.Warn().Interface("panic", r).Msg("update check panicked")
-			}
+			cs := f.IOStreams.ColorScheme()
+			fmt.Fprintf(f.IOStreams.ErrOut, "%s update check panicked: %v\n", cs.WarningIcon(), r)
 		}
 	}()
-	rel, err := checkForUpdate(ctx, f, currentVersion, consts.GitHubRepo)
+	rel, err := checkForUpdate(f, currentVersion, release)
 	if err != nil {
-		if log, logErr := f.Logger(); logErr == nil {
-			log.Debug().Err(err).Msg("update check failed")
-		}
+		cs := f.IOStreams.ColorScheme()
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s update check failed: %v\n", cs.WarningIcon(), err)
 	}
 	return rel
 }
 
-// runChangelogCheck runs the changelog check and reports the entries gained
-// since the cursor. Like runUpdateCheck it recovers and logs on its own, so
-// neither check can take down the other or the user's command.
-func runChangelogCheck(ctx context.Context, f *cmdutil.Factory, currentVersion string) []changelog.Entry {
-	// A recovered panic returns the zero value: the results are unnamed, so
-	// nothing was assigned to them when the stack unwound.
+// runChangelogCheck diffs already-fetched entries against the cursor and
+// reports what the user has not seen. Like runUpdateCheck it runs after the
+// command — the cursor read and advance both happen here — and recovers on its
+// own so neither check can take down the other.
+func runChangelogCheck(f *cmdutil.Factory, currentVersion string, entries []changelog.Entry) []changelog.Entry {
+	if entries == nil {
+		return nil
+	}
+	// A recovered panic returns the zero value: the result is unnamed, so
+	// nothing was assigned to it when the stack unwound.
 	defer func() {
 		if r := recover(); r != nil {
-			if log, logErr := f.Logger(); logErr == nil {
-				log.Warn().Interface("panic", r).Msg("changelog check panicked")
-			}
+			cs := f.IOStreams.ColorScheme()
+			fmt.Fprintf(f.IOStreams.ErrOut, "%s changelog check panicked: %v\n", cs.WarningIcon(), r)
 		}
 	}()
-	// CheckForChanges returns gained entries even when only the cursor persist
+	// CheckForChanges returns gained entries even when only the cursor advance
 	// fails, so the entries are kept regardless of the error.
-	gained, err := checkForChanges(ctx, f, currentVersion)
+	gained, err := checkForChanges(f, currentVersion, entries)
 	if err != nil {
-		if log, logErr := f.Logger(); logErr == nil {
-			log.Debug().Err(err).Msg("checking changelog for teaser")
-		}
+		cs := f.IOStreams.ColorScheme()
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s changelog check failed: %v\n", cs.WarningIcon(), err)
 	}
 	return gained
 }
 
-// checkForChanges resolves the HttpClient and CLIState nouns from the Factory and
-// hands them to changelog.CheckForChanges. It is the changelog teaser's single
-// entry from Main; a noun-resolution error aborts just this one background check
-// and is logged by the caller, never surfaced.
-func checkForChanges(ctx context.Context, f *cmdutil.Factory, currentVersion string) ([]changelog.Entry, error) {
+// getChangelogEntries resolves the HttpClient noun from the Factory and fetches
+// the curated changelog. It is the fetch half of the teaser — network only, no
+// state — so it can run before the command with only the context to bound it.
+func getChangelogEntries(ctx context.Context, f *cmdutil.Factory) ([]changelog.Entry, error) {
 	httpClient, err := f.HttpClient()
 	if err != nil {
 		return nil, err
 	}
+	entries, err := changelog.GetChangelogEntries(ctx, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("getting changelog entries: %w", err)
+	}
+	return entries, nil
+}
+
+// checkForChanges resolves the CLIState noun from the Factory and hands the
+// already-fetched entries to changelog.CheckForChanges. It is the decide half:
+// it reads the cursor and advances it, so it runs after the command.
+func checkForChanges(f *cmdutil.Factory, currentVersion string, entries []changelog.Entry) ([]changelog.Entry, error) {
 	cliState, err := f.CLIState()
 	if err != nil {
 		return nil, err
 	}
-	return changelog.CheckForChanges(ctx, httpClient, cliState, currentVersion)
+	gained, err := changelog.CheckForChanges(entries, cliState, currentVersion)
+	if err != nil {
+		return gained, fmt.Errorf("checking changelog for teaser: %w", err)
+	}
+	return gained, nil
+}
+
+func getLatestReleaseInfo(ctx context.Context, f *cmdutil.Factory, repo string) (*update.GithubRelease, error) {
+	httpClient, err := f.HttpClient()
+	if err != nil {
+		return nil, fmt.Errorf("resolving HTTP client: %w", err)
+	}
+	release, err := update.GetLatestReleaseInfo(ctx, httpClient, repo)
+	if err != nil {
+		return nil, fmt.Errorf("checking %s: %w", repo, err)
+	}
+	return release, nil
 }
 
 // checkForUpdate resolves the HttpClient and CLIState nouns from the Factory and
 // hands them to update.CheckForUpdate. It is the update notifier's single entry
 // from Main; a noun-resolution error aborts just this one background check and is
 // logged by the caller, never surfaced.
-func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, repo string) (*update.ReleaseInfo, error) {
-	httpClient, err := f.HttpClient()
-	if err != nil {
-		return nil, err
-	}
+func checkForUpdate(
+	f *cmdutil.Factory,
+	currentVersion string,
+	release *update.GithubRelease,
+) (*update.ReleaseInfo, error) {
 	cliState, err := f.CLIState()
 	if err != nil {
 		return nil, err
 	}
-	return update.CheckForUpdate(ctx, httpClient, cliState, currentVersion, repo)
+	rel, err := update.CheckForUpdate(release, cliState, currentVersion)
+	if err != nil {
+		return nil, fmt.Errorf("checking for a newer release: %w", err)
+	}
+	return rel, nil
 }
 
 // notificationsSuppressed is the single gate for ALL clawker background
@@ -288,9 +351,11 @@ func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, rep
 // computed once in Main, up front: when true, the background goroutine that
 // runs both checks is not launched, so the run does zero network I/O and no
 // state writes.
-func notificationsSuppressed(ios *iostreams.IOStreams) bool {
+func notificationsSuppressed(ios *iostreams.IOStreams, session clawker.Session) {
 	// "CI" is the canonical cross-tool CI-detection env var (kept literal).
-	return !ios.IsStderrTTY() || os.Getenv(consts.EnvNoNotifier) != "" || os.Getenv("CI") != ""
+	if !ios.IsStderrTTY() || os.Getenv(consts.EnvNoNotifier) != "" || os.Getenv("CI") != "" {
+		session.SetNotifications(false)
+	}
 }
 
 // printUpdateNotification prints a version upgrade notification to stderr.

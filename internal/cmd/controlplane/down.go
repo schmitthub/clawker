@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -12,7 +12,7 @@ import (
 
 type DownOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() manager.Manager
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 }
 
 // NewCmdDown creates the controlplane down command. Stops and removes
@@ -49,7 +49,10 @@ containers, no stale map entries.`,
 func downRun(ctx context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	mgr := opts.ControlPlane()
+	mgr, err := opts.ControlPlane(ctx)
+	if err != nil {
+		return fmt.Errorf("reaching control plane: %w", err)
+	}
 
 	running, err := mgr.IsRunning(ctx)
 	if err != nil {

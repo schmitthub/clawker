@@ -166,8 +166,12 @@ func TestINV_B1_015_CPImageTag(t *testing.T) {
 		"image tag must be content-derived under the clawker-controlplane repo, got %q", cpConfig.Image)
 
 	full, _ := cpBinaryHash()
-	assert.Equal(t, full, cpConfig.Labels[consts.LabelCPBinarySHA],
-		"container labels must carry the full SHA-256 of the embedded binaries so EnsureRunning's staleness compare works")
+	assert.Equal(
+		t,
+		full,
+		cpConfig.Labels[consts.LabelCPBinarySHA],
+		"container labels must carry the full SHA-256 of the embedded binaries so EnsureRunning's staleness compare works",
+	)
 }
 
 // TestCPContainer_BinarySHAEnv_Emitted — the CP container must receive
@@ -228,18 +232,58 @@ func TestINV_B1_020_ConfigDirMounted(t *testing.T) {
 	assert.True(t, found, "config dir must be bind-mounted into the CP container")
 }
 
+// TestCPContainerConfig_BPFFSDefaultMount pins the default deployment's BPF
+// filesystem shape — the way it has worked since the project's inception:
+// the host's own /sys/fs/bpf bound straight through with NO propagation
+// options (Docker validates propagation against the source mount, and on
+// Docker Desktop the /host_mnt virtiofs mounts are private, so any
+// propagation flag fails container start on macOS). The delegated-source
+// arm only engages when a delegated bpffs exists at clawker's host path,
+// which never happens in this test environment.
+func TestCPContainerConfig_BPFFSDefaultMount(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	found := false
+	for _, m := range cpConfig.Mounts {
+		if m.Target == consts.SysFSBPFPath {
+			found = true
+			assert.Equal(t, consts.SysFSBPFPath, m.Source,
+				"default deployment binds the host's own /sys/fs/bpf")
+			assert.Nil(t, m.BindOptions,
+				"the bpffs bind must carry no propagation options")
+			break
+		}
+	}
+	require.True(t, found, "the BPF filesystem must be bind-mounted into the CP container")
+
+	assert.Equal(t, consts.SysFSBPFPath, cpConfig.Labels[consts.LabelCPBPFFSSource],
+		"the chosen bpffs source must be stamped as the drift label")
+	assert.Contains(t, cpConfig.Env, consts.EnvHostBPFFSSource+"="+consts.SysFSBPFPath,
+		"the chosen bpffs source must travel to the CP for the CoreDNS sibling")
+}
+
 // Tests that Docker socket is bind-mounted read-only for container state verification.
 func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
-	dockerSocketMount := func(t *testing.T) (mount.Mount, bool) {
+	// A bind source and target are paths, so both drop the address's scheme.
+	defaultSocketPath := strings.TrimPrefix(consts.DefaultDockerHost, "unix://")
+
+	// host is applied after testenv, which isolates daemon-address resolution
+	// from the developer's own docker install and would otherwise clear it.
+	dockerSocketMount := func(t *testing.T, host string) (mount.Mount, bool) {
 		t.Helper()
 		testenv.New(t)
+		t.Setenv(consts.EnvDockerHost, host)
 		cfg := configmocks.NewBlankConfig()
 
 		cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 		require.NoError(t, err)
 
 		for _, m := range cpConfig.Mounts {
-			if m.Target == consts.DefaultDockerSocketPath {
+			if m.Target == defaultSocketPath {
 				return m, true
 			}
 		}
@@ -247,26 +291,96 @@ func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
 	}
 
 	t.Run("default host socket", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "")
-		m, found := dockerSocketMount(t)
+		m, found := dockerSocketMount(t, "")
 		require.True(t, found,
 			"Docker socket must be bind-mounted into the CP container")
-		assert.Equal(t, consts.DefaultDockerSocketPath, m.Source)
+		assert.Equal(t, defaultSocketPath, m.Source)
 		assert.True(t, m.ReadOnly,
 			"Docker socket must be mounted read-only")
 	})
 
 	t.Run("rootless DOCKER_HOST socket", func(t *testing.T) {
-		t.Setenv(consts.EnvDockerHost, "unix:///run/user/1003/docker.sock")
-		m, found := dockerSocketMount(t)
+		m, found := dockerSocketMount(t, "unix:///run/user/1003/docker.sock")
 		require.True(t, found,
 			"Docker socket must be bind-mounted into the CP container")
 		assert.Equal(t, "/run/user/1003/docker.sock", m.Source,
 			"bind source must follow the host's actual socket path")
-		assert.Equal(t, consts.DefaultDockerSocketPath, m.Target,
+		assert.Equal(t, defaultSocketPath, m.Target,
 			"in-container target stays the conventional path")
 		assert.True(t, m.ReadOnly)
 	})
+
+	t.Run("non-unix host is rejected before any container work", func(t *testing.T) {
+		testenv.New(t)
+		t.Setenv(consts.EnvDockerHost, "tcp://10.0.0.5:2376")
+		cfg := configmocks.NewBlankConfig()
+
+		_, err := BuildCPContainerConfig(cfg, testCPOpts())
+		require.ErrorIs(t, err, ErrUnsupportedDockerHost,
+			"an address that cannot back the socket bind must fail config construction")
+		assert.Contains(t, err.Error(), "tcp://10.0.0.5:2376",
+			"the error must name the offending address")
+	})
+}
+
+// The socket mount remaps the host's daemon socket to the conventional path,
+// so inside the CP container the daemon address is a constant. The env pin is
+// what keeps the CP daemon (docker.WithEnvHost) off the host-side resolution
+// chain — the mounted settings.yaml names the host side of the mount.
+func TestCPContainerConfig_DockerHostEnvPinned(t *testing.T) {
+	testenv.New(t)
+	t.Setenv(consts.EnvDockerHost, "unix:///run/user/1003/docker.sock")
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	assert.Contains(t, cpConfig.Env, consts.EnvDockerHost+"="+consts.DefaultDockerHost,
+		"DOCKER_HOST must be pinned to the in-container constant, not the host-side address")
+}
+
+func TestValidateMountableHost_Mountable(t *testing.T) {
+	for _, host := range []string{
+		"unix:///var/run/docker.sock",
+		"unix:///run/user/1003/docker.sock",
+	} {
+		if err := validateMountableHost(host); err != nil {
+			t.Errorf("validateMountableHost(%q) = %v, want nil", host, err)
+		}
+	}
+}
+
+func TestValidateMountableHost_Rejected(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		hint string // substring the error must carry
+	}{
+		{name: "tcp address", host: "tcp://10.0.0.5:2376", hint: "tcp://10.0.0.5:2376"},
+		{name: "ssh address", host: "ssh://user@host", hint: "ssh://user@host"},
+		{name: "https address", host: "https://10.0.0.5:2376", hint: "https://10.0.0.5:2376"},
+		{name: "fd address", host: "fd://", hint: "fd://"},
+		{name: "npipe address", host: "npipe:////./pipe/docker_engine", hint: "npipe"},
+		{
+			name: "schemeless absolute path names the corrected spelling",
+			host: "/var/run/docker.sock",
+			hint: "unix:///var/run/docker.sock",
+		},
+		{
+			name: "two-slash unix address is a relative path",
+			host: "unix://var/run/docker.sock",
+			hint: "non-absolute",
+		},
+		{name: "empty unix remainder", host: "unix://", hint: "non-absolute"},
+		{name: "empty address", host: "", hint: `""`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMountableHost(tt.host)
+			require.ErrorIs(t, err, ErrUnsupportedDockerHost)
+			assert.Contains(t, err.Error(), tt.hint)
+		})
+	}
 }
 
 // Tests INV-B1-020 [unit]: CLAWKER_CONFIG_DIR env var is set.
@@ -414,6 +528,10 @@ func TestCPContainer_SecurityOpt_AppArmorUnconfined(t *testing.T) {
 
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
-	assert.Contains(t, cpConfig.SecurityOpt, "apparmor=unconfined",
-		"CP container must set apparmor=unconfined so bpffs writes (mkdir /sys/fs/bpf/clawker) are not denied by docker-default")
+	assert.Contains(
+		t,
+		cpConfig.SecurityOpt,
+		"apparmor=unconfined",
+		"CP container must set apparmor=unconfined so bpffs writes (mkdir /sys/fs/bpf/clawker) are not denied by docker-default",
+	)
 }

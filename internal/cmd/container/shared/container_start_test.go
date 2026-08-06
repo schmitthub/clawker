@@ -13,14 +13,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/controlplane/manager"
-	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -38,11 +39,19 @@ func okClientProvider(t *testing.T) func(context.Context) (*docker.Client, error
 // noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
 // Bootstrap tests need it because CP is unconditionally brought up in
 // BootstrapServicesPreStart (CP is core infra, not a firewall feature).
-func noopCPManager() func() manager.Manager {
-	m := &cpbootmocks.ManagerMock{
-		EnsureRunningFunc: func(context.Context) error { return nil },
+func noopCPManager() func(context.Context) (cpmanager.Manager, error) {
+	m := &cpmanagermocks.ManagerMock{ //nolint:exhaustruct // test double: only the methods this path exercises are programmed
+		StartFunc: func(context.Context) error { return nil },
 	}
-	return func() manager.Manager { return m }
+	return func(context.Context) (cpmanager.Manager, error) { return m, nil }
+}
+
+// testIOStreams returns the bare non-TTY IOStreams every CommandOpts
+// requires — pre-start refuses a nil so a forgotten field cannot silently
+// decline control plane assistance requests.
+func testIOStreams() *iostreams.IOStreams {
+	tio, _, _, _ := iostreams.Test() //nolint:dogsled // only the streams handle matters here
+	return tio
 }
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
@@ -63,20 +72,34 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 		{
 			name: "config provider returns error",
 			cmdOpts: CommandOpts{
-				Config: func() (config.Config, error) { return nil, errBoom },
+				IOStreams: testIOStreams(),
+				Config:    func() (config.Config, error) { return nil, errBoom },
 			},
 			wantErr: "bootstrapping services: loading config: boom",
 		},
 		{
 			name: "config provider returns nil config",
 			cmdOpts: CommandOpts{
-				Config: func() (config.Config, error) { return nil, nil },
+				IOStreams: testIOStreams(),
+				Config:    func() (config.Config, error) { return nil, nil }, //nolint:nilnil // the nil-config-without-error arm is exactly what this row exercises
 			},
 			wantErr: "bootstrapping services: config is nil",
 		},
 		{
+			name: "nil IOStreams is refused",
+			cmdOpts: CommandOpts{ //nolint:exhaustruct // sparse by design: the row exercises exactly the missing-IOStreams arm
+				Config: testRuntimeConfig(
+					`security: { enable_host_proxy: false }`,
+					`firewall: { enable: false }`,
+				),
+				ControlPlane: noopCPManager(),
+			},
+			wantErr: "bootstrapping services: no IOStreams provided",
+		},
+		{
 			name: "logger init error is wrapped",
 			cmdOpts: CommandOpts{
+				IOStreams: testIOStreams(),
 				Config: testRuntimeConfig(
 					`security: { enable_host_proxy: false }`,
 					`firewall: { enable: false }`,
@@ -89,7 +112,8 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 		{
 			name: "missing control plane manager is an error",
 			cmdOpts: CommandOpts{
-				Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+				IOStreams: testIOStreams(),
+				Config:    testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
 			},
 			wantErr: "bootstrapping services: no control plane manager provided",
 		},
@@ -110,6 +134,7 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+		IOStreams:    testIOStreams(),
 		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 		ControlPlane: noopCPManager(),
 		Client:       okClientProvider(t),
@@ -131,6 +156,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
 		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
@@ -146,6 +172,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
 		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
@@ -161,6 +188,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainerError(errors.New("copy boom"))
 		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
@@ -374,8 +402,9 @@ func TestContainerStart_PreStartFailureReapsAutoRemove(t *testing.T) {
 	// No ControlPlane manager → BootstrapServicesPreStart fails after the
 	// client is resolved, exercising the reap path.
 	res, err := ContainerStart(context.Background(), CommandOpts{
-		Config: testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
-		Client: func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		IOStreams: testIOStreams(),
+		Config:    testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
+		Client:    func(context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}, docker.ContainerStartOptions{ContainerID: "ctr"})
 
 	if err == nil || !strings.Contains(err.Error(), "pre-start bootstrapping failed") {
@@ -408,6 +437,7 @@ func TestContainerStart_StartFailureReapsAutoRemove(t *testing.T) {
 	}
 
 	res, err := ContainerStart(context.Background(), CommandOpts{
+		IOStreams:    testIOStreams(),
 		Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
 		Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
 		ControlPlane: noopCPManager(),

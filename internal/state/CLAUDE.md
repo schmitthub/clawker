@@ -14,9 +14,11 @@ other's way, and neither may be dropped without the other:
 1. **Disjoint keys** — the update checker owns `checked_at`/`latest_version`,
    the changelog teaser owns `last_seen_changelog`, so a field-merged write of
    one never carries a value of the other.
-2. **A single writer at a time** — the CLI runs both checks sequentially on one
-   background goroutine (`internal/clawker.Main`), so no `Set`→`Write` cycle
-   interleaves with another's. The store cannot make a compound
+2. **A single writer at a time** — the CLI runs both checks sequentially on
+   `Main`'s own goroutine after the command returns
+   (`internal/clawkercmd.Main`), so no `Set`→`Write` cycle interleaves with
+   another's. The background goroutine that runs before the command only
+   fetches; it never touches this store. The store cannot make a compound
    Set-then-Write atomic across calls (see `internal/storage/CLAUDE.md`);
    serialization is architectural, never a lock in this package.
 
@@ -28,7 +30,7 @@ shape.
 
 - `internal/storage/CLAUDE.md` — the underlying store engine, merge strategy, write model
 - `internal/update/CLAUDE.md` — the pure checker whose result this package persists
-- `internal/clawker/CLAUDE.md` — `Main()` constructs the facade and wires it to the checker + changelog teaser
+- `internal/clawkercmd/CLAUDE.md` — `Main()` constructs the facade and wires it to the checker + changelog teaser
 
 ## Schema
 
@@ -122,7 +124,7 @@ schema changes (and add a `TestStateMigrations` row); never edit a shipped one.
 
 `StateStore` is a lazy Factory noun (`f.CLIState() (StateStore, error)`,
 `sync.Once`-cached). It is used only by the background update check and changelog
-teaser in `internal/clawker.Main()`, which resolve it via the factory closures
+teaser in `internal/clawkercmd.Main()`, which resolve it via the factory closures
 `checkForUpdate`/`checkForChanges`. A missing/unreadable store surfaces as the
 `CLIState()` error, which aborts that one background check (logged to the file
 log) — `CheckForUpdate`/`CheckForChanges` themselves treat a nil store as a

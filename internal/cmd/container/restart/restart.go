@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -27,7 +27,7 @@ type RestartOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.Service
-	ControlPlane   func() manager.Manager
+	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	Logger         func() (*logger.Logger, error)
@@ -162,6 +162,7 @@ func restartContainer(
 
 	// Restart carries no agent identity — AgentName/Project stay empty.
 	cmdOpts := shared.CommandOpts{
+		IOStreams:    opts.IOStreams,
 		Client:       opts.Client,
 		Config:       opts.Config,
 		HostProxy:    opts.HostProxy,

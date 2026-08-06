@@ -22,14 +22,19 @@ import (
 // place where Docker/Config/Logger resolution is wired and lets tests
 // inject a fake without reaching into package-level seams.
 type Manager interface {
-	// EnsureRunning is idempotent: it builds the CP image if missing,
+	// Start is idempotent: it builds the CP image if missing,
 	// creates/starts the container on the clawker network, and blocks until the
 	// aggregate /healthz endpoint returns 200 and the CP clock has caught up
 	// to the host. The clock-sync step is a readiness gate, not a
 	// value source: it guarantees the CP clock has reconverged with the host
 	// before a container start lets clawkerd exchange its (host-clock-minted)
 	// agent assertion.
-	EnsureRunning(ctx context.Context) error
+	//
+	// See it running or start it, then report the outcome — that is the whole
+	// contract. A boot the CP cannot finish alone comes back as a
+	// *CPSOSError describing what it needs; acting on that is the caller's
+	// job, not this one's.
+	Start(ctx context.Context) error
 
 	// Stop removes the CP container. SIGTERM reaches PID 1 (clawkercp),
 	// which drains the firewall stack and flushes per-container eBPF
@@ -38,7 +43,7 @@ type Manager interface {
 	Stop(ctx context.Context) error
 
 	// IsRunning reports whether a managed CP container exists AND is in
-	// Docker's `running` state. Never triggers EnsureRunning — safe for
+	// Docker's `running` state. Never triggers Start — safe for
 	// status commands that must not bootstrap as a side effect.
 	IsRunning(ctx context.Context) (bool, error)
 
@@ -53,45 +58,30 @@ type Manager interface {
 // on a dead CP; long enough to tolerate a slow localhost handshake.
 const probeHealthzTimeout = 2 * time.Second
 
-// manager is the production Manager. All dependencies are lazy Factory
-// closures — the manager itself holds no live Docker client, config, or
-// logger. Resolution happens per-method, matching the "Client(ctx)"
-// contract in cmdutil.Factory.
+// manager is the production Manager. It holds the live dependencies it was
+// built with and nothing else — resolving a Docker client, config, or logger
+// is the caller's business, done once where the manager is constructed.
 type manager struct {
-	client func(context.Context) (*docker.Client, error)
-	config func() (config.Config, error)
-	logger func() (*logger.Logger, error)
+	docker *docker.Client
+	config config.Config
+	logger *logger.Logger
 }
 
-// NewManager constructs a Manager from lazy Factory accessors. Callers
-// are expected to hand in the same closures that live on *cmdutil.Factory
-// so the manager and direct `f.Client/Config/Logger` callers observe the
-// same cached singletons.
-func NewManager(
-	client func(context.Context) (*docker.Client, error),
-	cfg func() (config.Config, error),
-	log func() (*logger.Logger, error),
-) Manager {
-	return &manager{client: client, config: cfg, logger: log}
+// NewManager constructs a Manager over already-resolved dependencies. The
+// Factory (or a command that builds its own) resolves them; by the time a
+// Manager exists there is nothing left for it to fail at except talking to
+// the control plane.
+//
+//nolint:ireturn // Manager is the mockable seam every consumer holds; handing back the struct would defeat it
+func NewManager(dc *docker.Client, cfg config.Config, log *logger.Logger) Manager {
+	return &manager{docker: dc, config: cfg, logger: log}
 }
 
-func (m *manager) EnsureRunning(ctx context.Context) error {
-	dc, err := m.client(ctx)
-	if err != nil {
-		return fmt.Errorf("connecting to Docker: %w", err)
-	}
-	cfg, err := m.config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	log, err := m.logger()
-	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
-	}
-	return EnsureRunning(ctx, EnsureOpts{
-		Docker: dc,
-		Config: cfg,
-		Logger: log,
+func (m *manager) Start(ctx context.Context) error {
+	return ensureRunning(ctx, EnsureOpts{
+		Docker: m.docker,
+		Config: m.config,
+		Logger: m.logger,
 		HostDirs: HostDirs{
 			Config: consts.ConfigDir(),
 			Data:   consts.DataDir(),
@@ -102,33 +92,21 @@ func (m *manager) EnsureRunning(ctx context.Context) error {
 }
 
 func (m *manager) Stop(ctx context.Context) error {
-	dc, err := m.client(ctx)
-	if err != nil {
-		return fmt.Errorf("connecting to Docker: %w", err)
-	}
-	return Stop(ctx, dc)
+	return Stop(ctx, m.docker)
 }
 
 func (m *manager) IsRunning(ctx context.Context) (bool, error) {
-	dc, err := m.client(ctx)
-	if err != nil {
-		return false, fmt.Errorf("connecting to Docker: %w", err)
-	}
-	return CPRunning(ctx, dc)
+	return CPRunning(ctx, m.docker)
 }
 
 func (m *manager) ProbeHealthz(ctx context.Context) (int, error) {
-	cfg, err := m.config()
-	if err != nil {
-		return 0, fmt.Errorf("loading config: %w", err)
-	}
-	return probeHealthz(ctx, cfg.ControlPlaneSettings().HealthPort)
+	return probeHealthz(ctx, m.config.ControlPlaneSettings().HealthPort)
 }
 
 // probeHealthz performs a GET on http://127.0.0.1:<port>/healthz with a
-// short deadline. Separate from waitForCPHealthz (bootstrap.go) — that
-// one polls for readiness with retries; this one is a point-in-time
-// snapshot for `controlplane status`.
+// short deadline. Separate from newHealthzProbe (bootstrap.go) — that
+// one drives the readiness wait with budget and diagnostics; this one
+// is a point-in-time snapshot for `controlplane status`.
 func probeHealthz(ctx context.Context, port int) (int, error) {
 	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", port)
 	httpClient := &http.Client{Timeout: probeHealthzTimeout}

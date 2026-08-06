@@ -9,22 +9,32 @@ import (
 	mobyClient "github.com/moby/moby/client"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/controlplane/manager"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
+	cpshared "github.com/schmitthub/clawker/internal/cmd/controlplane/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 type CommandOpts struct {
+	// IOStreams is how a control plane that asks for assistance mid-boot
+	// reaches the person running the command (see cpshared.AssistSOS).
+	// Required: every start path runs under a command that owns a real
+	// IOStreams, and a nil here silently downgrades an assistable SOS to
+	// a plain error (prompt-suitability is CanPrompt's call, not the
+	// wiring's). BootstrapServicesPreStart refuses a nil up front.
+	IOStreams *iostreams.IOStreams
+
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() (config.Config, error)
 	HostProxy    func() hostproxy.Service
-	ControlPlane func() manager.Manager
+	ControlPlane func(context.Context) (cpmanager.Manager, error)
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Logger       func() (*logger.Logger, error)
@@ -104,6 +114,13 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
 	}
+	// A nil IOStreams is always a wiring bug, never a headless caller —
+	// non-interactive runs carry a non-TTY IOStreams and are filtered by
+	// CanPrompt inside AssistSOS. Failing loud here keeps a forgotten
+	// field from silently declining control plane assistance requests.
+	if cmdOpts.IOStreams == nil {
+		return errors.New("bootstrapping services: no IOStreams provided")
+	}
 
 	cfg, err := cmdOpts.Config()
 	if err != nil {
@@ -139,8 +156,20 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if cmdOpts.ControlPlane == nil {
 		return fmt.Errorf("bootstrapping services: no control plane manager provided")
 	}
-	if err := cmdOpts.ControlPlane().EnsureRunning(ctx); err != nil {
-		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", err)
+	mgr, cpErr := cmdOpts.ControlPlane(ctx)
+	if cpErr != nil {
+		return fmt.Errorf("bootstrapping services: %w", cpErr)
+	}
+	startErr := mgr.Start(ctx)
+	var sos *cpmanager.CPSOSError
+	if errors.As(startErr, &sos) {
+		if assistErr := cpshared.AssistSOS(ctx, sos, cmdOpts.IOStreams); assistErr != nil {
+			return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", assistErr)
+		}
+		startErr = mgr.Start(ctx)
+	}
+	if startErr != nil {
+		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", startErr)
 	}
 
 	if cmdOpts.Client == nil {
@@ -152,6 +181,14 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 	if client == nil {
 		return errors.New("bootstrapping services: docker client is nil")
+	}
+
+	// Containers created against ID-mapped workspace views (rootless
+	// daemons) need those views mounted BEFORE Docker resolves the bind
+	// sources at start — they die at reboot, and starting over the bare
+	// mount-point directory hands the container an empty workspace.
+	if err = ensureIDMappedViewsAtStart(ctx, client, container, cmdOpts.IOStreams, log); err != nil {
+		return fmt.Errorf("bootstrapping services: %w", err)
 	}
 
 	// The container's harness label (stamped at create from the image) is

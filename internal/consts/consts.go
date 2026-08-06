@@ -60,6 +60,14 @@ const (
 	LabelProject = LabelPrefix + "project"
 	LabelAgent   = LabelPrefix + "agent"
 	LabelHarness = LabelPrefix + "harness"
+
+	// LabelIDMapRoots stamps the workspace roots a container's binds were
+	// repointed through ID-mapped views for (a JSON string array). The
+	// start path reads it back to re-establish the views before Docker
+	// resolves the bind sources — the mounts die at reboot, and a start
+	// against the bare mount-point directory would hand the container an
+	// empty workspace.
+	LabelIDMapRoots = LabelPrefix + "idmap.roots"
 )
 
 // Infrastructure volume-name purpose suffixes. Volume names compose as
@@ -100,6 +108,14 @@ const (
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
 	LabelCPBinarySHA = LabelPrefix + "cp.binary_sha256"
+	// LabelCPBPFFSSource stamps the host path the CP container's BPF
+	// filesystem bind mounts from. The default is the host's own
+	// /sys/fs/bpf; after a rootless delegation heal it is clawker's
+	// delegated bpffs (BPFFSSubdir). EnsureRunning compares the running
+	// container's label against the currently desired source so a CP
+	// created before the heal is recreated onto the delegated filesystem
+	// instead of being restarted without it.
+	LabelCPBPFFSSource = LabelPrefix + "cp.bpffs_source"
 	// LabelBaseContentHash stamps the SHA-256 of the base image's inputs
 	// (rendered base Dockerfile + user copy sources) onto the per-project
 	// base image. The builder compares it against the freshly computed
@@ -299,10 +315,23 @@ const (
 	CLIStateFile = "update-state.yaml"
 )
 
+// SysFSBPFPath is the kernel's canonical BPF filesystem mount point. It is
+// both the default bind source for the CP and CoreDNS containers' BPF
+// filesystem (the host's own bpffs) and the fixed container-side target, so
+// the pin paths inside the containers never depend on the deployment.
+const SysFSBPFPath = "/sys/fs/bpf"
+
+// SysFSCgroupPath is the kernel's cgroup v2 hierarchy root. Bind-mounted
+// into the CP container (read-only, host tree) so eBPF cgroup paths resolve
+// in host coordinates regardless of where the daemon parks its containers.
+const SysFSCgroupPath = "/sys/fs/cgroup"
+
 // Subdirectory names within XDG base dirs.
 const (
 	monitorDir      = "monitor"
 	firewallDir     = "firewall"
+	bpffsDir        = "bpffs"
+	idmapDir        = "idmap"
 	firewallCertDir = "certs"
 	// OtelClientsDirName is the per-service mTLS material subdirectory
 	// under firewallDir: clients/<svc>/{client.pem,client.key} plus a
@@ -527,11 +556,20 @@ const (
 	// stack-bringing RPCs (FirewallInit, FirewallReload), derived from the
 	// server-side bringup budget + headroom so the real server error reaches
 	// the user instead of a premature client deadline. Second consumer:
-	// manager.waitForCPHealthz extends its host-side readiness budget by this
+	// manager.newHealthzProbe extends its host-side readiness budget by this
 	// value when the firewall is enabled — shrinking it shrinks that wait too
 	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
 )
+
+// CPSOSIdleTTL is the shared clock of the WatchSOS channel, used on both
+// sides so neither outlives the other: a CP holding a recoverable startup
+// failure with no watcher stream connected shuts down after this long (a
+// connected watcher holds the clock at zero), and the CLI keeps
+// re-attempting the WatchSOS connection for the same window before giving
+// up and disconnecting. It matches the 30s an idle CP already waits
+// before drain-to-zero.
+const CPSOSIdleTTL = 30 * time.Second
 
 // Host-proxy egress-rules readiness gate. The host-proxy daemon serves
 // /health immediately, then runs a staged wait — firewall container running →
@@ -957,6 +995,34 @@ func CacheDir() string {
 
 // FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
 func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataDir) }
+
+// BPFFSSubdir ensures and returns the mount point of clawker's own BPF
+// filesystem, which holds the pinned maps and programs. The control plane
+// mounts a bpffs here and both it and the CoreDNS container bind-mount the
+// path, so CoreDNS can open the pinned dns_cache map.
+//
+// This is deliberately NOT /sys/fs/bpf. That filesystem belongs to the
+// system, is root-owned mode 0700, and reaching into it from an
+// unprivileged container would mean loosening permissions on a path clawker
+// does not own. A bpffs of our own is born owned by the right user through
+// uid/gid mount options instead.
+//
+// The directory persists; the filesystem mounted on it does not. A mount
+// cannot outlive the user namespace it was created for, so it is
+// re-established on each control-plane start.
+func BPFFSSubdir() (string, error) { return subdirPath(bpffsDir, DataDir) }
+
+// IDMapSubdir ensures and returns the directory holding clawker's ID-mapped
+// workspace views. On a rootless daemon the user namespace maps the daemon
+// user to container root, so a bind-mounted workspace reaches the container
+// root-owned and the unprivileged clawker user cannot use it. An ID-mapped
+// bind of the workspace is attached here instead, presenting the owner's
+// files as the IDs that user occupies, and container specs bind the view.
+//
+// The directories persist; the mounts on them do not — an ID-mapped mount
+// lives until it is replaced or the host reboots, so each view is
+// re-established on demand.
+func IDMapSubdir() (string, error) { return subdirPath(idmapDir, DataDir) }
 
 // OtelClientsDir ensures and returns the directory under
 // FirewallDataSubdir where the otelcerts.Service writes mTLS client

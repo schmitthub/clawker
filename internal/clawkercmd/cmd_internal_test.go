@@ -1,13 +1,15 @@
-package clawker
+package clawkercmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/changelog"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/update"
@@ -21,7 +23,11 @@ import (
 func sampleEntries() []changelog.Entry {
 	return []changelog.Entry{
 		{Version: "0.12.0", Date: "2026-06-11", Body: "### Added\n\n- **Command aliases.** Define your own shortcuts."},
-		{Version: "0.11.0", Date: "2026-06-10", Body: "### Fixed\n\n- **Worktree masks.** Protect the host repository."},
+		{
+			Version: "0.11.0",
+			Date:    "2026-06-10",
+			Body:    "### Fixed\n\n- **Worktree masks.** Protect the host repository.",
+		},
 	}
 }
 
@@ -56,10 +62,78 @@ func TestNotificationsSuppressed(t *testing.T) {
 			t.Setenv(consts.EnvNoNotifier, tt.noNotify)
 			tio, _, _, _ := iostreams.Test()
 			tio.SetStderrTTY(tt.stderrTTY)
-			if got := notificationsSuppressed(tio); got != tt.want {
-				t.Errorf("notificationsSuppressed = %v, want %v", got, tt.want)
+			session := clawker.NewSession()
+			notificationsSuppressed(tio, session)
+			if got := !session.Notifications(); got != tt.want {
+				t.Errorf("notifications suppressed = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestPrintFetchWarnings pins the canceled-fetch silence: Main cancels the
+// notification context the moment the command returns, so any command faster
+// than the network aborts both fetches with [context.Canceled] — that is
+// routine, not a failure, and warning on it would spam every fast command
+// (`clawker version` did exactly that). Real fetch failures must still print.
+func TestPrintFetchWarnings(t *testing.T) {
+	tests := []struct {
+		name        string
+		n           notifications
+		wantWarning []string
+		wantSilent  []string
+	}{
+		{
+			name: "own cancellation is silent",
+			n: notifications{
+				release:    nil,
+				releaseErr: fmt.Errorf("checking repo: %w", context.Canceled),
+				entries:    nil,
+				entriesErr: fmt.Errorf("getting changelog entries: %w", context.Canceled),
+			},
+			wantWarning: nil,
+			wantSilent:  []string{"update check failed", "changelog check failed"},
+		},
+		{
+			name: "real failures still warn",
+			n: notifications{
+				release:    nil,
+				releaseErr: errors.New("dial tcp: no route to host"),
+				entries:    nil,
+				entriesErr: errors.New("unexpected status 502"),
+			},
+			wantWarning: []string{"update check failed", "changelog check failed"},
+			wantSilent:  nil,
+		},
+		{
+			name:        "no errors, no output",
+			n:           notifications{release: nil, releaseErr: nil, entries: nil, entriesErr: nil},
+			wantWarning: nil,
+			wantSilent:  []string{"failed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tio, _, _, errOut := iostreams.Test()
+			printFetchWarnings(tio, tt.n)
+			assertStderrMentions(t, errOut.String(), tt.wantWarning, tt.wantSilent)
+		})
+	}
+}
+
+// assertStderrMentions checks the captured stderr for required warnings and
+// forbidden fragments.
+func assertStderrMentions(t *testing.T, got string, wantWarning, wantSilent []string) {
+	t.Helper()
+	for _, want := range wantWarning {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr missing %q; got %q", want, got)
+		}
+	}
+	for _, silent := range wantSilent {
+		if strings.Contains(got, silent) {
+			t.Errorf("stderr must not contain %q; got %q", silent, got)
+		}
 	}
 }
 

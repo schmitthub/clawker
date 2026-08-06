@@ -43,9 +43,10 @@ jobs:
       - name: Install BPF toolchain
         run: sudo apt-get update && sudo make bpf-deps
 
-      # Native build of the four linux/{amd64,arm64} embed binaries
-      # (clawkercp, clawkerd, ebpf-manager, coredns-clawker). Runs bpf2go
-      # via `go generate` plus 4×2 plain Go cross-compiles; no Docker.
+      # Native build of the six linux/{amd64,arm64} embed binaries
+      # (clawkercp, clawkerd, ebpf-manager, coredns-clawker, bpffs-delegate,
+      # idmap-mount). Runs bpf2go
+      # via `go generate` plus 6×2 plain Go cross-compiles; no Docker.
       # Outputs staged under embeds/{amd64,arm64}/ for goreleaser pre-hooks.
       - name: Build linux embed sets
         run: make release-embeds
@@ -75,12 +76,13 @@ jobs:
       # subject name from each file's basename, so renaming is the only way to
       # surface version/os/arch in the SLSA statement.
       #
-      # Subjects (16 total):
+      # Subjects (20 total):
       #   - 4 release archives (goreleaser already names them correctly; copied as-is)
       #   - 4 standalone CLI binaries from goreleaser dist/ ({linux,darwin}×{amd64,arm64}).
       #     Redundant with the archives (which contain the same bytes) but lets
       #     forensics verify a loose `clawker` binary by digest without unpacking.
-      #   - 8 linux embed binaries ({ebpf-manager,coredns-clawker,clawkercp,clawkerd}
+      #   - 12 linux embed binaries ({ebpf-manager,coredns-clawker,clawkercp,clawkerd,
+      #     bpffs-delegate,idmap-mount}
       #     × {amd64,arm64}). The CLI binary already embeds these, but attesting
       #     them individually lets verification of an extracted embed succeed
       #     without first hashing the host CLI it came from.
@@ -104,14 +106,14 @@ jobs:
           cp dist/clawker-arm64_darwin_arm64*/clawker "${SUBJECTS}/clawker_${VERSION}_darwin_arm64"
 
           for arch in amd64 arm64; do
-            for bin in ebpf-manager coredns-clawker clawkercp clawkerd; do
+            for bin in ebpf-manager coredns-clawker clawkercp clawkerd bpffs-delegate idmap-mount; do
               cp "embeds/${arch}/${bin}" "${SUBJECTS}/${bin}_${VERSION}_linux_${arch}"
             done
           done
 
           ls -la "$SUBJECTS"
 
-      # Single attestation covering all 16 staged subjects. actions/attest@v4
+      # Single attestation covering all 20 staged subjects. actions/attest@v4
       # auto-generates an SLSA v1 build provenance predicate from GitHub Actions
       # context (source commit, workflow ref, builder ID, runner environment).
       # That binding pins everything in the source tree — Dockerfile.controlplane,

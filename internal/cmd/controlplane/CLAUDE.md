@@ -26,31 +26,33 @@ handlers", or `*Domain` symbols. No numbered `// Phase N` comment scaffolding.
 | File | Purpose |
 |------|---------|
 | `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status`/`agents` |
-| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent); when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `shared.BringUpStack` (`internal/cmd/firewall/shared`) (idempotent `FirewallInit`) |
+| `shared/` | `AssistSOS(ctx, sos, ios)` — resolves one `*cpmanager.CPSOSError` from a blocked CP boot: dispatches on `Kind` (`SOS_KIND_BPFFS_DELEGATION` → stage the embedded `bpffs-delegate` helper into a fresh 0700 temp dir, prompt via `sudo.Password`, feed the credential to `sudo -S -p ''`); declines by returning the SOS unchanged when there is no terminal, on a non-linux CLI, or for a `Kind` this CLI predates — never hangs. Shared by `controlplane up`, `firewall up`, and the container-start bootstrap; each caller does its own `mgr.Start` → `errors.As` → `AssistSOS` → retry inline |
+| `up.go` | `controlplane up` — `Manager.Start` (idempotent bringup), with a caught `*CPSOSError` handed to `cpshared.AssistSOS` then one retry; when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `shared.BringUpStack` (`internal/cmd/firewall/shared`) (idempotent `FirewallInit`) |
 | `down.go` | `controlplane down` — `Manager.Stop` (CP container only); no orphan warning — CP drains its own firewall stack on SIGTERM |
 | `status.go` | `controlplane status` — `Manager.IsRunning` + `Manager.ProbeHealthz` + best-effort `FirewallStatus` RPC |
 | `agents.go` | `controlplane agents` — `AdminClient.ListAgents` snapshot of the agent registry |
-| `up_test.go` / `down_test.go` / `status_test.go` / `agents_test.go` | Unit tests driving the run functions through `mocks.ManagerMock` |
+| `up_test.go` / `down_test.go` / `status_test.go` / `agents_test.go` | Unit tests driving the run functions through `cpmanagermocks.ManagerMock` |
 
 ## Subcommand Table
 
 | Command | Constructor | Args | Flags | Manager methods |
 |---------|-------------|------|-------|-----------------|
-| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning`; then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`shared.BringUpStack`) |
+| `up` | `NewCmdUp(f, runF)` | none | none | `Manager.Start` (+ `cpshared.AssistSOS` and one retry on a `*CPSOSError`); then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`shared.BringUpStack`) |
 | `down` | `NewCmdDown(f, runF)` | none | none | `IsRunning`, then `Stop` on the running path |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IsRunning`, `ProbeHealthz`; plus best-effort `FirewallStatus` via `f.AdminClient` |
 | `agents` | `NewCmdAgents(f, runF)` | none | `--format`, `--json`, `--quiet` | none (uses `f.AdminClient` → `ListAgents`) |
 
 ## Factory dependency
 
-Every verb here reaches the CP lifecycle through one noun: `f.ControlPlane()
-cpboot.Manager`. The `Manager` interface lives in `internal/controlplane/
-cpboot/manager.go` and is wired in `internal/cmd/factory/default.go` via
-`controlPlaneFunc(f)` (a `sync.Once`-cached closure that calls
-`cpboot.NewManager(f.Client, f.Config, f.Logger)`).
+Every verb here reaches the CP lifecycle through one noun:
+`f.ControlPlane(ctx) (cpmanager.Manager, error)`. The `Manager` interface lives
+in `controlplane/manager/manager.go` and is wired in
+`internal/cmd/factory/default.go` via `controlPlaneFunc(f)` (a
+`sync.Once`-cached closure that resolves Config, Logger, and the Docker client
+once, then constructs `cpmanager.NewManager(dc, cfg, log)`).
 
 No package-level seams. Tests inject test doubles by overriding Factory
-closures on the per-test `testBed`: a `*mocks.ManagerMock` on
+closures on the per-test `testBed`: a `*cpmanagermocks.ManagerMock` on
 `tb.F.ControlPlane` (always), plus — for the `up` firewall paths — a
 `ConfigMock` on `tb.F.Config` (`withSettings`), an
 `AdminServiceClientMock` on `tb.F.AdminClient` (`withAdminMock`), and a
@@ -71,11 +73,11 @@ whenever the CP is. Two cooperating mechanisms deliver that:
    A bringup failure fails CP startup (exit code 1) — fail-closed and
    loud, never silently unenforced. `/healthz` green therefore implies
    the stack is up when the firewall is enabled, and the host-side
-   `cpboot` healthz wait extends its budget accordingly (and fail-fasts
+   `controlplane/manager` healthz wait extends its budget accordingly (and fail-fasts
    with a diagnostic error if the CP container terminally exits). Covers
    CP boots no CLI observes (restart policy, container-start bootstrap).
 2. **CLI-side (idempotent path)**: `upRun` loads config after
-   `EnsureRunning` and, when enabled, dials `f.AdminClient` and calls
+   `Manager.Start` and, when enabled, dials `f.AdminClient` and calls
    `shared.BringUpStack` — the same spinner + shared-deadline +
    exposure-warning UX as `firewall up`. This covers the case where the
    CP was already running with the stack down (e.g. after `firewall
@@ -122,7 +124,7 @@ regardless of which trigger fires:
 there. When the CP is present, the command:
 
 1. Calls `Manager.ProbeHealthz` — a dedicated 2-second-budget point-in-time
-   probe (separate from the `EnsureRunning` polling path). Transport errors
+   probe (separate from the bringup's own polling path). Transport errors
    land on `row.HealthzError` and are rendered alongside the icon.
 2. Best-effort queries `FirewallStatus` via `f.AdminClient`. Both the
    AdminClient dial error and the RPC error are tolerated and surfaced on
@@ -171,7 +173,7 @@ throughout — no raw `cs.Red` / `cs.Green`.
 
 ## Import boundary
 
-`up`, `down`, and `status` import `internal/controlplane/cpboot` (for the `Manager` interface
+`up`, `down`, and `status` import `controlplane/manager` (for the `Manager` interface
 type) but never import `pkg/whail`. CP lifecycle side effects are reached
 through Manager or AdminClient methods, which is what makes the moq mocks
 complete substitutes. `agents` imports only `api/admin/v1` for the
@@ -186,7 +188,7 @@ routed through Manager because it is not a CP lifecycle operation.
 
 ## Testing
 
-- `newTestBed(t)` returns a `*testBed` with a fresh `mocks.ManagerMock` on
+- `newTestBed(t)` returns a `*testBed` with a fresh `cpmanagermocks.ManagerMock` on
   `f.ControlPlane` and the stdout/stderr capture buffers from
   `iostreams.Test()`.
 - Each test programs only the Manager methods it exercises; unprogrammed

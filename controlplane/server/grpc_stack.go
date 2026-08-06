@@ -39,6 +39,11 @@ const (
 // stack go to the structured log, never onto the wire.
 const grpcPanicMessage = "internal error"
 
+// cpBootingMessage is the client-visible detail of the
+// codes.FailedPrecondition status the ready gate answers non-exempt RPCs
+// with while the startup flow is still running.
+const cpBootingMessage = "control plane is starting up"
+
 // ErrNilFirewallHandler is returned by NewGRPCStack when no firewall
 // handler is supplied. The handler backs the AdminService surface (its
 // embedded UnimplementedAdminServiceServer satisfies method promotion),
@@ -46,6 +51,13 @@ const grpcPanicMessage = "internal error"
 // programming bug — surfaced as an error (not a panic) so the daemon
 // degrades rather than crashing and stranding pinned eBPF.
 var ErrNilFirewallHandler = errors.New("controlplane: NewGRPCStack requires a non-nil firewall handler")
+
+// ErrNilReadyCheck is returned by NewGRPCStack when no ready predicate is
+// supplied. The admin listener serves from construction and the ready
+// gate is what keeps every non-exempt RPC out until the startup flow
+// completes — wiring the stack without it would open the whole admin
+// surface mid-boot.
+var ErrNilReadyCheck = errors.New("controlplane: NewGRPCStack requires a non-nil ready predicate")
 
 // GRPCDeps is the dependency set for the CP gRPC listener stack. Every
 // field is orchestrator-owned and INJECTED — the stack constructs the
@@ -61,6 +73,18 @@ type GRPCDeps struct {
 	// Registry is the durable agent identity registry, shared with the
 	// AdminService.ListAgents RPC and the AgentService.Register handler.
 	Registry agent.Registry
+
+	// Recovery is the recovery queue the WatchSOS RPC streams
+	// from. Required — see server.ErrNilRecovery.
+	Recovery RecoverySource
+
+	// Ready reports whether the CP completed startup (SetReady). The
+	// admin listener serves from construction so the bootstrap RPCs
+	// (the public GetSystemTime, the admin-scoped WatchSOS) answer
+	// while the CP boots; the ready gate rejects every other admin RPC
+	// with codes.FailedPrecondition until this reports true. Required — see
+	// ErrNilReadyCheck.
+	Ready func() bool
 
 	// PeerLookup resolves a live mTLS peer IP to the purpose=agent
 	// container owning that endpoint, grounding the IdentityInterceptor's
@@ -197,6 +221,64 @@ func recoveryStreamInterceptor(log *logger.Logger) grpc.StreamServerInterceptor 
 	}
 }
 
+// readyGateExemptMethods is the set of admin RPCs that must answer while
+// the CP is still booting: every public-scope method from the scope
+// vocabulary (the bootstrap GetSystemTime — automatically exempt, so a
+// new public RPC needs no second list) plus WatchSOS, which is
+// admin-scoped (the auth link after the gate still enforces its bearer
+// token) but IS the boot-assistance channel — gating it on ready would
+// gate the CLI's only window into a boot waiting for assistance on the
+// boot completing. Everything else waits for SetReady.
+func readyGateExemptMethods() map[string]bool {
+	exempt := map[string]bool{
+		adminv1.AdminService_WatchSOS_FullMethodName: true,
+	}
+	for method, scope := range adminv1.AdminMethodScopes() {
+		if scope == consts.ScopePublic {
+			exempt[method] = true
+		}
+	}
+	return exempt
+}
+
+// readyGateUnaryInterceptor rejects every non-exempt admin RPC with
+// codes.FailedPrecondition until the CP reports ready. The admin listener
+// serves from construction so the bootstrap RPCs answer while the CP
+// boots (WatchSOS is the CLI's window into a boot waiting for
+// assistance); this gate is what preserves the no-mutation-mid-boot
+// contract that serving late used to provide. It sits between the
+// recovery and auth links: a booting CP answers with a clean
+// FailedPrecondition instead of whatever auth error a half-started Ory
+// stack would produce.
+func readyGateUnaryInterceptor(ready func() bool, exempt map[string]bool) grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		if !exempt[info.FullMethod] && !ready() {
+			return nil, status.Error(codes.FailedPrecondition, cpBootingMessage)
+		}
+		return handler(ctx, req)
+	}
+}
+
+// readyGateStreamInterceptor is readyGateUnaryInterceptor's streaming twin.
+func readyGateStreamInterceptor(ready func() bool, exempt map[string]bool) grpc.StreamServerInterceptor {
+	return func(
+		srv any,
+		ss grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		if !exempt[info.FullMethod] && !ready() {
+			return status.Error(codes.FailedPrecondition, cpBootingMessage)
+		}
+		return handler(srv, ss)
+	}
+}
+
 // NewGRPCStack constructs both gRPC listeners from deps without starting
 // to serve. It loads the server cert, builds both mTLS configs, the
 // shared Hydra introspector and the two per-listener auth interceptors,
@@ -209,10 +291,15 @@ func recoveryStreamInterceptor(log *logger.Logger) grpc.StreamServerInterceptor 
 //
 //   - ServeAgent runs at boot, before the CP is ready — clawkerd dial-back
 //     and agent registration are boot-time flows.
-//   - ServeAdmin runs only AFTER the startup gates and SetReady, so no admin
-//     RPC — in particular no rule mutation — can be accepted mid-boot. An
-//     early client waits in the bound listener's accept backlog rather than
-//     getting connection-refused.
+//   - ServeAdmin also runs at boot, right after construction: the
+//     bootstrap RPCs (the public GetSystemTime, the admin-scoped
+//     WatchSOS) must answer while the startup flow is still running
+//     — WatchSOS is the CLI's window into a boot waiting for
+//     assistance. The ready gate in the admin
+//     interceptor chain rejects every OTHER admin RPC — in particular any
+//     rule mutation — with codes.FailedPrecondition until SetReady, which
+//     preserves the no-mutation-mid-boot contract that serving late used
+//     to provide.
 //
 // All failures return an error; the CP serve path never panics (a panic
 // would strand pinned eBPF programs with no supervisor — a security
@@ -223,6 +310,9 @@ func recoveryStreamInterceptor(log *logger.Logger) grpc.StreamServerInterceptor 
 func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	if deps.Handler == nil {
 		return nil, ErrNilFirewallHandler
+	}
+	if deps.Ready == nil {
+		return nil, ErrNilReadyCheck
 	}
 	log := deps.Log
 	if log == nil {
@@ -262,14 +352,27 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 
 	// The recovery interceptor is FIRST in both chains — grpc.Chain*
 	// interceptors run outermost-first, and a panic in the auth interceptor
-	// itself must be contained just as a handler panic is.
+	// itself must be contained just as a handler panic is. The ready gate
+	// runs second, ahead of auth: the admin listener serves from
+	// construction, so the gate is what keeps every non-exempt RPC out
+	// until the startup flow completes (and a booting CP answers
+	// FailedPrecondition instead of a half-started Ory stack's auth error).
+	exempt := readyGateExemptMethods()
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
-		grpc.ChainUnaryInterceptor(recoveryUnaryInterceptor(log), authInterceptor.UnaryInterceptor()),
-		grpc.ChainStreamInterceptor(recoveryStreamInterceptor(log), authInterceptor.StreamInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			recoveryUnaryInterceptor(log),
+			readyGateUnaryInterceptor(deps.Ready, exempt),
+			authInterceptor.UnaryInterceptor(),
+		),
+		grpc.ChainStreamInterceptor(
+			recoveryStreamInterceptor(log),
+			readyGateStreamInterceptor(deps.Ready, exempt),
+			authInterceptor.StreamInterceptor(),
+		),
 	)
 
-	adminServer, err := NewAdminServer(deps.Handler, deps.Registry, log)
+	adminServer, err := NewAdminServer(deps.Handler, deps.Registry, deps.Recovery, log)
 	if err != nil {
 		return nil, fmt.Errorf("admin server: %w", err)
 	}
@@ -432,12 +535,15 @@ func (s *GRPCStack) ServeAgent(failed chan<- error) {
 }
 
 // ServeAdmin starts the recovered serve goroutine for the admin listener.
-// The orchestrator calls it only AFTER the startup gates and SetReady, so
-// no admin RPC — in particular no rule mutation — can be accepted while
-// the CP is still booting. The listener socket is bound at construction,
-// so a client that connects early simply waits in the accept backlog until
-// the CP is ready rather than getting connection-refused. Serving is
-// single-shot — a second call serves nothing and warns.
+// The orchestrator calls it MID-BOOT, right after construction: the
+// bootstrap RPCs (the public GetSystemTime, the admin-scoped
+// WatchSOS) must answer while the
+// startup flow runs, and the ready-gate interceptor rejects every other
+// admin RPC — in particular any rule mutation — until SetReady. The
+// listener socket is bound at construction, so a client that connects
+// before this call simply waits in the accept backlog rather than getting
+// connection-refused. Serving is single-shot — a second call serves
+// nothing and warns.
 //
 // The serving flag flips BEFORE the goroutine is scheduled: /healthz starts
 // after this call, and a probe landing between the go statement and the

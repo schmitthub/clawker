@@ -101,13 +101,20 @@ func (b *Bridge) SetGPGPubkey(pubkey []byte) {
 
 // Start launches the socket-forwarder in the container and begins forwarding.
 func (b *Bridge) Start(ctx context.Context) error {
-	// Get GPG pubkey if GPG forwarding is enabled
+	// Resolve the GPG pubkey if GPG forwarding is enabled. A host without
+	// usable GPG material (no gpg binary, no keys — the config default
+	// enables forwarding without knowing) degrades to SSH-only forwarding:
+	// killing the whole bridge, and with it the container start, over an
+	// optional lane would fail the deployment for a feature it never had.
 	if b.gpgEnabled && len(b.gpgPubkey) == 0 {
 		pubkey, err := getHostGPGPubkey()
 		if err != nil {
-			return fmt.Errorf("GPG forwarding requires pubkey: %w", err)
+			b.log.Warn().Err(err).
+				Msg("GPG forwarding unavailable on this host; continuing with SSH-only forwarding")
+			b.gpgEnabled = false
+		} else {
+			b.gpgPubkey = pubkey
 		}
-		b.gpgPubkey = pubkey
 	}
 
 	// Start docker exec

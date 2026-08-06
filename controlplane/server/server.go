@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -19,6 +20,21 @@ import (
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// RecoverySource is the recovery queue the WatchSOS RPC drains.
+// Implemented by the CP startup orchestrator.
+//
+// SubscribeRecovery registers a watcher and returns its receive channel
+// plus a cancel func (idempotent; must be called when the watcher goes
+// away). Channel contract: the pending recoverable failure — current or
+// later-published — is delivered as a ready-to-send SOS; the channel is
+// CLOSED when the failure is resolved or startup completes (the
+// stream's clean EOF). A connected watcher also holds the
+// orchestrator's recovery idle clock — a CP holding a failure with no
+// watcher shuts down after its idle TTL.
+type RecoverySource interface {
+	SubscribeRecovery() (<-chan *adminv1.SOS, func())
+}
 
 // adminServer composes the domain-specific handlers into the single
 // AdminServiceServer surface. The firewall handler embeds
@@ -31,8 +47,9 @@ type adminServer struct {
 	// rather than blocking the whole CP on a partial domain rewrite.
 	*fwhandler.Handler
 
-	agents agent.Registry
-	log    *logger.Logger
+	agents   agent.Registry
+	recovery RecoverySource
+	log      *logger.Logger
 }
 
 // ErrNilRegistry is returned by NewAdminServer when no agent registry is
@@ -41,6 +58,13 @@ type adminServer struct {
 // bug — surfaced as an error (not a panic) so the daemon degrades rather
 // than crashing and stranding eBPF.
 var ErrNilRegistry = errors.New("controlplane: NewAdminServer requires a non-nil agent registry")
+
+// ErrNilRecovery is returned by NewAdminServer when no recovery source
+// is supplied. The WatchSOS RPC is the CLI's only window into a CP
+// waiting for boot assistance; wiring the server without it is a
+// programming bug — surfaced as an error (not a panic) per the CP
+// no-crash contract.
+var ErrNilRecovery = errors.New("controlplane: NewAdminServer requires a non-nil recovery source")
 
 // compile-time: any future additions to AdminServiceServer must be
 // covered by one of the embedded domain handlers or this assertion fails.
@@ -54,16 +78,27 @@ var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 // pinned eBPF programs with no supervisor), so the caller logs a
 // structured event=<subsystem>_unavailable line and degrades.
 //
+//   - recovery is required — the WatchSOS RPC is the CLI's only
+//     window into a CP waiting for boot assistance (ErrNilRecovery).
 //   - log defaults to logger.Nop() when nil. Production wiring passes
 //     the CP's structured logger.
-func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Logger) (adminv1.AdminServiceServer, error) {
+//nolint:ireturn // adminServer is package-private by design; the composed adminv1.AdminServiceServer surface is the export
+func NewAdminServer(
+	fw *fwhandler.Handler,
+	agents agent.Registry,
+	recovery RecoverySource,
+	log *logger.Logger,
+) (adminv1.AdminServiceServer, error) {
 	if agents == nil {
 		return nil, ErrNilRegistry
+	}
+	if recovery == nil {
+		return nil, ErrNilRecovery
 	}
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &adminServer{Handler: fw, agents: agents, log: log}, nil
+	return &adminServer{Handler: fw, agents: agents, recovery: recovery, log: log}, nil
 }
 
 // ListAgents returns a deterministic snapshot of every agent currently
@@ -115,4 +150,39 @@ func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest
 // ability to authenticate at all.
 func (s *adminServer) GetSystemTime(_ context.Context, _ *adminv1.GetSystemTimeRequest) (*adminv1.GetSystemTimeResult, error) {
 	return &adminv1.GetSystemTimeResult{UnixNanos: time.Now().UnixNano()}, nil
+}
+
+// WatchSOS streams recoverable startup failures to the CLI, which
+// holds the stream open from a goroutine while the CP boots. It is
+// admin-scoped (recoverable failures only happen after the Ory stack is
+// up — anything earlier exits 1 — so the CLI can always mint a token by
+// the time there is something to watch) but exempt from the READY gate:
+// it must serve while the startup flow is still running. The stream
+// carries an error or nothing — a delivered message is the recoverable
+// failure the CLI can act on; a clean end-of-stream means the failure
+// was resolved or startup completed with nothing to report. A connected
+// stream holds the orchestrator's recovery idle clock (see
+// RecoverySource).
+func (s *adminServer) WatchSOS(
+	_ *adminv1.WatchSOSRequest, stream adminv1.AdminService_WatchSOSServer,
+) error {
+	ch, cancel := s.recovery.SubscribeRecovery()
+	defer cancel()
+	for {
+		select {
+		case <-stream.Context().Done():
+			// The watcher went away — its disconnect restarts the
+			// orchestrator's idle clock via the deferred cancel. Not an
+			// error worth surfacing.
+			return nil
+		case sos, ok := <-ch:
+			if !ok {
+				// Resolved, or startup completed — clean end-of-stream.
+				return nil
+			}
+			if err := stream.Send(sos); err != nil {
+				return fmt.Errorf("watch sos send: %w", err)
+			}
+		}
+	}
 }

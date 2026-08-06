@@ -387,7 +387,7 @@ with a Factory struct literal populated with the appropriate deps for the test.
 
 **Factory is mandatory.** Every command test MUST construct a `&cmdutil.Factory{}`
 struct literal with the dependencies the test needs — real or doubled. Never call
-`factory.New()` in tests (that's only for `internal/clawker/cmd.go`). The Factory
+`factory.New()` in tests (that's only for `internal/clawkercmd/cmd.go`). The Factory
 wiring IS part of what the test validates.
 
 ```go

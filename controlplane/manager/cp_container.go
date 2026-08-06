@@ -1,14 +1,19 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -96,6 +101,41 @@ type CPContainerConfig struct {
 // localhost is the 127.0.0.1 address used for all published port bindings.
 var localhost = netip.MustParseAddr(consts.Localhost)
 
+// ErrUnsupportedDockerHost reports a daemon address the control plane cannot
+// use: the CP container exists only by bind-mounting the daemon socket, a
+// bind source is a filesystem path, and only the schemes in
+// clawker.MountableHostSchemes carry one.
+var ErrUnsupportedDockerHost = errors.New(
+	"the control plane bind-mounts the local Docker socket to manage containers, " +
+		"and the daemon address cannot be bind-mounted",
+)
+
+// validateMountableHost enforces the CP's socket-mount constraint on the
+// resolved daemon address, naming the offending address and the fix.
+func validateMountableHost(dockerHost string) error {
+	for _, scheme := range clawker.MountableHostSchemes {
+		if !strings.HasPrefix(dockerHost, scheme) {
+			continue
+		}
+		if path := strings.TrimPrefix(dockerHost, scheme); !filepath.IsAbs(path) {
+			return fmt.Errorf(
+				"%w: %q resolves to the non-absolute socket path %q "+
+					"(a unix address takes three slashes, e.g. unix:///var/run/docker.sock)",
+				ErrUnsupportedDockerHost, dockerHost, path)
+		}
+		return nil
+	}
+	if filepath.IsAbs(dockerHost) {
+		return fmt.Errorf(
+			"%w: %q carries no scheme — write it as unix://%s",
+			ErrUnsupportedDockerHost, dockerHost, dockerHost)
+	}
+	return fmt.Errorf(
+		"%w: %q is not a unix:// address; point the daemon address "+
+			"($DOCKER_HOST, the docker.host setting, or the active docker context) at a unix socket",
+		ErrUnsupportedDockerHost, dockerHost)
+}
+
 // BuildCPContainerConfig constructs the CPContainerConfig for the control
 // plane container. Reads all ports from cfg.ControlPlaneSettings() —
 // defaults come from struct tags via the storage layer.
@@ -111,6 +151,9 @@ var localhost = netip.MustParseAddr(consts.Localhost)
 func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContainerConfig, error) {
 	if err := opts.HostDirs.Validate(); err != nil {
 		return nil, fmt.Errorf("cp container config: %w", err)
+	}
+	if err := validateMountableHost(cfg.DockerHost()); err != nil {
+		return nil, err
 	}
 
 	cp := cfg.ControlPlaneSettings()
@@ -179,6 +222,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	firewallDataDir, err := consts.FirewallDataSubdir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
+	}
+
+	// The BPF filesystem the CP loads against. The default deployment binds
+	// the host's own /sys/fs/bpf, exactly as it always has; only when a
+	// delegated bpffs exists at clawker's own host path — the product of a
+	// rootless-Docker heal — does the spec bind that instead.
+	bpffsSource, err := resolveBPFFSSource()
+	if err != nil {
+		return nil, fmt.Errorf("resolve bpffs source: %w", err)
 	}
 
 	// Control-plane data dir — the CP daemon is the sole writer of
@@ -270,25 +322,32 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		// cgroup filesystem for eBPF program attachment.
 		{
 			Type:     mount.TypeBind,
-			Source:   "/sys/fs/cgroup",
-			Target:   "/sys/fs/cgroup",
+			Source:   consts.SysFSCgroupPath,
+			Target:   consts.SysFSCgroupPath,
 			ReadOnly: true,
 		},
-		// BPF filesystem for pinned maps.
+		// The BPF filesystem for pinned maps and programs, shared with the
+		// CoreDNS container through the same source. No propagation
+		// options: Docker re-establishes bind mounts at every container
+		// START, capturing whatever is mounted at the source then, and the
+		// rootless heal always ends in a container (re)start — never a
+		// mount travelling into a running one.
 		{
 			Type:   mount.TypeBind,
-			Source: "/sys/fs/bpf",
-			Target: "/sys/fs/bpf",
+			Source: bpffsSource,
+			Target: consts.SysFSBPFPath,
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).
 		// Source resolves the host's actual socket ($DOCKER_HOST /
-		// settings override aware); target stays the conventional path
-		// the CP daemon's Docker client expects.
+		// settings override aware; validateMountableHost above rejects
+		// anything else); target is ALWAYS the conventional path — the
+		// DOCKER_HOST env pin below and the CP daemon's WithEnvHost
+		// client both depend on that remap.
 		{
 			Type:     mount.TypeBind,
-			Source:   cfg.DockerSocketPath(),
-			Target:   consts.DefaultDockerSocketPath,
+			Source:   strings.TrimPrefix(cfg.DockerHost(), "unix://"),
+			Target:   strings.TrimPrefix(consts.DefaultDockerHost, "unix://"),
 			ReadOnly: true,
 		},
 		// Firewall state dir — CP is the sole writer (INV-B2-001). Envoy
@@ -312,9 +371,10 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 
 	binarySHA, _ := cpBinaryHash()
 	labels := map[string]string{
-		consts.LabelManaged:     consts.ManagedLabelValue,
-		consts.LabelPurpose:     consts.PurposeControlPlane,
-		consts.LabelCPBinarySHA: binarySHA,
+		consts.LabelManaged:       consts.ManagedLabelValue,
+		consts.LabelPurpose:       consts.PurposeControlPlane,
+		consts.LabelCPBinarySHA:   binarySHA,
+		consts.LabelCPBPFFSSource: bpffsSource,
 	}
 
 	return &CPContainerConfig{
@@ -327,6 +387,12 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		Env: append([]string{
 			consts.EnvConfigDir + "=" + consts.CPClawkerConfigDir,
 			consts.EnvDataDir + "=" + consts.CPClawkerDataDir,
+			// The socket mount above remaps the host's daemon socket to the
+			// conventional path, so inside this container the address is a
+			// constant. Pinned here so the CP daemon (WithEnvHost) never
+			// consults the mounted host settings, whose docker.host names
+			// the host side of the mount.
+			consts.EnvDockerHost + "=" + consts.DefaultDockerHost,
 			consts.EnvHostConfigDir + "=" + opts.HostDirs.Config,
 			consts.EnvHostDataDir + "=" + opts.HostDirs.Data,
 			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
@@ -339,6 +405,9 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// re-stamps it as a firewall-sibling drift label
 			// (firewall.Stack.driftLabels). See consts.EnvCPBinarySHA.
 			consts.EnvCPBinarySHA + "=" + binarySHA,
+			// The bpffs source this container was built with, so
+			// firewall.Stack gives the CoreDNS sibling the same one.
+			consts.EnvHostBPFFSSource + "=" + bpffsSource,
 		}, otelLogsEnv(cfg)...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawkercp"},
@@ -351,6 +420,25 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			MaximumRetryCount: consts.CPMaxRestartRetries,
 		},
 	}, nil
+}
+
+// resolveBPFFSSource picks the host path the CP and CoreDNS containers bind
+// their BPF filesystem from. It is a state check, not deployment detection:
+// when a delegated bpffs exists at clawker's own host path — the elevated
+// helper of a rootless heal put it there — that filesystem is the one the
+// containers must load and pin against; otherwise the source is the host's
+// own /sys/fs/bpf, exactly as it has been since the project's inception.
+// Resolving the clawker path also creates the directory, so the helper (which
+// refuses to create its own mount point) always finds it in place.
+func resolveBPFFSSource() (string, error) {
+	dir, err := consts.BPFFSSubdir()
+	if err != nil {
+		return "", fmt.Errorf("resolve bpffs dir: %w", err)
+	}
+	if delegation.Mounted(dir) {
+		return dir, nil
+	}
+	return consts.SysFSBPFPath, nil
 }
 
 // otelLogsEnv injects the OTLP env vars the CP daemon reads to enable

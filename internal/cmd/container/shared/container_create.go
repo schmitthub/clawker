@@ -28,6 +28,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -35,6 +36,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -1643,8 +1645,14 @@ type CreateContainerOptions struct {
 	ProjectRegistry func() (project.Registry, error)
 	HostProxy       func() hostproxy.Service
 	Log             *logger.Logger
-	Is256Color      bool
-	IsTrueColor     bool
+	// IOStreams is required. It is what lets the create path ask the person
+	// for authorization when a host step needs elevation (the ID-mapped
+	// workspace view on a rootless daemon). A nil value always means a
+	// forgotten field, never a headless caller: headless runs carry a
+	// non-TTY IOStreams and are filtered by CanPrompt at the point of asking.
+	IOStreams   *iostreams.IOStreams
+	Is256Color  bool
+	IsTrueColor bool
 
 	// harnessBundle is the container's harness identity, resolved once at
 	// the top of CreateContainer from the image's harness label (registry
@@ -1670,9 +1678,60 @@ type CreateContainerResult struct {
 // Developer diagnostics go to zerolog. Callers own all terminal output.
 // On any failure past the resource-tracking point, each error return reclaims
 // the container and volumes created during the attempt; a panic does not.
+// ErrUnsupportedDockerHost reports a daemon address the docker-socket feature
+// (security.docker_socket) cannot mount into the agent container: a bind
+// source is a filesystem path, and only the schemes in
+// clawker.MountableHostSchemes carry one.
+var ErrUnsupportedDockerHost = errors.New("docker daemon address cannot be bind-mounted into the container")
+
+// validateMountableHost enforces the docker-socket feature's constraint on
+// the resolved daemon address, naming the offending address and the fixes.
+func validateMountableHost(dockerHost string) error {
+	for _, scheme := range clawker.MountableHostSchemes {
+		if !strings.HasPrefix(dockerHost, scheme) {
+			continue
+		}
+		if path := strings.TrimPrefix(dockerHost, scheme); !filepath.IsAbs(path) {
+			return fmt.Errorf(
+				"%w: %q resolves to the non-absolute socket path %q "+
+					"(a unix address takes three slashes, e.g. unix:///var/run/docker.sock)",
+				ErrUnsupportedDockerHost, dockerHost, path)
+		}
+		return nil
+	}
+	if filepath.IsAbs(dockerHost) {
+		return fmt.Errorf(
+			"%w: %q carries no scheme — write it as unix://%s",
+			ErrUnsupportedDockerHost, dockerHost, dockerHost)
+	}
+	return fmt.Errorf(
+		"%w: %q is not a unix:// address; set security.docker_socket: false in clawker.yaml to stop mounting it, "+
+			"or point the daemon address ($DOCKER_HOST, the docker.host setting, or the active docker context) "+
+			"at a unix socket",
+		ErrUnsupportedDockerHost, dockerHost)
+}
+
 func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*CreateContainerResult, error) {
 	containerOpts := opts.Options
 	log := opts.Log
+
+	// A nil IOStreams is always a wiring mistake, never a headless caller:
+	// non-interactive runs carry a non-TTY IOStreams and are filtered by
+	// CanPrompt where authorization is actually asked for. Failing loud here
+	// keeps a forgotten field from silently turning an answerable prompt
+	// into an unexplained permission failure inside the container.
+	if opts.IOStreams == nil {
+		return nil, errors.New("creating container: no IOStreams provided")
+	}
+
+	// Entrypoint gate: the docker-socket feature bind-mounts the daemon
+	// socket, which only a unix:// address can back. Checked before any
+	// volume or container work so a bad address strands nothing.
+	if opts.Config.SecurityConfig().DockerSocket {
+		if err := validateMountableHost(opts.Config.DockerHost()); err != nil {
+			return nil, err
+		}
+	}
 
 	agentName := containerOpts.GetAgentName()
 	if agentName == "" {
@@ -2182,6 +2241,10 @@ type containerConfigs struct {
 	container *container.Config
 	host      *container.HostConfig
 	network   *network.NetworkingConfig
+	// idmapRoots are the workspace roots whose binds were repointed through
+	// ID-mapped views (rootless daemons only; empty otherwise). Stamped as
+	// a label so every later start can re-establish the views.
+	idmapRoots []string
 }
 
 // buildContainerConfigs assembles the git-credential mounts and create-time
@@ -2218,6 +2281,16 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Every host bind this container will ever have now exists on hostConfig
+	// — the workspace, the harness's, the user's own -v flags — because
+	// Docker fixes mounts at create. That makes this the one place that can
+	// make them all usable on a rootless daemon.
+	idmapRoots, err := ensureIDMappedWorkspace(ctx, opts.Client, hostConfig,
+		[]string{ws.wd, ws.projectRootDir}, opts.IOStreams, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
 	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
 	// handles internal name resolution (container names, host.docker.internal).
@@ -2236,7 +2309,12 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 		containerConfig.WorkingDir = ws.result.ContainerPath
 	}
 
-	return &containerConfigs{container: containerConfig, host: hostConfig, network: networkConfig}, nil
+	return &containerConfigs{
+		container:  containerConfig,
+		host:       hostConfig,
+		network:    networkConfig,
+		idmapRoots: idmapRoots,
+	}, nil
 }
 
 // finalizeCreatedContainer performs the post-create steps that depend on the
@@ -2288,6 +2366,17 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 	// start-time consumers (pre_run composition, egress refresh) read back
 	// instead of re-resolving the configured default.
 	extraLabels[consts.LabelHarness] = opts.harnessBundle.Name
+
+	// Stamp the ID-mapped workspace roots so every start can re-establish
+	// the views before Docker resolves the bind sources (they die at
+	// reboot). Marshaling []string cannot fail; absent on rootful daemons.
+	if len(cfgs.idmapRoots) > 0 {
+		rootsJSON, jsonErr := json.Marshal(cfgs.idmapRoots)
+		if jsonErr != nil {
+			return "", fmt.Errorf("encoding the ID-mapped workspace roots: %w", jsonErr)
+		}
+		extraLabels[consts.LabelIDMapRoots] = string(rootsJSON)
+	}
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           cfgs.container,

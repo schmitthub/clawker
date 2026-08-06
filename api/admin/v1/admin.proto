@@ -114,6 +114,25 @@ service AdminService {
   // CLI's client cert is long-lived (1y), so the handshake survives a lagging
   // CP clock.
   rpc GetSystemTime(GetSystemTimeRequest) returns (GetSystemTimeResult);
+
+  // WatchSOS is the CLI's window into a boot that needs assistance.
+  // The CLI keeps (re-)establishing this stream from a goroutine while
+  // the CP boots. The stream carries an error or nothing: when the
+  // startup flow hits a failure it cannot resolve alone but the CLI can
+  // assist with, that failure is delivered on every open stream —
+  // including streams that connect after it was published. When the
+  // failure is resolved, or startup completes, the server ends the
+  // stream cleanly. Unrecoverable failures never appear here — the CP
+  // exits non-zero as usual and the dropped connection is the signal.
+  //
+  // Admin-scoped like every privileged RPC: recoverable failures only
+  // happen after the auth stack is up (anything earlier exits non-zero),
+  // so the CLI can always mint a token by the time there is something to
+  // watch. It is exempt from the server's READY gate — it must serve
+  // while the startup flow is still running. A CP holding a recoverable
+  // failure with no watcher connected shuts down after its recovery idle
+  // TTL rather than waiting forever; a connected watcher holds it open.
+  rpc WatchSOS(WatchSOSRequest) returns (stream SOS);
 }
 
 // Route is one entry in the global route_map.
@@ -326,6 +345,34 @@ message GetSystemTimeResult {
   // time.Now().UTC() to decide whether the CP clock has caught up to the host
   // before the container start is allowed to proceed.
   int64 unix_nanos = 1;
+}
+
+message WatchSOSRequest {}
+
+// SOSKind names the recoverable failure an SOS carries. It is the CLI's
+// dispatch discriminator: the CLI switches on kind and runs the matching
+// assistance, and never parses message, which is human prose free to
+// change. A kind the CLI does not know — an older CLI against a newer CP
+// — is surfaced as the failure using message and the boot is abandoned;
+// an unassisted SOS still ends the boot, it never hangs waiting for
+// assistance that cannot come.
+enum SOSKind {
+  SOS_KIND_UNSPECIFIED = 0;
+  // BPFFS_DELEGATION: the CP cannot create its own BPF filesystem
+  // because the kernel demands init-namespace privileges for the
+  // delegation options — the rootless-Docker shape, where the CP lives
+  // in the daemon's user namespace. The CP holds the open filesystem
+  // context and waits for an elevated process to configure and create
+  // it.
+  SOS_KIND_BPFFS_DELEGATION = 1;
+}
+
+// SOS is one recoverable startup failure: the CP cannot fix it alone and
+// is alive waiting for the CLI's assistance. kind selects the assistance
+// to run; message describes the failure and what is needed.
+message SOS {
+  string message = 1;
+  SOSKind kind = 2;
 }
 
 message Agent {

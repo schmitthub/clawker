@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // fakeHydra returns a TLS test server that answers any /oauth2/token POST with a
@@ -70,5 +73,37 @@ func TestTokenSource_MintsAndCaches(t *testing.T) {
 	}
 	if got := hits.Load(); got != 2 {
 		t.Fatalf("hydra hits = %d, want 2 (near-expiry triggers re-mint)", got)
+	}
+}
+
+// TestStreamInterceptor_AttachesBearerToken pins that streaming calls
+// carry the authorization metadata. grpc-go routes unary and streaming
+// RPCs through DISJOINT interceptor chains, so the bearer that unary
+// calls get from unaryInterceptor never reaches a stream — a regression
+// dropping streamInterceptor from Dial would send WatchSOS to the CP
+// with no token at all, rejected Unauthenticated on every attempt.
+func TestStreamInterceptor_AttachesBearerToken(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, tlsCfg, _ := fakeHydra(t)
+	ts := newTokenSource(key, url, tlsCfg)
+
+	var gotAuth []string
+	streamer := func(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+		md, _ := metadata.FromOutgoingContext(ctx)
+		gotAuth = md.Get("authorization")
+		return nil, nil //nolint:nilnil // the fake streamer's return values are unused; only the captured metadata matters
+	}
+
+	_, err = ts.streamInterceptor()(
+		context.Background(), nil, nil, "/clawker.admin.v1.AdminService/WatchSOS", streamer,
+	)
+	if err != nil {
+		t.Fatalf("stream interceptor: %v", err)
+	}
+	if len(gotAuth) != 1 || gotAuth[0] != "Bearer tok" {
+		t.Fatalf("authorization metadata = %v, want [Bearer tok]", gotAuth)
 	}
 }

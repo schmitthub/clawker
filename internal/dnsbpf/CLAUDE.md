@@ -37,7 +37,7 @@ func OpenBPFMap(pinPath string) (*BPFMap, error)
 func (b *BPFMap) Update(ip uint32, identity clawkerebpf.RouteIdentity, ttlSeconds uint32)
 func (b *BPFMap) Close() error
 
-const DefaultPinPath = "/sys/fs/bpf/clawker/dns_cache"
+const DefaultPinPath = "/sys/fs/bpf/clawker/dns_cache" // ebpf.PinPath + map name
 const pluginName    = "dnsbpf"
 const minTTLSeconds = 60
 ```
@@ -61,7 +61,7 @@ TTLs below `minTTLSeconds` (60s) are clamped up — very short CDN TTLs would ot
 
 ## Runtime Requirements
 
-The custom CoreDNS container (`clawker-coredns:latest`, built on demand by the CP's `firewall.Stack`) runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf`. `CAP_BPF` alone is insufficient on kernels < 5.19 for `BPF_MAP_UPDATE_ELEM`, which is why `CAP_SYS_ADMIN` is added — this was observed during the CoreDNS plugin initiative. The CP's `ebpf.Manager.Load()` must run **before** CoreDNS starts so the pinned map exists when `OpenBPFMap` runs.
+The custom CoreDNS container (`clawker-coredns:latest`, built on demand by the CP's `firewall.Stack`) runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount at `/sys/fs/bpf` of the same BPF filesystem source the CP container was created with (`consts.HostBPFFSSource()`; no propagation options). `CAP_BPF` alone is insufficient on kernels < 5.19 for `BPF_MAP_UPDATE_ELEM`, which is why `CAP_SYS_ADMIN` is added — this was observed during the CoreDNS plugin initiative. The CP's `ebpf.Manager.Load()` must run **before** CoreDNS starts so the pinned map exists when `OpenBPFMap` runs.
 
 ## Test Seam
 

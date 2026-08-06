@@ -407,6 +407,78 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 }
 
+// TestMigrateDockerSocketToHost covers the docker.socket → docker.host rename.
+// The key always held a daemon address; only its name was wrong.
+func TestMigrateDockerSocketToHost(t *testing.T) {
+	t.Run("renames the key and prefixes a carried path into an address", func(t *testing.T) {
+		// The old key held a socket PATH; the new key holds an ADDRESS and
+		// the Docker SDK rejects a schemeless value, so a carried path must
+		// arrive scheme-qualified or every docker command breaks post-upgrade.
+		const in = `docker:
+  socket: /run/user/1003/docker.sock
+`
+		after := loadSettings(t, in)
+		assert.NotContains(t, after, "socket:", "renamed key must be gone")
+		assert.Contains(t, after, "host: unix:///run/user/1003/docker.sock",
+			"a carried path must become the address naming the same socket")
+	})
+
+	t.Run("the materialized init default is carried as an address too", func(t *testing.T) {
+		// clawker init flushes schema defaults to disk, so most installs
+		// have the old default on disk without ever choosing it. It rides
+		// the same transform — the migration does not second-guess values.
+		const in = `docker:
+  socket: /var/run/docker.sock
+`
+		after := loadSettings(t, in)
+		assert.Contains(t, after, "host: unix:///var/run/docker.sock")
+	})
+
+	t.Run("a scheme-qualified value is carried verbatim", func(t *testing.T) {
+		const in = `docker:
+  socket: tcp://10.0.0.5:2376
+`
+		after := loadSettings(t, in)
+		assert.Contains(t, after, "host: tcp://10.0.0.5:2376",
+			"an address must not be double-prefixed")
+	})
+
+	t.Run("collision keeps host and drops socket", func(t *testing.T) {
+		const in = `docker:
+  socket: /run/user/1003/docker.sock
+  host: /custom/docker.sock
+`
+		after := loadSettings(t, in)
+		assert.NotContains(t, after, "socket:", "legacy key must be dropped on collision")
+		assert.Contains(t, after, "host: /custom/docker.sock",
+			"existing host value must be kept, not overwritten")
+	})
+
+	t.Run("no-op without a docker block", func(t *testing.T) {
+		const in = `host_proxy:
+  port: 9999
+`
+		after := loadSettings(t, in)
+		assert.Equal(t, in, after, "file without a docker block must be untouched")
+	})
+
+	t.Run("second load is byte-identical", func(t *testing.T) {
+		// The migration must be precondition-guarded: once the rename has
+		// happened there is nothing left to match, so the file stops changing.
+		env := testenv.New(t)
+		env.WriteYAML(t, testenv.Settings, "", "docker:\n  socket: /run/user/1003/docker.sock\n")
+		path := filepath.Join(env.Dirs.Config, consts.SettingsFile)
+
+		_, err := config.NewConfig()
+		require.NoError(t, err)
+		first := readFile(t, path)
+
+		_, err = config.NewConfig()
+		require.NoError(t, err)
+		assert.Equal(t, first, readFile(t, path), "a migrated file must be stable across loads")
+	})
+}
+
 // TestMigrations_RouteToTheOwningFile proves one load cleans each schema's
 // legacy keys in the file that owns them and never writes one schema's keys
 // into the other's file — both files live in the config dir, so a rewrite

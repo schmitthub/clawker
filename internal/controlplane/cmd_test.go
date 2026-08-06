@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -28,6 +30,86 @@ func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
 
 	assert.True(t, orchestrator.IsReady(),
 		"IsReady() must be true after SetReady() is called")
+}
+
+// ---------------------------------------------------------------------------
+// Recovery queue: publish → poll → clear
+// ---------------------------------------------------------------------------
+
+// TestRecoveryQueue_SubscribeThenPublish pins the watcher-first order:
+// a stream connected before the failure happens receives it when
+// published, and ClearRecovery (assistance landed) closes the channel —
+// the stream's clean end-of-file.
+func TestRecoveryQueue_SubscribeThenPublish(t *testing.T) {
+	orchestrator := NewControlPlane()
+	ch, cancel := orchestrator.SubscribeRecovery()
+	defer cancel()
+
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "bpffs delegation needed")
+	sos := <-ch
+	assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, sos.GetKind())
+	assert.Equal(t, "bpffs delegation needed", sos.GetMessage())
+
+	orchestrator.ClearRecovery()
+	_, open := <-ch
+	assert.False(t, open, "ClearRecovery must close the watcher channel (clean EOF)")
+}
+
+// TestRecoveryQueue_SubscribeAfterPublish pins the queue semantics: the
+// pending failure sits in the slot, so a watcher that connects AFTER it
+// was published still receives it — the CLI's watch goroutine may
+// establish the stream at any point during boot.
+func TestRecoveryQueue_SubscribeAfterPublish(t *testing.T) {
+	orchestrator := NewControlPlane()
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "bpffs delegation needed")
+
+	ch, cancel := orchestrator.SubscribeRecovery()
+	defer cancel()
+	sos := <-ch
+	assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, sos.GetKind())
+	assert.Equal(t, "bpffs delegation needed", sos.GetMessage())
+}
+
+// TestRecoveryQueue_ReadyEndsStreams pins that readiness is terminal for
+// the recovery queue: SetReady closes every connected watcher channel,
+// and a subscription made after ready is closed on arrival — the CLI
+// sees clean end-of-stream, never a hang.
+func TestRecoveryQueue_ReadyEndsStreams(t *testing.T) {
+	orchestrator := NewControlPlane()
+	ch, cancel := orchestrator.SubscribeRecovery()
+	defer cancel()
+
+	orchestrator.SetReady()
+	_, open := <-ch
+	assert.False(t, open, "SetReady must close connected watcher channels")
+
+	late, lateCancel := orchestrator.SubscribeRecovery()
+	defer lateCancel()
+	_, open = <-late
+	assert.False(t, open, "a post-ready subscription must be closed on arrival")
+}
+
+// TestRecoveryIdle_WatcherHoldsClock pins the idle-TTL inputs the
+// recovery wait loop consumes: publish starts the clock at now (the CLI
+// gets a full TTL to connect — a clock left at the zero time would read
+// as hours idle and shut the CP down before the CLI ever connected), a
+// connected watcher holds it at zero, and a disconnect restarts it
+// rather than inheriting the pre-connect reading.
+func TestRecoveryIdle_WatcherHoldsClock(t *testing.T) {
+	orchestrator := NewControlPlane()
+
+	orchestrator.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, "waiting")
+	assert.Less(t, orchestrator.RecoveryIdle(), consts.CPSOSIdleTTL,
+		"publish must start the idle clock at now, not the zero time")
+
+	ch, cancel := orchestrator.SubscribeRecovery()
+	assert.Equal(t, time.Duration(0), orchestrator.RecoveryIdle(),
+		"a connected watcher holds the clock at zero")
+
+	cancel()
+	assert.Less(t, orchestrator.RecoveryIdle(), consts.CPSOSIdleTTL,
+		"a disconnect restarts the clock")
+	assert.Equal(t, "waiting", (<-ch).GetMessage(), "the pending failure was delivered before disconnect")
 }
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
+	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -31,8 +32,19 @@ import (
 // programming bug. It surfaces as ErrNilRegistry (not a panic) so the
 // daemon degrades rather than crashing and stranding pinned eBPF.
 func TestAdminServer_NewAdminServer_NilAgentsErrors(t *testing.T) {
-	srv, err := NewAdminServer(nil, nil, nil)
+	srv, err := NewAdminServer(nil, nil, new(fakeRecoverySource), nil)
 	require.ErrorIs(t, err, ErrNilRegistry)
+	assert.Nil(t, srv)
+}
+
+// TestAdminServer_NewAdminServer_NilRecoveryErrors pins that the
+// constructor rejects a nil recovery source — the WatchSOS RPC is
+// the CLI's only window into a CP waiting for boot assistance, so wiring
+// the server without it is a programming bug. It surfaces as
+// ErrNilRecovery (not a panic) per the CP no-crash contract.
+func TestAdminServer_NewAdminServer_NilRecoveryErrors(t *testing.T) {
+	srv, err := NewAdminServer(nil, agent.NewRegistry(nil), nil, nil)
+	require.ErrorIs(t, err, ErrNilRecovery)
 	assert.Nil(t, srv)
 }
 
@@ -122,7 +134,7 @@ func (f *fakeSnapshotRegistry) Snapshot() ([]agent.Entry, error) { return f.snap
 // intact but unreadable.
 func TestAdminServer_ListAgents_SnapshotError_ReturnsCodesInternal(t *testing.T) {
 	reg := &fakeSnapshotRegistry{snapErr: errors.New("sqlite query failed")}
-	srvIface, err := NewAdminServer(nil, reg, nil)
+	srvIface, err := NewAdminServer(nil, reg, new(fakeRecoverySource), nil)
 	require.NoError(t, err)
 	srv := srvIface.(*adminServer)
 
@@ -132,6 +144,201 @@ func TestAdminServer_ListAgents_SnapshotError_ReturnsCodesInternal(t *testing.T)
 	st, ok := status.FromError(err)
 	require.True(t, ok, "must be a gRPC status error")
 	assert.Equal(t, codes.Internal, st.Code())
+}
+
+// fakeRecoverySource is an in-test RecoverySource handing out a fixed
+// channel and counting cancels.
+type fakeRecoverySource struct {
+	ch      chan *adminv1.SOS
+	cancels int
+}
+
+func (f *fakeRecoverySource) SubscribeRecovery() (<-chan *adminv1.SOS, func()) {
+	return f.ch, func() { f.cancels++ }
+}
+
+// fakeRecoveryStream satisfies grpc.ServerStreamingServer[SOS]
+// for driving WatchSOS without a network. Only Context and Send are
+// exercised; the embedded nil ServerStream panics on anything else, which
+// is exactly the regression signal we want.
+type fakeRecoveryStream struct {
+	grpc.ServerStream
+
+	//nolint:containedctx // mirrors grpc.ServerStream, whose Context() is the stream's own — there is no ctx parameter to thread
+	ctx  context.Context
+	sent []*adminv1.SOS
+}
+
+func (f *fakeRecoveryStream) Context() context.Context { return f.ctx }
+func (f *fakeRecoveryStream) Send(m *adminv1.SOS) error {
+	f.sent = append(f.sent, m)
+	return nil
+}
+
+// TestAdminServer_WatchSOS pins the stream contract: a published
+// failure is sent to the watcher; a closed subscription channel ends the
+// stream cleanly (nil — resolved, or nothing ever to report); a watcher
+// whose context dies ends cleanly too. Every path releases the
+// subscription (cancel), or the orchestrator's idle clock would treat a
+// gone watcher as still connected and a CP abandoned mid-recovery would
+// never shut down.
+func TestAdminServer_WatchSOS(t *testing.T) {
+	newServer := func(src *fakeRecoverySource) *adminServer {
+		return &adminServer{
+			Handler:  nil,
+			agents:   nil,
+			recovery: src,
+			log:      logger.Nop(),
+		}
+	}
+
+	t.Run("delivers failure then clean EOF on close", func(t *testing.T) {
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS, 1), cancels: 0}
+		src.ch <- &adminv1.SOS{
+			Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
+			Message: "bpffs delegation needed",
+		}
+		close(src.ch)
+
+		stream := &fakeRecoveryStream{ServerStream: nil, ctx: context.Background(), sent: nil}
+		err := newServer(src).WatchSOS(&adminv1.WatchSOSRequest{}, stream)
+		require.NoError(t, err)
+		require.Len(t, stream.sent, 1)
+		assert.Equal(t, "bpffs delegation needed", stream.sent[0].GetMessage())
+		assert.Equal(t, adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, stream.sent[0].GetKind(),
+			"kind must ride the wire — it is what the CLI dispatches on")
+		assert.Equal(t, 1, src.cancels, "subscription must be released")
+	})
+
+	t.Run("closed channel with no message is clean EOF", func(t *testing.T) {
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS), cancels: 0}
+		close(src.ch)
+
+		stream := &fakeRecoveryStream{ServerStream: nil, ctx: context.Background(), sent: nil}
+		err := newServer(src).WatchSOS(&adminv1.WatchSOSRequest{}, stream)
+		require.NoError(t, err)
+		assert.Empty(t, stream.sent)
+		assert.Equal(t, 1, src.cancels)
+	})
+
+	t.Run("watcher context done ends stream and releases subscription", func(t *testing.T) {
+		src := &fakeRecoverySource{ch: make(chan *adminv1.SOS), cancels: 0}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		stream := &fakeRecoveryStream{ServerStream: nil, ctx: ctx, sent: nil}
+		err := newServer(src).WatchSOS(&adminv1.WatchSOSRequest{}, stream)
+		require.NoError(t, err)
+		assert.Empty(t, stream.sent)
+		assert.Equal(t, 1, src.cancels)
+	})
+}
+
+// TestNewGRPCStack_NilReadyErrors pins that the gRPC stack constructor
+// rejects a nil ready predicate — the admin listener serves from
+// construction, and the ready gate is the only thing keeping non-public
+// RPCs out mid-boot. Wiring the stack without it would open the whole
+// admin surface (rule mutations included) while the CP is still booting.
+func TestNewGRPCStack_NilReadyErrors(t *testing.T) {
+	stack, err := NewGRPCStack(GRPCDeps{
+		Handler:        new(fwhandler.Handler),
+		Registry:       nil,
+		Recovery:       nil,
+		Ready:          nil,
+		PeerLookup:     nil,
+		ServerCertPath: "",
+		ServerKeyPath:  "",
+		CACertPool:     nil,
+		CATLS:          nil,
+		HydraAdminPort: 0,
+		AdminPort:      0,
+		AgentPort:      0,
+		Log:            nil,
+	})
+	require.ErrorIs(t, err, ErrNilReadyCheck)
+	assert.Nil(t, stack)
+}
+
+// adminMethod builds a full admin method string the way the generated
+// bindings do.
+func adminMethod(name string) string {
+	return "/" + adminv1.ServiceName + "/" + name
+}
+
+// TestReadyGate_Unary pins the ready gate's contract on the unary chain:
+// while the CP boots, every non-exempt RPC is rejected with
+// codes.FailedPrecondition BEFORE its handler runs (this is what
+// preserves the no-mutation-mid-boot contract now that the admin
+// listener serves from construction), while the bootstrap RPCs (the
+// public GetSystemTime, the admin-scoped ready-gate-exempt
+// WatchSOS) pass — WatchSOS is the CLI's only window into a
+// boot waiting for assistance. Once ready, everything passes.
+func TestReadyGate_Unary(t *testing.T) {
+	ready := false
+	gate := readyGateUnaryInterceptor(func() bool { return ready }, readyGateExemptMethods())
+
+	invoke := func(method string) (bool, error) {
+		called := false
+		handler := func(_ context.Context, _ any) (any, error) {
+			called = true
+			return nil, nil //nolint:nilnil // test handler; only the called flag matters
+		}
+		info := &grpc.UnaryServerInfo{Server: nil, FullMethod: method}
+		_, err := gate(context.Background(), nil, info, handler)
+		return called, err
+	}
+
+	// Pre-ready: a mutating RPC is blocked before its handler runs.
+	called, err := invoke(adminMethod("FirewallInit"))
+	assert.False(t, called, "gated handler must not run mid-boot")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	// Pre-ready: the exempt bootstrap RPCs pass.
+	for _, m := range []string{"GetSystemTime", "WatchSOS"} {
+		called, err = invoke(adminMethod(m))
+		assert.True(t, called, "%s must answer mid-boot", m)
+		require.NoError(t, err)
+	}
+
+	// Post-ready: everything passes.
+	ready = true
+	called, err = invoke(adminMethod("FirewallInit"))
+	assert.True(t, called)
+	require.NoError(t, err)
+}
+
+// TestReadyGate_Stream is TestReadyGate_Unary's streaming twin.
+func TestReadyGate_Stream(t *testing.T) {
+	ready := false
+	gate := readyGateStreamInterceptor(func() bool { return ready }, readyGateExemptMethods())
+
+	invoke := func(method string) (bool, error) {
+		called := false
+		handler := func(_ any, _ grpc.ServerStream) error {
+			called = true
+			return nil
+		}
+		info := &grpc.StreamServerInfo{
+			FullMethod:     method,
+			IsClientStream: false,
+			IsServerStream: true,
+		}
+		err := gate(nil, nil, info, handler)
+		return called, err
+	}
+
+	called, err := invoke(adminMethod("FirewallInit"))
+	assert.False(t, called, "gated handler must not run mid-boot")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	called, err = invoke(adminMethod("WatchSOS"))
+	assert.True(t, called)
+	require.NoError(t, err)
+
+	ready = true
+	called, err = invoke(adminMethod("FirewallInit"))
+	assert.True(t, called)
+	require.NoError(t, err)
 }
 
 // newAdminOnlyStack hand-builds a GRPCStack with only the admin half wired,

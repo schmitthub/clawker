@@ -9,9 +9,11 @@
 // Two things keep the update check and the changelog cursor out of each
 // other's way. They own disjoint keys — checked_at/latest_version versus
 // last_seen_changelog — so a field-merged write of one never carries a value
-// of the other. And the CLI runs both checks sequentially on one background
-// goroutine (internal/clawker.Main), so there is a single writer at a time and
-// a Write can never flush the other writer's half-staged fields. Neither
+// of the other. And the CLI runs both checks sequentially on Main's own
+// goroutine after the command returns (internal/clawkercmd.Main) — the
+// pre-command goroutine only fetches and never touches this store — so there is
+// a single writer at a time and a Write can never flush the other writer's
+// half-staged fields. Neither
 // property may be dropped without the other: the store cannot make a
 // Set-then-Write cycle atomic across calls (see internal/storage/CLAUDE.md).
 //

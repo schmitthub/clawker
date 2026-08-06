@@ -415,3 +415,22 @@ func TestPrompter_Select(t *testing.T) {
 		})
 	}
 }
+
+// TestPassword_NonInteractive_Errors pins the one Password behavior a test can
+// observe without a real terminal, and it is the security-relevant one: echo
+// suppression is a property of the terminal, so a piped stdin has no way to
+// hide what is typed. Password refuses rather than reading a secret in the
+// clear.
+func TestPassword_NonInteractive_Errors(t *testing.T) {
+	ios, in, _, _ := iostreams.Test()
+	in.WriteString("hunter2\n")
+
+	got, err := NewPrompter(ios).Password("[sudo] password")
+
+	if err == nil {
+		t.Fatal("Password() expected an error without a terminal, got nil")
+	}
+	if got != "" {
+		t.Errorf("Password() = %q, want empty on error", got)
+	}
+}

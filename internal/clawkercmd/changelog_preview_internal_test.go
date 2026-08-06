@@ -1,4 +1,4 @@
-package clawker
+package clawkercmd
 
 import (
 	"os"
@@ -21,7 +21,7 @@ import (
 //
 // Opt-in so it never adds noise to a normal package run:
 //
-//	CLAWKER_PREVIEW_CHANGELOG=1 go test ./internal/clawker/ \
+//	CLAWKER_PREVIEW_CHANGELOG=1 go test ./internal/clawkercmd/ \
 //	    -run TestPreviewLatestChangelogEntry -v
 //
 // Or via the make target: `make changelog-preview`. Uses iostreams.System()
