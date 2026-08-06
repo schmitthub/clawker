@@ -120,32 +120,35 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origImage, origHealthz, origClockSync, origWatchSOS := ensureCPImageFn, healthzFn, clockSyncFn, watchSOSFn
+	origImage, origHealthz, origClockSync, origDialSOS := ensureCPImageFn, healthzFn, clockSyncFn, dialSOSFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
 		return cpImageRef(), nil
 	}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
-		calls.healthz.Add(1)
-		return nil
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
+		return func(_ context.Context) (bool, error) {
+			calls.healthz.Add(1)
+			return true, nil
+		}
 	}
 	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
 	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
 		calls.clockSync.Add(1)
 		return nil
 	}
-	// Stub the SOS watch (real impl spams gRPC dials at localhost) with a
-	// channel that never delivers — the readiness gate decides, matching
-	// a boot with nothing to report.
-	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
-		return make(chan *adminv1.SOS)
+	// Stub the SOS dial (real impl presses gRPC at localhost) as a
+	// failed dial — checking disabled, the readiness gate decides,
+	// matching a boot with nothing to report. Tests that exercise the
+	// SOS path override this with a live sosWatch.
+	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
+		return nil
 	}
 
 	t.Cleanup(func() {
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
 		clockSyncFn = origClockSync
-		watchSOSFn = origWatchSOS
+		dialSOSFn = origDialSOS
 	})
 	return &bootstrapFixture{cfg: cfg, docker: dockerFake, calls: calls}
 }
@@ -338,9 +341,11 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	// timeout error rather than blocking indefinitely.
 	f := newBootstrapFixture(t)
 	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://" + consts.Localhost + ":7080/healthz"}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
-		f.calls.healthz.Add(1)
-		return sentinel
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
+		return func(_ context.Context) (bool, error) {
+			f.calls.healthz.Add(1)
+			return false, sentinel
+		}
 	}
 
 	err := ensureRunning(t.Context(), f.ensureOpts())
@@ -375,27 +380,30 @@ func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
 }
 
 // TestEnsureRunning_SOS_SurfacesCPSOSError pins the SOS-wins contract:
-// an SOS delivered while the readiness gate is still waiting aborts the
+// an SOS pending while the readiness probe reports not-ready aborts the
 // wait and surfaces as *CPSOSError carrying the CP's own message —
 // instead of the user staring at a wait that can only time out. The
-// healthz stub blocks until its ctx dies, proving both that the SOS
-// preempts an in-flight wait and that the readiness goroutine is
-// cancelled rather than leaked.
+// healthz stub never reports ready, proving the SOS check runs between
+// samples (on the very first not-ready pass), not only after the
+// readiness budget burns down.
 func TestEnsureRunning_SOS_SurfacesCPSOSError(t *testing.T) {
 	f := newBootstrapFixture(t)
-	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
-		ch := make(chan *adminv1.SOS, 1)
-		ch <- &adminv1.SOS{
-			Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
-			Message: "the kernel denied eBPF setup (test sentinel)",
+	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
+		return &sosWatch{
+			check: func(_ context.Context) *adminv1.SOS {
+				return &adminv1.SOS{
+					Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
+					Message: "the kernel denied eBPF setup (test sentinel)",
+				}
+			},
+			close: func() {},
 		}
-		close(ch)
-		return ch
 	}
-	healthzFn = func(ctx context.Context, _ *docker.Client, _ config.Config) error {
-		f.calls.healthz.Add(1)
-		<-ctx.Done()
-		return ctx.Err()
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
+		return func(_ context.Context) (bool, error) {
+			f.calls.healthz.Add(1)
+			return false, nil
+		}
 	}
 
 	err := ensureRunning(t.Context(), f.ensureOpts())
@@ -408,20 +416,38 @@ func TestEnsureRunning_SOS_SurfacesCPSOSError(t *testing.T) {
 }
 
 // TestEnsureRunning_QuietWatch_ReadinessDecides pins the no-SOS path: a
-// watch that ends with nothing to deliver (closed channel — clean
-// end-of-stream or give-up) must leave the outcome entirely to the
-// readiness gate. A regression that treated the closed channel as a
-// failure would break every healthy boot.
+// check that finds nothing to deliver must leave the outcome entirely
+// to the readiness gate — the loop keeps sampling and a later ready
+// probe succeeds the boot. Also pins the held connection's release: the
+// wait must close the watch it dialed on the way out. The stubs run on
+// the caller's goroutine (the whole point of the sequential loop), so
+// plain variables need no synchronization.
 func TestEnsureRunning_QuietWatch_ReadinessDecides(t *testing.T) {
 	f := newBootstrapFixture(t)
-	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
-		ch := make(chan *adminv1.SOS)
-		close(ch)
-		return ch
+	checks := 0
+	closed := false
+	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
+		return &sosWatch{
+			check: func(_ context.Context) *adminv1.SOS {
+				checks++
+				return nil
+			},
+			close: func() { closed = true },
+		}
+	}
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
+		return func(_ context.Context) (bool, error) {
+			f.calls.healthz.Add(1)
+			// Not ready on the first sample so a quiet SOS check runs,
+			// ready on the second.
+			return f.calls.healthz.Load() > 1, nil
+		}
 	}
 
 	require.NoError(t, ensureRunning(t.Context(), f.ensureOpts()))
-	assert.Equal(t, int32(1), f.calls.healthz.Load(), "readiness gate ran")
+	assert.Equal(t, int32(2), f.calls.healthz.Load(), "readiness gate sampled until ready")
+	assert.Equal(t, 1, checks, "quiet SOS check ran between samples and did not abort the wait")
+	assert.True(t, closed, "held admin connection released when the wait ended")
 	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
 }
 
@@ -681,13 +707,13 @@ func TestCPTerminalError(t *testing.T) {
 	})
 }
 
-// TestWaitForCPHealthz_ExitedContainer_FailsFast pins the loop-level
-// fast-fail: with healthz unreachable and the CP container terminally
-// exited, the wait must return the typed *CPExitedError well before the
-// budget elapses (zero-value throttle state means the very first failed
-// probe triggers the container-state check) instead of burning the full
+// TestHealthzProbe_ExitedContainer_FailsFast pins the fast-fail: with
+// healthz unreachable and the CP container terminally exited, the very
+// first probe step must return the typed *CPExitedError (zero-value
+// throttle state means the first failed probe triggers the
+// container-state check) instead of leaving the loop to burn the full
 // healthz budget on a generic timeout.
-func TestWaitForCPHealthz_ExitedContainer_FailsFast(t *testing.T) {
+func TestHealthzProbe_ExitedContainer_FailsFast(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dockerFake := dockermocks.NewFakeClient(cfg)
 	//nolint:exhaustruct // sparse fixture: only the fields the CP lookup reads
@@ -713,33 +739,33 @@ func TestWaitForCPHealthz_ExitedContainer_FailsFast(t *testing.T) {
 	// at the transport layer (the branch that runs the state check).
 	cfgUnreachable := configmocks.NewFromString("", "control_plane:\n  health_port: 1\n")
 
-	start := time.Now()
-	err := waitForCPHealthz(t.Context(), dockerFake.Client, cfgUnreachable)
+	probe := newHealthzProbe(t.Context(), dockerFake.Client, cfgUnreachable)
+	ready, err := probe(t.Context())
+	assert.False(t, ready)
 	var exitedErr *CPExitedError
-	require.ErrorAs(t, err, &exitedErr)
+	require.ErrorAs(t, err, &exitedErr, "first probe step must surface the terminal exit")
 	assert.Equal(t, 1, exitedErr.ExitCode)
-	assert.Less(t, time.Since(start), 10*time.Second,
-		"exited container must abort the wait long before the healthz budget elapses")
 }
 
-func TestWaitForCPHealthz_ContextCancelled_ReturnsCtxErr(t *testing.T) {
-	// The poller respects context cancellation before the healthCheck
-	// deadline. Immediately-cancelled context short-circuits the first
-	// iteration.
+func TestHealthzProbe_ContextCancelled_ReturnsCtxErr(t *testing.T) {
+	// The probe step respects context cancellation before touching the
+	// network. An immediately-cancelled context short-circuits the step.
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err := waitForCPHealthz(ctx, nil, cfg)
+	probe := newHealthzProbe(ctx, nil, cfg)
+	ready, err := probe(ctx)
+	assert.False(t, ready)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-func TestWaitForCPHealthz_Timeout_ReturnsTypedError(t *testing.T) {
+func TestHealthzProbe_Timeout_ReturnsTypedError(t *testing.T) {
 	// An httptest server that always returns 503 with a diagnostic body
-	// deterministically exercises the timeout path. The poller's own
-	// deadline fires before the context deadline, so we expect the
-	// typed *CPHealthTimeoutError — anything else (including bare
-	// context.DeadlineExceeded) means a regression in the last-probe
-	// capture or the loop ordering.
+	// deterministically exercises the timeout path. The probe's own
+	// deadline (min of budget and ctx deadline) fires first, so we
+	// expect the typed *CPHealthTimeoutError — anything else (including
+	// bare context.DeadlineExceeded) means a regression in the
+	// last-probe capture or the step's deadline-before-ctx ordering.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("hydra: not ready"))
@@ -750,11 +776,21 @@ func TestWaitForCPHealthz_Timeout_ReturnsTypedError(t *testing.T) {
 
 	cfg := configmocks.NewFromString("", fmt.Sprintf("control_plane:\n  health_port: %d\n", port))
 
-	// Drive the inner deadline via ctx so the test completes fast while
-	// still proving the deadline-path returns the typed error.
+	// Drive the probe's deadline via ctx so the test completes fast
+	// while still proving the deadline path returns the typed error.
+	// Stepping in a loop mirrors how awaitCPReady drives the probe.
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	err = waitForCPHealthz(ctx, nil, cfg)
+	probe := newHealthzProbe(ctx, nil, cfg)
+	for {
+		var ready bool
+		ready, err = probe(ctx)
+		require.False(t, ready, "a 503 must never report ready")
+		if err != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	require.Error(t, err)
 	var timeoutErr *CPHealthTimeoutError
 	require.ErrorAs(t, err, &timeoutErr, "must return *CPHealthTimeoutError, got %T: %v", err, err)

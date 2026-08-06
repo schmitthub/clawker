@@ -104,9 +104,9 @@ func (m *manager) ProbeHealthz(ctx context.Context) (int, error) {
 }
 
 // probeHealthz performs a GET on http://127.0.0.1:<port>/healthz with a
-// short deadline. Separate from waitForCPHealthz (bootstrap.go) — that
-// one polls for readiness with retries; this one is a point-in-time
-// snapshot for `controlplane status`.
+// short deadline. Separate from newHealthzProbe (bootstrap.go) — that
+// one drives the readiness wait with budget and diagnostics; this one
+// is a point-in-time snapshot for `controlplane status`.
 func probeHealthz(ctx context.Context, port int) (int, error) {
 	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", port)
 	httpClient := &http.Client{Timeout: probeHealthzTimeout}

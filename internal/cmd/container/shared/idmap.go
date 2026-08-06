@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 
@@ -171,6 +173,12 @@ func ensureIDMappedViewsAtStart(
 
 	inspect, err := client.ContainerInspect(ctx, containerName, docker.ContainerInspectOptions{Size: false})
 	if err != nil {
+		// A container that doesn't exist (or isn't clawker's) has no views
+		// to re-establish — let the start path itself produce its canonical
+		// not-found error instead of a confusing one about workspace roots.
+		if cerrdefs.IsNotFound(err) || errors.Is(err, docker.ErrNotManaged) {
+			return nil
+		}
 		return fmt.Errorf("inspecting %s for ID-mapped workspace roots: %w", containerName, err)
 	}
 	if inspect.Container.Config == nil {

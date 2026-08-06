@@ -364,7 +364,15 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	// The exchange itself is detached from the caller's cancellation and
+	// bounded only by the client's own timeout. A mint is a sub-second
+	// round trip, and a caller cancelling mid-flight (command finished,
+	// watch abandoned, Ctrl+C) aborts Hydra's transaction mid-commit —
+	// observed to destroy its in-memory SQLite database outright, leaving
+	// a running CP whose every later token exchange fails. Letting the
+	// mint complete and discarding the result costs nothing.
+	req, err := http.NewRequestWithContext(
+		context.WithoutCancel(ctx), http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", 0, err
 	}

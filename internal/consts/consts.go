@@ -556,7 +556,7 @@ const (
 	// stack-bringing RPCs (FirewallInit, FirewallReload), derived from the
 	// server-side bringup budget + headroom so the real server error reaches
 	// the user instead of a premature client deadline. Second consumer:
-	// manager.waitForCPHealthz extends its host-side readiness budget by this
+	// manager.newHealthzProbe extends its host-side readiness budget by this
 	// value when the firewall is enabled — shrinking it shrinks that wait too
 	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
