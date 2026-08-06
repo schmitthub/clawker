@@ -120,35 +120,39 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origImage, origHealthz, origClockSync, origDialSOS := ensureCPImageFn, healthzFn, clockSyncFn, dialSOSFn
+	origImage, origHealthz, origClockSync, origWatchSOS := ensureCPImageFn, healthzFn, clockSyncFn, watchSOSFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
 		return cpImageRef(), nil
 	}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
-		return func(_ context.Context) (bool, error) {
-			calls.healthz.Add(1)
-			return true, nil
-		}
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
+		calls.healthz.Add(1)
+		return nil
 	}
 	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
 	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
 		calls.clockSync.Add(1)
 		return nil
 	}
-	// Stub the SOS dial (real impl presses gRPC at localhost) as a
-	// failed dial — checking disabled, the readiness gate decides,
-	// matching a boot with nothing to report. Tests that exercise the
-	// SOS path override this with a live sosWatch.
-	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
-		return nil
+	// Stub the SOS watch (real impl presses gRPC streams at localhost)
+	// with a channel that delivers nothing — the readiness gate decides,
+	// matching a boot with nothing to report. Closing on ctx cancel is
+	// part of the contract: awaitCPReady JOINS the watch by draining the
+	// channel to close, so a stub that never closes deadlocks it.
+	watchSOSFn = func(ctx context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
+		ch := make(chan *adminv1.SOS)
+		go func() {
+			<-ctx.Done()
+			close(ch)
+		}()
+		return ch
 	}
 
 	t.Cleanup(func() {
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
 		clockSyncFn = origClockSync
-		dialSOSFn = origDialSOS
+		watchSOSFn = origWatchSOS
 	})
 	return &bootstrapFixture{cfg: cfg, docker: dockerFake, calls: calls}
 }
@@ -341,11 +345,9 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	// timeout error rather than blocking indefinitely.
 	f := newBootstrapFixture(t)
 	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://" + consts.Localhost + ":7080/healthz"}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
-		return func(_ context.Context) (bool, error) {
-			f.calls.healthz.Add(1)
-			return false, sentinel
-		}
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
+		f.calls.healthz.Add(1)
+		return sentinel
 	}
 
 	err := ensureRunning(t.Context(), f.ensureOpts())
@@ -380,30 +382,27 @@ func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
 }
 
 // TestEnsureRunning_SOS_SurfacesCPSOSError pins the SOS-wins contract:
-// an SOS pending while the readiness probe reports not-ready aborts the
+// an SOS delivered while the readiness gate is still waiting aborts the
 // wait and surfaces as *CPSOSError carrying the CP's own message —
 // instead of the user staring at a wait that can only time out. The
-// healthz stub never reports ready, proving the SOS check runs between
-// samples (on the very first not-ready pass), not only after the
-// readiness budget burns down.
+// healthz stub blocks until its ctx dies, proving both that the SOS
+// preempts an in-flight wait and that the readiness goroutine is
+// cancelled rather than leaked.
 func TestEnsureRunning_SOS_SurfacesCPSOSError(t *testing.T) {
 	f := newBootstrapFixture(t)
-	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
-		return &sosWatch{
-			check: func(_ context.Context) *adminv1.SOS {
-				return &adminv1.SOS{
-					Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
-					Message: "the kernel denied eBPF setup (test sentinel)",
-				}
-			},
-			close: func() {},
+	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
+		ch := make(chan *adminv1.SOS, 1)
+		ch <- &adminv1.SOS{
+			Kind:    adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION,
+			Message: "the kernel denied eBPF setup (test sentinel)",
 		}
+		close(ch)
+		return ch
 	}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
-		return func(_ context.Context) (bool, error) {
-			f.calls.healthz.Add(1)
-			return false, nil
-		}
+	healthzFn = func(ctx context.Context, _ *docker.Client, _ config.Config) error {
+		f.calls.healthz.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
 	}
 
 	err := ensureRunning(t.Context(), f.ensureOpts())
@@ -416,38 +415,20 @@ func TestEnsureRunning_SOS_SurfacesCPSOSError(t *testing.T) {
 }
 
 // TestEnsureRunning_QuietWatch_ReadinessDecides pins the no-SOS path: a
-// check that finds nothing to deliver must leave the outcome entirely
-// to the readiness gate — the loop keeps sampling and a later ready
-// probe succeeds the boot. Also pins the held connection's release: the
-// wait must close the watch it dialed on the way out. The stubs run on
-// the caller's goroutine (the whole point of the sequential loop), so
-// plain variables need no synchronization.
+// watch that ends with nothing to deliver (closed channel — clean
+// end-of-stream or give-up) must leave the outcome entirely to the
+// readiness gate. A regression that treated the closed channel as a
+// failure would break every healthy boot.
 func TestEnsureRunning_QuietWatch_ReadinessDecides(t *testing.T) {
 	f := newBootstrapFixture(t)
-	checks := 0
-	closed := false
-	dialSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) *sosWatch {
-		return &sosWatch{
-			check: func(_ context.Context) *adminv1.SOS {
-				checks++
-				return nil
-			},
-			close: func() { closed = true },
-		}
-	}
-	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) func(context.Context) (bool, error) {
-		return func(_ context.Context) (bool, error) {
-			f.calls.healthz.Add(1)
-			// Not ready on the first sample so a quiet SOS check runs,
-			// ready on the second.
-			return f.calls.healthz.Load() > 1, nil
-		}
+	watchSOSFn = func(_ context.Context, _ config.Config, _ *logger.Logger) <-chan *adminv1.SOS {
+		ch := make(chan *adminv1.SOS)
+		close(ch)
+		return ch
 	}
 
 	require.NoError(t, ensureRunning(t.Context(), f.ensureOpts()))
-	assert.Equal(t, int32(2), f.calls.healthz.Load(), "readiness gate sampled until ready")
-	assert.Equal(t, 1, checks, "quiet SOS check ran between samples and did not abort the wait")
-	assert.True(t, closed, "held admin connection released when the wait ended")
+	assert.Equal(t, int32(1), f.calls.healthz.Load(), "readiness gate ran")
 	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
 }
 

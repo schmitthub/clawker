@@ -57,16 +57,10 @@ const (
 	// cpStopTimeout (seconds) is the grace period before SIGKILL on Stop.
 	cpStopTimeout = 30
 
-	// sosRetryInterval paces the readiness loop's SOS checks so an
-	// unhealthy CP is not pressed with a new WatchSOS stream on every
-	// 100ms healthz sample.
+	// sosRetryInterval paces the WatchSOS connection spam: any failed
+	// stream attempt on the held connection retries this fast for the
+	// shared consts.CPSOSIdleTTL window.
 	sosRetryInterval = 500 * time.Millisecond
-
-	// sosCheckTimeout bounds one WatchSOS look. The CP replays a pending
-	// SOS immediately on subscribe, so a short receive window is enough
-	// to hear it; an idle stream is cancelled at the timeout and the
-	// queue is looked at again on a later pass.
-	sosCheckTimeout = 250 * time.Millisecond
 )
 
 // ensureMu serializes concurrent ensureRunning calls within a single
@@ -88,10 +82,10 @@ var ensureMu sync.Mutex
 var (
 	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
-	healthzFn       = newHealthzProbe
+	healthzFn       = waitForCPHealthz
 	clockSyncFn     = waitForCPClockSync
 	probeCPTimeFn   = adminclient.ProbeCPTime
-	dialSOSFn       = dialSOSWatch
+	watchSOSFn      = watchSOS
 )
 
 // errCPRecoveryRetry is returned by recoverFromNameConflict when it
@@ -865,54 +859,61 @@ func (e *CPSOSError) Error() string {
 	return "control plane needs assistance: " + e.Message
 }
 
-// awaitCPReady is the readiness gate: one sequential loop, run entirely
-// inside the command's execution — no goroutines. Each pass takes one
-// /healthz sample; while the CP is not ready it also takes one paced,
-// bounded look at the CP's WatchSOS recovery queue — the CLI's window
-// into a boot waiting for assistance. An SOS surfaces immediately as
-// *CPSOSError, which the caller renders or acts on — assisting the CP
-// means prompting a human and running something privileged, and neither
-// belongs in the package that merely interfaces with it. Checks that
-// find nothing leave the outcome to the readiness probe alone: ready
-// breaks to the clock-sync gate, a terminal probe error (typed timeout,
-// dead container) returns as-is.
+// awaitCPReady starts the SOS watch FIRST — before any readiness
+// probing — and then runs the readiness gate beside it. The watch is
+// the CLI's window into a boot waiting for assistance, and it exists
+// for a very small startup window BEFORE the ready signal: it must be
+// connected as early as possible, holding a live stream, so an SOS is
+// delivered the instant the CP emits it. Probing anything else first
+// (healthz included) only delays that connection — the readiness gate
+// is the crashloop/timeout story, never a precondition for watching.
+// An SOS wins and surfaces as *CPSOSError, which the caller renders or
+// acts on — assisting the CP means prompting a human and running
+// something privileged, and neither belongs in the package that merely
+// interfaces with it. A watch that ends with nothing to deliver leaves
+// the outcome to the readiness gate alone.
 //
-// The SOS side holds ONE admin connection for the whole wait — one
-// minted token, cached on the connection — dialed lazily on the first
-// not-ready pass so an already-healthy CP costs nothing. Each check is
-// a short-lived stream on that connection; the CP replays a pending SOS
-// to any subscriber, so short-lived checks cannot miss one. A failed
-// dial disables the checks for this wait and the readiness gate decides
-// alone.
-//
-// Clock sync runs after /healthz is green and is a first-class
-// readiness condition, not an afterthought: a start that proceeded
-// while the CP clock still lagged the host would let clawkerd exchange
-// an assertion whose (host-clock) iat is in the CP's future.
+// The command OWNS the watch: on every return path it is stopped AND
+// joined (sosCh drained to close). Returning with the watch goroutine
+// still live would let the process exit while a token mint is in
+// flight, and a mint aborted mid-transaction destroys Hydra's
+// in-memory database — the CP keeps running but every later token
+// exchange fails until the container is recreated. The join is
+// bounded: cancellation stops the loop, and the detached in-flight
+// exchange finishes on its own short HTTP timeout.
 func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
-	probe := healthzFn(ctx, dc, cfg)
-	watch := newLazySOSWatch(cfg, log)
-	defer watch.close()
-
-	for {
-		ready, err := probe(ctx)
-		if err != nil {
-			return err
-		}
-		if ready {
-			break
-		}
-		if sos := watch.check(ctx); sos != nil {
-			return &CPSOSError{Kind: sos.GetKind(), Message: sos.GetMessage()}
-		}
-		if sleepErr := sleepReadyInterval(ctx); sleepErr != nil {
-			return sleepErr
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	sosCh := watchSOSFn(watchCtx, cfg, log)
+	joinWatch := func() {
+		stopWatch()
+		// Draining to close IS the join: the channel closes when the
+		// watch goroutine exits.
+		for range sosCh { //revive:disable-line:empty-block
 		}
 	}
-	return clockSyncFn(ctx, cfg, log)
+
+	readyCh := make(chan error, 1)
+	readyCtx, stopReady := context.WithCancel(ctx)
+	defer stopReady()
+	go func() { readyCh <- cpReady(readyCtx, dc, cfg, log) }()
+
+	select {
+	case err := <-readyCh:
+		joinWatch()
+		return err
+	case sos, ok := <-sosCh:
+		if !ok {
+			// Watch ended with nothing to deliver (clean end-of-stream,
+			// gave up, or cancelled) — the readiness gate decides.
+			return <-readyCh
+		}
+		joinWatch()
+		return &CPSOSError{Kind: sos.GetKind(), Message: sos.GetMessage()}
+	}
 }
 
-// sleepReadyInterval paces the readiness loop. Cancellation surfaces as
+// sleepReadyInterval paces the healthz wait. Cancellation surfaces as
 // an error; a deadline expiry returns nil so one more probe step
 // surfaces the typed timeout error with its diagnostics instead of a
 // bare ctx error.
@@ -927,125 +928,157 @@ func sleepReadyInterval(ctx context.Context) error {
 	return nil
 }
 
-// newLazySOSWatch wraps dialSOSFn so the readiness loop dials only on
-// the first check — an already-healthy CP never has a not-ready pass
-// and costs nothing, not even a token. A failed dial sticks: checking
-// stays disabled for the rest of the wait (every later check is a
-// no-op) and the readiness gate decides alone.
-func newLazySOSWatch(cfg config.Config, log *logger.Logger) *sosWatch {
-	var watch *sosWatch
-	dialed := false
-	return &sosWatch{
-		check: func(ctx context.Context) *adminv1.SOS {
-			if !dialed {
-				dialed = true
-				watch = dialSOSFn(ctx, cfg, log)
-			}
-			if watch == nil {
-				return nil
-			}
-			return watch.check(ctx)
-		},
-		close: func() {
-			if watch != nil {
-				watch.close()
-			}
-		},
-	}
-}
-
-// sosWatch is the boot-SOS check the readiness loop consults between
-// healthz samples. check takes one paced, bounded look at the CP's
-// recovery queue (nil = nothing to report yet); close releases the held
-// admin connection. Both fields are non-nil on every value dialSOSWatch
-// returns — a nil *sosWatch means the dial failed and checking is
-// disabled for this wait.
-type sosWatch struct {
-	check func(ctx context.Context) *adminv1.SOS
-	close func()
-}
-
-// dialSOSWatch establishes the one admin connection the readiness
-// loop's SOS checks share. The connection is dialed ONCE and held for
-// the whole wait: gRPC reconnects a broken transport by itself, and the
-// connection's token source caches its bearer token after the first
-// successful mint — so the whole wait costs one token, not one per
-// check. Re-dialing per attempt was a real bug: each dial minted a
-// fresh Hydra token, and that 2Hz mint burst destroyed Hydra's
-// in-memory SQLite database.
+// watchSOS is the CLI half of the WatchSOS channel: from the moment it
+// is called it presses stream-open attempts at the CP's admin surface —
+// open the stream, block on receive; any failure retries after
+// sosRetryInterval — for the shared consts.CPSOSIdleTTL window, the same
+// clock after which an unwatched CP holding a failure shuts itself
+// down. No pre-checks before the first attempt: probing anything else
+// first only delays the connection. At most one SOS message is
+// delivered on the returned channel; the channel closes without a
+// message when the stream ends cleanly (nothing to report), the window
+// expires (hung CP — give up and disconnect), or ctx is cancelled.
 //
-// The dial itself tolerates a CP still bringing up its token endpoint
-// (adminclient.Dial retries the initial mint on a bounded window); a
-// dial that still fails disables SOS checking for this wait — the
-// readiness gate decides alone.
-func dialSOSWatch(ctx context.Context, cfg config.Config, log *logger.Logger) *sosWatch {
-	cp := cfg.ControlPlaneSettings()
-	adminClient, conn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort)
-	if err != nil {
-		log.Debug().
-			Err(err).
-			Str("component", "manager.bootstrap").
-			Msg("sos check: dial failed; boot SOS checking disabled")
-		return nil
-	}
-	var lastAttempt time.Time
-	return &sosWatch{
-		check: func(ctx context.Context) *adminv1.SOS {
-			if time.Since(lastAttempt) < sosRetryInterval {
-				return nil
-			}
-			lastAttempt = time.Now()
-			return checkSOSOnce(ctx, adminClient, log)
-		},
-		close: func() {
+// The connection is dialed ONCE and held for the whole window: gRPC
+// reconnects a broken transport by itself, and the connection's token
+// source caches its bearer token after the first successful mint — so
+// the whole watch costs one token, not one per retry. Re-dialing per
+// attempt was a real bug: each dial minted a fresh Hydra token, and
+// that 2Hz mint burst could churn Hydra's in-memory SQLite connection
+// pool to zero, destroying the database.
+func watchSOS(ctx context.Context, cfg config.Config, log *logger.Logger) <-chan *adminv1.SOS {
+	sosCh := make(chan *adminv1.SOS, 1)
+	go func() {
+		defer close(sosCh)
+		watchCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
+		defer cancel()
+		cp := cfg.ControlPlaneSettings()
+
+		// The dial itself tolerates a CP still bringing up its token
+		// endpoint (adminclient.Dial retries the initial mint on a
+		// bounded window); a dial that still fails leaves the boot
+		// unwatched — the readiness gate decides.
+		adminClient, conn, err := adminclient.Dial(watchCtx, cp.AdminPort, cp.HydraPublicPort)
+		if err != nil {
+			log.Debug().
+				Err(err).
+				Str("component", "manager.bootstrap").
+				Msg("sos watch: dial failed; not watching")
+			return
+		}
+		defer func() {
 			if cerr := conn.Close(); cerr != nil {
 				log.Debug().
 					Err(cerr).
 					Str("component", "manager.bootstrap").
-					Msg("sos check: closing connection")
+					Msg("sos watch: closing connection")
 			}
-		},
+		}()
+
+		watchSOSLoop(watchCtx, adminClient, sosCh, log)
+	}()
+	return sosCh
+}
+
+// watchSOSLoop presses stream attempts on the held connection until an
+// SOS arrives (delivered on sosCh), the stream ends cleanly, or ctx
+// expires.
+func watchSOSLoop(
+	ctx context.Context,
+	adminClient adminv1.AdminServiceClient,
+	sosCh chan<- *adminv1.SOS,
+	log *logger.Logger,
+) {
+	for {
+		sos, terminal := watchSOSOnce(ctx, adminClient, log)
+		if sos != nil {
+			log.Info().
+				Str("event", "cp_sos_received").
+				Str("component", "manager.bootstrap").
+				Str("kind", sos.GetKind().String()).
+				Str("message", sos.GetMessage()).
+				Msg("control plane sent an SOS during boot")
+			sosCh <- sos
+			return
+		}
+		if terminal {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(sosRetryInterval):
+		}
 	}
 }
 
-// checkSOSOnce opens one WatchSOS stream bounded by sosCheckTimeout and
-// reports what the CP has to say right now. The CP delivers a pending
-// SOS — current or earlier-published — immediately on subscribe, so the
-// short window is enough to hear one; nil covers everything else (clean
-// end-of-stream, timeout with nothing pending, stream open or transport
-// failure) — the readiness gate owns those outcomes.
-func checkSOSOnce(
+// watchSOSOnce is one WatchSOS stream attempt on the held connection:
+// open the stream, block on the first receive. It returns the received
+// SOS (terminal), terminal=true with a nil SOS on a clean
+// end-of-stream (the CP resolved the failure or completed boot with
+// nothing to report — stop watching), and terminal=false on any
+// failure (CP not up yet, token mint rejected while the CP clock lags,
+// stream dropped) so the caller retries — a dropped gRPC stream never
+// reconnects on its own, but the underlying connection re-establishes
+// its transport automatically.
+func watchSOSOnce(
 	ctx context.Context,
 	adminClient adminv1.AdminServiceClient,
 	log *logger.Logger,
-) *adminv1.SOS {
-	checkCtx, cancel := context.WithTimeout(ctx, sosCheckTimeout)
-	defer cancel()
-	stream, err := adminClient.WatchSOS(checkCtx, &adminv1.WatchSOSRequest{})
+) (*adminv1.SOS, bool) {
+	stream, err := adminClient.WatchSOS(ctx, &adminv1.WatchSOSRequest{})
 	if err != nil {
 		log.Debug().
 			Err(err).
 			Str("component", "manager.bootstrap").
-			Msg("sos check: stream open failed")
-		return nil
+			Msg("sos watch: stream open failed; retrying")
+		return nil, false
 	}
 	sos, err := stream.Recv()
-	if err != nil {
-		if !errors.Is(err, io.EOF) && checkCtx.Err() == nil {
-			log.Debug().
-				Err(err).
-				Str("component", "manager.bootstrap").
-				Msg("sos check: stream ended")
-		}
-		return nil
+	switch {
+	case err == nil:
+		return sos, true
+	case errors.Is(err, io.EOF):
+		return nil, true
+	default:
+		log.Debug().
+			Err(err).
+			Str("component", "manager.bootstrap").
+			Msg("sos watch: stream ended; retrying")
+		return nil, false
 	}
-	log.Info().
-		Str("event", "cp_sos_received").
-		Str("component", "manager.bootstrap").
-		Str("kind", sos.GetKind().String()).
-		Str("message", sos.GetMessage()).
-		Msg("control plane sent an SOS during boot")
-	return sos
+}
+
+// cpReady is the composite readiness gate run beside the SOS watch:
+// /healthz green first, then host↔CP clock alignment. Both must pass —
+// a start that proceeds while the CP clock is still drifted from the
+// host would let clawkerd exchange an assertion whose (host-clock) iat
+// is in the CP's future, so clock sync is a first-class readiness
+// condition, not an afterthought.
+func cpReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
+	if err := healthzFn(ctx, dc, cfg); err != nil {
+		return err
+	}
+	return clockSyncFn(ctx, cfg, log)
+}
+
+// waitForCPHealthz drives the healthz step to completion: one sample
+// per cpReadyInterval until the CP reports ready or the step returns
+// its terminal error (typed timeout, dead container, cancellation).
+func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config) error {
+	step := newHealthzProbe(ctx, dc, cfg)
+	for {
+		ready, err := step(ctx)
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
+		if sleepErr := sleepReadyInterval(ctx); sleepErr != nil {
+			return sleepErr
+		}
+	}
 }
 
 // waitForCPClockSync polls the public GetSystemTime RPC until the CP clock
@@ -1131,14 +1164,13 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 	}
 }
 
-// newHealthzProbe builds the readiness loop's healthz step: each call
-// of the returned function takes ONE sample of
+// newHealthzProbe builds waitForCPHealthz's step: each call of the
+// returned function takes ONE sample of
 // http://127.0.0.1:<HealthPort>/healthz — ready on HTTP 200, (false,
 // nil) to keep sampling, and a non-nil error when the wait is over (the
 // budget expired, the container died, or the caller cancelled). The
 // wait budget and the last-probe diagnostics live in the healthzProbe
-// state so the loop in awaitCPReady stays a plain sequential loop.
-// Separate from
+// state. Separate from
 // firewall.Stack.WaitForHealthy because the CP's healthz is exposed on
 // a published host port, not via the clawker network.
 //
