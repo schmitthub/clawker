@@ -94,6 +94,17 @@ func RunElevated(ctx context.Context, ios *iostreams.IOStreams, helper ElevatedH
 // stageHelper writes the embedded binary to a fresh 0700 directory and
 // returns its path plus a cleanup.
 func stageHelper(helper ElevatedHelper) (string, func(), error) {
+	// Name is joined onto the staging directory and the result is executed
+	// under sudo. filepath.Join cleans its result, so a ".." segment escapes
+	// the private directory — "../evil" lands in the world-writable temp
+	// root, which is precisely the name-race this fresh directory exists to
+	// close. Reject anything that is not a plain base name rather than
+	// sanitizing: a caller that got this wrong should hear about it.
+	if helper.Name == "." || helper.Name == ".." ||
+		helper.Name != filepath.Base(helper.Name) {
+		return "", nil, fmt.Errorf("staging the elevated helper: name %q is not a plain filename", helper.Name)
+	}
+
 	dir, err := os.MkdirTemp("", consts.NamePrefix+"-elevated-")
 	if err != nil {
 		return "", nil, fmt.Errorf("creating a directory for the elevated helper: %w", err)

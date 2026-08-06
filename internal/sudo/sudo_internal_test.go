@@ -43,6 +43,25 @@ func TestStageHelper_ModeAndCleanup(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "cleanup must remove the staging directory")
 }
 
+// TestStageHelper_RejectsNonBaseName pins the front-door invariant: Name is
+// a path component under the private staging directory, and anything that
+// could resolve outside it (traversal, separators, dot names) must error
+// before a byte is written — the 0700 directory is the security boundary,
+// and "../evil" would stage the root-executed binary at a predictable name
+// in the world-writable temp root instead.
+func TestStageHelper_RejectsNonBaseName(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"", ".", "..", "../evil", "sub/name", "/abs/name", "/"} {
+		_, _, err := stageHelper(ElevatedHelper{
+			Name:   name,
+			Binary: []byte("#!/bin/sh\n"),
+			Args:   nil,
+		})
+		require.Error(t, err, "name %q must be rejected", name)
+	}
+}
+
 // TestRunElevated_SudoUnavailable: without sudo on PATH the step cannot even
 // be attempted, and callers distinguish that from a helper failure via the
 // sentinel.

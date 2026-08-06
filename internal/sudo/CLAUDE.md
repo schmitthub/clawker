@@ -11,7 +11,7 @@ execution.
 var ErrSudoUnavailable error            // sudo is not on PATH — the step cannot even be attempted
 
 type ElevatedHelper struct {
-    Name   string   // staged filename — what the person sees in the sudo prompt and audit log
+    Name   string   // staged filename — must be a plain base name (no separators/traversal; staging rejects otherwise); what the person sees in the sudo prompt and audit log
     Binary []byte   // the embedded helper
     Args   []string // handed verbatim to the root process
 }
