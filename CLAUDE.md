@@ -1,5 +1,9 @@
 # Clawker
 
+## Output Style
+
+All output — chat replies, documentation, and code comments — must comply with ASD-STE100 Simplified Technical English. The ASD-STE100 rules and approved technical dictionary are the controlling standard. Apply the current ASD-STE100 rules and its approved technical dictionary as the controlling standard. When a word is not an approved dictionary term or a standard technical name, replace it or write the sentence without it. **Do not restate or summarize the standard; apply it.**
+
 <critical_instructions>
 
 ## MANTRA
