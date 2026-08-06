@@ -1328,11 +1328,6 @@ func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
 	return cfg, nil
 }
 
-// CgroupPath returns the cgroup v2 path for a Docker container.
-func CgroupPath(containerID string) string {
-	return filepath.Join("/sys/fs/cgroup/system.slice", "docker-"+containerID+".scope")
-}
-
 // cgroupRoot is the only legitimate filesystem root for cgroup v2 paths.
 // Validated in CgroupID to sanitize caller-supplied paths against traversal
 // and injection — defense-in-depth for the privileged ebpf-manager binary

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -373,6 +374,13 @@ func Main() StatusCode {
 
 	if err := run(*caCertPath, *serverCertPath, *serverKeyPath, *jwkPath, *logDir); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", consts.ContainerCP, err)
+		if errors.Is(err, errBPFFSDelegated) {
+			// A deliberate hand-back, not a failure: exiting clean keeps the
+			// on-failure restart policy from resurrecting this process, whose
+			// mount namespace predates the delegated filesystem. The CLI's
+			// retry restarts or recreates the container.
+			return StatusOk
+		}
 		return StatusErr
 	}
 	return StatusOk
@@ -723,8 +731,9 @@ func buildEnforcement(
 	}
 	cleanup = func() error { dockerCli.Close(); return nil }
 
-	// Cgroup driver queried once and cached on the resolver (BPF cgroup paths
-	// come from firewall.EBPFCgroupPath, the single source of truth).
+	// Cgroup driver queried once and cached on the resolver. BPF cgroup
+	// paths resolve inside it: conventional rootful layout first, one-time
+	// hierarchy discovery (cached parent) for rootless daemons.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
 		return dockerCli, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
@@ -756,110 +765,6 @@ func buildEnforcement(
 	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
 }
 
-// bpffsFlow is the startup-flow step that puts a usable BPF filesystem in
-// place. It runs BEFORE ebpfLoadFlow, and that order is load-bearing rather
-// than stylistic: cilium/ebpf mints its token lazily on the first BPF
-// syscall and caches the result — including a nil one — for the lifetime of
-// the process. A filesystem that appears after that first syscall can never
-// be picked up, so "load, then fix it up on failure and retry" cannot work.
-// The filesystem exists first or the control plane does not start.
-//
-// The kernel version is checked before any of it is attempted. An older
-// kernel's behaviour when handed delegation options it does not recognise
-// is not something to characterise in a user's environment, and no
-// assistance can conjure the feature, so it fails startup outright rather
-// than asking the CLI for help that cannot exist.
-//
-// Two filesystems are involved, and only the second ever needs help:
-//
-//   - the PIN filesystem, which holds clawker's maps and programs and is
-//     shared with the CoreDNS container;
-//   - the TOKEN filesystem, which carries the delegated privileges and is
-//     private to this mount namespace.
-//
-// Which deployment this is gets DISCOVERED, never detected. On a rootful
-// host both succeed in-process and nothing else happens. Inside a user
-// namespace the kernel refuses both — mounting a bpffs and setting
-// delegation options each demand init-namespace CAP_SYS_ADMIN — and that
-// refusal is the trigger: one SOS is published, one elevated helper does
-// both jobs, and the flow continues.
-func (o *ControlPlane) bpffsFlow(ctx context.Context, log *logger.Logger) error {
-	if err := ebpf.CheckKernelSupport(); err != nil {
-		return fmt.Errorf("bpf filesystem: %w", err)
-	}
-
-	// Both attempts run before anything is published, so a single SOS can
-	// cover both jobs. Neither is fatal yet: a refusal here is the expected
-	// rootless shape.
-	pinErr := ebpf.MountPinFS(ebpf.PinPath, os.Getuid(), os.Getgid())
-	if pinErr != nil && !errors.Is(pinErr, ebpf.ErrDelegationRequired) {
-		return fmt.Errorf("bpf filesystem: pin filesystem: %w", pinErr)
-	}
-
-	tokenFS, tokenErr := ebpf.OpenTokenFS(ebpf.TokenMountPath)
-	if tokenErr != nil && !errors.Is(tokenErr, ebpf.ErrDelegationRequired) {
-		return fmt.Errorf("bpf filesystem: token filesystem: %w", tokenErr)
-	}
-	defer tokenFS.Close()
-
-	if pinErr != nil || tokenErr != nil {
-		if err := o.awaitBPFFSDelegation(ctx, tokenFS, log); err != nil {
-			return err
-		}
-	}
-
-	// Mounting the token filesystem also proves it can mint a token, which
-	// is the only evidence that the delegation actually landed.
-	if err := tokenFS.Mount(); err != nil {
-		return fmt.Errorf("bpf filesystem: attaching the token filesystem: %w", err)
-	}
-	if err := ebpf.AwaitPinFS(ctx, ebpf.PinPath); err != nil {
-		return fmt.Errorf("bpf filesystem: pin filesystem never appeared: %w", err)
-	}
-
-	log.Info().
-		Str("event", "bpffs_ready").
-		Bool("delegated", tokenFS.Delegated()).
-		Str("pin_path", ebpf.PinPath).
-		Msg("BPF filesystem ready")
-	return nil
-}
-
-// awaitBPFFSDelegation publishes the SOS and blocks on the handoff while an
-// elevated helper completes the work this process is not privileged to do.
-//
-// The wait is bounded by consts.CPSOSIdleTTL, the same clock the CLI spams
-// WatchSOS connection attempts for, so neither side outlives the other. A
-// control plane nobody is listening to shuts down instead of waiting
-// forever — pre-SetReady, nothing attached, fail-closed.
-func (o *ControlPlane) awaitBPFFSDelegation(
-	ctx context.Context, tokenFS *ebpf.TokenFS, log *logger.Logger,
-) error {
-	socketPath, err := bpffsHandoffSocketPath()
-	if err != nil {
-		return err
-	}
-
-	o.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, recoveryMsgBPFFSDelegation)
-	log.Warn().
-		Str("event", "bpffs_awaiting_delegation").
-		Str("socket", socketPath).
-		Dur("idle_ttl", consts.CPSOSIdleTTL).
-		Msg("the kernel denied BPF filesystem setup (rootless Docker); waiting for CLI assistance")
-
-	waitCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
-	defer cancel()
-
-	if delegateErr := tokenFS.Delegate(waitCtx, socketPath); delegateErr != nil {
-		return fmt.Errorf("bpf filesystem delegation: %w", delegateErr)
-	}
-
-	// The failure is resolved: every connected WatchSOS stream ends cleanly.
-	o.ClearRecovery()
-	log.Info().Str("event", "bpffs_delegation_complete").Msg("BPF filesystem delegation completed")
-	return nil
-}
-
 // bpffsHandoffSocketPath places the handoff socket in the firewall data
 // directory, which is already bind-mounted from the host — the helper runs
 // out there and has to be able to reach it.
@@ -871,24 +776,22 @@ func bpffsHandoffSocketPath() (string, error) {
 	return filepath.Join(dir, delegation.SocketName), nil
 }
 
-// enforcementCleanup closes the eBPF manager and the Docker client, joining
-// the eBPF close error so a partial teardown is investigated, not silently
-// blessed.
 // ebpfLoadFlow is the startup-flow step that creates the CP's BPF state:
 // Load() attaches programs and creates the pins, then CleanupStaleBypass
 // clears leftover bypass_map entries from a crashed previous CP
 // (INV-B2-013). Both are hard pre-SetReady gates.
 //
-// It has no recoverable arm. Permission failures are handled earlier, by
-// bpffsFlow, which puts a usable BPF filesystem in place before this runs;
-// by the time Load is called there is nothing left for the CLI to assist
-// with, and a failure here means something genuinely wrong. Retrying would
-// be worse than useless: cilium/ebpf caches its token decision on the first
-// BPF syscall, so a retry loop around Load can never succeed once that
-// syscall has happened — it would spin to its deadline and exit with
-// nothing to explain why.
-func (o *ControlPlane) ebpfLoadFlow(ebpfMgr *ebpf.Manager, log *logger.Logger) error {
+// On the default deployment this is the whole story, exactly as it has
+// always been. The ONE recoverable failure is a permission-denied load —
+// the rootless-Docker shape, where the BPF filesystem behind the
+// container's bind belongs to the init namespace and this process does not.
+// Only that error engages any of the delegation machinery; see
+// delegateBPFFSFlow.
+func (o *ControlPlane) ebpfLoadFlow(ctx context.Context, ebpfMgr *ebpf.Manager, log *logger.Logger) error {
 	if err := ebpfMgr.Load(); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return o.delegateBPFFSFlow(ctx, log, err)
+		}
 		return fmt.Errorf("ebpf load: %w", err)
 	}
 	log.Info().Msg("eBPF programs loaded")
@@ -906,6 +809,86 @@ func (o *ControlPlane) ebpfLoadFlow(ebpfMgr *ebpf.Manager, log *logger.Logger) e
 	return nil
 }
 
+// errBPFFSDelegated reports that the rootless delegation heal completed and
+// this process is exiting ON PURPOSE so the next control plane boot — a
+// container start that re-binds the now-delegated filesystem — can load
+// against it. Main maps it to a clean exit: the on-failure restart policy
+// must not resurrect this process, which can never load (see
+// delegateBPFFSFlow).
+var errBPFFSDelegated = errors.New(
+	"BPF filesystem delegated; exiting so the next control plane boot starts against it")
+
+// delegateBPFFSFlow is the rootless recovery arm of ebpfLoadFlow, reached
+// ONLY on a permission-denied load. It publishes the SOS, serves the open
+// filesystem context to the elevated helper the CLI runs, and then ends
+// this boot with errBPFFSDelegated.
+//
+// Exiting is not a shortcut — it is the only correct outcome. cilium/ebpf
+// caches its token decision on the first BPF syscall (the failed Load), so
+// this process could never load against the delegated filesystem even if it
+// could see it; and it cannot see it, because this mount namespace captured
+// the source path's state at container start. The CLI's retry recreates the
+// CP container onto the delegated path when the source changed (the
+// bpffs-source drift gate in manager's reconcileExistingCP) or simply
+// restarts it when the helper replaced a stale mount at the same path —
+// Docker re-establishes bind mounts at every container start. Either way
+// the next boot loads through the default path with none of this machinery
+// running.
+//
+// The kernel version is checked before anything is attempted or published.
+// An older kernel's behaviour when handed delegation options it does not
+// recognise is not something to characterise in a user's environment, and
+// no assistance can conjure the feature, so it fails startup outright
+// rather than asking the CLI for help that cannot exist.
+//
+// The handoff wait is bounded by consts.CPSOSIdleTTL, the same clock the
+// CLI spams WatchSOS connection attempts for, so neither side outlives the
+// other. A control plane nobody is listening to shuts down instead of
+// waiting forever — pre-SetReady, nothing attached, fail-closed.
+func (o *ControlPlane) delegateBPFFSFlow(
+	ctx context.Context, log *logger.Logger, loadErr error,
+) error {
+	if kernelErr := ebpf.CheckKernelSupport(); kernelErr != nil {
+		return fmt.Errorf("ebpf load: %w; delegation unavailable: %w", loadErr, kernelErr)
+	}
+
+	socketPath, err := bpffsHandoffSocketPath()
+	if err != nil {
+		return err
+	}
+	fsCtx, err := ebpf.OpenForDelegation()
+	if err != nil {
+		return fmt.Errorf("ebpf load: %w; %w", loadErr, err)
+	}
+	defer fsCtx.Close()
+
+	o.PublishRecovery(adminv1.SOSKind_SOS_KIND_BPFFS_DELEGATION, recoveryMsgBPFFSDelegation)
+	log.Warn().
+		Str("event", "bpffs_awaiting_delegation").
+		Str("socket", socketPath).
+		Dur("idle_ttl", consts.CPSOSIdleTTL).
+		Msg("eBPF load denied (rootless Docker); waiting for CLI assistance to delegate a BPF filesystem")
+
+	waitCtx, cancel := context.WithTimeout(ctx, consts.CPSOSIdleTTL)
+	defer cancel()
+
+	if delegateErr := fsCtx.Delegate(waitCtx, socketPath); delegateErr != nil {
+		return fmt.Errorf("bpf filesystem delegation: %w", delegateErr)
+	}
+
+	// The failure is resolved: every connected WatchSOS stream ends cleanly,
+	// and the CLI's next Manager.Start recreates this container onto the
+	// delegated filesystem.
+	o.ClearRecovery()
+	log.Info().
+		Str("event", "bpffs_delegation_complete").
+		Msg("BPF filesystem delegation completed; exiting for recreation onto it")
+	return errBPFFSDelegated
+}
+
+// enforcementCleanup closes the eBPF manager and the Docker client, joining
+// the eBPF close error so a partial teardown is investigated, not silently
+// blessed.
 func enforcementCleanup(dockerCli *docker.Client, ebpfMgr *ebpf.Manager, log *logger.Logger) func() error {
 	return func() error {
 		var errs []error
@@ -1461,19 +1444,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// responds. Installed once the Ory ports exist to probe.
 	orchestrator.SetServiceProbes(cp, caTLS)
 
-	// BPF filesystem — startup gate, and it MUST precede the load: the
-	// token decision is cached on the first BPF syscall, so a filesystem
-	// that arrives afterwards is never seen (see bpffsFlow). This is the
-	// step that publishes an SOS and waits for CLI assistance when the
-	// kernel refuses it.
-	if err = orchestrator.bpffsFlow(signalCtx, log); err != nil {
-		return err
-	}
-
-	// eBPF load + stale-bypass cleanup (INV-B2-013) — startup gate, with no
-	// recoverable arm: bpffsFlow above already resolved anything the CLI
-	// could help with.
-	if err = orchestrator.ebpfLoadFlow(ebpfMgr, log); err != nil {
+	// eBPF load + stale-bypass cleanup (INV-B2-013) — startup gate. The one
+	// recoverable arm is a permission-denied load (rootless Docker): it
+	// publishes an SOS, serves the delegation handoff, and ends the boot
+	// with errBPFFSDelegated so a fresh CP starts against the delegated
+	// filesystem.
+	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
 		return err
 	}
 

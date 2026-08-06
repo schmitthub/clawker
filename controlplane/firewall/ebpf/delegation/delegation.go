@@ -14,7 +14,7 @@
 // what it was built for.
 package delegation
 
-import "fmt"
+import "strconv"
 
 // Delegation masks: exactly the BPF operations clawker's own object needs,
 // enumerated rather than delegated wholesale with "any". Every entry is
@@ -93,10 +93,16 @@ const SocketName = "bpffs-handoff.sock"
 // FSType is the kernel's name for the BPF filesystem.
 const FSType = "bpf"
 
-// MountOptions describes the pin filesystem's ownership at mount time. The
-// kernel added uid/gid/mode to bpffs for exactly this, so the filesystem is
-// born owned by the unprivileged user instead of being chowned afterwards —
-// and no permission on a path clawker does not own is ever touched.
-func MountOptions(uid, gid int) string {
-	return fmt.Sprintf("mode=0700,uid=%d,gid=%d", uid, gid)
+// OwnerParams are the filesystem parameters that set the filesystem's
+// ownership at creation. The kernel added uid/gid/mode to bpffs for exactly
+// this, so the filesystem is born owned by the unprivileged control plane
+// instead of being chowned afterwards — and no permission on a path clawker
+// does not own is ever touched. The helper reads uid and gid off the handoff
+// socket's peer credentials, never from configuration.
+func OwnerParams(uid, gid int) []Param {
+	return []Param{
+		{Name: "mode", Value: "0700"},
+		{Name: "uid", Value: strconv.Itoa(uid)},
+		{Name: "gid", Value: strconv.Itoa(gid)},
+	}
 }

@@ -456,7 +456,7 @@ The CP container is the **single owner** of firewall state, eBPF lifetime, and E
                            │                ▼                                                ▼
                            │         Envoy (.2) + CoreDNS (.3) on clawker-net      clawker-ebpf-egress index
                            ▼                                                       (service.name=ebpf-egress)
-                      /var/lib/clawker/bpffs/{container_map, bypass_map, dns_cache,
+                      /sys/fs/bpf/clawker/{container_map, bypass_map, dns_cache,
                                            route_map, metrics_map, events_ringbuf,
                                            events_drops, ratelimit_state, ratelimit_drops}
 ```
@@ -502,7 +502,7 @@ Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `
 
 **Network isolation:** The CP creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — `gateway+EnvoyIPLastOctet` (.2) for Envoy, `gateway+CoreDNSIPLastOctet` (.3) for CoreDNS, `gateway+CPIPLastOctet` (.202) for the CP container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. Static-IP assignment cannot go through whail's `EnsureNetwork` helper (which hard-overwrites `EndpointSettings`) — call `dc.EnsureNetwork` first, then explicit `NetworkingConfig.IPAMConfig.IPv4Address` in `ContainerCreate`.
 
-**Custom CoreDNS container:** Runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of clawker's own BPF filesystem (`/var/lib/clawker/bpffs`) so the `dnsbpf` plugin can open the pinned `dns_cache` map. Image `clawker-coredns:latest` is built from `cmd/coredns-clawker` on demand by `firewall.Stack.ensureCorednsImage`. The stock `coredns/coredns:1.14.2` image is no longer used.
+**Custom CoreDNS container:** Runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of the same BPF filesystem the CP loads against (source from `consts.HostBPFFSSource()`, target `/sys/fs/bpf`) so the `dnsbpf` plugin can open the pinned `dns_cache` map. Image `clawker-coredns:latest` is built from `cmd/coredns-clawker` on demand by `firewall.Stack.ensureCorednsImage`. The stock `coredns/coredns:1.14.2` image is no longer used.
 
 **Integration points:** Commands call `f.AdminClient(ctx)` to obtain an `adminv1.AdminServiceClient`. `BootstrapServicesPreStart` issues `FirewallInit` → `FirewallAddRules`; `BootstrapServicesPostStart` issues `FirewallEnable` (per-container). Break-glass verbs use `f.ControlPlane()` for direct container lifecycle control.
 

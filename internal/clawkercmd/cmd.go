@@ -170,13 +170,7 @@ func Main() int {
 		}
 		n := <-notifyChan
 
-		cs := f.IOStreams.ColorScheme()
-		if n.releaseErr != nil {
-			fmt.Fprintf(f.IOStreams.ErrOut, "%s update check failed: %v\n", cs.WarningIcon(), n.releaseErr)
-		}
-		if n.entriesErr != nil {
-			fmt.Fprintf(f.IOStreams.ErrOut, "%s changelog check failed: %v\n", cs.WarningIcon(), n.entriesErr)
-		}
+		printFetchWarnings(f.IOStreams, n)
 
 		printUpdateNotification(f.IOStreams, runUpdateCheck(f, buildVersion, n.release))
 		printChangelogTeaser(f.IOStreams, runChangelogCheck(f, buildVersion, n.entries))
@@ -217,6 +211,22 @@ type notifications struct {
 	releaseErr error
 	entries    []changelog.Entry
 	entriesErr error
+}
+
+// printFetchWarnings reports the background fetches' failures on stderr. A
+// [context.Canceled] error is deliberately silent: it is Main's own doing — the
+// command finished first and notifyCancel aborted the in-flight request. That
+// is the normal outcome for any command faster than the network, not a
+// failure; the aborted check simply retries next run. Real fetch failures
+// (DNS, HTTP, parse) still surface.
+func printFetchWarnings(ios *iostreams.IOStreams, n notifications) {
+	cs := ios.ColorScheme()
+	if n.releaseErr != nil && !errors.Is(n.releaseErr, context.Canceled) {
+		fmt.Fprintf(ios.ErrOut, "%s update check failed: %v\n", cs.WarningIcon(), n.releaseErr)
+	}
+	if n.entriesErr != nil && !errors.Is(n.entriesErr, context.Canceled) {
+		fmt.Fprintf(ios.ErrOut, "%s changelog check failed: %v\n", cs.WarningIcon(), n.entriesErr)
+	}
 }
 
 // runUpdateCheck interprets an already-fetched release and reports the newer

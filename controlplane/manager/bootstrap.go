@@ -317,16 +317,21 @@ func refuseUpgradeWhileActive(
 }
 
 // reconcileExistingCP decides what happens to a CP container that is already
-// there. It reports adopted=true when that container is this clawker's own
-// (its consts.LabelCPBinarySHA matches the embedded binaries) and is now
-// running — all the caller has left to do is wait for readiness. It reports
-// adopted=false when there was nothing there, or once a drifted container has
-// been removed, leaving the caller to create a fresh one.
+// there. It reports adopted=true when that container is this clawker's own —
+// its consts.LabelCPBinarySHA matches the embedded binaries AND its
+// consts.LabelCPBPFFSSource matches the currently desired BPF filesystem
+// source — and is now running; all the caller has left to do is wait for
+// readiness. It reports adopted=false when there was nothing there, or once a
+// drifted container has been removed, leaving the caller to create a fresh
+// one.
 //
-// The drift case is a host clawker that was rebuilt, or a container predating
-// the label. Replacing it is refused while a CP or any agent is still running:
-// removing the supervisor out from under live agents is a worse outcome than
-// telling the operator to drain first.
+// The binary-drift case is a host clawker that was rebuilt, or a container
+// predating the label. The bpffs-source drift case is the rootless heal: a CP
+// created before the delegated filesystem existed must be recreated onto it —
+// restarting it would replay the same permission failure forever. Replacing
+// is refused while a CP or any agent is still running: removing the
+// supervisor out from under live agents is a worse outcome than telling the
+// operator to drain first.
 func reconcileExistingCP(ctx context.Context, dc *docker.Client, log *logger.Logger) (bool, error) {
 	summary, err := findCPContainer(ctx, dc)
 	if err != nil {
@@ -338,7 +343,12 @@ func reconcileExistingCP(ctx context.Context, dc *docker.Client, log *logger.Log
 
 	desired, _ := cpBinaryHash()
 	actual := summary.Labels[consts.LabelCPBinarySHA]
-	if actual == desired {
+	desiredBPFFS, err := resolveBPFFSSource()
+	if err != nil {
+		return false, fmt.Errorf("controlplane: %w", err)
+	}
+	actualBPFFS := summary.Labels[consts.LabelCPBPFFSSource]
+	if actual == desired && actualBPFFS == desiredBPFFS {
 		if summary.State != container.StateRunning {
 			//nolint:exhaustruct // ContainerID is the only field a plain start needs; the rest are checkpoint/network options
 			if _, startErr := dc.ContainerStart(
@@ -364,6 +374,8 @@ func reconcileExistingCP(ctx context.Context, dc *docker.Client, log *logger.Log
 		Str("state", string(summary.State)).
 		Str("desired_binary_sha256", desired).
 		Str("running_binary_sha256", actual).
+		Str("desired_bpffs_source", desiredBPFFS).
+		Str("running_bpffs_source", actualBPFFS).
 		Msg("recreating CP container — embedded binary or spec changed")
 	if removeErr := stopAndRemoveCP(ctx, dc, summary.ID); removeErr != nil {
 		log.Error().

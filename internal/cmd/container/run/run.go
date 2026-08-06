@@ -273,6 +273,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
+		IOStreams:    ios,
 		Client:       opts.Client,
 		Config:       opts.Config,
 		HostProxy:    opts.HostProxy,

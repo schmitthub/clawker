@@ -84,6 +84,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 |-------|------|---------|
 | `Client` | `func(ctx) (*docker.Client, error)` | Docker client provider |
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
+| `IOStreams` | `*iostreams.IOStreams` | Terminal reach for mid-boot CP assistance prompts (required) |
 | `HostProxy` | `func() hostproxy.Service` | Host proxy provider |
 | `ControlPlane` | `func(ctx) (cpmanager.Manager, error)` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
@@ -92,7 +93,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 | `AgentName` | `string` | Short agent name (set on new-container starts; empty on restart) |
 | `Project` | `string` | Project slug for composite identity |
 
-Nil providers safely skipped (debug logged). `Config` is the only required provider.
+Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams` (the struct field, not a provider) — `BootstrapServicesPreStart` refuses a nil IOStreams up front, because a nil is always a wiring bug (headless runs carry a non-TTY IOStreams; prompt-suitability is `CanPrompt`'s call inside `AssistSOS`) and would silently downgrade a control plane SOS to a plain error instead of prompting.
 
 **Functions**:
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.

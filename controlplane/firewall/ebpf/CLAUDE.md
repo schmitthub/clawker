@@ -14,19 +14,20 @@ clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make
 clawker_*_bpfel.o    BPF bytecode (gitignored)
 manager.go           Go-side Manager: Load/Enable/Disable/SyncRoutes/Bypass/DNS helpers
 types.go             Exported types: ContainerConfig, DNSEntry, RouteKey/Val, MetricKey
-bpffs.go             Portable half of BPF filesystem setup: kernel floor (6.9), the
-                     ErrKernelUnsupported/ErrDelegationRequired/ErrUnsupportedPlatform
-                     sentinels, TokenMountPath, release parsing
-bpffs_linux.go       CheckKernelSupport, PinFSMounted, MountPinFS (uid/gid MOUNT OPTIONS
-                     + MS_SHARED; EPERM/EACCES => ErrDelegationRequired), AwaitPinFS
+bpffs.go             Portable half of the rootless delegation arm: kernel floor (6.9),
+                     the ErrKernelUnsupported/ErrDelegationRequired/
+                     ErrUnsupportedPlatform sentinels, release parsing
+bpffs_linux.go       CheckKernelSupport — the version gate run before any delegation
+                     attempt
 bpffs_darwin.go      Forced platform half — the package compiles into the darwin CLI
-token_linux.go       TokenFS: fsopen, the delegation handoff (SCM_RIGHTS over a 0600
-                     unix socket), fsmount/move_mount, and a proving BPF_TOKEN_CREATE
+delegate_linux.go    DelegatedFS: OpenForDelegation (fsopen + refused-configure probe)
+                     and the delegation handoff (SCM_RIGHTS over a 0600 unix socket)
 delegation/          The contract both sides of the privilege boundary compile against:
-                     the four delegate_* masks, the handoff socket name and ack byte,
-                     the pin filesystem's mount options. Its own package so the elevated
-                     helper (cmd/bpffs-delegate) links the syscalls it makes and NOT
-                     this loader — it runs as root
+                     the four delegate_* masks, the uid/gid/mode owner params, the
+                     handoff socket name and ack byte, and Mounted (the bpffs state
+                     check the spec builders and the helper share). Its own package so
+                     the elevated helper (cmd/bpffs-delegate) links the syscalls it
+                     makes and NOT this loader — it runs as root
 manager_test.go      Unit tests (no kernel required — exercises non-BPF code paths)
 bpf/tests/           SYSCALL-type wrapper progs #including common.h for BPF_PROG_TEST_RUN
 bpftest/             Privileged prog-run harness (cilium bpf/tests pattern): loads the
@@ -46,7 +47,7 @@ Command-mode access to pinned state is done via the `cmd/ebpf-manager` break-gla
 
 ## Pinned Maps
 
-All maps live at `PinPath = consts.CPBPFFSPath` (`/var/lib/clawker/bpffs`) — clawker's OWN BPF filesystem, not the system `/sys/fs/bpf`. The CP mounts a bpffs there (or, on a rootless host, an elevated helper does) and both the CP and the CoreDNS container bind-mount the path with shared propagation, so a pin written by one is the path the other opens. `bpffs.go`/`bpffs_linux.go`/`token_linux.go` own that setup, `delegation/` holds the masks and the wire contract the elevated helper shares, and `CheckKernelSupport` gates the whole sequence at kernel 6.9:
+All maps live at `PinPath` (`/sys/fs/bpf/clawker`) — the clawker subdirectory of whatever BPF filesystem the container spec bound at `consts.SysFSBPFPath`. Both the CP and the CoreDNS container bind the SAME source (no propagation options), so a pin written by one is the path the other opens. The default deployment binds the host's own `/sys/fs/bpf`, exactly as it always has, and none of the delegation machinery runs. Only a permission-denied `Load()` — rootless Docker — engages the delegation arm: the CP fsopens a filesystem context (`delegate_linux.go`), the elevated helper (`cmd/bpffs-delegate`) applies the masks + owner params and attaches it at clawker's host path (`consts.BPFFSSubdir`), and a FRESH CP container binds it (the bpffs-source drift gate in `controlplane/manager`). `delegation/` holds the masks and the wire contract the helper shares, and `CheckKernelSupport` gates the delegation arm at kernel 6.9:
 
 | Map | Key | Value | Written by | Read by |
 |-----|-----|-------|-----------|---------|
@@ -122,7 +123,7 @@ func (m *Manager) DNSCache() *ebpf.Map                      // HASH of {IPv4 →
 Helpers in `types.go`:
 
 ```go
-const PinPath = consts.CPBPFFSPath // clawker's own bpffs, NOT /sys/fs/bpf
+const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix // /sys/fs/bpf/clawker
 
 type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
 type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})

@@ -162,6 +162,7 @@ func restartContainer(
 
 	// Restart carries no agent identity — AgentName/Project stay empty.
 	cmdOpts := shared.CommandOpts{
+		IOStreams:    opts.IOStreams,
 		Client:       opts.Client,
 		Config:       opts.Config,
 		HostProxy:    opts.HostProxy,

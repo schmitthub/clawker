@@ -72,6 +72,13 @@ const (
 	// MUST recreate the siblings rather than adopt ones an older build
 	// created.
 	labelStackBuildSHA = "dev.clawker.firewall.stack_build_sha"
+
+	// labelBPFFSSource encodes the create-time BPF filesystem bind source
+	// (consts.HostBPFFSSource, injected by host bootstrap at CP create).
+	// A sibling created against one filesystem must not be adopted by a CP
+	// loading against another — the pinned dns_cache it opens would belong
+	// to a dead superblock — so a source change forces a recreate.
+	labelBPFFSSource = "dev.clawker.firewall.bpffs_source"
 )
 
 // Stack manages the Envoy + CoreDNS container pair via Docker-outside-of-
@@ -758,20 +765,14 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			ReadOnly: true,
 		},
 		{
-			// The dnsbpf plugin updates the pinned dns_cache map under
-			// clawker's own BPF filesystem in real time. CoreDNS only ever
-			// receives that mount — the CP or the elevated helper creates
-			// it — so slave propagation is all it needs.
+			// The dnsbpf plugin updates the pinned dns_cache map in real
+			// time, so CoreDNS binds the SAME BPF filesystem source the CP
+			// container was built with (carried in via EnvHostBPFFSSource):
+			// the host's own /sys/fs/bpf by default, clawker's delegated
+			// bpffs on a healed rootless host.
 			Type:   mount.TypeBind,
-			Source: consts.HostBPFFSSubdir(),
-			Target: consts.CPBPFFSPath,
-			BindOptions: &mount.BindOptions{
-				Propagation:            mount.PropagationRSlave,
-				NonRecursive:           false,
-				CreateMountpoint:       false,
-				ReadOnlyNonRecursive:   false,
-				ReadOnlyForceRecursive: false,
-			},
+			Source: consts.HostBPFFSSource(),
+			Target: consts.SysFSBPFPath,
 		},
 	}
 	var env []string
@@ -819,6 +820,7 @@ func (s *Stack) driftLabels() map[string]string {
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
 		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.MonitoringConfig().OtelInfraPort)),
 		labelStackBuildSHA:   consts.CPBinarySHA,
+		labelBPFFSSource:     consts.HostBPFFSSource(),
 	}
 }
 

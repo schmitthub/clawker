@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -223,13 +224,13 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		return nil, fmt.Errorf("resolve firewall data dir: %w", err)
 	}
 
-	// clawker's own BPF filesystem mount point. Resolving it creates the
-	// directory, so the bind source always exists; the bpffs itself is
-	// mounted onto it by the CP at startup (or, on a rootless host, by the
-	// elevated helper) and is shared with the CoreDNS container.
-	bpffsDir, err := consts.BPFFSSubdir()
+	// The BPF filesystem the CP loads against. The default deployment binds
+	// the host's own /sys/fs/bpf, exactly as it always has; only when a
+	// delegated bpffs exists at clawker's own host path — the product of a
+	// rootless-Docker heal — does the spec bind that instead.
+	bpffsSource, err := resolveBPFFSSource()
 	if err != nil {
-		return nil, fmt.Errorf("resolve bpffs dir: %w", err)
+		return nil, fmt.Errorf("resolve bpffs source: %w", err)
 	}
 
 	// Control-plane data dir — the CP daemon is the sole writer of
@@ -321,29 +322,20 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		// cgroup filesystem for eBPF program attachment.
 		{
 			Type:     mount.TypeBind,
-			Source:   "/sys/fs/cgroup",
-			Target:   "/sys/fs/cgroup",
+			Source:   consts.SysFSCgroupPath,
+			Target:   consts.SysFSCgroupPath,
 			ReadOnly: true,
 		},
-		// clawker's own BPF filesystem, holding the pinned maps and
-		// programs. Shared propagation in BOTH directions is load-bearing
-		// and the direction depends on the deployment: on a rootful host
-		// the CP mounts the bpffs itself and the mount must travel OUT so
-		// the CoreDNS container can see it; on a rootless host the
-		// elevated helper mounts it and it must travel IN to this
-		// already-running container. A shared peer group carries both,
-		// which is why this is rshared rather than rslave.
+		// The BPF filesystem for pinned maps and programs, shared with the
+		// CoreDNS container through the same source. No propagation
+		// options: Docker re-establishes bind mounts at every container
+		// START, capturing whatever is mounted at the source then, and the
+		// rootless heal always ends in a container (re)start — never a
+		// mount travelling into a running one.
 		{
 			Type:   mount.TypeBind,
-			Source: bpffsDir,
-			Target: consts.CPBPFFSPath,
-			BindOptions: &mount.BindOptions{
-				Propagation:            mount.PropagationRShared,
-				NonRecursive:           false,
-				CreateMountpoint:       false,
-				ReadOnlyNonRecursive:   false,
-				ReadOnlyForceRecursive: false,
-			},
+			Source: bpffsSource,
+			Target: consts.SysFSBPFPath,
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).
@@ -379,9 +371,10 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 
 	binarySHA, _ := cpBinaryHash()
 	labels := map[string]string{
-		consts.LabelManaged:     consts.ManagedLabelValue,
-		consts.LabelPurpose:     consts.PurposeControlPlane,
-		consts.LabelCPBinarySHA: binarySHA,
+		consts.LabelManaged:       consts.ManagedLabelValue,
+		consts.LabelPurpose:       consts.PurposeControlPlane,
+		consts.LabelCPBinarySHA:   binarySHA,
+		consts.LabelCPBPFFSSource: bpffsSource,
 	}
 
 	return &CPContainerConfig{
@@ -412,6 +405,9 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// re-stamps it as a firewall-sibling drift label
 			// (firewall.Stack.driftLabels). See consts.EnvCPBinarySHA.
 			consts.EnvCPBinarySHA + "=" + binarySHA,
+			// The bpffs source this container was built with, so
+			// firewall.Stack gives the CoreDNS sibling the same one.
+			consts.EnvHostBPFFSSource + "=" + bpffsSource,
 		}, otelLogsEnv(cfg)...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawkercp"},
@@ -424,6 +420,25 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			MaximumRetryCount: consts.CPMaxRestartRetries,
 		},
 	}, nil
+}
+
+// resolveBPFFSSource picks the host path the CP and CoreDNS containers bind
+// their BPF filesystem from. It is a state check, not deployment detection:
+// when a delegated bpffs exists at clawker's own host path — the elevated
+// helper of a rootless heal put it there — that filesystem is the one the
+// containers must load and pin against; otherwise the source is the host's
+// own /sys/fs/bpf, exactly as it has been since the project's inception.
+// Resolving the clawker path also creates the directory, so the helper (which
+// refuses to create its own mount point) always finds it in place.
+func resolveBPFFSSource() (string, error) {
+	dir, err := consts.BPFFSSubdir()
+	if err != nil {
+		return "", fmt.Errorf("resolve bpffs dir: %w", err)
+	}
+	if delegation.Mounted(dir) {
+		return dir, nil
+	}
+	return consts.SysFSBPFPath, nil
 }
 
 // otelLogsEnv injects the OTLP env vars the CP daemon reads to enable

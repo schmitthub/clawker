@@ -220,15 +220,17 @@ func managedImageInspect(cfg config.Config, created string) mobyclient.ImageInsp
 }
 
 // cpLabels returns the minimum label set a freshly-built CP container
-// would carry — managed + the content-derived binary SHA. Tests stubbing
-// ContainerList put this on the fake summary so EnsureRunning's drift
-// compare matches and adopts the existing container instead of
-// force-removing it.
+// would carry — managed + the content-derived binary SHA + the currently
+// desired bpffs source. Tests stubbing ContainerList put this on the fake
+// summary so EnsureRunning's drift compare matches and adopts the existing
+// container instead of force-removing it.
 func (f *bootstrapFixture) cpLabels() map[string]string {
 	full, _ := cpBinaryHash()
+	bpffsSource, _ := resolveBPFFSSource()
 	return map[string]string{
-		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
-		consts.LabelCPBinarySHA: full,
+		f.cfg.LabelManaged():      f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA:   full,
+		consts.LabelCPBPFFSSource: bpffsSource,
 	}
 }
 

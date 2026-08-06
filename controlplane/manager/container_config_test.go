@@ -232,6 +232,40 @@ func TestINV_B1_020_ConfigDirMounted(t *testing.T) {
 	assert.True(t, found, "config dir must be bind-mounted into the CP container")
 }
 
+// TestCPContainerConfig_BPFFSDefaultMount pins the default deployment's BPF
+// filesystem shape — the way it has worked since the project's inception:
+// the host's own /sys/fs/bpf bound straight through with NO propagation
+// options (Docker validates propagation against the source mount, and on
+// Docker Desktop the /host_mnt virtiofs mounts are private, so any
+// propagation flag fails container start on macOS). The delegated-source
+// arm only engages when a delegated bpffs exists at clawker's host path,
+// which never happens in this test environment.
+func TestCPContainerConfig_BPFFSDefaultMount(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	found := false
+	for _, m := range cpConfig.Mounts {
+		if m.Target == consts.SysFSBPFPath {
+			found = true
+			assert.Equal(t, consts.SysFSBPFPath, m.Source,
+				"default deployment binds the host's own /sys/fs/bpf")
+			assert.Nil(t, m.BindOptions,
+				"the bpffs bind must carry no propagation options")
+			break
+		}
+	}
+	require.True(t, found, "the BPF filesystem must be bind-mounted into the CP container")
+
+	assert.Equal(t, consts.SysFSBPFPath, cpConfig.Labels[consts.LabelCPBPFFSSource],
+		"the chosen bpffs source must be stamped as the drift label")
+	assert.Contains(t, cpConfig.Env, consts.EnvHostBPFFSSource+"="+consts.SysFSBPFPath,
+		"the chosen bpffs source must travel to the CP for the CoreDNS sibling")
+}
+
 // Tests that Docker socket is bind-mounted read-only for container state verification.
 func TestCPContainerConfig_DockerSocketMounted(t *testing.T) {
 	// A bind source and target are paths, so both drop the address's scheme.

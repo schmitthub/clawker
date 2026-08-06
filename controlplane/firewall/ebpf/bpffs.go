@@ -5,27 +5,24 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// The BPF filesystem clawker pins into is its own, not the system-wide
-// /sys/fs/bpf. Two things live here:
+// BPF filesystem delegation is the rootless arm of the control plane's eBPF
+// setup, and it only ever runs after the default path has failed: the CP
+// loads against whatever BPF filesystem its container spec bound at
+// consts.SysFSBPFPath (the host's own /sys/fs/bpf by default), and only a
+// permission-denied load — the rootless Docker shape, where that filesystem
+// belongs to the init namespace and this process does not — triggers any of
+// the machinery in this file.
 //
-//   - The PIN filesystem, mounted at PinPath. It holds clawker's maps and
-//     programs and is shared with the CoreDNS container, which opens
-//     dns_cache by absolute path. It is an ordinary bpffs owned by the
-//     unprivileged user through uid/gid MOUNT OPTIONS — never a chown, and
-//     never a permission change on a path clawker does not own.
-//   - The TOKEN filesystem, which exists only to mint BPF tokens on kernels
-//     where this process cannot perform BPF operations on its own. It is
-//     private to this mount namespace and holds nothing.
-//
-// On a rootful deployment the control plane is init-namespace root and
-// mounts the pin filesystem itself; no token is involved. On a rootless
-// deployment the kernel refuses both the mount and the delegation options
-// to this process, and an elevated helper performs them — see the recovery
-// flow in internal/controlplane.
+// The delegated filesystem serves both jobs at once: its superblock is
+// stamped with this process's user namespace (fsopen here, see
+// OpenForDelegation), so BPF tokens can be minted from it, and the elevated
+// helper attaches it at clawker's own host path owned by the control plane
+// through uid/gid/mode filesystem parameters — never a chown, and never a
+// permission change on a path clawker does not own. A fresh CP container
+// then binds that path and loads normally; cilium/ebpf discovers the
+// filesystem by type and mints its token with no code on our side.
 //
 // The delegation masks the helper applies live in the delegation subpackage,
 // not here: a binary that runs as root should link the syscalls it makes and
@@ -112,10 +109,3 @@ func parseKernelRelease(release string) (kernelVersion, error) {
 	}
 	return kernelVersion{major: major, minor: minor}, nil
 }
-
-// TokenMountPath is where the token filesystem is attached. It is private
-// to the control plane's mount namespace and holds nothing — no pins ever
-// land here — so the location only has to be somewhere writable that no
-// other filesystem occupies. cilium/ebpf discovers BPF filesystems by
-// filesystem type rather than by path, so it finds this wherever it sits.
-const TokenMountPath = "/run/" + consts.NamePrefix + "/token-bpffs"

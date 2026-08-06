@@ -391,6 +391,29 @@ security:
             path: /manual/
         port: 443
         proto: https
+      # BPF toolchain pin bumps: resolve current noble candidate versions for
+      # the Makefile's BPF_APT_DEPS from the Ubuntu archive's package indexes.
+      # Metadata only (dists/ indexes) — pool/ debs stay blocked.
+      - action: allow
+        dst: archive.ubuntu.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /ubuntu/dists/
+        port: 80
+        proto: http
+      # ports.ubuntu.com serves the non-x86 arches (arm64) — same indexes,
+      # different host. Needed to verify pins for the arm64 (macOS dev) build.
+      - action: allow
+        dst: ports.ubuntu.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /ubuntu-ports/dists/
+        port: 80
+        proto: http
       # Kernel BPF token / bpffs delegation research (rootless eBPF support):
       # how bpffs ownership and pinning are meant to work for unprivileged
       # containers, and how other runtimes already ship it.

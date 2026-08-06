@@ -44,12 +44,21 @@ func TestParams(t *testing.T) {
 	}, values)
 }
 
-// TestMountOptions pins the pin filesystem's ownership shape. The control
-// plane mounts it in-process when it can and the elevated helper mounts it
-// when it cannot; a divergence would give the two deployments differently
-// owned filesystems for the same path.
-func TestMountOptions(t *testing.T) {
+// TestOwnerParams pins the delegated filesystem's ownership shape: born
+// owned 0700 by the control plane through filesystem parameters, with uid
+// and gid learned from the handoff socket's peer credentials — never a
+// chown, never a configured value.
+func TestOwnerParams(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "mode=0700,uid=1003,gid=1004", delegation.MountOptions(1003, 1004))
+	values := map[string]string{}
+	for _, p := range delegation.OwnerParams(1003, 1004) {
+		values[p.Name] = p.Value
+	}
+
+	assert.Equal(t, map[string]string{
+		"mode": "0700",
+		"uid":  "1003",
+		"gid":  "1004",
+	}, values)
 }

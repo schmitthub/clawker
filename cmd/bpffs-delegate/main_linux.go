@@ -63,10 +63,6 @@ const (
 	// turns a failure here into an immediate, explicit failure on the
 	// control plane side instead of a socket that closes without a word.
 	ackFailed = 'x'
-
-	// bpfFSMagic identifies an already-mounted BPF filesystem, so the pin
-	// mount is skipped rather than stacked when it is already in place.
-	bpfFSMagic = 0xcafe4a11
 )
 
 func main() {
@@ -98,17 +94,17 @@ func run(socketPath, pinPath string) error {
 	}
 	defer func() { _ = unix.Close(fsFD) }()
 
-	if cfgErr := configure(fsFD); cfgErr != nil {
-		reportFailure(conn)
-		return cfgErr
-	}
-
 	uid, gid, err := peerCreds(conn)
 	if err != nil {
 		reportFailure(conn)
 		return err
 	}
-	if mountErr := mountPinFS(pinPath, uid, gid); mountErr != nil {
+
+	if cfgErr := configure(fsFD, uid, gid); cfgErr != nil {
+		reportFailure(conn)
+		return cfgErr
+	}
+	if mountErr := mountAt(pinPath, fsFD); mountErr != nil {
 		reportFailure(conn)
 		return mountErr
 	}
@@ -171,11 +167,14 @@ func receiveFD(conn *net.UnixConn) (int, error) {
 	return fds[0], nil
 }
 
-// configure applies clawker's delegation parameters and instantiates the
-// superblock. Both halves need init-namespace CAP_SYS_ADMIN, which is the
-// entire reason this program exists.
-func configure(fsFD int) error {
-	for _, p := range delegation.Params() {
+// configure applies clawker's delegation parameters plus the ownership
+// parameters and instantiates the superblock. Both halves need
+// init-namespace CAP_SYS_ADMIN, which is the entire reason this program
+// exists. Ownership comes from the peer's credentials, so the filesystem is
+// born owned by the control plane — never a chown afterwards.
+func configure(fsFD, uid, gid int) error {
+	params := append(delegation.Params(), delegation.OwnerParams(uid, gid)...)
+	for _, p := range params {
 		if err := unix.FsconfigSetString(fsFD, p.Name, p.Value); err != nil {
 			return fmt.Errorf("setting %s=%s: %w", p.Name, p.Value, err)
 		}
@@ -210,13 +209,18 @@ func peerCreds(conn *net.UnixConn) (int, int, error) {
 	return int(ucred.Uid), int(ucred.Gid), nil
 }
 
-// mountPinFS mounts the filesystem clawker pins into, owned by the control
-// plane through mount options, and marks it shared so it propagates into the
-// already-running containers that bind-mount the path. Nothing is created
-// here: the mount point is the clawker data directory the CLI resolved before
-// invoking this, and a root-owned directory left behind at that path would
-// outlive the mount.
-func mountPinFS(path string, uid, gid int) error {
+// mountAt attaches the delegated filesystem at path. Nothing is created
+// here: the mount point is the clawker data directory the CLI resolved
+// before invoking this, and a root-owned directory left behind at that path
+// would outlive the mount.
+//
+// An existing BPF filesystem at path is REPLACED, not adopted. This program
+// only ever runs because the control plane's load failed on permissions, and
+// a mount already sitting there in that situation is a stale one whose
+// owning user namespace died with a previous Docker daemon — adopting it
+// would hand the control plane a filesystem that can never mint a token
+// again.
+func mountAt(path string, fsFD int) error {
 	//nolint:gosec // the mount point is this program's whole argument; it is chosen by the caller by design
 	info, err := os.Stat(path)
 	if err != nil {
@@ -226,31 +230,23 @@ func mountPinFS(path string, uid, gid int) error {
 		return fmt.Errorf("the mount point %s is not a directory", path)
 	}
 
-	mounted, mountedErr := isBPFFS(path)
-	if mountedErr != nil {
-		return mountedErr
-	}
-	if !mounted {
-		if mountErr := unix.Mount("bpffs", path, delegation.FSType, 0,
-			delegation.MountOptions(uid, gid)); mountErr != nil {
-			return fmt.Errorf("mounting a BPF filesystem at %s: %w", path, mountErr)
+	if delegation.Mounted(path) {
+		if umountErr := unix.Unmount(path, unix.MNT_DETACH); umountErr != nil {
+			return fmt.Errorf("detaching the stale BPF filesystem at %s: %w", path, umountErr)
 		}
 	}
 
-	if sharedErr := unix.Mount("", path, "", unix.MS_SHARED, ""); sharedErr != nil {
-		return fmt.Errorf("marking %s shared: %w", path, sharedErr)
+	mntFD, err := unix.Fsmount(fsFD, unix.FSMOUNT_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("creating a mount from the BPF filesystem: %w", err)
+	}
+	defer func() { _ = unix.Close(mntFD) }()
+
+	if mvErr := unix.MoveMount(mntFD, "", unix.AT_FDCWD, path,
+		unix.MOVE_MOUNT_F_EMPTY_PATH); mvErr != nil {
+		return fmt.Errorf("attaching the BPF filesystem at %s: %w", path, mvErr)
 	}
 	return nil
-}
-
-// isBPFFS reports whether path already carries a BPF filesystem, so a second
-// invocation stacks nothing.
-func isBPFFS(path string) (bool, error) {
-	var sfs unix.Statfs_t
-	if err := unix.Statfs(path, &sfs); err != nil {
-		return false, fmt.Errorf("inspecting %s: %w", path, err)
-	}
-	return sfs.Type == bpfFSMagic, nil
 }
 
 // reportFailure tells the control plane this failed, so it stops waiting now

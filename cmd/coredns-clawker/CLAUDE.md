@@ -92,7 +92,7 @@ The catch-all `. {}` zone has `otel`, `log`, `template IN ANY . { rcode NXDOMAIN
 | Build | `make coredns-binary` → `GOOS=linux CGO_ENABLED=0 go build ./cmd/coredns-clawker` → `internal/controlplane/firewall/assets/coredns-clawker` (gitignored) |
 | Embed into CLI | `internal/controlplane/firewall/embed_coredns.go` — `//go:embed assets/coredns-clawker` → exported `CoreDNSClawkerBinary []byte` |
 | Image build | `firewall.Stack.ensureCorednsImage` (Dockerfile generated in-memory; the embedded binary is the only content of the layer) |
-| Runtime | `firewall.Stack.ensureContainer` creates the CoreDNS container on `clawker-net` at a static IP with `CAP_BPF + CAP_SYS_ADMIN` and clawker's own BPF filesystem (`/var/lib/clawker/bpffs`) bind-mounted |
+| Runtime | `firewall.Stack.ensureContainer` creates the CoreDNS container on `clawker-net` at a static IP with `CAP_BPF + CAP_SYS_ADMIN` and the same BPF filesystem the CP loads against bind-mounted at `/sys/fs/bpf` (source from `consts.HostBPFFSSource()`) |
 
 Binary architecture must match the Docker host (arm64 or amd64). Makefile selects `GOARCH` accordingly.
 

@@ -25,7 +25,10 @@ import (
 type CommandOpts struct {
 	// IOStreams is how a control plane that asks for assistance mid-boot
 	// reaches the person running the command (see cpshared.AssistSOS).
-	// Optional: without it the request comes back as an error instead.
+	// Required: every start path runs under a command that owns a real
+	// IOStreams, and a nil here silently downgrades an assistable SOS to
+	// a plain error (prompt-suitability is CanPrompt's call, not the
+	// wiring's). BootstrapServicesPreStart refuses a nil up front.
 	IOStreams *iostreams.IOStreams
 
 	Client       func(context.Context) (*docker.Client, error)
@@ -110,6 +113,13 @@ func ensureHostProxyRunning(
 func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
+	}
+	// A nil IOStreams is always a wiring bug, never a headless caller —
+	// non-interactive runs carry a non-TTY IOStreams and are filtered by
+	// CanPrompt inside AssistSOS. Failing loud here keeps a forgotten
+	// field from silently declining control plane assistance requests.
+	if cmdOpts.IOStreams == nil {
+		return errors.New("bootstrapping services: no IOStreams provided")
 	}
 
 	cfg, err := cmdOpts.Config()

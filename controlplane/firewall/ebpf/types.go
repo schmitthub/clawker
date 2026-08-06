@@ -27,16 +27,14 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// PinPath is where BPF maps and programs are pinned: clawker's OWN BPF
-// filesystem, bind-mounted into the control plane and the CoreDNS
-// container at the same path so a pin written by one is the path the other
-// opens.
-//
-// It is deliberately not /sys/fs/bpf. That filesystem belongs to the
-// system and is root-owned mode 0700, so pinning there from an
-// unprivileged container would require loosening permissions on a path
-// clawker does not own. See consts.BPFFSSubdir.
-const PinPath = consts.CPBPFFSPath
+// PinPath is where BPF maps and programs are pinned: the clawker
+// subdirectory of the BPF filesystem bind-mounted into the control plane
+// and the CoreDNS container at consts.SysFSBPFPath — the same container
+// path in both, so a pin written by one is the path the other opens. Which
+// filesystem sits behind that path is the container spec's decision: the
+// host's own /sys/fs/bpf by default, or clawker's delegated bpffs after a
+// rootless heal.
+const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix
 
 // Pinned map names. MUST match the `ebpf:` struct tags in the generated
 // bpfel bindings (which come from the map names in bpf/common.h).

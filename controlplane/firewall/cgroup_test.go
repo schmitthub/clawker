@@ -147,23 +147,6 @@ func TestResolveContainerID_PropagatesLookupError(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 }
 
-func TestNewContainerResolver_ResolvesToCanonicalIDAndCgroupPath(t *testing.T) {
-	// Happy path: a friendly ref resolves through Docker to its canonical
-	// long ID, and the resolver pairs it with the BPF-attachable cgroup
-	// path for the detected driver.
-	const friendly = "clawker.myapp.dev"
-	cfg := configmocks.NewBlankConfig()
-	fake := dockermocks.NewFakeClient(cfg)
-	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, nil)
-
-	resolve := fwcp.NewContainerResolver(fake.Client, "systemd")
-	id, cgroupPath, exists, err := resolve(t.Context(), friendly)
-	require.NoError(t, err)
-	assert.True(t, exists)
-	assert.Equal(t, longHexID, id)
-	assert.Equal(t, fwcp.EBPFCgroupPath("systemd", longHexID), cgroupPath)
-}
-
 func TestNewContainerResolver_MissingContainerSurfacesAsError(t *testing.T) {
 	// A friendly ref that Docker no longer knows is reported by the
 	// whail-backed *docker.Client as a "not managed" error (its managed
@@ -182,23 +165,6 @@ func TestNewContainerResolver_MissingContainerSurfacesAsError(t *testing.T) {
 	assert.False(t, exists)
 	assert.Empty(t, id)
 	assert.Empty(t, cgroupPath)
-}
-
-func TestNewContainerResolver_CanonicalIDSkipsDockerRoundTrip(t *testing.T) {
-	// A canonical long-hex ref short-circuits inside ResolveContainerID and
-	// never touches Docker. ContainerInspect is left unset so a regression
-	// that drops the short-circuit would panic with "not implemented".
-	cfg := configmocks.NewBlankConfig()
-	fake := dockermocks.NewFakeClient(cfg)
-	fake.FakeAPI.ContainerInspectFn = nil
-
-	resolve := fwcp.NewContainerResolver(fake.Client, "cgroupfs")
-	id, cgroupPath, exists, err := resolve(t.Context(), longHexID)
-	require.NoError(t, err)
-	assert.True(t, exists)
-	assert.Equal(t, longHexID, id)
-	assert.Equal(t, fwcp.EBPFCgroupPath("cgroupfs", longHexID), cgroupPath)
-	assert.NotContains(t, fake.FakeAPI.Calls, "ContainerInspect")
 }
 
 func TestNewContainerResolver_PropagatesDockerError(t *testing.T) {

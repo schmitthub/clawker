@@ -21,6 +21,14 @@ const (
 	EnvHostUID       = "CLAWKER_HOST_UID"
 	EnvHostGID       = "CLAWKER_HOST_GID"
 
+	// EnvHostBPFFSSource carries the host path the CP container's BPF
+	// filesystem was bind-mounted from, so firewall.Stack can give the
+	// CoreDNS sibling the same source — the two containers reach the same
+	// pinned dns_cache map only when they bind the same filesystem. Set by
+	// the CLI when launching the CP container; a missing value degrades to
+	// SysFSBPFPath, the default deployment's source.
+	EnvHostBPFFSSource = "CLAWKER_HOST_BPFFS_SOURCE"
+
 	// EnvCPBinarySHA carries the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes (the LabelCPBinarySHA value) into the CP
 	// container, where firewall.Stack stamps it as a sibling drift
@@ -144,12 +152,17 @@ var (
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
-// HostBPFFSSubdir returns the host-FS mount point of clawker's own BPF
-// filesystem — the bind source shared by the CP and the CoreDNS container,
-// which reach the same pinned dns_cache map through it. Pure composition
-// like the vars above; a function because it needs no package-level state
-// and nothing evaluates it at init.
-func HostBPFFSSubdir() string { return filepath.Join(HostDataDir, bpffsDir) }
+// HostBPFFSSource returns the host path the CP container's BPF filesystem
+// was bind-mounted from, read from EnvHostBPFFSSource. firewall.Stack uses
+// it as the CoreDNS sibling's bind source so both containers reach the same
+// filesystem. Unset degrades to SysFSBPFPath — the default deployment's
+// source, and what a pre-existing CP without the env var was built with.
+func HostBPFFSSource() string {
+	if v := os.Getenv(EnvHostBPFFSSource); v != "" {
+		return v
+	}
+	return SysFSBPFPath
+}
 
 const (
 	// CPLogsPath is the container-side clawker log directory. In the CP
@@ -157,11 +170,6 @@ const (
 	// agent-container helpers (the socket server) write theirs to the
 	// same path in the container's own filesystem.
 	CPLogsPath = "/var/log/clawker"
-
-	// CPBPFFSPath is the container-side mount point of clawker's own BPF
-	// filesystem, identical in the CP and CoreDNS containers so a pin path
-	// written by one is the path the other opens. It backs ebpf.PinPath.
-	CPBPFFSPath = "/var/lib/" + NamePrefix + "/" + bpffsDir
 
 	// CPClawkerDataDir is the container-side directory for Clawker data.
 	CPClawkerDataDir = "/usr/local/share/clawker"

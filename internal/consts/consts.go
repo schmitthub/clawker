@@ -100,6 +100,14 @@ const (
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
 	LabelCPBinarySHA = LabelPrefix + "cp.binary_sha256"
+	// LabelCPBPFFSSource stamps the host path the CP container's BPF
+	// filesystem bind mounts from. The default is the host's own
+	// /sys/fs/bpf; after a rootless delegation heal it is clawker's
+	// delegated bpffs (BPFFSSubdir). EnsureRunning compares the running
+	// container's label against the currently desired source so a CP
+	// created before the heal is recreated onto the delegated filesystem
+	// instead of being restarted without it.
+	LabelCPBPFFSSource = LabelPrefix + "cp.bpffs_source"
 	// LabelBaseContentHash stamps the SHA-256 of the base image's inputs
 	// (rendered base Dockerfile + user copy sources) onto the per-project
 	// base image. The builder compares it against the freshly computed
@@ -298,6 +306,17 @@ const (
 	// storage.Store.
 	CLIStateFile = "update-state.yaml"
 )
+
+// SysFSBPFPath is the kernel's canonical BPF filesystem mount point. It is
+// both the default bind source for the CP and CoreDNS containers' BPF
+// filesystem (the host's own bpffs) and the fixed container-side target, so
+// the pin paths inside the containers never depend on the deployment.
+const SysFSBPFPath = "/sys/fs/bpf"
+
+// SysFSCgroupPath is the kernel's cgroup v2 hierarchy root. Bind-mounted
+// into the CP container (read-only, host tree) so eBPF cgroup paths resolve
+// in host coordinates regardless of where the daemon parks its containers.
+const SysFSCgroupPath = "/sys/fs/cgroup"
 
 // Subdirectory names within XDG base dirs.
 const (
