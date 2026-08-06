@@ -909,6 +909,11 @@ func awaitCPReady(ctx context.Context, dc *docker.Client, cfg config.Config, log
 			return <-readyCh
 		}
 		joinWatch()
+		// The readiness goroutine is owned here too: cancel it and wait for
+		// its send so nothing outlives this call still probing (or, in
+		// tests, still reading seam globals mid-restore).
+		stopReady()
+		<-readyCh
 		return &CPSOSError{Kind: sos.GetKind(), Message: sos.GetMessage()}
 	}
 }
