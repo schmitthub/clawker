@@ -1,6 +1,7 @@
 name: Build embedded control plane binaries
 description: >
-  Builds the `clawkerd`, `clawkercp`, `ebpf-manager`, and `coredns-clawker`
+  Builds the `clawkerd`, `clawkercp`, `ebpf-manager`, `coredns-clawker`,
+  `bpffs-delegate`, and `idmap-mount`
   Linux binaries via plain CGO_ENABLED=0 Go cross-compiles, and materializes
   the bpf2go-generated Go wrappers at
   `internal/controlplane/firewall/ebpf/clawker_*_bpfel.{go,o}` by running
@@ -16,6 +17,10 @@ description: >
   - `internal/controlplane/firewall` `go:embed`'s `coredns-clawker`
   - `internal/controlplane/firewall/ebpf/manager.go` references types
     declared in the bpf2go wrappers
+  - `controlplane/manager` `go:embed`'s `bpffs-delegate` (elevated bpffs
+    delegation one-shot)
+  - `internal/cmd/container/shared` `go:embed`'s `idmap-mount` (elevated
+    id-mapped-mount one-shot)
 
   Build order: `clawkerd-binary` MUST come before `cp-binary` because
   `cmd/clawkercp` transitively imports `clawkerd/embed` via
@@ -65,4 +70,4 @@ runs:
 
     - name: Build embedded control plane binaries
       shell: bash
-      run: make ebpf-binary coredns-binary clawkerd-binary cp-binary
+      run: make ebpf-binary coredns-binary clawkerd-binary cp-binary bpffs-delegate-binary idmap-mount-binary
