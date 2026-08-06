@@ -61,10 +61,18 @@ Order of decisions, each cheap before the next:
 3. The daemon reports itself rootful (`Info.SecurityOptions` lacks
    `name=rootless`) → no-op. The daemon's own answer is the only trustworthy
    source; the CLI's privileges say nothing about how the daemon runs.
-4. Otherwise, per root, deepest first: if no view is mounted at
-   `consts.IDMapSubdir()/<basename>-<hash>`, run the embedded `idmap-mount`
-   helper under sudo (via `cmdutil.RunElevated`) to attach one; then repoint
-   every bind source at or under that root into the view.
+4. The daemon is rootless but remote (its address is not a local unix
+   socket) → refused with a clear error: the view would be a mount on the
+   CLI's machine, computed from the CLI's subordinate ID tables —
+   meaningless to a daemon elsewhere.
+5. Otherwise, per root, deepest first: `ensureViewForRoot` brings the view at
+   `consts.IDMapSubdir()/<basename>-<hash>` into a **proven** state — mounted
+   AND presenting the IDs the current mapping computes (checked by stat). A
+   mount that exists but presents the wrong IDs (stale mapping, a prior
+   half-failed attach) is re-attached, which the helper does by detaching the
+   old view first; the helper likewise detaches its own attach if the
+   post-attach proof fails, so a failed run leaves no state. Then every bind
+   source at or under that root is repointed into the view.
 
 Roots are `ws.wd` (the workspace — a worktree in `--worktree` mode) and
 `ws.projectRootDir` (the main repository, bound for its git directory in
@@ -78,9 +86,21 @@ read from `/etc/subuid` + `/etc/subgid`). The container's clawker user carries
 the host user's uid, so the owner's IDs are also the container-side IDs.
 
 The view is state, not configuration: it survives daemon restarts and dies at
-reboot, so its absence is simply re-provisioned — one sudo prompt on the first
-create after a boot. A non-interactive run declines and returns the exact
-`sudo clawker-idmap-mount …` command instead of a bare failure.
+reboot, so its absence is simply re-provisioned — one sudo prompt per
+workspace root (two in worktree mode), the first time after a boot. A
+non-interactive run declines with an error naming the remedy (an interactive
+run); there is deliberately no command handover — attaching a view takes a
+sudo prompt, which a headless run cannot answer.
+
+**Every start re-checks.** Docker re-resolves bind sources at container start,
+and the views are gone after a reboot — a start over the bare mount-point
+directory would hand the container an empty workspace. So the create path
+returns the roots it attached views for, `createAndBootstrapContainer` stamps
+them as the `consts.LabelIDMapRoots` label (JSON array), and
+`BootstrapServicesPreStart` calls `ensureIDMappedViewsAtStart`, which reads
+the label back and runs the same `ensureViewForRoot` proof per root before
+Docker starts the container. Containers without the label (rootful daemons,
+pre-feature containers) are left entirely alone.
 
 ### Agent Bootstrap Delivery (`agent_bootstrap.go`)
 
@@ -146,7 +166,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams` (the struct field, not a provider) — `BootstrapServicesPreStart` refuses a nil IOStreams up front, because a nil is always a wiring bug (headless runs carry a non-TTY IOStreams; prompt-suitability is `CanPrompt`'s call inside `AssistSOS`) and would silently downgrade a control plane SOS to a plain error instead of prompting.
 
 **Functions**:
-- `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
+- `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + ID-mapped view re-establishment (`ensureIDMappedViewsAtStart` — containers stamped with `consts.LabelIDMapRoots` get their workspace views re-proven before Docker resolves bind sources; see "ID-mapped workspace views") + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
 - `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
 - `ContainerStart(ctx, cmdOpts, startOpts) (*mobyClient.ContainerStartResult, error)` -- runs all three phases; errors abort immediately. The docker client is resolved BEFORE pre-start so a failure can reap. Pre-start and Docker-start failures route through `ReapFailedStart`; post-start failures don't (the container is running). The result is the SDK's verbatim; nil means the Docker start call was never reached — the wrapper never fabricates an SDK result value (moby reserves the right to add fields to ContainerStartResult).
 - `ReapFailedStart(client, containerID, startErr) error` -- reap-on-failed-start: when a start sequence fails, removes the container ONLY if it is destined for AutoRemove (`--rm`) and inspect proves it not running (nil `State` = unknown → untouched, a force-remove demands proof). Docker honors AutoRemove solely on exit-after-start, so a `--rm` container whose start never succeeded would otherwise squat its name forever in the `created` state, blocking a re-run. Non-AutoRemove and running containers are left untouched. NotFound/not-managed from inspect or remove is benign — the daemon already removed it. Always returns a non-nil error derived from `startErr` (the `ReapedNotice` const carries the user-facing removed-it message); cleanup uses a background context so Ctrl+C cannot abort it. Every start-sequence failure path routes through it; the one nuance worth knowing: plain `restart` and `start --attach` call it directly because they bootstrap without going through `ContainerStart`.
@@ -173,7 +193,7 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 | `NewContainerOptions()` | Create ContainerCreateOptions with initialized pflag.Value fields |
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
 | `MarkMutuallyExclusive(cmd)` | Mark `--agent`/`--name` mutually exclusive |
-| `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
+| `CreateContainer(ctx, opts)` | Single entry point -- workspace, config, env, create, inject |
 | `NeedsSocketBridge(security)` | Check if GPG/SSH bridge needed from the project's `security:` block |
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
 | `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
@@ -202,13 +222,14 @@ The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree ad
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `controlplane/manager` (the `Manager` noun) + `internal/cmd/controlplane/shared` (`AssistSOS`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
+Imports: `internal/cmdutil`, `internal/config`, `internal/consts`, `internal/containerfs`, `controlplane/manager` (the `Manager` noun) + `internal/cmd/controlplane/shared` (`AssistSOS`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/idmap`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/sudo`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
 
 ## Testing
 
 - `shared/init_test.go` -- `CreateContainer` with `mocks.FakeClient` + `hostproxytest.MockManager`
 - `shared/container_create_test.go` -- Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types
 - `shared/container_start_test.go` -- `BootstrapServicesPreStart`/`PostStart` nil-safety, pre-run delivery, `ContainerStart` client validation
+- `shared/idmap_internal_test.go` -- `ensureIDMappedWorkspace` gates (rootful untouched, daemon never queried without binds, non-interactive decline, remote-daemon refusal), `ensureIDMappedViewsAtStart` label handling, `workspaceRoots` ordering
 - `shared/agent_bootstrap_test.go` -- `GenerateAgentBootstrap`, `WriteAgentBootstrapToContainer` tar shape, `InstallAgentBootstrapMaterial`
 - `shared/image_test.go` -- `validatePlaceholderHarness` reserved-tag rejection
 - `shared/containerfs_test.go` -- Mock CopyToVolume/CopyToContainer trackers

@@ -2241,6 +2241,10 @@ type containerConfigs struct {
 	container *container.Config
 	host      *container.HostConfig
 	network   *network.NetworkingConfig
+	// idmapRoots are the workspace roots whose binds were repointed through
+	// ID-mapped views (rootless daemons only; empty otherwise). Stamped as
+	// a label so every later start can re-establish the views.
+	idmapRoots []string
 }
 
 // buildContainerConfigs assembles the git-credential mounts and create-time
@@ -2281,8 +2285,9 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 	// — the workspace, the harness's, the user's own -v flags — because
 	// Docker fixes mounts at create. That makes this the one place that can
 	// make them all usable on a rootless daemon.
-	if err = ensureIDMappedWorkspace(ctx, opts.Client, hostConfig,
-		[]string{ws.wd, ws.projectRootDir}, opts.IOStreams, log); err != nil {
+	idmapRoots, err := ensureIDMappedWorkspace(ctx, opts.Client, hostConfig,
+		[]string{ws.wd, ws.projectRootDir}, opts.IOStreams, log)
+	if err != nil {
 		return nil, err
 	}
 
@@ -2304,7 +2309,12 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 		containerConfig.WorkingDir = ws.result.ContainerPath
 	}
 
-	return &containerConfigs{container: containerConfig, host: hostConfig, network: networkConfig}, nil
+	return &containerConfigs{
+		container:  containerConfig,
+		host:       hostConfig,
+		network:    networkConfig,
+		idmapRoots: idmapRoots,
+	}, nil
 }
 
 // finalizeCreatedContainer performs the post-create steps that depend on the
@@ -2356,6 +2366,17 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 	// start-time consumers (pre_run composition, egress refresh) read back
 	// instead of re-resolving the configured default.
 	extraLabels[consts.LabelHarness] = opts.harnessBundle.Name
+
+	// Stamp the ID-mapped workspace roots so every start can re-establish
+	// the views before Docker resolves the bind sources (they die at
+	// reboot). Marshaling []string cannot fail; absent on rootful daemons.
+	if len(cfgs.idmapRoots) > 0 {
+		rootsJSON, jsonErr := json.Marshal(cfgs.idmapRoots)
+		if jsonErr != nil {
+			return "", fmt.Errorf("encoding the ID-mapped workspace roots: %w", jsonErr)
+		}
+		extraLabels[consts.LabelIDMapRoots] = string(rootsJSON)
+	}
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           cfgs.container,

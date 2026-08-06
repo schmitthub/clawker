@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,6 +101,12 @@ func run(src, view, uidPair, gidPair string) error {
 		return attachErr
 	}
 	if proveErr := proveMapping(view, m); proveErr != nil {
+		// The view is attached but provably wrong. Take it back down so a
+		// failed run leaves no state — a broken mount left behind would look
+		// exactly like a healthy one to the next run's mounted-check.
+		if umountErr := unix.Unmount(view, unix.MNT_DETACH); umountErr != nil {
+			return fmt.Errorf("%w (and detaching the broken view failed: %w)", proveErr, umountErr)
+		}
 		return proveErr
 	}
 
@@ -123,6 +130,13 @@ func parseArgs(src, view, uidPair, gidPair string) (idmap.Mapping, error) {
 	gidFrom, gidTo, err := idmap.ParseIDPair(gidPair)
 	if err != nil {
 		return idmap.Mapping{}, fmt.Errorf("gid pair: %w", err)
+	}
+	// Mirror ComputeMapping's refusal on the privileged side of the boundary:
+	// a from-ID of 0 would build a view presenting root-owned files as some
+	// user's, which is never the workspace translation this program exists
+	// for.
+	if uidFrom == 0 || gidFrom == 0 {
+		return idmap.Mapping{}, errors.New("refusing to map from ID 0: an ID-mapped view is for user-owned trees")
 	}
 	if srcErr := checkDir(src); srcErr != nil {
 		return idmap.Mapping{}, fmt.Errorf("source: %w", srcErr)

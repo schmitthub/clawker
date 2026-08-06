@@ -15,8 +15,9 @@ invisible, 775 directories are unwritable.
 
 Neither of the obvious fixes works:
 
-- **Docker has no per-mount ID mapping.** `BindOptions` carries
-  `Propagation`/`NonRecursive`/`CreateMountpoint` and nothing else;
+- **Docker has no per-mount ID mapping.** `BindOptions` carries propagation
+  and recursion knobs (`Propagation`, `NonRecursive`, `CreateMountpoint`,
+  `ReadOnlyNonRecursive`, `ReadOnlyForceRecursive`) — nothing that maps IDs;
   [moby#52061](https://github.com/moby/moby/issues/52061) proposed one in
   February 2026 and was closed unimplemented weeks later. Podman's
   `--userns=keep-id` has no Docker equivalent — podman is daemonless and
@@ -72,8 +73,10 @@ container user are the same number. Verified live (uid 1003, subuid base
 296608 → 297610).
 
 Refusals are explicit, because a wrong mapping is worse than none: a
-root-owned workspace, a user with no subordinate ranges, and an id beyond the
-ranges each name what went wrong. Malformed lines in the files are skipped
+root-owned or root-group-owned workspace, a user with no subordinate ranges,
+and an id beyond the ranges each name what went wrong (the gid-0 refusal also
+keeps the n−1 offset from underflowing into range-walk debris). Malformed
+lines in the files are skipped
 rather than fatal — those files are system-owned and one stray row must not
 break every container create.
 
@@ -100,5 +103,5 @@ not a host bind (named volumes, tmpfs, mounts elsewhere on the filesystem).
 - `controlplane/firewall/ebpf/delegation` — the same shape for the BPF
   filesystem: a small contract package both sides of a privilege boundary
   compile against.
-- `internal/cmdutil` `RunElevated` — stages an embedded helper into a fresh
+- `internal/sudo` `RunElevated` — stages an embedded helper into a fresh
   0700 directory, prompts for the sudo credential, runs it once, removes it.

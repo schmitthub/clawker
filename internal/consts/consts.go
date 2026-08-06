@@ -60,6 +60,14 @@ const (
 	LabelProject = LabelPrefix + "project"
 	LabelAgent   = LabelPrefix + "agent"
 	LabelHarness = LabelPrefix + "harness"
+
+	// LabelIDMapRoots stamps the workspace roots a container's binds were
+	// repointed through ID-mapped views for (a JSON string array). The
+	// start path reads it back to re-establish the views before Docker
+	// resolves the bind sources — the mounts die at reboot, and a start
+	// against the bare mount-point directory would hand the container an
+	// empty workspace.
+	LabelIDMapRoots = LabelPrefix + "idmap.roots"
 )
 
 // Infrastructure volume-name purpose suffixes. Volume names compose as

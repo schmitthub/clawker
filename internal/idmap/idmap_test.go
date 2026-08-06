@@ -82,6 +82,25 @@ func TestComputeMapping_MultipleRanges(t *testing.T) {
 	assert.Equal(t, uint32(500002), m.ToUID)
 }
 
+// TestComputeMapping_LastIDInRange pins the exact range end: a 65536-count
+// range holds container ids 1..65536, so 65536 maps to the range's final
+// subordinate id. Paired with the one-past case in the error table, this
+// brackets the offset < count comparison from both sides.
+func TestComputeMapping_LastIDInRange(t *testing.T) {
+	t.Parallel()
+
+	m, err := idmap.ComputeMapping(idmap.MappingInputs{
+		OwnerUID: 65536,
+		OwnerGID: bigdaddyGID,
+		UserName: "openclaw",
+		UserUID:  bigdaddyUID,
+		Subuid:   bigdaddySubIDs,
+		Subgid:   bigdaddySubIDs,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(296608+65535), m.ToUID)
+}
+
 func TestComputeMapping_Errors(t *testing.T) {
 	t.Parallel()
 
@@ -112,6 +131,31 @@ func TestComputeMapping_Errors(t *testing.T) {
 			name: "owner uid beyond the subordinate ranges",
 			in: idmap.MappingInputs{
 				OwnerUID: 70000, OwnerGID: bigdaddyGID,
+				UserName: "openclaw", UserUID: bigdaddyUID,
+				Subuid: bigdaddySubIDs, Subgid: bigdaddySubIDs,
+			},
+			wantErr: "outside",
+		},
+		{
+			// gid 0 gets its own refusal: without it, the n-1 offset
+			// underflows and errors with range-walk debris instead of an
+			// answer that names the problem.
+			name: "root-group-owned workspace is refused",
+			in: idmap.MappingInputs{
+				OwnerUID: bigdaddyUID, OwnerGID: 0,
+				UserName: "openclaw", UserUID: bigdaddyUID,
+				Subuid: bigdaddySubIDs, Subgid: bigdaddySubIDs,
+			},
+			wantErr: "root-group-owned",
+		},
+		{
+			// The exact first-invalid id: a 65536-count range holds
+			// container ids 1..65536 (offsets 0..65535); 65537 is one past
+			// it. An off-by-one to <= would map it one past the delegated
+			// range — into someone else's subordinate block.
+			name: "owner uid one past the range end",
+			in: idmap.MappingInputs{
+				OwnerUID: 65537, OwnerGID: bigdaddyGID,
 				UserName: "openclaw", UserUID: bigdaddyUID,
 				Subuid: bigdaddySubIDs, Subgid: bigdaddySubIDs,
 			},

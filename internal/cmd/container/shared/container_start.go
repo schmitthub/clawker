@@ -183,6 +183,14 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return errors.New("bootstrapping services: docker client is nil")
 	}
 
+	// Containers created against ID-mapped workspace views (rootless
+	// daemons) need those views mounted BEFORE Docker resolves the bind
+	// sources at start — they die at reboot, and starting over the bare
+	// mount-point directory hands the container an empty workspace.
+	if err = ensureIDMappedViewsAtStart(ctx, client, container, cmdOpts.IOStreams, log); err != nil {
+		return fmt.Errorf("bootstrapping services: %w", err)
+	}
+
 	// The container's harness label (stamped at create from the image) is
 	// the runtime identity — egress floor and pre_run compose against it,
 	// not against whatever the configured default happens to be today.

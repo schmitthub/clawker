@@ -80,6 +80,13 @@ func ComputeMapping(in MappingInputs) (Mapping, error) {
 	if in.OwnerUID == 0 {
 		return Mapping{}, errors.New("idmap: workspace is root-owned; an ID-mapped view is for user-owned trees")
 	}
+	if in.OwnerGID == 0 {
+		// Refused for its own reason, not folded into the uid check: id 0 is
+		// the daemon user in the rootless formula, so without this guard the
+		// n-1 offset underflows and produces range-walk debris instead of an
+		// answer that names the problem.
+		return Mapping{}, errors.New("idmap: workspace is root-group-owned; an ID-mapped view is for user-owned trees")
+	}
 
 	kuid, err := resolveSubordinate(in.Subuid, in.UserName, in.UserUID, in.OwnerUID)
 	if err != nil {

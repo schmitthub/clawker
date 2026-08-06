@@ -2,7 +2,7 @@ package shared
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/user"
@@ -13,12 +13,12 @@ import (
 	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/idmap"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/sudo"
 )
 
 // rootlessSecurityOption is what a rootless daemon reports in its info
@@ -26,6 +26,11 @@ import (
 // the only trustworthy source — the CLI's own privileges say nothing about
 // how the daemon runs.
 const rootlessSecurityOption = "name=rootless"
+
+// localDaemonScheme is the address scheme of a daemon on this machine. An
+// ID-mapped view is a mount on the CLI's own host, which only helps a daemon
+// that shares that host.
+const localDaemonScheme = "unix://"
 
 // idmapHelperName is what the elevated helper is called on disk while it
 // runs. It shows up in the sudo prompt and the audit log, so it says what it
@@ -40,8 +45,28 @@ const viewDirMode = 0o700
 // linuxOS is the only platform where an ID-mapped mount can be made.
 const linuxOS = "linux"
 
+// readSubIDFiles reads the subordinate ID tables. A seam variable in the
+// established test-seam shape: production always reads the real files, tests
+// substitute contents so mapping outcomes do not depend on the host's
+// /etc/subuid.
+//
+//nolint:gochecknoglobals // test seam, same contract as the manager package's seam block
+var readSubIDFiles = func() (string, string, error) {
+	uids, err := os.ReadFile(idmap.SubUIDFile)
+	if err != nil {
+		return "", "", fmt.Errorf("reading %s: %w", idmap.SubUIDFile, err)
+	}
+	gids, err := os.ReadFile(idmap.SubGIDFile)
+	if err != nil {
+		return "", "", fmt.Errorf("reading %s: %w", idmap.SubGIDFile, err)
+	}
+	return string(uids), string(gids), nil
+}
+
 // ensureIDMappedWorkspace makes the container's host binds usable on a
-// rootless daemon, and is a no-op everywhere else.
+// rootless daemon, and is a no-op everywhere else. It returns the workspace
+// roots it attached views for, which the create path stamps onto the
+// container so every later start can re-check the same state.
 //
 // A rootless daemon's user namespace maps the invoking user to container
 // root, so a bind-mounted workspace arrives root-owned inside the container
@@ -57,9 +82,12 @@ const linuxOS = "linux"
 // written from either side land owned by the right identity on both.
 //
 // The view is state, not configuration: it survives daemon restarts and dies
-// at reboot, so its absence is simply re-provisioned. Attaching it needs
-// init-namespace CAP_SYS_ADMIN — hence one sudo prompt, the first time a
-// container is created after a reboot.
+// at reboot, so its absence is simply re-provisioned — one sudo prompt per
+// workspace root (two in worktree mode), the first time after a boot. Docker
+// re-resolves bind sources at every container start, which is why the start
+// path re-checks the views (see ensureIDMappedViewsAtStart): a start after a
+// reboot would otherwise bind the bare mount-point directory and hand the
+// container an empty workspace.
 func ensureIDMappedWorkspace(
 	ctx context.Context,
 	client *docker.Client,
@@ -67,37 +95,45 @@ func ensureIDMappedWorkspace(
 	roots []string,
 	ios *iostreams.IOStreams,
 	log *logger.Logger,
-) error {
+) ([]string, error) {
 	if runtime.GOOS != linuxOS {
 		// An ID-mapped mount has to be made on the kernel the daemon runs
 		// on. A CLI elsewhere (a Docker Desktop VM, say) cannot reach it —
 		// and has no reason to, since that daemon runs as root.
-		return nil
+		return nil, nil
 	}
 	roots = workspaceRoots(hostConfig, roots)
 	if len(roots) == 0 {
-		return nil
+		log.Debug().Msg("no host binds under a workspace root; ID-mapped views not needed")
+		return nil, nil
 	}
 
 	rootless, err := daemonIsRootless(ctx, client)
 	if err != nil {
-		return fmt.Errorf("asking the daemon how it runs: %w", err)
+		return nil, fmt.Errorf("asking the daemon how it runs: %w", err)
 	}
 	if !rootless {
-		return nil
+		log.Debug().Msg("daemon reports itself rootful; ID-mapped views not needed")
+		return nil, nil
+	}
+	if host := client.DaemonHost(); !strings.HasPrefix(host, localDaemonScheme) {
+		// The view would be mounted on THIS machine, from THIS machine's
+		// subordinate ID tables — meaningless to a daemon running elsewhere.
+		return nil, fmt.Errorf(
+			"the daemon at %s runs rootless on another machine; "+
+				"clawker can only attach the ID-mapped workspace view a rootless daemon needs on its own host",
+			host)
 	}
 
 	viewBase, err := consts.IDMapSubdir()
 	if err != nil {
-		return fmt.Errorf("resolving the ID-mapped view directory: %w", err)
+		return nil, fmt.Errorf("resolving the ID-mapped view directory: %w", err)
 	}
 
 	for _, root := range roots {
-		view := idmap.ViewPath(viewBase, root)
-		if !idmap.Mounted(view) {
-			if err = attachIDMappedView(ctx, root, view, ios, log); err != nil {
-				return err
-			}
+		view, viewErr := ensureViewForRoot(ctx, root, viewBase, ios, log)
+		if viewErr != nil {
+			return nil, viewErr
 		}
 
 		mounts, rewrittenMounts := idmap.RewriteMounts(hostConfig.Mounts, root, view)
@@ -112,7 +148,90 @@ func ensureIDMappedWorkspace(
 			Int("binds", rewrittenBinds).
 			Msg("repointed host binds at the ID-mapped workspace view")
 	}
+	return roots, nil
+}
+
+// ensureIDMappedViewsAtStart re-establishes the views a container was created
+// against, before Docker resolves its bind sources. The create path stamped
+// the workspace roots as a label; each start recomputes the mapping and
+// verifies the mounted view actually presents it, because the mounts die at
+// reboot and the inputs (workspace owner, subordinate ranges) can drift
+// between boots. Without this, a start after a reboot binds the bare
+// mount-point directory and the container gets an empty workspace.
+func ensureIDMappedViewsAtStart(
+	ctx context.Context,
+	client *docker.Client,
+	containerName string,
+	ios *iostreams.IOStreams,
+	log *logger.Logger,
+) error {
+	if runtime.GOOS != linuxOS {
+		return nil
+	}
+
+	inspect, err := client.ContainerInspect(ctx, containerName, docker.ContainerInspectOptions{Size: false})
+	if err != nil {
+		return fmt.Errorf("inspecting %s for ID-mapped workspace roots: %w", containerName, err)
+	}
+	if inspect.Container.Config == nil {
+		return nil
+	}
+	labelValue := inspect.Container.Config.Labels[consts.LabelIDMapRoots]
+	if labelValue == "" {
+		return nil
+	}
+
+	var roots []string
+	if err = json.Unmarshal([]byte(labelValue), &roots); err != nil {
+		return fmt.Errorf("reading the %s label on %s: %w", consts.LabelIDMapRoots, containerName, err)
+	}
+
+	viewBase, err := consts.IDMapSubdir()
+	if err != nil {
+		return fmt.Errorf("resolving the ID-mapped view directory: %w", err)
+	}
+	for _, root := range roots {
+		if _, err = ensureViewForRoot(ctx, root, viewBase, ios, log); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ensureViewForRoot brings the view for one workspace root into a proven
+// state: mounted and actually presenting the IDs the current mapping
+// computes. An existing mount is trusted only after that check — a mount
+// whose translation is stale (the helper failed mid-way once, the workspace
+// owner changed, the subordinate ranges moved) is re-attached, which the
+// helper does by detaching the old view first.
+func ensureViewForRoot(
+	ctx context.Context,
+	root, viewBase string,
+	ios *iostreams.IOStreams,
+	log *logger.Logger,
+) (string, error) {
+	view := idmap.ViewPath(viewBase, root)
+	mapping, err := workspaceMapping(root)
+	if err != nil {
+		return "", err
+	}
+
+	if idmap.Mounted(view) {
+		uid, gid, statErr := pathOwner(view)
+		if statErr == nil && uid == mapping.ToUID && gid == mapping.ToGID {
+			return view, nil
+		}
+		log.Debug().
+			Str("view", view).
+			Uint32("want_uid", mapping.ToUID).
+			Uint32("want_gid", mapping.ToGID).
+			Msg("mounted view does not present the current mapping; re-attaching")
+	}
+
+	if err = attachIDMappedView(ctx, root, view, mapping, ios, log); err != nil {
+		return "", err
+	}
+	return view, nil
 }
 
 // workspaceRoots reduces the candidate roots to the ones this container
@@ -165,31 +284,30 @@ func daemonIsRootless(ctx context.Context, client *docker.Client) (bool, error) 
 	return false, nil
 }
 
-// attachIDMappedView computes the mapping and runs the elevated helper that
-// attaches the view. The mount point is created here, unprivileged, because
-// the helper refuses to create it — that way a run as root can never leave a
-// root-owned directory where the CLI expects to manage its own state.
+// attachIDMappedView runs the elevated helper that attaches the view. The
+// mount point is created here, unprivileged, because the helper refuses to
+// create it — that way a run as root can never leave a root-owned directory
+// where the CLI expects to manage its own state.
 func attachIDMappedView(
 	ctx context.Context,
 	workspaceRoot, view string,
+	mapping idmap.Mapping,
 	ios *iostreams.IOStreams,
 	log *logger.Logger,
 ) error {
-	mapping, err := workspaceMapping(workspaceRoot)
-	if err != nil {
-		return err
+	if ios == nil || !ios.CanPrompt() {
+		// Elevation means a sudo prompt, which needs a person at a terminal.
+		// There is nothing to instruct a headless run to do — the remedy IS
+		// an interactive run — so the error just names the situation.
+		return idmapUnavailableError(workspaceRoot, nil)
 	}
-	if err = os.MkdirAll(view, viewDirMode); err != nil {
+	if err := os.MkdirAll(view, viewDirMode); err != nil {
 		return fmt.Errorf("creating the ID-mapped view directory: %w", err)
 	}
 
-	if ios == nil || !ios.CanPrompt() {
-		// Elevation means running something privileged, which is only
-		// reasonable with a human present to authorize it. Say what is
-		// needed and let the caller's operator run it.
-		return idmapUnavailableError(workspaceRoot, view, mapping, nil)
-	}
-
+	// The narration and the prompt land on the stream a caller's spinner may
+	// still be animating over.
+	ios.StopSpinner()
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "%s This daemon runs rootless, so %s reaches the container root-owned.\n",
 		cs.WarningIcon(), workspaceRoot)
@@ -203,7 +321,7 @@ func attachIDMappedView(
 		Uint32("gid_to", mapping.ToGID).
 		Msg("attaching ID-mapped workspace view")
 
-	if err = cmdutil.RunElevated(ctx, ios, cmdutil.ElevatedHelper{
+	if err := sudo.RunElevated(ctx, ios, sudo.ElevatedHelper{
 		Name:   idmapHelperName,
 		Binary: IDMapMountBinary,
 		Args: []string{
@@ -212,26 +330,25 @@ func attachIDMappedView(
 			idmap.FormatIDPair(mapping.FromGID, mapping.ToGID),
 		},
 	}); err != nil {
-		return idmapUnavailableError(workspaceRoot, view, mapping, err)
+		return idmapUnavailableError(workspaceRoot, err)
 	}
 	return nil
 }
 
-// idmapUnavailableError explains what could not be done and hands over the
-// exact command that does it, so a headless run is actionable rather than
-// merely failed.
-func idmapUnavailableError(workspaceRoot, view string, mapping idmap.Mapping, cause error) error {
+// idmapUnavailableError reports that the workspace cannot reach the container
+// usably. The remedy is an interactive run, so that is what the error says —
+// there is no command to hand a headless operator, because attaching the view
+// takes a sudo prompt.
+func idmapUnavailableError(workspaceRoot string, cause error) error {
 	msg := fmt.Sprintf(
-		"the daemon runs rootless, so %s reaches the container owned by root and the agent cannot use it.\n\n"+
-			"Mapping it for the container user needs one elevated command:\n\n"+
-			"    sudo %s %s %s %s %s\n",
-		workspaceRoot, idmapHelperName, workspaceRoot, view,
-		idmap.FormatIDPair(mapping.FromUID, mapping.ToUID),
-		idmap.FormatIDPair(mapping.FromGID, mapping.ToGID))
+		"the daemon runs rootless, so %s reaches the container owned by root and the agent cannot use it; "+
+			"attaching the ID-mapped view that fixes this needs a sudo prompt — "+
+			"run this once from an interactive terminal (once per boot)",
+		workspaceRoot)
 	if cause != nil {
-		return fmt.Errorf("%s\n%w", msg, cause)
+		return fmt.Errorf("%s: %w", msg, cause)
 	}
-	return errors.New(msg)
+	return fmt.Errorf("%s", msg)
 }
 
 // workspaceMapping resolves the ID pairs for the workspace: the owner IDs on
@@ -253,13 +370,9 @@ func workspaceMapping(workspaceRoot string) (idmap.Mapping, error) {
 	if err != nil {
 		return idmap.Mapping{}, fmt.Errorf("resolving the current user: %w", err)
 	}
-	subuid, err := os.ReadFile(idmap.SubUIDFile)
+	subuid, subgid, err := readSubIDFiles()
 	if err != nil {
-		return idmap.Mapping{}, fmt.Errorf("reading %s: %w", idmap.SubUIDFile, err)
-	}
-	subgid, err := os.ReadFile(idmap.SubGIDFile)
-	if err != nil {
-		return idmap.Mapping{}, fmt.Errorf("reading %s: %w", idmap.SubGIDFile, err)
+		return idmap.Mapping{}, err
 	}
 
 	//nolint:gosec // a uid from the OS is never negative
@@ -268,8 +381,8 @@ func workspaceMapping(workspaceRoot string) (idmap.Mapping, error) {
 		OwnerGID: ownerGID,
 		UserName: current.Username,
 		UserUID:  uint32(os.Getuid()),
-		Subuid:   string(subuid),
-		Subgid:   string(subgid),
+		Subuid:   subuid,
+		Subgid:   subgid,
 	})
 	if err != nil {
 		return idmap.Mapping{}, fmt.Errorf("computing the workspace ID mapping: %w", err)

@@ -1,4 +1,8 @@
-package cmdutil
+// Package sudo owns clawker's privileged one-shot lane: prompting for the
+// sudo credential and running an embedded helper binary under it exactly
+// once. Callers decide that elevation is warranted; this package does the
+// staging, prompting, and execution.
+package sudo
 
 import (
 	"context"
@@ -14,9 +18,9 @@ import (
 	"github.com/schmitthub/clawker/internal/prompter"
 )
 
-// sudoPrompt is what the credential prompt asks for. Callers suppress sudo's
+// prompt is what the credential prompt asks for. Callers suppress sudo's
 // own prompt (-p ”), so this is the only thing the person sees.
-const sudoPrompt = "[sudo] password"
+const prompt = "[sudo] password"
 
 // helperFileMode is the mode a staged helper binary is written with. The
 // other-execute bit is load-bearing: a helper that re-execs itself inside a
@@ -69,7 +73,7 @@ func RunElevated(ctx context.Context, ios *iostreams.IOStreams, helper ElevatedH
 	// nothing is spinning, and the caller's own deferred stop stays safe.
 	ios.StopSpinner()
 
-	credential, err := SudoPassword(ios)
+	credential, err := Password(ios)
 	if err != nil {
 		return err
 	}
@@ -110,12 +114,12 @@ func stageHelper(helper ElevatedHelper) (string, func(), error) {
 	return path, cleanup, nil
 }
 
-// SudoPassword prompts for the invoking user's sudo credential without echo
-// and returns it. It runs nothing itself — the caller feeds the credential to
+// Password prompts for the invoking user's sudo credential without echo and
+// returns it. It runs nothing itself — the caller feeds the credential to
 // `sudo -S` on stdin. A non-interactive session errors instead of reading
 // cleartext from a pipe.
-func SudoPassword(ios *iostreams.IOStreams) (string, error) {
-	credential, err := prompter.NewPrompter(ios).Password(sudoPrompt)
+func Password(ios *iostreams.IOStreams) (string, error) {
+	credential, err := prompter.NewPrompter(ios).Password(prompt)
 	if err != nil {
 		return "", fmt.Errorf("prompting for the sudo credential: %w", err)
 	}

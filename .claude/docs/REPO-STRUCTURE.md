@@ -70,6 +70,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── state/                 # StateStore facade over Store[State]: update-check cache + changelog cursor
 │   ├── storage/               # Multi-file YAML store engine (Store[T])
 │   ├── storeui/               # Generic TUI for Store[T] editing
+│   ├── sudo/                  # Privileged one-shot lane: credential prompt + stage-and-run of embedded elevated helpers
 │   ├── term/                  # Terminal capabilities (sole x/term gateway)
 │   ├── testenv/               # Unified test environment (test-only)
 │   ├── text/                  # Pure text utilities (leaf)

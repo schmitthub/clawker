@@ -11,9 +11,9 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/sudo"
 )
 
 // helperBinaryName is what the staged helper is called on disk. It shows up
@@ -84,11 +84,14 @@ func delegateBPFFS(ctx context.Context, sos *cpmanager.CPSOSError, ios *iostream
 		return fmt.Errorf("resolving the BPF filesystem directory: %w", err)
 	}
 
+	// The container-start path runs this under a spinner that animates on
+	// the same stream the narration and prompt land on.
+	ios.StopSpinner()
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), sos.Message)
-	fmt.Fprintf(ios.ErrOut, "%s Completing it needs %s.\n", cs.InfoIcon(), cs.Muted("sudo"))
+	fmt.Fprintf(ios.ErrOut, "%s Completing it needs sudo.\n", cs.InfoIcon())
 
-	if runErr := cmdutil.RunElevated(ctx, ios, cmdutil.ElevatedHelper{
+	if runErr := sudo.RunElevated(ctx, ios, sudo.ElevatedHelper{
 		Name:   helperBinaryName,
 		Binary: cpmanager.BPFFSDelegateBinary,
 		Args:   []string{filepath.Join(firewallDir, delegation.SocketName), pinPath},

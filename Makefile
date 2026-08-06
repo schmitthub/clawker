@@ -460,9 +460,9 @@ $(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard control
 
 # idmap-mount-binary builds the elevated one-shot helper that attaches an
 # ID-mapped view of a workspace on a rootless Docker host. Pure Go: it links
-# the mapping contract (internal/idmap) and x/sys, nothing else — it runs
-# under sudo, and a root-run binary should carry the syscalls it makes and no
-# more. The artifact is go:embed'd into the clawker CLI via
+# the mapping contract (internal/idmap, which brings moby's mount type
+# definitions) and x/sys — it runs under sudo, and a root-run binary should
+# carry the syscalls it makes and little else. The artifact is go:embed'd into the clawker CLI via
 # internal/cmd/container/shared/embed_idmap.go and written to a private temp
 # directory when a container create needs a view.
 .PHONY: idmap-mount-binary
