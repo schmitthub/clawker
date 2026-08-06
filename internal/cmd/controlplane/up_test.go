@@ -106,7 +106,7 @@ func TestUpRun_FirewallEnabled_BringsUpStack(t *testing.T) {
 	}
 
 	require.NoError(t, upRun(context.Background(), upOptsFrom(tb)))
-	assert.Len(t, tb.Mock.StartCalls(), 1, "EnsureRunning must be invoked once")
+	assert.Len(t, tb.Mock.StartCalls(), 1, "Start must be invoked once")
 	assert.Len(t, adminMock.FirewallInitCalls(), 1, "FirewallInit must be invoked once when firewall.enable is true")
 	out := tb.Stdout.String()
 	assert.Contains(t, out, "Control plane is up")
@@ -184,7 +184,7 @@ func TestUpRun_FirewallInitError_WarnsAndFails(t *testing.T) {
 	assert.Contains(t, tb.Stderr.String(), "FIREWALL STACK FAILED TO START")
 }
 
-func TestUpRun_WrapsEnsureRunningError(t *testing.T) {
+func TestUpRun_WrapsStartError(t *testing.T) {
 	tb := newTestBed(t)
 	bootErr := errors.New("healthz timed out")
 	tb.Mock.StartFunc = func(_ context.Context) error { return bootErr }

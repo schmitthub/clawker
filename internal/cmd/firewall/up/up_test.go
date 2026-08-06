@@ -86,7 +86,7 @@ func TestNewCmdUp(t *testing.T) {
 }
 
 // TestUpRun covers the CP-bootstrap-before-dial ordering contract that
-// `firewall up` owns: EnsureRunning MUST fire before any AdminClient dial so
+// `firewall up` owns: Manager.Start MUST fire before any AdminClient dial so
 // the RPC hits a live CP instead of fail-fast, and a CP bootstrap failure MUST
 // short-circuit before the dial — no point dialing a CP that refused to come
 // up.
@@ -164,7 +164,7 @@ func TestUpRun(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			assert.Len(t, mgr.StartCalls(), 1, "EnsureRunning must fire exactly once")
+			assert.Len(t, mgr.StartCalls(), 1, "Start must fire exactly once")
 			assert.Equal(t, tt.wantAdminCalled, adminCalled)
 			if tt.wantStdout != "" {
 				assert.Contains(t, stdout.String(), tt.wantStdout)
