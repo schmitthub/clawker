@@ -70,7 +70,7 @@ Constants: `ProtocolVersion`, `readBufSize` (64KB), `maxMessageSize` (1MB).
 
 ## Manager Lifecycle
 
-1. `Precheck(ctx)` -- per-lane host checks mirroring the daemon's own lookups (GPG: `gpg --export` + gpg-agent extra socket; SSH: `SSH_AUTH_SOCK` set + dialable), failures wrapping the `ErrGPGUnavailable` / `ErrSSHAgentUnavailable` sentinels (`errors.Join` when both). The command layer runs it before container start and prints one stderr warning per configured lane the host cannot serve — warn only, no behavior change
+1. `Precheck(ctx, PrecheckOptions)` -- host checks for the lanes the options request, mirroring the daemon's own lookups (GPG: `gpg --export` + gpg-agent extra socket; SSH: `SSH_AUTH_SOCK` set + dialable), failures wrapping the `ErrGPGUnavailable` / `ErrSSHAgentUnavailable` sentinels (`errors.Join` when both). The command layer sets each option from the project's git-credential config — a disabled lane is never probed — runs it before container start, and prints one stderr warning per configured lane the host cannot serve — warn only, no behavior change
 2. `EnsureBridge(containerID, gpgEnabled)` -- idempotent; checks in-memory tracking, then PID file, then spawns new daemon
 3. Daemon runs `clawker bridge serve --container <id> --pid-file <path> [--gpg]`
 4. Daemon is detached (`Setsid: true`), persists across CLI invocations

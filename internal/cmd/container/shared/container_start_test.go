@@ -205,20 +205,12 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 	})
 }
 
-// TestBootstrapServicesPostStart_GPGPrecheck proves the CLI-side GPG probe
-// contract: a host without GPG material degrades the bridge to SSH-only
-// forwarding with a visible warning on stderr, a host with material keeps
-// GPG forwarding on silently, and an SSH-only config never probes at all.
-// TestBootstrapServicesPostStart_BridgePrecheck pins the lane precheck
-// contract: each enabled lane the host cannot serve gets a visible stderr
-// warning before the daemon spawns (GPG additionally spawns with the flag
-// off — the daemon dies without a pubkey), a healthy host warns nothing,
-// and a config-disabled lane is never checked against.
 // TestBootstrapServicesPostStart_ForwarderPrechecks pins the precheck
-// contract: each configured forwarding lane the host cannot serve gets one
-// stderr warning before anything starts, prechecks never change what is
-// passed to the forwarding services, and lanes the config disables are
-// never warned about.
+// contract: every configured forwarding lane the host cannot serve produces
+// a stderr warning naming that lane, a precheck failure never aborts the
+// start and never changes what is passed to the forwarding services — a
+// failed GPG probe still spawns the bridge with the configured GPG flag on —
+// and lanes the config disables are neither probed nor warned about.
 func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +229,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 	t.Run("missing GPG warns and does not change the bridge flags", func(t *testing.T) {
 		t.Parallel()
 		sb := sbmocks.NewMockManager()
-		sb.PrecheckFunc = func(context.Context) error {
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
 			return fmt.Errorf("%w: no GPG public keys found", socketbridge.ErrGPGUnavailable)
 		}
 		tio, _, _, errOut := iostreams.Test()
@@ -254,7 +246,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 	t.Run("missing SSH agent warns", func(t *testing.T) {
 		t.Parallel()
 		sb := sbmocks.NewMockManager()
-		sb.PrecheckFunc = func(context.Context) error {
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
 			return fmt.Errorf("%w: SSH_AUTH_SOCK not set on host", socketbridge.ErrSSHAgentUnavailable)
 		}
 		tio, _, _, errOut := iostreams.Test()
@@ -266,10 +258,10 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		require.Len(t, sb.EnsureBridgeCalls(), 1)
 	})
 
-	t.Run("config-disabled lanes are not warned about", func(t *testing.T) {
+	t.Run("config-disabled lanes are neither probed nor warned about", func(t *testing.T) {
 		t.Parallel()
 		sb := sbmocks.NewMockManager()
-		sb.PrecheckFunc = func(context.Context) error {
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
 			return errors.Join(
 				fmt.Errorf("%w: gpg not found", socketbridge.ErrGPGUnavailable),
 				fmt.Errorf("%w: SSH_AUTH_SOCK not set", socketbridge.ErrSSHAgentUnavailable),
@@ -283,6 +275,10 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 
 		assert.NotContains(t, errOut.String(), "GPG forwarding", "disabled lane must not warn")
 		assert.Contains(t, errOut.String(), "SSH forwarding is configured")
+		calls := sb.PrecheckCalls()
+		require.Len(t, calls, 1)
+		assert.False(t, calls[0].Opts.GPG, "disabled lane must not be probed")
+		assert.True(t, calls[0].Opts.SSH)
 	})
 
 	t.Run("host proxy credential precheck failure warns", func(t *testing.T) {

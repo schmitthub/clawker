@@ -25,7 +25,7 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //			IsRunningFunc: func(containerID string) bool {
 //				panic("mock out the IsRunning method")
 //			},
-//			PrecheckFunc: func(ctx context.Context) error {
+//			PrecheckFunc: func(ctx context.Context, opts socketbridge.PrecheckOptions) error {
 //				panic("mock out the Precheck method")
 //			},
 //			StopAllFunc: func() error {
@@ -48,7 +48,7 @@ type SocketBridgeManagerMock struct {
 	IsRunningFunc func(containerID string) bool
 
 	// PrecheckFunc mocks the Precheck method.
-	PrecheckFunc func(ctx context.Context) error
+	PrecheckFunc func(ctx context.Context, opts socketbridge.PrecheckOptions) error
 
 	// StopAllFunc mocks the StopAll method.
 	StopAllFunc func() error
@@ -74,6 +74,8 @@ type SocketBridgeManagerMock struct {
 		Precheck []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
+			// Opts is the opts argument value.
+			Opts socketbridge.PrecheckOptions
 		}
 		// StopAll holds details about calls to the StopAll method.
 		StopAll []struct {
@@ -160,19 +162,21 @@ func (mock *SocketBridgeManagerMock) IsRunningCalls() []struct {
 }
 
 // Precheck calls PrecheckFunc.
-func (mock *SocketBridgeManagerMock) Precheck(ctx context.Context) error {
+func (mock *SocketBridgeManagerMock) Precheck(ctx context.Context, opts socketbridge.PrecheckOptions) error {
 	if mock.PrecheckFunc == nil {
 		panic("SocketBridgeManagerMock.PrecheckFunc: method is nil but SocketBridgeManager.Precheck was just called")
 	}
 	callInfo := struct {
-		Ctx context.Context
+		Ctx  context.Context
+		Opts socketbridge.PrecheckOptions
 	}{
-		Ctx: ctx,
+		Ctx:  ctx,
+		Opts: opts,
 	}
 	mock.lockPrecheck.Lock()
 	mock.calls.Precheck = append(mock.calls.Precheck, callInfo)
 	mock.lockPrecheck.Unlock()
-	return mock.PrecheckFunc(ctx)
+	return mock.PrecheckFunc(ctx, opts)
 }
 
 // PrecheckCalls gets all the calls that were made to Precheck.
@@ -180,10 +184,12 @@ func (mock *SocketBridgeManagerMock) Precheck(ctx context.Context) error {
 //
 //	len(mockedSocketBridgeManager.PrecheckCalls())
 func (mock *SocketBridgeManagerMock) PrecheckCalls() []struct {
-	Ctx context.Context
+	Ctx  context.Context
+	Opts socketbridge.PrecheckOptions
 } {
 	var calls []struct {
-		Ctx context.Context
+		Ctx  context.Context
+		Opts socketbridge.PrecheckOptions
 	}
 	mock.lockPrecheck.RLock()
 	calls = mock.calls.Precheck

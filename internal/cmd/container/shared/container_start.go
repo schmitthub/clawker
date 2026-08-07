@@ -474,7 +474,8 @@ func precheckBridgeLanes(
 	cmdOpts CommandOpts,
 	log *logger.Logger,
 ) {
-	if !gc.GPGEnabled() && !gc.GitSSHEnabled() {
+	lanes := socketbridge.PrecheckOptions{GPG: gc.GPGEnabled(), SSH: gc.GitSSHEnabled()}
+	if !lanes.GPG && !lanes.SSH {
 		return
 	}
 	if cmdOpts.SocketBridge == nil {
@@ -484,15 +485,15 @@ func precheckBridgeLanes(
 	if sb == nil {
 		return
 	}
-	err := sb.Precheck(ctx)
+	err := sb.Precheck(ctx, lanes)
 	if err == nil {
 		return
 	}
-	if gc.GPGEnabled() && errors.Is(err, socketbridge.ErrGPGUnavailable) {
+	if lanes.GPG && errors.Is(err, socketbridge.ErrGPGUnavailable) {
 		warnForwarderLane(cmdOpts, log,
 			"GPG forwarding is configured but no usable GPG keys or gpg-agent were found on this host")
 	}
-	if gc.GitSSHEnabled() && errors.Is(err, socketbridge.ErrSSHAgentUnavailable) {
+	if lanes.SSH && errors.Is(err, socketbridge.ErrSSHAgentUnavailable) {
 		warnForwarderLane(cmdOpts, log,
 			"SSH forwarding is configured but no SSH agent was found on this host")
 	}

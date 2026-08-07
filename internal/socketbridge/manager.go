@@ -36,13 +36,24 @@ type SocketBridgeManager interface {
 	StopAll() error
 	// IsRunning returns true if a bridge daemon is running for the given container.
 	IsRunning(containerID string) bool
-	// Precheck reports which enabled forwarding lanes the host can serve,
-	// before the bridge daemon spawns. It returns nil when every checked
-	// lane is usable, or an error wrapping ErrGPGUnavailable,
+	// Precheck reports whether the host can serve the forwarding lanes the
+	// options request, before the bridge daemon spawns. Lanes the options
+	// leave off are not probed. It returns nil when every requested lane is
+	// usable, or an error wrapping ErrGPGUnavailable,
 	// ErrSSHAgentUnavailable, or both ([errors.Join]) — match with
 	// [errors.Is]. Callers warn the user, so a later bridge failure has a
 	// visible cause instead of an opaque daemon-side error.
-	Precheck(ctx context.Context) error
+	Precheck(ctx context.Context, opts PrecheckOptions) error
+}
+
+// PrecheckOptions selects the forwarding lanes Precheck probes. Callers set
+// each lane from the project's git-credential config, so a disabled lane is
+// never checked.
+type PrecheckOptions struct {
+	// GPG probes the host GPG material and gpg-agent extra socket.
+	GPG bool
+	// SSH probes the host SSH agent socket with a dial.
+	SSH bool
 }
 
 // Manager tracks per-container bridge daemon processes.
@@ -201,9 +212,16 @@ var (
 )
 
 // Precheck implements SocketBridgeManager by running the same host lookups
-// the bridge daemon performs when it serves each lane.
-func (m *Manager) Precheck(ctx context.Context) error {
-	return errors.Join(checkHostGPG(), checkHostSSHAgent(ctx))
+// the bridge daemon performs when it serves each requested lane.
+func (m *Manager) Precheck(ctx context.Context, opts PrecheckOptions) error {
+	var errs []error
+	if opts.GPG {
+		errs = append(errs, checkHostGPG())
+	}
+	if opts.SSH {
+		errs = append(errs, checkHostSSHAgent(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 // checkHostGPG wraps ErrGPGUnavailable around the exact host lookups the

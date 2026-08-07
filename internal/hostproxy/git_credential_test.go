@@ -2,9 +2,15 @@ package hostproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/logger"
@@ -367,4 +373,78 @@ func TestParseGitCredentialOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPrecheckGitCredential pins the error split: exit 1 (no credential.*
+// key anywhere) is the one benign "not configured" outcome; a broken config
+// file must surface git's own fatal instead of masquerading as
+// not-configured; a configured helper passes.
+func TestPrecheckGitCredential(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+
+	tests := []struct {
+		name              string
+		globalConfig      string
+		wantErr           bool
+		wantNotConfigured bool   // errors.Is(err, errNoGitCredentialHelper)
+		wantInError       string // substring the error must carry
+	}{
+		{
+			name:              "no helper configured",
+			globalConfig:      "",
+			wantErr:           true,
+			wantNotConfigured: true,
+			wantInError:       "",
+		},
+		{
+			name:              "broken config surfaces the git fatal",
+			globalConfig:      "[credential\nhelper = broken",
+			wantErr:           true,
+			wantNotConfigured: false,
+			wantInError:       "bad config",
+		},
+		{
+			name:              "configured helper passes",
+			globalConfig:      "[credential]\n\thelper = store\n",
+			wantErr:           false,
+			wantNotConfigured: false,
+			wantInError:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := precheckGitEnv(t, tt.globalConfig)
+			err := m.PrecheckGitCredential(context.Background())
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+			if errors.Is(err, errNoGitCredentialHelper) != tt.wantNotConfigured {
+				t.Errorf("wantNotConfigured=%v, got %v", tt.wantNotConfigured, err)
+			}
+			if tt.wantInError != "" && !strings.Contains(err.Error(), tt.wantInError) {
+				t.Errorf("want error containing %q, got %v", tt.wantInError, err)
+			}
+		})
+	}
+}
+
+// precheckGitEnv points every git config source at a scratch file and moves
+// cwd outside any repository, so the host's real config and the repo's
+// .git/config cannot leak credential.* keys into the probe.
+func precheckGitEnv(t *testing.T, globalConfig string) *Manager {
+	t.Helper()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfgPath, []byte(globalConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("GIT_CONFIG_GLOBAL", cfgPath)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Chdir(dir)
+	return &Manager{}
 }
