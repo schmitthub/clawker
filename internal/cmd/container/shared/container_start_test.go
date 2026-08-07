@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,8 +23,12 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
+	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
+	sbmocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
@@ -196,6 +202,151 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "injecting pre-run script") {
 			t.Fatalf("expected pre-run injection error, got %v", err)
 		}
+	})
+}
+
+// TestBootstrapServicesPostStart_ForwarderPrechecks pins the precheck
+// contract: every configured forwarding lane the host cannot serve produces
+// a stderr warning naming that lane, a precheck failure never aborts the
+// start and never changes what is passed to the forwarding services — a
+// failed GPG probe still spawns the bridge with the configured GPG flag on —
+// and lanes the config disables are neither probed nor warned about.
+func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
+	t.Parallel()
+
+	const bothProjectYAML = `security: { git_credentials: { forward_gpg: true, forward_ssh: true, copy_git_config: false } }`
+
+	// forwarderOpts builds the minimal post-start CommandOpts the precheck
+	// path needs.
+	forwarderOpts := func(sb *sbmocks.SocketBridgeManagerMock, tio *iostreams.IOStreams, projectYAML string) CommandOpts {
+		return CommandOpts{ //nolint:exhaustruct // sparse by design: only the precheck + bridge path runs
+			IOStreams:    tio,
+			Config:       testRuntimeConfig(projectYAML, `firewall: { enable: false }`),
+			SocketBridge: func() socketbridge.SocketBridgeManager { return sb },
+		}
+	}
+
+	t.Run("missing GPG warns and does not change the bridge flags", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
+			return fmt.Errorf("%w: no GPG public keys found", socketbridge.ErrGPGUnavailable)
+		}
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		require.NoError(t, err)
+
+		assert.Contains(t, errOut.String(), "GPG forwarding is configured")
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.True(t, calls[0].GpgEnabled, "precheck must not change the configured GPG flag")
+	})
+
+	t.Run("missing SSH agent warns", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
+			return fmt.Errorf("%w: SSH_AUTH_SOCK not set on host", socketbridge.ErrSSHAgentUnavailable)
+		}
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		require.NoError(t, err)
+
+		assert.Contains(t, errOut.String(), "SSH forwarding is configured")
+		require.Len(t, sb.EnsureBridgeCalls(), 1)
+	})
+
+	t.Run("config-disabled lanes are neither probed nor warned about", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		sb.PrecheckFunc = func(context.Context, socketbridge.PrecheckOptions) error {
+			return errors.Join(
+				fmt.Errorf("%w: gpg not found", socketbridge.ErrGPGUnavailable),
+				fmt.Errorf("%w: SSH_AUTH_SOCK not set", socketbridge.ErrSSHAgentUnavailable),
+			)
+		}
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+			`security: { git_credentials: { forward_gpg: false, forward_ssh: true, copy_git_config: false } }`))
+		require.NoError(t, err)
+
+		assert.NotContains(t, errOut.String(), "GPG forwarding", "disabled lane must not warn")
+		assert.Contains(t, errOut.String(), "SSH forwarding is configured")
+		calls := sb.PrecheckCalls()
+		require.Len(t, calls, 1)
+		assert.False(t, calls[0].Opts.GPG, "disabled lane must not be probed")
+		assert.True(t, calls[0].Opts.SSH)
+	})
+
+	t.Run("host proxy credential precheck failure warns", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		hp := hostproxytest.NewMockManager()
+		hp.PrecheckErr = errors.New("no git credential helper configured on host")
+		tio, _, _, errOut := iostreams.Test()
+
+		opts := forwarderOpts(
+			sb,
+			tio,
+			`security: { git_credentials: { forward_https: true, forward_gpg: false, forward_ssh: false, copy_git_config: false } }`,
+		)
+		opts.HostProxy = func() hostproxy.Service { return hp }
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		require.NoError(t, err)
+
+		assert.Contains(t, errOut.String(), "HTTPS credential forwarding is configured")
+	})
+}
+
+// TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome covers the
+// precheck cases that depend on the host home directory, controlled with
+// t.Setenv (which forbids t.Parallel).
+func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
+	forwarderOpts := func(sb *sbmocks.SocketBridgeManagerMock, tio *iostreams.IOStreams, projectYAML string) CommandOpts {
+		return CommandOpts{ //nolint:exhaustruct // sparse by design: only the precheck + bridge path runs
+			IOStreams:    tio,
+			Config:       testRuntimeConfig(projectYAML, `firewall: { enable: false }`),
+			SocketBridge: func() socketbridge.SocketBridgeManager { return sb },
+		}
+	}
+
+	t.Run("missing host gitconfig warns when copy is configured", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir()) // no ~/.gitconfig in this home
+		sb := sbmocks.NewMockManager()
+		tio, _, _, errOut := iostreams.Test()
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+			`security: { git_credentials: { forward_gpg: false, forward_ssh: false, copy_git_config: true } }`))
+		require.NoError(t, err)
+
+		assert.Contains(t, errOut.String(), "Git config copy is configured")
+	})
+
+	t.Run("healthy host warns nothing", func(t *testing.T) {
+		home := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = t\n"), 0o600))
+		t.Setenv("HOME", home)
+		sb := sbmocks.NewMockManager()
+		hp := hostproxytest.NewMockManager()
+		tio, _, _, errOut := iostreams.Test()
+
+		opts := forwarderOpts(
+			sb,
+			tio,
+			`security: { git_credentials: { forward_https: true, forward_gpg: true, forward_ssh: true, copy_git_config: true } }`,
+		)
+		opts.HostProxy = func() hostproxy.Service { return hp }
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		require.NoError(t, err)
+
+		assert.Empty(t, errOut.String())
+		require.Len(t, sb.EnsureBridgeCalls(), 1)
+		assert.True(t, sb.EnsureBridgeCalls()[0].GpgEnabled)
 	})
 }
 

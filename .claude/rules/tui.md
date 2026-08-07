@@ -42,6 +42,14 @@ Stateless rendering helpers that compose `iostreams` styles into reusable visual
 | `RenderTag(text, ...render)` | Single tag (default: `iostreams.TagStyle`) |
 | `RenderTags(tags, ...render)` | Space-separated list of tags |
 
+## Progress Display (`progress.go`)
+
+`ProgressDisplayConfig` + `ProgressStep`/`ProgressResult` drive build-style step
+progress (grouping, max-visible window, internal-step filtering). The summary
+renderer stays silent when zero steps arrived — a success line there would
+misstate a producer that failed before doing anything; the producer's error
+speaks instead.
+
 ## Dashboard Framework (`dashboard.go`)
 
 Generic event-driven dashboard for live-display commands. Consumer provides a `DashboardRenderer` interface:

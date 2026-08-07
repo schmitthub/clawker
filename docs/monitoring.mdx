@@ -58,8 +58,8 @@ The monitoring services have fixed, stable hostnames on `clawker-net`. Agent con
 Infrastructure telemetry (egress, DNS, CLI, control plane) is emitted host-side for every harness. Agent-session OTEL endpoints are baked into images whose harness bundle declares them — the claude bundle ships a full OTLP env block. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — single base URL pointing at the collector's OTLP/HTTP listener (baked into image). The Claude Code SDK appends `/v1/metrics`, `/v1/logs`, `/v1/traces` per signal
-- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — all set to `otlp`
-- `CLAUDE_CODE_ENABLE_TELEMETRY` — set to `1` when the `otel-collector` container is detected as running on `clawker-net`, set to `0` otherwise
+- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — baked to `otlp`, overridden to `none` at container creation when the `otel-collector` container is not detected as running on `clawker-net`
+- `CLAUDE_CODE_ENABLE_TELEMETRY` — always `1` (baked into the image; not conditionally toggled — the exporter overrides above are what turn telemetry off)
 - `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` — set to `1` (gates Claude Code's span export; both this and `CLAUDE_CODE_ENABLE_TELEMETRY` must be `1` for traces to flow)
 - `OTEL_RESOURCE_ATTRIBUTES` — tags with `project=` and `agent=` for filtering
 
@@ -93,8 +93,8 @@ monitor:
     - claude-code
 ```
 
-Extensions are opt-in — there is no default selection; select `claude-code` to
-capture Claude Code telemetry. `clawker monitor up` is bring-up only: it seeds
+The default selection is the built-in `claude-code` extension; set an explicit
+empty list (`extensions: []`) to opt out of all monitoring. `clawker monitor up` is bring-up only: it seeds
 the current project's selection when it starts the stack, and exits untouched
 when the stack is already running — there is no host-side registry, and the
 collector routes from the union of every extension ever seeded. To apply an

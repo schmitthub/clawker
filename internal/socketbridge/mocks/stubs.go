@@ -2,6 +2,7 @@ package mocks
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"testing"
@@ -20,6 +21,7 @@ func NewMockManager() *SocketBridgeManagerMock {
 		StopBridgeFunc:   func(containerID string) error { return nil },
 		StopAllFunc:      func() error { return nil },
 		IsRunningFunc:    func(containerID string) bool { return false },
+		PrecheckFunc:     func(ctx context.Context, opts socketbridge.PrecheckOptions) error { return nil },
 	}
 }
 

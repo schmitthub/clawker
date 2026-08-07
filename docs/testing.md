@@ -71,7 +71,7 @@ GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios
 
 ### Firewall Corefile Golden
 
-The firewall package has a golden file test for CoreDNS config generation (`internal/controlplane/firewall/coredns_config_test.go`). The golden file at `internal/controlplane/firewall/testdata/corefile_basic.golden` must be hand-edited to update.
+The firewall package has a golden file test for CoreDNS config generation (`controlplane/firewall/coredns_config_test.go`). The golden file at `controlplane/firewall/testdata/corefile_basic.golden` must be hand-edited to update.
 
 ### Storage Oracle + Golden Strategy
 
@@ -169,7 +169,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq-generated) |
 | `internal/git` | `gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
-| `pkg/whail` | `whailtest/` | `FakeAPIClient` (46 Fn fields, call recording), build scenarios (Simple, Cached, MultiStage, Error, etc.), `EventRecorder` |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient` (47 Fn fields, call recording), build scenarios (Simple, Cached, MultiStage, Error, etc.), `EventRecorder` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` for integration tests |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
@@ -227,17 +227,17 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `adminv1mocks.AdminServiceClientMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
+Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `adminv1mocks.AdminServiceClientMock`), while `Logger` always creates a real, settings-driven file logger via `logcfg.New` (mirroring production), and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
 
 #### Harness Types
 
 | Type | Purpose |
 |------|---------|
-| `Harness` | Isolated test environment with CLI execution (`T`, `Opts`) |
+| `Harness` | Isolated test environment with CLI execution (`T`, `Opts`, `Cleanup`) |
 | `RunResult` | CLI command outcome (`ExitCode`, `Err`, `Stdout`, `Stderr`, `Factory`) |
 | `SetupResult` | Embeds `*testenv.Env` + `ProjectDir` from `NewIsolatedFS` |
 | `FSOptions` | Override project dir name (default: `"testproject"`) |
-| `FactoryOptions` | 6 pluggable constructors (Config, Client, ProjectManager, GitManager, HostProxy, SocketBridge) + `UseRealAdminClient bool` + `ControlPlane` |
+| `FactoryOptions` | 6 pluggable constructors (Config, Client, ProjectManager, GitManager, HostProxy, SocketBridge) + `UseRealAdminClient bool` + `UseRealControlPlane bool` |
 
 #### Harness Functions
 
@@ -258,8 +258,9 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 2. Remove shared firewall infrastructure containers (by `purpose=firewall` label)
 3. Remove control plane container (by `purpose=controlplane` label)
 4. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
+5. Remove test-labeled images (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log`, `clawkercpboot.log`, and `clawker-controlplane.log` from the test's state dir.
+On failure, dumps `clawker.log`, `hostproxy.log`, and `clawker-controlplane.log` from the test's state dir.
 
 ### Project Test Double Scenarios
 

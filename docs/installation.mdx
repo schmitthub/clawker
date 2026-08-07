@@ -9,8 +9,8 @@ Clawker is a free, open-source, self-hosted AI coding agent sandbox — it runs 
 
 ## Prerequisites
 
-- **Docker** must be installed and running
-- macOS is the primary supported platform; Linux should also work
+- **Docker** must be installed and running — Docker Desktop, Docker Engine, or a [rootless daemon](/container-internals#rootless-docker)
+- macOS and Linux are supported
 - Windows is not currently supported
 
 ## Homebrew (Recommended)
@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 
 ## Build from Source
 
-Requires Go 1.25+. Use the Makefile entry point — `go install` is unsupported because the CLI `//go:embed`s several Linux binaries (`clawkerd`, `clawkercp`, `ebpf-manager`, `coredns-clawker`) that are gitignored and produced by `make clawker`. Without them the build fails at compile time with a `pattern assets/...: no matching files found` error.
+Requires Go 1.25+. Use the Makefile entry point — `go install` is unsupported because the CLI `//go:embed`s several Linux binaries (`clawkerd`, `clawkercp`, `ebpf-manager`, `coredns-clawker`, `bpffs-delegate`, `idmap-mount`) that are gitignored and produced by `make clawker`. Without them the build fails at compile time with a `pattern assets/...: no matching files found` error.
 
 ```bash
 git clone https://github.com/schmitthub/clawker.git
@@ -90,7 +90,7 @@ cd your-project
 clawker init
 ```
 
-This walks you through a guided setup — pick a language preset (Python, Go, Rust, Node, Java, Ruby, C/C++, C#/.NET, Bare) and Clawker creates a `.clawker.yaml` config tailored for your stack. User settings and XDG directories are bootstrapped automatically on first run.
+This walks you through a guided setup — pick a language preset (Python, Go, Rust, Node, Java, Ruby, C/C++, C#/.NET, Bare) and Clawker creates a `clawker.yaml` config tailored for your stack. User settings and XDG directories are bootstrapped automatically on first run.
 
 Clawker stores data following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
 

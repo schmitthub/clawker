@@ -34,6 +34,12 @@ type Service interface {
 	IsRunning() bool
 	// ProxyURL returns the URL containers should use to reach the host proxy.
 	ProxyURL() string
+	// PrecheckGitCredential reports whether the host can serve the
+	// /git/credential endpoint: the same `git` binary the handler execs
+	// must be on PATH with a credential helper configured. Callers warn
+	// the user before container start, so an in-container credential
+	// failure has a visible cause.
+	PrecheckGitCredential(ctx context.Context) error
 }
 
 // validatePort checks that a port number is in the valid TCP range.

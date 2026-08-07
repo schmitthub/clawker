@@ -12,8 +12,12 @@ Generates + owns:                       Receives bind-mounted (RO):
   Signing key (ES256)                     CLI public JWK (verify assertions)
   Client cert (mTLS)                      Server cert + key (for TLS)
   Server cert + key                       CP client cert + key (outbound mTLS)
-  Hydra shared secret (HMAC)              Infra intermediate CA cert + key
-  JWK export                              (Hydra secret read via data dir)
+  JWK export                              Infra intermediate CA cert + key
+
+                                         Generates + owns locally (not
+                                         bind-mounted — CP's own Hydra
+                                         system secret, first-boot via
+                                         auth.EnsureHydraSecret())
 
 Dials CP via:
   1. mTLS handshake (client cert)
@@ -32,7 +36,7 @@ Dials CP via:
 | `identity.go` | Typed identity values `ProjectSlug` / `AgentName` for compile-time discipline (callers can't accidentally pass a raw string); `New*` constructors reject only the empty case for `AgentName` (empty `ProjectSlug` is the global-scope-agent signal (2-segment naming)); `Must*` for test/migration paths. Charset / length / form constraints are NOT enforced here — input normalization for user-typed names happens upstream at `cmdutil.ProjectSlugify`, and Docker / x509 / `IdentityInterceptor` enforce their own constraints downstream at op time. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
 | `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. iat is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); no iat correction is applied. The transient post-sleep window where the VM clock lags is handled by *waiting* until the CP clock has caught up to the host before the assertion is exchanged (the pre-start CP-ensure), not by shifting iat. 24h TTL covers typical container session length. |
-| ~~`cp_dial.go`~~ | **Moved to `internal/controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `(adminv1.AdminServiceClient, *grpc.ClientConn, error)`. See `adminclient` package. |
+| ~~`cp_dial.go`~~ | **Moved to `controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `(adminv1.AdminServiceClient, *grpc.ClientConn, error)`. See `adminclient` package. |
 
 ## Agent cert mint
 
@@ -41,6 +45,7 @@ Dials CP via:
 - Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs.
 - `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly. The displayed `AgentFullName` is reconstructed on demand from the row's `project` + `agent_name` columns — there is no precomputed identity column.
 - The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity, not a per-agent value). Per-agent identity rides in SANs: `AgentFullName(project, agent)` → `clawker.<project>.<agent>` in a `urn:clawker:agent:<full-name>` URI SAN, and `containerID` in a `urn:clawker:container:<id>` URI SAN. Keeping identity out of the CN avoids x509's 64-byte CN limit for long random agent names.
+- Dual-purpose EKU: both `ExtKeyUsageClientAuth` and `ExtKeyUsageServerAuth`. clawkerd presents the same leaf as its client cert dialing CP's AgentService AND as its server cert on the `:7700` ClawkerdService listener CP dials into — without `ServerAuth`, CP's default `ExtKeyUsageServerAuth` chain-verify fails every CP→clawkerd dial with "incompatible key usage".
 - PEM material is returned for in-memory bootstrap delivery only; never persisted on the host.
 
 ## Auth material layout
@@ -55,20 +60,20 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 | CLI client cert + key | CLI mTLS | No (used by CLI only) |
 | CLI signing key (ECDSA) | ES256 signer | No (private half stays on host) |
 | CLI signing JWK | public JWK export | Yes (RO — Hydra verifies assertions against this) |
-| Hydra shared secret | HMAC between CLI and Hydra | No (read inside CP via `auth.EnsureHydraSecret()` from data dir) |
+| Hydra system secret | Hydra's own cookie/DB-encryption secret | No — generated and persisted by the CP itself on first boot (`controlplane/auth.OryStack.Start` calls `auth.EnsureHydraSecret()`); the CLI never generates or touches it |
 | OTel server cert + key | TLS identity for the monitoring OTel collector | No (used by `monitor init`, not the CP container) |
 | CP client cert + key | CP outbound mTLS identity (CN=ContainerCP, ClientAuth EKU) | Yes (RO) |
 | Infra intermediate CA cert + key | CP signs runtime leaves for Envoy/CoreDNS | Yes (RO) — cert + key both mounted |
 
 ## Token exchange flow (moved to `adminclient/dial.go`)
 
-The `Dial` function and token exchange logic live in `internal/controlplane/adminclient/dial.go`:
+The `Dial` function and token exchange logic live in `controlplane/adminclient/dial.go`:
 
 1. `adminclient.Dial(ctx, adminPort, hydraPort)` loads CA cert, signing key, and CLI client cert
 2. Builds `tokenTLSCfg` (plain TLS, CA trust) and `grpcTLSCfg` (mTLS with client cert, CA trust)
 3. Mints the assertion in the **host clock** (the source of truth — `AssertionClaims.Now` unset → `time.Now()`; Docker forces the CP/VM clock to track the host). Hydra/fosite validates `iat` with zero leeway, but the dial path does **not** re-check the clock: host↔CP convergence is gated once at CP bring-up by the cpboot readiness gate (`waitForCPClockSync`), which is the precondition for any CP interaction, so by the time the CLI dials AdminService the CP clock is already at/ahead of the host and a host-clock `iat` is in the CP's past. (`GetSystemTime`/`ProbeCPTime` remain the probe that gate polls — the CLI token path no longer uses them.)
-4. Constructs a `tokenSource` that lazily fetches + caches access tokens
-5. Returns a gRPC `ClientConn` with a unary interceptor that attaches `authorization: Bearer <token>` on every call
+4. Constructs a `tokenSource`, then eagerly fetches the first token with bounded retry (`retryInitialToken`, 15s deadline) so `Dial` tolerates a CP that is still mid-bring-up; every token after that is fetched/cached lazily on demand
+5. Returns a gRPC `ClientConn` with a chained unary interceptor (deadline + bearer token) and a separate stream interceptor (bearer token, no deadline — for long-lived streams like `WatchSOS`), each attaching `authorization: Bearer <token>` on every call
 6. Token fetch: POST to `https://127.0.0.1:<hydraPort>/oauth2/token` with:
    - `grant_type=client_credentials`
    - `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
@@ -117,8 +122,8 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 - `controlplane/manager` — `ensureRunning` calls `EnsureAuthMaterial` so the CP container boots with a populated config dir
 - `internal/cmd/auth` — `rotate` subcommand calls `RotateAuthMaterial`
 - `internal/cmd/project/init` — calls `EnsureAuthMaterial` before container creation
-- `internal/cmd/monitor/init` — calls `EnsureAuthMaterial` to provision OTel mTLS material before mounting it into the monitoring stack
-- `cmd/clawkercp` (via bind-mounts + `auth.EnsureHydraSecret()`) — reads CA, server cert, JWK, Hydra secret at container startup
+- `internal/monitor` (`PrepareTemplateData`) — calls `EnsureAuthMaterial` to provision OTel mTLS material before mounting it into the monitoring stack; invoked (via `PrepareTemplateData`) by the `monitor init`, `monitor up`, and `monitor reload` subcommands
+- `cmd/clawkercp` (via bind-mounts) — reads CA cert, server cert, JWK, CP client cert, infra intermediate CA at container startup; `controlplane/auth.OryStack.Start`, running inside the CP daemon, calls `auth.EnsureHydraSecret()` to generate/persist its own Hydra secret locally (never bind-mounted, never CLI-generated)
 
 ## Tests
 

@@ -88,4 +88,4 @@ All paths lead to PID file removal via `defer os.Remove(pidFile)`.
 - `github.com/moby/moby/api/types/events` — Event type constants (`ContainerEventType`, `ActionDie`)
 - `internal/config` — Config for log directory resolution
 - `internal/logger` — File-based daemon logger
-- `internal/socketbridge` — `NewBridge()` constructor
+- `internal/socketbridge` — `NewBridge()` constructor, `ShortID()` for log tagging

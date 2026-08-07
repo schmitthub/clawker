@@ -1,5 +1,9 @@
 # Clawker
 
+## Output Style
+
+All output — chat replies, documentation, and code comments — must comply with ASD-STE100 Simplified Technical English. The ASD-STE100 rules and approved technical dictionary are the controlling standard. Apply the current ASD-STE100 rules and its approved technical dictionary as the controlling standard. When a word is not an approved dictionary term or a standard technical name, replace it or write the sentence without it. **Do not restate or summarize the standard; apply it.**
+
 <critical_instructions>
 
 ## MANTRA
@@ -26,7 +30,7 @@ Prioritize fixing technical debt and improving architecture over completing the 
 
 ## CP ≠ firewall (common LLM confusion)
 
-- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `manager.EnsureRunning` (`controlplane/manager`). No "disable CP" flag. CP owns clawker-net.
+- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `Manager.Start` (`controlplane/manager`). No "disable CP" flag. CP owns clawker-net.
 - **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
 
 Do **NOT** gate non-firewall behavior on `firewall.enable`.
@@ -58,9 +62,9 @@ The stack trace from a CP panic lands on `os.Stderr` → `docker logs <cp>`. It 
 
 **Hard rules for code on the CP boot/serve path** (`cmd/clawkercp/`, `internal/controlplane/`, anything imported by them):
 
-1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** outside the orchestrator's intentional shutdown sequence. Constructors return `(nil, error)` (see `agent.New`, `agent.NewExecutor`); main logs structurally and degrades. The only hard-exits permitted are: drain-to-zero clean exit (code 0), and the orchestrator's pre-`SetReady` startup-gate failures (code 1) — these exit WITHOUT flushing eBPF, so any agents enrolled by a previous CP stay fail-closed (filtered against the old rule set) rather than fail-open.
-2. **Every long-lived goroutine recovers.** Heartbeats, watchers, event handlers, RPC handlers — wrap with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The overseer stats heartbeat in `cmd/clawkercp/main.go` is the canonical template. One bad event must not take down the daemon and silently strand eBPF.
-3. **Subsystem failures degrade, never cascade.** A broken Executor → `executor = nil`; CP never dispatches `AgentReady`, clawkerd-as-PID-1 never spawns the user CMD, and the container exits non-zero on `docker stop`; the firewall, registry, AdminService, dialer all stay up. A broken dialer → `dialer = nil`; CP→clawkerd dispatch disabled; everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are the templates; copy either for any new subsystem.
+1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** outside the orchestrator's intentional shutdown sequence. Constructors return `(nil, error)` (see `agent.NewDialer`, `agent.NewExecutor`); main logs structurally and degrades. The only hard-exits permitted are: drain-to-zero clean exit (code 0), and the orchestrator's pre-`SetReady` startup-gate failures (code 1) — these exit WITHOUT flushing eBPF, so any agents enrolled by a previous CP stay fail-closed (filtered against the old rule set) rather than fail-open.
+2. **Every long-lived goroutine recovers.** Heartbeats, watchers, event handlers, RPC handlers — wrap with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The pub/sub stats heartbeat (`pubsub.NewStatsHeartbeat`, wired in `internal/controlplane/cmd.go`) is the canonical template. One bad event must not take down the daemon and silently strand eBPF.
+3. **Subsystem failures degrade, never cascade.** A broken Executor → `executor = nil`; CP never dispatches `AgentReady`, clawkerd-as-PID-1 never spawns the user CMD, and the container exits non-zero on `docker stop`; the firewall, registry, AdminService, dialer all stay up. A broken dialer → `dialer = nil`; CP→clawkerd dispatch disabled; everything else stays up. The patterns in `internal/controlplane/cmd.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.NewDialer(...)` block that degrades on error to `event=agent_dialer_unavailable` — are the templates; copy either for any new subsystem.
 4. **Every degraded path emits a structured log line.** `event=<subsystem>_unavailable` with component, error, downstream impact. Operator must be able to determine root cause AND blast radius from the structured log surface alone — they will not see panic stacks.
 5. **Treat CP shutdown as a privileged operation.** If you find yourself thinking "this should never happen, just panic," stop. In CP that line of reasoning compromises the security boundary the user trusts to be intact. Return an error and let the orchestrator decide.
 
@@ -73,7 +77,7 @@ If you're tempted to write `panic()` in CP code, ask: "would this leave eBPF pro
 ## Asymmetric trust: dialer permissive, listener strict
 
 - **clawkerd-side listener (server):** STRICT. `clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
-- **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` overseer events. Dial only fails on connectivity.
+- **CP-side dialer (client):** PERMISSIVE. `controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` events. Dial only fails on connectivity.
 
 **Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.
 
@@ -132,8 +136,8 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-
 
 See `docs/cli-reference/` for auto-generated command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `version`
-**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `plugin *` (alias `skill`)
+**Top-level shortcuts**: `init`, `monitor *`, `version`, plus Docker-CLI-style container/image verbs each aliasing the matching subcommand (`build`, `create`, `run`, `start`, `stop`, `restart`, `kill`, `pause`, `unpause`, `rm`, `rmi`, `ps`, `attach`, `exec`, `logs`, `cp`, `rename`, `stats`, `top`, `wait`)
+**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `prompt *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `plugin *` (alias `skill`)
 
 ## Configuration
 
@@ -155,7 +159,7 @@ security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_
 ## Design Decisions
 
 1. Firewall enabled, Docker socket disabled by default
-2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
+2. Top-level shortcuts (`run`, `start`, `stop`, `ps`, ...) alias their matching `container`/`image` subcommand (Docker CLI pattern)
 3. Hierarchical naming: `clawker.project.agent`; labels (`dev.clawker.*`) authoritative for filtering
 4. stdout for data/status/success/next-steps; stderr for warnings/errors only; `--format` for machine-readable output
 5. Project registry replaces directory walking for resolution

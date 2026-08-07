@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"sync"
 )
@@ -24,6 +25,9 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //			IsRunningFunc: func(containerID string) bool {
 //				panic("mock out the IsRunning method")
 //			},
+//			PrecheckFunc: func(ctx context.Context, opts socketbridge.PrecheckOptions) error {
+//				panic("mock out the Precheck method")
+//			},
 //			StopAllFunc: func() error {
 //				panic("mock out the StopAll method")
 //			},
@@ -42,6 +46,9 @@ type SocketBridgeManagerMock struct {
 
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(containerID string) bool
+
+	// PrecheckFunc mocks the Precheck method.
+	PrecheckFunc func(ctx context.Context, opts socketbridge.PrecheckOptions) error
 
 	// StopAllFunc mocks the StopAll method.
 	StopAllFunc func() error
@@ -63,6 +70,13 @@ type SocketBridgeManagerMock struct {
 			// ContainerID is the containerID argument value.
 			ContainerID string
 		}
+		// Precheck holds details about calls to the Precheck method.
+		Precheck []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Opts is the opts argument value.
+			Opts socketbridge.PrecheckOptions
+		}
 		// StopAll holds details about calls to the StopAll method.
 		StopAll []struct {
 		}
@@ -74,6 +88,7 @@ type SocketBridgeManagerMock struct {
 	}
 	lockEnsureBridge sync.RWMutex
 	lockIsRunning    sync.RWMutex
+	lockPrecheck     sync.RWMutex
 	lockStopAll      sync.RWMutex
 	lockStopBridge   sync.RWMutex
 }
@@ -143,6 +158,42 @@ func (mock *SocketBridgeManagerMock) IsRunningCalls() []struct {
 	mock.lockIsRunning.RLock()
 	calls = mock.calls.IsRunning
 	mock.lockIsRunning.RUnlock()
+	return calls
+}
+
+// Precheck calls PrecheckFunc.
+func (mock *SocketBridgeManagerMock) Precheck(ctx context.Context, opts socketbridge.PrecheckOptions) error {
+	if mock.PrecheckFunc == nil {
+		panic("SocketBridgeManagerMock.PrecheckFunc: method is nil but SocketBridgeManager.Precheck was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		Opts socketbridge.PrecheckOptions
+	}{
+		Ctx:  ctx,
+		Opts: opts,
+	}
+	mock.lockPrecheck.Lock()
+	mock.calls.Precheck = append(mock.calls.Precheck, callInfo)
+	mock.lockPrecheck.Unlock()
+	return mock.PrecheckFunc(ctx, opts)
+}
+
+// PrecheckCalls gets all the calls that were made to Precheck.
+// Check the length with:
+//
+//	len(mockedSocketBridgeManager.PrecheckCalls())
+func (mock *SocketBridgeManagerMock) PrecheckCalls() []struct {
+	Ctx  context.Context
+	Opts socketbridge.PrecheckOptions
+} {
+	var calls []struct {
+		Ctx  context.Context
+		Opts socketbridge.PrecheckOptions
+	}
+	mock.lockPrecheck.RLock()
+	calls = mock.calls.Precheck
+	mock.lockPrecheck.RUnlock()
 	return calls
 }
 

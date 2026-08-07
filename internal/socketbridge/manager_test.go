@@ -1,6 +1,8 @@
 package socketbridge_test
 
 import (
+	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -201,4 +203,36 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	pid, ok := m.BridgePIDForTest(containerID)
 	assert.True(t, ok)
 	assert.Equal(t, os.Getpid(), pid)
+}
+
+// TestCheckHostSSHAgent pins the SSH lane precheck contract: every failure
+// form wraps ErrSSHAgentUnavailable, and a live agent socket passes.
+// t.Setenv forbids t.Parallel here.
+func TestCheckHostSSHAgent(t *testing.T) {
+	t.Run("unset SSH_AUTH_SOCK", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+		err := socketbridge.CheckHostSSHAgentForTest(context.Background())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, socketbridge.ErrSSHAgentUnavailable)
+	})
+
+	t.Run("dead socket path", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "nope.sock"))
+		err := socketbridge.CheckHostSSHAgentForTest(context.Background())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, socketbridge.ErrSSHAgentUnavailable)
+	})
+
+	t.Run("live agent socket", func(t *testing.T) {
+		sockPath := filepath.Join(t.TempDir(), "agent.sock")
+		ln, err := net.Listen("unix", sockPath)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			if closeErr := ln.Close(); closeErr != nil {
+				t.Logf("closing listener: %v", closeErr)
+			}
+		})
+		t.Setenv("SSH_AUTH_SOCK", sockPath)
+		assert.NoError(t, socketbridge.CheckHostSSHAgentForTest(context.Background()))
+	})
 }

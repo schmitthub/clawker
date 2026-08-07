@@ -10,6 +10,12 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.8.3] - 2026-08-07
+
+- **Added:** Clawker runs on rootless Docker (Linux). A stock rootless install works without configuration — the full feature set is available, including the egress firewall and bind-mounted workspaces. Two steps ask for `sudo` once per boot: a BPF filesystem delegation for the firewall, and an ID-mapped workspace view so bind mounts reach the container user with correct ownership. See [Rootless Docker](https://docs.clawker.dev/container-internals#rootless-docker).
+- **Added:** Docker daemon host discovery. Clawker resolves the daemon address the way the `docker` CLI does: `DOCKER_HOST` > the `docker.host` setting > the active docker CLI context > the conventional default. Container create no longer fails on hosts whose daemon serves a non-default socket path. The `docker.socket` settings key is now `docker.host`; stored values migrate automatically.
+- **Added:** Credential-forwarding prechecks. Before a container starts, clawker checks each enabled git-credential lane (GPG, SSH agent, git credential helper, `.gitconfig`) against the host and prints one warning per lane the host cannot serve — no more silent forwarding failures.
+
 ## [2026.8.2] - 2026-08-03
 
 - **Removed:** The base image does not include git-delta. This dependency is not necessary. Git shows diffs with its standard output.

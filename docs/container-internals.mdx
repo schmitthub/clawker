@@ -233,7 +233,7 @@ A PID 1 process in Linux has special responsibilities the kernel does not delega
 When the container starts, clawkerd executes in this order:
 
 1. **Read bootstrap material.** Four files in `/run/clawker/bootstrap` (per-agent mTLS leaf cert + key, the clawker CA cert, and a single-use Hydra JWT). The CLI streams these into the container as a tar archive between `docker create` and `docker start` — they live on the container's writable layer, not on tmpfs or a bind mount.
-2. **Resolve environment.** `CLAWKER_AGENT` is required; `CLAWKER_PROJECT` may be empty (for global-scope containers). `CLAWKER_USER` (defaults to `claude`) is resolved against `/etc/passwd` to populate the kernel-side privilege-drop credentials for the eventual spawn.
+2. **Resolve environment.** `CLAWKER_AGENT` is required; `CLAWKER_PROJECT` may be empty (for global-scope containers). `CLAWKER_USER` (defaults to `clawker`) is resolved against `/etc/passwd` to populate the kernel-side privilege-drop credentials for the eventual spawn.
 3. **Start the mTLS listener.** clawkerd serves a gRPC `ClawkerdService.Session` endpoint on `:7700`, reachable only over the `clawker-net` network. The listener enforces `RequireAndVerifyClientCert` plus a CN pin: the only authorized peer is the clawker control plane's cert (CN = `clawker-controlplane`). Any other peer is rejected at the TLS layer, before any RPC handler runs.
 4. **Wait for CP-driven init.** The control plane dials in over mTLS, registers the agent's identity (binding the container ID to the captured cert thumbprint in CP's sqlite agent registry), and then dispatches one or more setup commands — config seeding, git wiring, your `post_init` script if configured. Each step's exit status and output flow back over the same Session stream.
 5. **Fork the user CMD when the agent is ready.** When CP sends the readiness signal, clawkerd forks the user CMD (the harness command from the image's CMD) using `SysProcAttr.Credential` so the kernel performs `setgroups → setgid → setuid` between fork and exec. The user CMD never runs as root; clawkerd does, but it never executes user-controlled code in its own process.
@@ -247,8 +247,8 @@ If the user CMD exits cleanly (e.g. you exit the harness), clawkerd exits with t
 | Process | UID | Why |
 |---------|----:|-----|
 | `clawkerd` (PID 1) | 0 (`root`) | mTLS listener, log writes, bootstrap reads, `Wait4(-1)` orphan reap |
-| User CMD (the harness) | `claude` (host-derived on Linux, 1001 elsewhere) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
-| Anything the user CMD spawns | `claude` (host-derived on Linux, 1001 elsewhere) | Inherits from the user CMD; never reaches clawkerd's privilege |
+| User CMD (the harness) | `clawker` (host-derived on Linux, 1001 elsewhere) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
+| Anything the user CMD spawns | `clawker` (host-derived on Linux, 1001 elsewhere) | Inherits from the user CMD; never reaches clawkerd's privilege |
 
 The kernel performs the credential switch atomically between fork and exec, so there is no user-mode code path that holds root and then drops it.
 
@@ -276,7 +276,24 @@ The firewall is intentionally **not** configured inside the container. eBPF cgro
 - Agent containers run with **no Linux capabilities** (`cap_add: []`). No `NET_ADMIN`, no `NET_RAW`. The firewall enforcement happens kernel-side, outside the container's privilege scope.
 - A compromised user CMD cannot modify, weaken, or bypass the firewall from inside — the eBPF programs, the BPF maps, and the route table are all in kernel space owned by the host, not the container.
 
-If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debugging), add them to `security.cap_add` in your `.clawker.yaml`. The firewall does not require any.
+If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debugging), add them to `security.cap_add` in your `clawker.yaml`. The firewall does not require any.
+
+## Rootless Docker
+
+Clawker runs on a rootless Docker daemon on Linux. A stock rootless install works without configuration — clawker finds the daemon, and the full feature set is available, including the egress firewall and bind-mounted workspaces. The rootless daemon must run on the same machine as the CLI, and `/etc/subuid`/`/etc/subgid` need subordinate ID ranges for your user (a standard rootless install sets these up).
+
+Clawker resolves the daemon address the same way the `docker` CLI does, in this order: the `DOCKER_HOST` environment variable, the `docker.host` key in clawker's `settings.yaml`, the active docker CLI context (`docker context show`), then the conventional default socket. A rootless install records its socket in the docker CLI context, so clawker finds it there with no configuration. To pin the address explicitly:
+
+```bash
+clawker settings set docker.host unix:///run/user/1000/docker.sock
+```
+
+Two capabilities need the kernel's cooperation on a rootless daemon. For each one, clawker asks for `sudo` once per boot, runs a small embedded helper, and continues. Each run stages the helper to a private temporary directory, runs it once under `sudo`, and removes it — nothing is installed on your system, and the helpers are attested at release together with the CLI.
+
+- **Firewall: BPF filesystem delegation.** The egress firewall loads eBPF programs, and on a rootless daemon the control plane cannot mount its own BPF filesystem. The first control-plane start after each boot asks for `sudo` and runs a helper that mounts a delegated BPF filesystem for it; the control plane then retries and comes up normally.
+- **Workspaces: ID-mapped views.** A rootless daemon maps your user to container root, so a plain bind mount reaches the container's unprivileged user root-owned and unusable. When you create or start a container in bind mode, clawker attaches an ID-mapped view of the workspace — one `sudo` prompt per boot — and mounts that view instead. Your files on the host keep their normal ownership. The view does not survive a reboot; the next container start re-attaches it.
+
+In a session without a terminal, either step fails with the reason; run one interactive command after boot (for example `clawker controlplane up` or a normal `clawker run`) and headless runs work until the next reboot.
 
 ## Shared Directory
 

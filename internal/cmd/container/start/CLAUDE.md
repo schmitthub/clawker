@@ -34,7 +34,7 @@ Phase B: Container start via shared.ContainerStart()
          └── BootstrapServicesPostStart (eBPF program attachment, socket bridge)
 ```
 
-Both attach and non-attach paths use `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger. `AgentName`/`Project` are left empty on both paths — an existing container's registry row already exists. Firewall eBPF programs are attached from outside the container by the eBPF manager, not by a container entrypoint.
+Both attach and non-attach paths use `shared.CommandOpts` for DI. The `CommandOpts` wires: IOStreams, Config, Client, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger. `AgentName`/`Project` are left empty on both paths — an existing container's registry row already exists. Firewall eBPF programs are attached from outside the container by the eBPF manager, not by a container entrypoint.
 
 A pre-start or Docker-start failure is routed through `shared.ReapFailedStart`, which removes a never-started auto-remove container so its name is freed and appends `shared.ReapedNotice` to the returned error.
 

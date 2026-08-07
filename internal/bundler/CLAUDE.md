@@ -156,6 +156,7 @@ type DockerfileContext struct {
     Packages, HarnessVolumeDirs, StackRootSteps, StackUserSteps []string
     HarnessPackages []string  // per-harness overlay apt packages (build.harnesses.<name>.packages); harness image only, no dedupe vs Packages
     HarnessSeeds []config.Seed; UID, GID int; BuildKitEnabled bool
+    ManagedPrompt *ManagedPromptContext  // build-time managed-prompt COPY target; nil when the harness manifest declares no managed_prompt
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
     OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the claude bundle fragment (not context fields).
@@ -246,11 +247,10 @@ The rendered harness image splits content across three scopes, dictated by USER 
 ### Dockerfile Instruction Types
 
 ```go
-type DockerfileInstructions struct { Copy []CopyInstruction; Args []ArgInstruction; UserRun, RootRun []RunInstruction }
+type DockerfileInstructions struct { Copy []CopyInstruction; Args []ArgInstruction; UserRun, RootRun []string }
 type DockerfileInject struct { AfterFrom, AfterPackages, AfterUserSetup, AfterUserSwitch, UserCommands, BeforeEntrypoint []string }  // yaml after_claude_install (deprecated alias) merges into UserCommands
 type CopyInstruction struct { Src, Dest, Chown, Chmod string }
 type ArgInstruction struct { Name, Default string }
-type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware RUN
 ```
 
 ### OTEL Endpoint Composition
@@ -316,6 +316,6 @@ Imports: `internal/bundle` (component resolution + floor FS), `internal/config` 
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `bundle_test.go`, `stack_load_test.go`, `harness_test.go`, `stack_test.go`, `overlay_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `bundle_test.go`, `stack_load_test.go`, `harness_test.go`, `stack_test.go`, `overlay_test.go`, `egress_test.go`, `journey_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

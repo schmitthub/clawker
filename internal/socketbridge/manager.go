@@ -3,7 +3,10 @@
 package socketbridge
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +36,24 @@ type SocketBridgeManager interface {
 	StopAll() error
 	// IsRunning returns true if a bridge daemon is running for the given container.
 	IsRunning(containerID string) bool
+	// Precheck reports whether the host can serve the forwarding lanes the
+	// options request, before the bridge daemon spawns. Lanes the options
+	// leave off are not probed. It returns nil when every requested lane is
+	// usable, or an error wrapping ErrGPGUnavailable,
+	// ErrSSHAgentUnavailable, or both ([errors.Join]) — match with
+	// [errors.Is]. Callers warn the user, so a later bridge failure has a
+	// visible cause instead of an opaque daemon-side error.
+	Precheck(ctx context.Context, opts PrecheckOptions) error
+}
+
+// PrecheckOptions selects the forwarding lanes Precheck probes. Callers set
+// each lane from the project's git-credential config, so a disabled lane is
+// never checked.
+type PrecheckOptions struct {
+	// GPG probes the host GPG material and gpg-agent extra socket.
+	GPG bool
+	// SSH probes the host SSH agent socket with a dial.
+	SSH bool
 }
 
 // Manager tracks per-container bridge daemon processes.
@@ -181,6 +202,56 @@ func (m *Manager) IsRunning(containerID string) bool {
 	}
 	pid := readPIDFile(pidFile)
 	return pid > 0 && isProcessAlive(pid)
+}
+
+// Sentinel errors for Precheck — one per forwarding lane. Callers match
+// with [errors.Is]; the wrapped detail carries the concrete cause.
+var (
+	ErrGPGUnavailable      = errors.New("host GPG material unavailable")
+	ErrSSHAgentUnavailable = errors.New("host SSH agent unavailable")
+)
+
+// Precheck implements SocketBridgeManager by running the same host lookups
+// the bridge daemon performs when it serves each requested lane.
+func (m *Manager) Precheck(ctx context.Context, opts PrecheckOptions) error {
+	var errs []error
+	if opts.GPG {
+		errs = append(errs, checkHostGPG())
+	}
+	if opts.SSH {
+		errs = append(errs, checkHostSSHAgent(ctx))
+	}
+	return errors.Join(errs...)
+}
+
+// checkHostGPG wraps ErrGPGUnavailable around the exact host lookups the
+// bridge performs for the GPG lane: the pubkey export sent at startup and
+// the gpg-agent extra socket dialed per connection.
+func checkHostGPG() error {
+	if _, err := getHostGPGPubkey(); err != nil {
+		return fmt.Errorf("%w: %w", ErrGPGUnavailable, err)
+	}
+	if _, err := getGPGExtraSocket(); err != nil {
+		return fmt.Errorf("%w: %w", ErrGPGUnavailable, err)
+	}
+	return nil
+}
+
+// checkHostSSHAgent wraps ErrSSHAgentUnavailable around the same agent
+// socket resolution the daemon performs per connection, plus a dial to
+// prove the agent answers.
+func checkHostSSHAgent(ctx context.Context) error {
+	path, err := resolveHostSocket(consts.SocketTypeSSHAgent)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSSHAgentUnavailable, err)
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", path)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSSHAgentUnavailable, err)
+	}
+	conn.Close() //nolint:gosec // probe-only connection, nothing was written
+	return nil
 }
 
 // startBridge spawns a detached "clawker bridge serve" subprocess.

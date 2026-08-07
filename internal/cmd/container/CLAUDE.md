@@ -20,7 +20,7 @@ Where to add logic that must run at a lifecycle point. The deciding axis is **on
 2. Docker start (`client.ContainerStart` / `ContainerRestart`).
 3. `BootstrapServicesPostStart` — after Docker start: eBPF cgroup enroll (cgroup exists only now), GPG/SSH socket bridge. Use for anything needing the running container's cgroup/PID.
 
-In-container, CP then dispatches its init plan to clawkerd on every start (`internal/controlplane/agent`): the `post-init` step is marker-gated (once), `pre-run` runs every start. Mirror this once-vs-every choice when adding an init step (and add a matching `clawkerd/progress.go` label).
+In-container, CP then dispatches its init plan to clawkerd on every start (`controlplane/agent`): the `post-init` step is marker-gated (once), `pre-run` runs every start. Mirror this once-vs-every choice when adding an init step (and add a matching `clawkerd/progress.go` label).
 
 ## Package Structure
 
@@ -132,7 +132,7 @@ Commands use function references on Options structs. `NewCmd*` takes `*Factory` 
 
 ## Exec Credential Forwarding
 
-Auto-injects git credential env vars into exec'd processes via `workspace.SetupGitCredentials()`. HTTPS via host proxy; SSH/GPG env vars from the already-running socket bridge (set up at container start, not per-exec).
+`execRun` does not inject credential env vars per invocation. Git/HTTPS credential env vars (and SSH/GPG via the socket bridge) are baked into the container's own environment once, at container creation (`shared.CreateContainer` → `workspace.SetupGitCredentials()`); `docker exec` processes inherit that environment automatically.
 
 ## SocketBridge Wiring
 

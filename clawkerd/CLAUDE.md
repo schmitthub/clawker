@@ -57,7 +57,7 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
 
 **Phase-2 gate** (`BeginOrphanDrain` / `MainExited`): the reaper holds at `<-orphanDrainCh` after phase 1. main() uses `MainExited` to trigger `Stop`, then calls `BeginOrphanDrain` to release phase 2. Tests with no concurrent exec.Cmd.Wait surface call `BeginOrphanDrain` immediately after `Run`. The gate is held by default — a forgetful caller hangs loudly on Wait/Done rather than silently racing concurrent c.Wait surfaces.
 
-**Privilege drop.** `SysProcAttr.Credential{Uid, Gid, Groups}` populated from `ResolveUser(CLAWKER_USER, /etc/passwd, /etc/group)` (wraps `github.com/moby/sys/user.GetExecUserPath`). The kernel performs `setgroups → setgid → setuid` (in that order — `setgroups` MUST run while still root, before the `setuid` that drops privileges) between fork and exec; see Go's `syscall/exec_linux.go`. clawkerd's own goroutines stay root.
+**Privilege drop.** `SysProcAttr.Credential{Uid, Gid, Groups}` populated from `ResolveUser(CLAWKER_USER, /etc/passwd, /etc/group)` (wraps `github.com/moby/sys/user.GetExecUser`, deliberately not `GetExecUserPath` — the latter silently swallows file-open failures). The kernel performs `setgroups → setgid → setuid` (in that order — `setgroups` MUST run while still root, before the `setuid` that drops privileges) between fork and exec; see Go's `syscall/exec_linux.go`. clawkerd's own goroutines stay root.
 
 **Exit-code mapping.** `mapWaitStatus` (Wait4 path) and `mapExitCode` (`*os.ProcessState` path) return `WEXITSTATUS` for normal exit, `128+signum` for signaled. Matches bash convention so `restart: on-failure` works.
 
@@ -121,7 +121,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 - No proactive outbound dial — only the one-time CP-triggered Register handshake
 - No heartbeat — CP knows liveness via Docker events + dialer overseer events
 - No init-script execution — CP-driven `Session.ShellCommand` runs the post-init plan; clawkerd just dispatches
-- No reconnect logic — clawkerd is the SERVER; reconnect with backoff lives in `internal/controlplane/agent/dialer.go` on the CP side
+- No reconnect logic — clawkerd is the SERVER; reconnect with backoff lives in `controlplane/agent/dialer.go` on the CP side
 
 ## Files
 
@@ -142,6 +142,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 | `recover_test.go` | `recoverGoroutine` panic callback + structured-log verification |
 | `register_test.go` | `registerCoordinator` happy path, retry/serialization, Hydra consumption semantics; `exchangeAssertion` transport/HTTP-error/token-type variants |
 | `session_test.go` | Dispatch/command_id contract, dup-ID rejection, ShellCommand audit log, spawn-failure outcome, concurrent-pipeline race-detector, `closePipeOnce` dedup, `routeSignal` reaper-race filter, `handleAgentReady` happy/reconnect/spawn-fail/unwired/panic |
+| `command_output_test.go` | Combined stdout+stderr single-stream ordering (`2>&1`), `print_output` console-echo gating, `exit_on_non_zero` exit-code mirroring (including signal-clamp), `settleInitStep` ✓/✗ rendering by exit code |
 | `spawn_test.go`, `spawn_unix_test.go`, `spawn_linux_test.go` | spawn-state lifecycle (echo/sleep/false/exit-42), Stop signaling, double-Run idempotency, ready-file touch, descendant reap, signal-set composition, exit-code mapping |
 | `user_test.go` | `ResolveUser` happy paths (name/uid/name:group/uid:gid), empty-spec and not-found errors, missing passwd/group file errors |
 
@@ -161,7 +162,7 @@ The single allowed `os.Stderr` write is the logger init failure path in `main`.
 
 - Deterministic pre-spawn config failure (missing `CLAWKER_AGENT`, `ResolveUser` fails, bootstrap read fails) → **exit 2** (`exitCodeConfig`). Distinct from transient exit 1 so an operator running `restart: on-failure:max-retries=N` can trip-and-stop on broken config instead of restart-looping. Unix tradition: 2 = config error.
 - Listener-bind failure → exit 1 (transient — port-in-use clears on restart).
-- A dispatched `ShellCommand` carrying `exit_on_non_zero` that exits non-zero (during init, before the user CMD spawns) → main exits PID 1 with the command's mirrored exit code (a signal-killed `-1` is clamped to a generic non-zero). This is how a fatal init step (e.g. a failing `post_init`/`pre_run` hook) tears the container down cleanly with the failing code rather than parking forever unhealthy with no child. CP enforces a `consts.CPAgentKillGrace` grace-then-SIGKILL backstop (`Executor.killAfterGrace`) for a clawkerd that cannot self-exit.
+- A dispatched `ShellCommand` carrying `exit_on_non_zero` that exits non-zero (during init, before the user CMD spawns) → main exits PID 1 with the command's mirrored exit code (a signal-killed `-1` is clamped to a generic non-zero). This is how a fatal init step (e.g. a failing `post_init`/`pre_run` hook) tears the container down cleanly with the failing code rather than parking forever unhealthy with no child. CP enforces a `consts.CPAgentKillGrace` grace-then-SIGKILL backstop (`Executor.KillAfterGrace`) for a clawkerd that cannot self-exit.
 - SIGTERM before `AgentReady` (no user CMD ever spawned) → main logs `event=shutdown_before_spawn` (Info), skips the `MainExited` wait, Stops the listener, returns exit 1. `spawn.SpawnErr()==nil` so the `event=shutdown` line carries no error field — the `shutdown_before_spawn` line is the sole signal. Operators grep for this event when a container exits 1 immediately on `docker stop` of an idle agent.
 - Once `spawn.Run` succeeds, exit code = bash-convention mapping of the user CMD's exit (`WEXITSTATUS` for normal, `128+signum` for signaled). Docker `restart: on-failure` reads this.
 - A clean SIGTERM that drains all goroutines and reaps the child = exit code carrying the child's signal exit (`128 + SIGTERM`).

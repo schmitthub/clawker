@@ -10,7 +10,7 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 | `init/init.go` | `NewCmdInit(f, runF)` — scaffold the base stack config files (floor only — zero extensions; projection is up/reload territory) |
 | `up/up.go` | `NewCmdUp(f, runF)` — bring-up only: a fully-running stack short-circuits with an already-up notice (no render/seed); otherwise merges the cwd projection into the host ledger and renders the collector config over the seeded union (option-D) |
 | `reload/reload.go` | `NewCmdReload(f, runF)` — explicit disruptive apply: re-render over the seeded union + this project's projection, stop+remove the collector, compose up, seed ledger |
-| `shared/stack.go` | `PrepareStack`, `ComposeUp`, `RemoveCollector`, `CollectorRunning`, `RunComposeCmd` — stack plumbing shared by up/reload |
+| `shared/stack.go` | `PrepareStack`, `ComposeUp`, `RemoveCollector`, `CollectorRunning`, `StackRunning`, `RunComposeCmd` — stack plumbing shared by up/reload |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show stack status |
 | `extensions/extensions.go` | `NewCmdExtensions(f, runF)` — read-only inventory of resolvable monitoring extensions (`cmdutil.NewInventoryListCommand` over `bundle.Manager.Inventory`) |
@@ -43,11 +43,12 @@ Scaffolds the BASE stack config files (`compose.yaml`, `otel-config.yaml`, `prom
 
 ```go
 type UpOptions struct {
-    IOStreams *iostreams.IOStreams
-    Client    func(context.Context) (*docker.Client, error)
-    Config    func() (config.Config, error)
-    Logger    func() (*logger.Logger, error)
-    Detach    bool
+    IOStreams     *iostreams.IOStreams
+    Client        func(context.Context) (*docker.Client, error)
+    Config        func() (config.Config, error)
+    Logger        func() (*logger.Logger, error)
+    BundleManager func() (*bundle.Manager, error)
+    Detach        bool
 }
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
 ```
