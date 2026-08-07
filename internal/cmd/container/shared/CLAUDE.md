@@ -31,7 +31,7 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
 
 **Steps** (streamed via events): workspace, config, environment, container (validate+build+create+inject).
 
-**Volume cleanup on failure**: Deferred cleanup via named returns. Tracks newly-created volumes; removes only those on error. Pre-existing volumes untouched.
+**Volume cleanup on failure**: a `createScope` tracks the container ID and newly-created volumes as they're made; a local `failed` flag is set on every post-workspace error path and checked by a deferred closure that calls `scope.reclaim()` (container first, then its volumes). Removes only resources created by this call — pre-existing volumes untouched. A panic unwinding through `CreateContainer` leaves `failed` false and does NOT reclaim.
 
 **`IOStreams` is required** — `CreateContainer` refuses a nil up front. A nil is
 always a forgotten field, never a headless caller (headless runs carry a non-TTY
@@ -132,8 +132,12 @@ One-time Claude config initialization for new containers, called by `CreateConta
 err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     ProjectName:      "myapp",
     AgentName:        "dev",
+    HarnessName:      bundle.Name,
     ContainerWorkDir: wsResult.ContainerPath,
-    ClaudeCode:       cfg.Agent.ClaudeCode,
+    Harness:          cfg.HarnessConfigFor(bundle.Name),
+    Staging:          bundle.Manifest.Staging,
+    Volumes:          bundle.Manifest.Volumes,
+    FreshVolumes:     wsResult.ConfigVolumeResult.CreatedByName,
     CopyToVolume:     client.CopyToVolume,
 })
 ```
@@ -169,7 +173,7 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + ID-mapped view re-establishment (`ensureIDMappedViewsAtStart` — containers stamped with `consts.LabelIDMapRoots` get their workspace views re-proven before Docker resolves bind sources; see "ID-mapped workspace views") + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
 - `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
 - `ContainerStart(ctx, cmdOpts, startOpts) (*mobyClient.ContainerStartResult, error)` -- runs all three phases; errors abort immediately. The docker client is resolved BEFORE pre-start so a failure can reap. Pre-start and Docker-start failures route through `ReapFailedStart`; post-start failures don't (the container is running). The result is the SDK's verbatim; nil means the Docker start call was never reached — the wrapper never fabricates an SDK result value (moby reserves the right to add fields to ContainerStartResult).
-- `ReapFailedStart(client, containerID, startErr) error` -- reap-on-failed-start: when a start sequence fails, removes the container ONLY if it is destined for AutoRemove (`--rm`) and inspect proves it not running (nil `State` = unknown → untouched, a force-remove demands proof). Docker honors AutoRemove solely on exit-after-start, so a `--rm` container whose start never succeeded would otherwise squat its name forever in the `created` state, blocking a re-run. Non-AutoRemove and running containers are left untouched. NotFound/not-managed from inspect or remove is benign — the daemon already removed it. Always returns a non-nil error derived from `startErr` (the `ReapedNotice` const carries the user-facing removed-it message); cleanup uses a background context so Ctrl+C cannot abort it. Every start-sequence failure path routes through it; the one nuance worth knowing: plain `restart` and `start --attach` call it directly because they bootstrap without going through `ContainerStart`.
+- `ReapFailedStart(client, containerID, startErr) error` -- reap-on-failed-start: when a start sequence fails, removes the container ONLY if it is destined for AutoRemove (`--rm`) and inspect proves it not running (nil `State` = unknown → untouched, a force-remove demands proof). Docker honors AutoRemove solely on exit-after-start, so a `--rm` container whose start never succeeded would otherwise squat its name forever in the `created` state, blocking a re-run. Non-AutoRemove and running containers are left untouched. NotFound/not-managed from inspect or remove is benign — the daemon already removed it. Always returns a non-nil error derived from `startErr` (the `ReapedNotice` const carries the user-facing removed-it message); cleanup uses a background context so Ctrl+C cannot abort it. Every start-sequence failure path routes through it; the nuance worth knowing: `run` (both its attach and detach paths), plain `restart`, and `start --attach` call it directly because they bootstrap without going through `ContainerStart` — only `start`'s non-attach path and `restart --signal` do.
 
 ### Types
 
@@ -196,9 +200,9 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 | `CreateContainer(ctx, opts)` | Single entry point -- workspace, config, env, create, inject |
 | `NeedsSocketBridge(security)` | Check if GPG/SSH bridge needed from the project's `security:` block |
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
-| `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
+| `InjectHookScript(ctx, opts)` | Tar a shell-wrapped hook (shebang from `opts.Shell`, default `zsh`) to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
 | `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |
-| `ResolveAgentEnv(agent, projectDir, log)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
+| `ResolveAgentEnv(agent, harnessCfg, harnessName, projectDir, log) (map[string]string, []string, error)` | Merges `agent.*` then `harnesses.<harnessName>.*` (harness values win on key collision) into one map. Within each scope, precedence is env_file < from_env < env. Returns the merged env plus non-fatal warnings (missing `env_file` var, unset `from_env` var) |
 | `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
 | `WriteAgentBootstrapToContainer(...)` | Tar bootstrap files into container |
 | `InstallAgentBootstrapMaterial(...)` | Create-time install of agent bootstrap material |
@@ -222,7 +226,7 @@ The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree ad
 
 ## Dependencies
 
-Imports: `internal/cmdutil`, `internal/config`, `internal/consts`, `internal/containerfs`, `controlplane/manager` (the `Manager` noun) + `internal/cmd/controlplane/shared` (`AssistSOS`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/idmap`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/sudo`, `internal/workspace`, `pkg/whail`, `api/admin/v1`
+Imports: `internal/auth`, `internal/bundle`, `internal/bundler`, `internal/clawker`, `internal/cmdutil`, `internal/config`, `internal/consts`, `internal/containerfs`, `internal/dotenv`, `controlplane/manager` (the `Manager` noun) + `internal/cmd/controlplane/shared` (`AssistSOS`), `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/idmap`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/socketbridge`, `internal/sudo`, `internal/workspace`, `api/admin/v1`. Never `pkg/whail` directly — only `internal/docker` may import it (see code-style rules).
 
 ## Testing
 

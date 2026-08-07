@@ -2,7 +2,7 @@
 
 A reusable Docker engine wrapper with automatic label-based resource isolation. All operations — create, list, remove, build — are filtered through managed labels. Resources created outside whail are invisible; resources created by whail cannot escape.
 
-Wraps `github.com/moby/moby/client`. **No other package may import moby directly.**
+Wraps `github.com/moby/moby/client`. **Only `pkg/whail` imports the moby `APIClient` connector, and only `internal/docker` imports `pkg/whail`.** Typed moby imports are fine anywhere; standalone daemon processes have narrow connector exceptions — see `.claude/rules/docker-client.md`.
 
 ## Quick Start
 
@@ -177,8 +177,8 @@ Function-field test double implementing the full moby `APIClient` interface. Emb
 
 ```go
 fake := whailtest.NewFakeAPIClient()
-fake.ContainerStopFn = func(ctx context.Context, id string, opts container.StopOptions) error {
-    return nil
+fake.ContainerStopFn = func(ctx context.Context, id string, opts client.ContainerStopOptions) (client.ContainerStopResult, error) {
+    return client.ContainerStopResult{}, nil
 }
 engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
 
@@ -233,12 +233,13 @@ pkg/whail/
     volume.go       Volume operations
     network.go      Network operations
     copy.go         CopyToContainer, CopyFromContainer
+    progress.go     Build progress display helpers (IsInternalStep, CleanStepName, ParseBuildStage, FormatBuildDuration)
     buildkit/       Subpackage — only place that imports moby/buildkit
         builder.go  NewImageBuilder() — returns the Engine closure
-        client.go   NewBuildKitClient() — connects via Docker's /grpc endpoint
+        client.go   NewBuildKitClient() — connects via Docker's /grpc and /session hijack endpoints
         solve.go    toSolveOpt() — converts ImageBuildKitOptions to SolveOpt
-        progress.go drainProgress() — logs build progress via zerolog
+        progress.go drainProgress() — converts BuildKit SolveStatus vertices to BuildProgressEvent callbacks
     whailtest/      Test infrastructure
-        fake_client.go  FakeAPIClient with function-field fakes
+        stubs.go        FakeAPIClient with function-field fakes
         helpers.go      BuildKitCapture, resource fixtures, assertions
 ```

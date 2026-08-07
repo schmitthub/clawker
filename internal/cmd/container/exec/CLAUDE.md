@@ -14,19 +14,21 @@ Executes a command in a running container. Supports TTY mode with terminal resiz
 1. **Resolve container name** — `--agent` flag resolves to `clawker.<project>.<agent>`
 2. **Connect to Docker** — `opts.Client(ctx)`
 3. **Find container** — `FindContainerByName` + verify running state
-4. **Credential forwarding** — host proxy + git credentials + socket bridge env injection
-5. **Create exec instance** — `ExecCreate` with command, env, workdir, user, TTY config
-6. **Route by mode**:
+4. **Create exec instance** — `ExecCreate` with command, env, workdir, user, TTY config
+5. **Route by mode**:
    - **Detach**: `ExecStart` + print exec ID
    - **TTY**: PTY setup + Stream goroutine + resize handler + exit code check
    - **Non-TTY**: stdcopy demux + optional stdin forwarding + exit code check
 
 ## Credential Forwarding
 
-Exec injects git credential env vars into exec'd processes automatically:
-
-1. **Host proxy** — if enabled, `CLAWKER_HOST_PROXY=<url>` for HTTPS credential forwarding
-2. **Git credentials** — `workspace.SetupGitCredentials()` provides env for HTTPS/SSH/GPG
+`execRun` does **not** inject credential env vars per invocation. Git/HTTPS
+credential env vars (and SSH/GPG via the socket bridge) are baked into the
+container's own environment once, at container creation
+(`shared.CreateContainer` → `workspace.SetupGitCredentials`, see
+`internal/cmd/container/shared/CLAUDE.md`); `docker exec` processes inherit
+that environment automatically, so no per-exec setup is needed.
+`ExecOptions.HostProxy` is wired from the Factory but unused in `execRun`.
 
 ## TTY Mode: Stream + Resize Pattern
 
@@ -74,12 +76,10 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 
 - `internal/docker` — PTYHandler, ExecCreate/Start/Attach/Inspect/Resize
 - `internal/signals` — ResizeHandler for SIGWINCH monitoring
-- `internal/hostproxy` — Host proxy for credential forwarding
-- `internal/workspace` — SetupGitCredentials for exec sessions
 - Logging via `*logger.Logger` (Factory lazy noun) — resolved eagerly in `execRun` via `opts.Logger()`
 
 ## Testing
 
 - **Tier 1**: Flag parsing via `runF` trapdoor — all flags, agent mode, args parsing
 - **Tier 2**: Cobra+Factory with `mocks.FakeClient` — Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code
-- TTY path requires real terminal — covered by integration tests in `test/e2e/`
+- TTY path requires a real terminal — not exercised by `test/e2e/`: the harness's `ExecInContainer`/`ExecInContainerAsRoot` helpers never pass `-t`, and there is no PTY test infrastructure. No automated TTY coverage currently exists.

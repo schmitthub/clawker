@@ -27,7 +27,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   │   └── ebpf/              # eBPF loader + Manager
 │   │       └── netlogger/     # Per-decision egress event emitter (ringbuf → enrich → OTLP)
 │   ├── infracerts/            # CLI-root CA material (long-lived) for CP→clawkerd dial
-│   ├── manager/               # Host-side CP lifecycle (EnsureRunning/Stop/CPRunning), embedded clawkercp + ebpf-manager binaries
+│   ├── manager/               # Host-side CP lifecycle (Start/Stop/IsRunning/ProbeHealthz), embedded clawkercp + ebpf-manager + bpffs-delegate binaries
 │   ├── otel/                  # CP-side OTel logger provider factory (trusted-infra OTLP)
 │   ├── otelcerts/             # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS/netlogger)
 │   ├── pubsub/                # Generic typed pub/sub pipe: Topic[T], Event[T] (dumb, stateless, panic-recovered delivery)
@@ -38,7 +38,8 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── auth/                  # CLI-side auth material + CP dial helpers
 │   ├── build/                 # Build-time metadata (leaf, stdlib only)
 │   ├── bundler/               # Dockerfile generation, harness bundle + stack loading/validation/composition, egress composition, semver resolution, npm registry (manifest schema types live in internal/config)
-│   ├── clawker/               # Main application lifecycle
+│   ├── clawker/               # CLI domain package: types + interface declarations only, no internal imports (Session)
+│   ├── clawkercmd/            # CLI entry point: builds and runs the command tree
 │   ├── clawkerd/              # clawkerd daemon entrypoint package (Main/run in cmd.go); embed lives at top-level clawkerd/embed
 │   ├── cmd/                   # Cobra commands
 │   │   ├── factory/           # Factory constructor
@@ -53,6 +54,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── controlplane/          # CP daemon orchestrator (cmd.go): constructs pub/sub topics + domain state repos, wires handlers, runs startup/drain
 │   ├── dnsbpf/                # CoreDNS plugin for BPF dns_cache
 │   ├── docker/                # Docker middleware (wraps pkg/whail + bundler)
+│   │   └── context/           # Read-only docker CLI context reader (current context pointer, stored endpoints, typed absence sentinels)
 │   ├── dotenv/                # .env parser, compose semantics (vendored from compose-go, MIT/Apache — see LICENSE files; logrus replaced with MissingFn reporting)
 │   │   └── template/          # ${VAR:-default} interpolation engine (vendored compose-go/template)
 │   ├── docs/                  # CLI doc generation

@@ -12,12 +12,13 @@ npm registry client and version metadata types for `internal/bundler`. Full API 
 | `types.go` | `DistTags`, `VersionInfo`, `VersionsFile`, `NPMPackageInfo`, `NewVersionInfo(...)`. `VersionsFile.SortedKeys` returns keys in semver-descending order; order-sensitive consumers iterate that. |
 | `errors.go` | `NetworkError` (with `Unwrap`), `RegistryError` (with `IsNotFound` for 404 detection), `ParseError` (with `Unwrap`; HTTP-200 body decode failure, distinct from network failure), sentinel `ErrVersionNotFound`/`ErrInvalidVersion`/`ErrNoVersions`. `bundler/errors.go` re-exports these as type aliases so callers outside `registry` import `bundler` instead. |
 | `npm_test.go` | `httptest.Server` stubs for `FetchVersions`, `FetchDistTags`, 404 handling, network error paths. |
+| `github_test.go` | `http.RoundTripper` stub for `LatestVersion` — tag-prefix stripping, no-prefix passthrough, prefix mismatch, HTTP/network errors, missing `tag_name`. |
 
 ## Key Invariants
 
 - `NewNPMClient()` defaults are safe for production (`baseURL = defaultNPMRegistry`, `timeout = defaultTimeout = 30s`).
 - `RegistryError.IsNotFound()` is the canonical way to distinguish "package doesn't exist" from other HTTP failures — don't grep the error string.
-- `VersionsFile.SortedKeys` parses each key into a `semver.Collection` and `sort.Sort(sort.Reverse(...))` (semver-descending). Order-sensitive consumers (`GenerateDockerfiles`, `displayVersionsFile`) iterate it. `versions.json` itself serializes as a plain JSON map — keys re-parse into a map on load, so on-disk key order is not a contract.
+- `VersionsFile.SortedKeys` parses each key into a `semver.Collection` and `sort.Sort(sort.Reverse(...))` (semver-descending) for callers that need semver-ordered iteration. `versions.json` itself serializes as a plain JSON map — keys re-parse into a map on load, so on-disk key order is not a contract.
 - `NPMClient.fetchPackageInfo` reads at most 1 KiB of error body on non-200 responses — avoids runaway memory on a broken registry mirror.
 
 ## Dependencies

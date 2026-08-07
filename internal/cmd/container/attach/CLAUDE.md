@@ -14,10 +14,9 @@ Attaches local stdin/stdout/stderr to a running container. Supports TTY mode wit
 1. **Resolve container name** — `--agent` flag resolves to `clawker.<project>.<agent>`
 2. **Connect to Docker** — `opts.Client(ctx)`
 3. **Find container** — `FindContainerByName` + verify running state
-4. **Start host proxy** — enables container-to-host actions (browser opening, etc.)
-5. **Inspect container** — determine TTY mode from `Config.Tty`
-6. **Attach** — `ContainerAttach` returns hijacked connection
-7. **Handle I/O** — TTY path (Stream + resize) or non-TTY path (stdcopy demux)
+4. **Inspect container** — determine TTY mode from `Config.Tty`
+5. **Attach** — `ContainerAttach` returns hijacked connection
+6. **Handle I/O** — TTY path (Stream + resize) or non-TTY path (stdcopy demux)
 
 ## TTY Mode: Stream + Resize Pattern
 
@@ -58,7 +57,6 @@ Uses `stdcopy.StdCopy` to demultiplex Docker's multiplexed stdout/stderr stream.
 
 - `internal/docker` — PTYHandler, ContainerAttach, ContainerResize, ContainerInspect
 - `internal/signals` — ResizeHandler for SIGWINCH monitoring
-- `internal/hostproxy` — Host proxy for container-to-host communication
 - Logging via `*logger.Logger` (Factory lazy noun) — resolved eagerly in `attachRun` via `opts.Logger()`
 
 ## Testing

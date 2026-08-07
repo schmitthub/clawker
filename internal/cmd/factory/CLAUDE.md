@@ -42,7 +42,7 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 `New()` delegates to extracted helper functions for each Factory field:
 - `ioStreams()` -- creates IOStreams via `iostreams.System()` (eager, no Config dependency)
 - `tuiFunc(f)` -- creates TUI struct bound to IOStreams (eager, separate helper in `default.go`)
-- `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
+- `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` and `f.Logger()` to pass `config.Config` (interface) and `*logger.Logger` to `docker.NewClient`
 - `projectRegistryFunc()` -- returns lazy `project.Registry` constructor (`project.NewRegistry()`); the sole production constructor of registry storage, shared by Config, GitManager, ProjectManager, and commands via `f.ProjectRegistry`
 - `configFunc(f)` -- returns lazy `config.Config` gateway constructor (lazy-loads project + settings stores; the registry is touched only through `f.ProjectRegistry().CurrentRoot()` for the walk-up anchor). Resolves the project root at the call site and passes it to `config.NewConfig(config.WithProjectRoot(root))` to bound project-config walk-up (empty root → walk-up disabled)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses the project root from `f.ProjectRegistry().CurrentRoot()`
@@ -50,24 +50,25 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `adminClientFunc(f)` -- returns a lazy `adminv1.AdminServiceClient` constructor; closes over `f.Config()` only. Pure dial — does NOT bootstrap the CP (CP lifecycle lives in `controlPlaneFunc` / `cpmanager.Manager`; CP is brought up by agent-container start flows and the explicit `clawker controlplane up` / `clawker firewall up` verbs). Reads `cp.AdminPort` / `cp.HydraPublicPort` from settings and calls `adminclient.Dial(ctx, adminPort, hydraPort, grpc.WithKeepaliveParams(...))` with mTLS + OAuth2 JWT; subsequent calls return the cached `grpc.ClientConn` unless it has entered `TransientFailure`/`Shutdown`, in which case the closure closes the conn and rebuilds. Admin commands invoked when the CP is down fail fast. No test seams — callers substitute via `AdminServiceClient` mocks at the Factory level (`adminv1mocks.AdminServiceClientMock` from `api/admin/v1/mocks`). No raw moby client.
 - `controlPlaneFunc(f)` -- returns a `sync.Once`-cached `func(context.Context) (cpmanager.Manager, error)` that resolves Config, Logger, and the Docker client once (mirroring `clientFunc`'s caching) and constructs a single `cpmanager.NewManager(dc, cfg, log)` per Factory. Resolution happens here, not in the manager — the Manager holds already-resolved dependencies and nothing lazy; a caller that never calls `f.ControlPlane(ctx)` never resolves them. Consumed by the break-glass verbs in `internal/cmd/controlplane/`, `firewall up`, and the container-start bootstrap.
 - `socketBridgeFunc(f)` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
-- `prompterFunc(f)` -- returns lazy prompter constructor
+- `prompterFunc(f)` -- returns a constructor closure that builds a fresh `*prompter.Prompter` on every call (no `sync.Once` caching, unlike the other helpers)
 - `projectManagerFunc(f)` -- returns lazy `project.ProjectManager` constructor; resolves Config, Logger, and ProjectRegistry, then calls `project.NewProjectManager(log, nil, cfg.ProjectName(), reg)`, passing the `clawker.yaml` `name:` override down as a primitive. The edge is strictly one-way (PM reads config; config never reads PM — its walk-up anchor comes from the shared registry facade), so there is no cycle
 - `httpClientFunc()` -- returns a lazy `func() (*http.Client, error)` with a 30s timeout; shared by npm registry lookups (Claude Code version resolution), the update checker, and the changelog teaser. The `error` return is **reserved** (constructing a plain client is infallible today) so a future fallible transport — custom CA bundle, proxy resolution, auth round-tripper — can surface failures without a signature change; until then it is always nil.
 - `cliStateFunc()` -- returns a lazy `func() (state.StateStore, error)` (`state.New()`, `sync.Once`-cached, no dependencies); the CLI runtime-state facade (update-check cache + changelog cursor) consumed by the background notifications in `Main`. The error is real — `state.New()` can fail on a disk/migration error.
+- `sessionFunc()` -- returns a `sync.Once`-cached `func() clawker.Session` (`clawker.NewSession()`); no dependencies. Assigned to `f.Session` directly in the `New()` struct literal, alongside `ProjectRegistry` and `CLIState`
+- `bundleManagerFunc(f)` -- returns a lazy `func() (*bundle.Manager, error)`; resolves Config once and constructs `bundle.NewManager(cfg, componentcheck.Validate, bundle.WithRegisteredRoots(registeredRootsFn(f)))`. `registeredRootsFn(f)` is a separate helper that lazily resolves `f.ProjectManager()` per GC pass to list every registered project root and worktree path as bundle cache GC roots
 
 Each helper is a standalone function in `default.go`, making the wiring easy to read and test.
 
-All closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves.
+Most closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves; `prompterFunc` is the one documented exception (see above).
 
-**Dependency ordering in `New()`**: Config is constructed first, then `loggerLazy(f)` (needs `f.Config()` for settings), then `ioStreams()` (no Config dependency), then IOStreams-dependent fields (TUI, Prompter).
+**Dependency ordering in `New()`**: `ProjectRegistry`, `CLIState`, and `Session` are set directly in the struct literal (no cross-dependencies). Then `Config` is assigned first among the remaining fields, then `ProjectManager` (needs Config), then `loggerLazy(f)` (needs `f.Config()` for settings), then `HostProxy`/`SocketBridge` (need Config+Logger), then `ioStreams()` (no Config dependency), then IOStreams-dependent fields (`TUI`, `Prompter`), then `Client`, `GitManager`, `AdminClient`, `ControlPlane`, `HttpClient`, and finally `BundleManager`.
 
 ## Logger Initialization
 
 Logger initialization happens inside `loggerLazy(f)` (separate from `ioStreams()`):
-1. Reads `cfg.LoggingConfig()` for file/OTEL config
-2. Calls `logger.New(opts)` with file config (rotation, compression) and optional OTEL config
-3. Returns `logger.Nop()` if file logging is explicitly disabled via settings
-4. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams
+1. Returns `logger.Nop()` immediately if `f.Session().FileLogging()` is false — this in-process flag (distinct from settings.yaml) lets a command disable file logging for itself so an elevated (e.g. sudo) run never creates or rotates a root-owned log file in the invoking user's home
+2. Otherwise resolves `f.Config()` and delegates to `logcfg.New(cfg)`, which reads `cfg.LoggingConfig()`, returns `logger.Nop()` if `FileEnabled` is explicitly disabled in settings, and otherwise calls `logger.New(opts)` with file config (rotation, compression) and optional OTEL config
+3. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams
 
 ## Environment Variables
 
