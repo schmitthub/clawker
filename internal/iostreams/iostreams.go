@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/mattn/go-colorable"
-	interm "github.com/schmitthub/clawker/internal/term"
+	hostterm "github.com/schmitthub/clawker/internal/term"
 	termocks "github.com/schmitthub/clawker/internal/term/mocks"
 )
 
@@ -53,13 +53,16 @@ type IOStreams struct {
 
 	colorOverride bool
 
-	// isInputTTY caches whether stdin is a terminal.
+	// isInputTTY records whether stdin is a terminal, detected at
+	// construction. SetStdinTTY overrides it.
 	isInputTTY bool
 
-	// isStdoutTTY caches whether stdout is a terminal.
+	// isStdoutTTY records whether stdout is a terminal, detected at
+	// construction. SetStdoutTTY overrides it.
 	isStdoutTTY bool
 
-	// isStderrTTY caches whether stderr is a terminal.
+	// isStderrTTY records whether stderr is a terminal, detected at
+	// construction. SetStderrTTY overrides it.
 	isStderrTTY bool
 
 	// colorEnabled controls color output.
@@ -87,7 +90,7 @@ type IOStreams struct {
 // The factory calls this, then may layer clawker config overrides.
 func System() *IOStreams {
 
-	terminal := interm.FromEnv()
+	terminal := hostterm.FromEnv()
 
 	var stdout fileWriter = os.Stdout
 	if colorableStdout := colorable.NewColorable(os.Stdout); colorableStdout != os.Stdout {
@@ -116,6 +119,9 @@ func System() *IOStreams {
 		pagerCommand: os.Getenv("PAGER"),
 		term:         &terminal,
 	}
+	io.isInputTTY = detectTTY(io.In)
+	io.isStdoutTTY = detectTTY(io.Out)
+	io.isStderrTTY = detectTTY(io.ErrOut)
 
 	stdoutIsTTY := io.IsStdoutTTY()
 	stderrIsTTY := io.IsStderrTTY()
@@ -205,27 +211,24 @@ func (s *IOStreams) TerminalWidth() int {
 	return DefaultWidth
 }
 
-// IsInputTTY returns true if stdin is a terminal.
-func (s *IOStreams) IsInputTTY() bool {
-	if !s.isInputTTY {
-		if f, ok := s.In.(*os.File); ok {
-			s.isInputTTY = interm.IsTerminalFd(int(f.Fd()))
-		} else {
-			s.isInputTTY = false
-		}
+// detectTTY reports whether a stream is backed by a terminal. Only a real
+// [os.File] can be one; wrapped writers (colorable, test buffers) are not.
+func detectTTY(stream any) bool {
+	if f, ok := stream.(*os.File); ok {
+		return hostterm.IsTerminalFd(int(f.Fd()))
 	}
+	return false
+}
+
+// IsInputTTY returns true if stdin is a terminal. Detection happens once at
+// construction; SetStdinTTY overrides it.
+func (s *IOStreams) IsInputTTY() bool {
 	return s.isInputTTY
 }
 
-// IsStdoutTTY returns true if stdout is a terminal.
+// IsStdoutTTY returns true if stdout is a terminal. Detection happens once at
+// construction; SetStdoutTTY overrides it.
 func (s *IOStreams) IsStdoutTTY() bool {
-	if !s.isStdoutTTY {
-		if f, ok := s.Out.(*os.File); ok {
-			s.isStdoutTTY = interm.IsTerminalFd(int(f.Fd()))
-		} else {
-			s.isStdoutTTY = false
-		}
-	}
 	return s.isStdoutTTY
 }
 
@@ -235,15 +238,9 @@ func (s *IOStreams) IsInteractive() bool {
 	return s.IsInputTTY() && s.IsStdoutTTY()
 }
 
-// IsStderrTTY returns true if stderr is a terminal.
+// IsStderrTTY returns true if stderr is a terminal. Detection happens once at
+// construction; SetStderrTTY overrides it.
 func (s *IOStreams) IsStderrTTY() bool {
-	if !s.isStderrTTY {
-		if f, ok := s.ErrOut.(*os.File); ok {
-			s.isStderrTTY = interm.IsTerminalFd(int(f.Fd()))
-		} else {
-			s.isStderrTTY = false
-		}
-	}
 	return s.isStderrTTY
 }
 
