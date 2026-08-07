@@ -27,9 +27,8 @@ A project is defined by `.clawker.yaml` and registered in the project registry (
 
 **Configuration precedence** (highest to lowest):
 1. CLI flags
-2. Environment variables
-3. Project config (`./.clawker.yaml`)
-4. User settings (`~/.config/clawker/settings.yaml`)
+2. Project config (`./.clawker.yaml`)
+3. User settings (`~/.config/clawker/settings.yaml`)
 
 ### Agent
 
@@ -77,20 +76,20 @@ Every firewall decision — `allowed`, `denied`, or `bypassed` — emits a struc
 
 1. **All Docker SDK calls go through `pkg/whail`** — never bypass this isolation layer
 2. **Labels are authoritative** — `dev.clawker.managed=true` determines ownership, not names
-3. **stdout for data, stderr for status** — enables scripting and composability
-4. **Factory DI pattern** — pure struct in `cmdutil`, constructor in `cmd/factory`, Options in commands
-5. **Stateless CLI** — all state lives in Docker (containers, labels, volumes); no local state files
-6. **`config.Config` is a gateway** — lazy accessor for Project, Settings, Resolution, Registry
+3. **stdout for data and status, stderr for warnings/errors** — enables scripting and composability
+4. **Factory DI pattern** — pure struct in `cmdutil`, constructor in `internal/cmd/factory`, Options in commands
+5. **Docker holds runtime state** — container status, labels, and volumes are the source of truth for what's running; local YAML files (project `clawker.yaml`, user `settings.yaml`, the project registry `registry.yaml`) hold configuration, not runtime state
+6. **`config.Config` is a gateway** — lazy accessor for Project, Settings, Resolution
 7. **zerolog is file-only** — user-visible output uses `fmt.Fprintf` to IOStreams
 
 ## State Management
 
-Clawker stores no local state. All state lives in Docker:
+Container runtime state lives in Docker:
 - Container state (running, stopped)
 - Labels (project, agent, metadata)
 - Volumes (workspace, config, history)
 
-This means multiple Clawker instances can operate concurrently with no synchronization issues.
+Configuration and project registration persist in small local YAML files (project `clawker.yaml`, user `settings.yaml`, the project registry `registry.yaml`). Writes to these files are serialized with advisory file locks, so multiple Clawker instances can operate concurrently with no synchronization issues.
 
 ## Command Taxonomy
 
@@ -103,7 +102,7 @@ Commands mirror Docker's CLI structure:
 
 Top-level shortcuts: `init`, `build`, `run`, `start`, `monitor *`, `version`
 
-Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`, `controlplane`, `auth`, `settings`, `skill`
+Management commands: `alias`, `auth`, `bundle`, `harness`, `stack`, `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`, `controlplane`, `settings`, `plugin` (alias `skill`)
 
 ## Multi-Agent Operations
 
@@ -114,7 +113,6 @@ Project ──< Agent >── Image
 
 - One project has many agents
 - Many agents can share one image
-- Race condition resolution: second process attaches to existing container (no error, no duplicate)
 
 ## Error Handling
 
