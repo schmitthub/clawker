@@ -6,14 +6,14 @@
 # shared sections of the two templates in sync when editing.
 
 # Builder stage for callback-forwarder
-FROM golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45 AS callback-forwarder-builder
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS callback-forwarder-builder
 WORKDIR /build
 COPY callback-forwarder.go .
 RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o callback-forwarder callback-forwarder.go
 
 # Builder stage for clawker-socket-server (unified socket forwarding)
-FROM golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45 AS socket-server-builder
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS socket-server-builder
 WORKDIR /build
 COPY clawker-socket-server.go .
 RUN --mount=type=cache,target=/go/pkg/mod \
