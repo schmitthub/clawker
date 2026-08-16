@@ -67,7 +67,7 @@ Separate I/O from resize — `pty.Stream(ctx, hijacked)` in goroutine, `signals.
 
 ### Format/Filter Flags (list command)
 
-`container list` supports `--format`/`--json`/`-q`/`--filter key=value` via `cmdutil.FormatFlags` and `cmdutil.FilterFlags`. Valid filter keys: `name`, `status`, `agent`.
+`container list` supports `--format`/`--json`/`-q`/`--filter key=value` via `cmdutil.FormatFlags` and `cmdutil.FilterFlags`. Valid filter keys: `name`, `status`, `agent`. `--project`/`-p` tab-completes registered project names via `projectshared.NameCompletions(f.ProjectManager)` (`internal/cmd/project/shared`).
 
 ### Per-Command Documentation
 

@@ -17,6 +17,8 @@ Project commands are the primary user interface for working with the `ProjectMan
 | `remove/remove.go` | `NewCmdRemove(f, runF)` — remove projects from registry (with confirmation) |
 | `shared/discovery.go` | `HasLocalProjectConfig(cfg, dir)` — config existence check via storage layers + fallback probe |
 | `shared/discovery_test.go` | Table-driven tests: registered/unregistered × all config placements |
+| `shared/completion.go` | `NameCompletions(pmFn)` — cobra completion func for registered project names |
+| `shared/completion_test.go` | Sorted names, typed-arg exclusion, degrade-to-empty on error |
 
 ## Subcommands
 
@@ -24,8 +26,8 @@ Project commands are the primary user interface for working with the `ProjectMan
 - `project edit` — interactively edit existing project configuration. Opens a storeui browser TUI against `cfg.ProjectStore()` via `projectui.Edit`. No flags.
 - `project register` — register existing project in the user's registry (the registry file in the data dir, owned by `internal/project`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
-- `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
-- `project remove NAME [NAME...]` (alias `rm`) — remove projects from registry by name. Prompts for confirmation in interactive mode; requires `--yes` in non-interactive mode. Does not delete files from disk.
+- `project info NAME` — tab-completes NAME from the registry. Show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
+- `project remove NAME [NAME...]` (alias `rm`) — tab-completes NAME from the registry (already-typed names excluded). Remove projects from registry by name. Prompts for confirmation in interactive mode; requires `--yes` in non-interactive mode. Does not delete files from disk.
 
 ## Key Symbols
 
@@ -136,6 +138,12 @@ Checks whether a project config file exists in the given directory. Two-phase:
 2. **Fallback**: Calls `config.ProjectConfigExistsIn(dir)` — config probes the directory itself (both filenames, dual placement, migrations wired), which works for unregistered projects where walk-up can't find the directory. A probe error is reported as "no local config" (a file the loader cannot read is not one the caller can carry forward).
 
 Used by both `init` and `register` to detect existing config before proceeding.
+
+### `NameCompletions(pmFn func() (project.ProjectManager, error)) cobra.CompletionFunc`
+
+Shell tab-completion for registered project names. Reads `ProjectManager.List` (cheap path — no filesystem health checks), sorts names, excludes names already present in the positional args, and returns `cobra.ShellCompDirectiveNoFileComp`. Every failure (nil `pmFn`, manager error, list error) degrades to no suggestions — completion never surfaces errors.
+
+Consumers: `project info` and `project remove` (`cmd.ValidArgsFunction`), `container list --project` (`RegisterFlagCompletionFunc`). Any command that takes a project name as an arg or flag should register this rather than build its own.
 
 ## Config Access Pattern
 

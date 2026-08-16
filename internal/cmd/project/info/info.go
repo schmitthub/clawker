@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -59,6 +60,8 @@ their health status.`,
 			return infoRun(cmd.Context(), opts)
 		},
 	}
+
+	cmd.ValidArgsFunction = shared.NameCompletions(opts.ProjectManager)
 
 	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON")
 
