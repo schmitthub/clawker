@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 )
 
@@ -89,7 +90,7 @@ func (w *otelLogWriter) Write(p []byte) (int, error) {
 	}
 
 	if msg, ok := fields[zerolog.MessageFieldName].(string); ok {
-		rec.SetBody(log.StringValue(msg))
+		rec.SetBody(attribute.StringValue(msg))
 		delete(fields, zerolog.MessageFieldName)
 	}
 
@@ -102,7 +103,7 @@ func (w *otelLogWriter) Write(p []byte) (int, error) {
 	// conversion so a numeric `port=4319` lands as an Int64 attribute,
 	// not the string "4319".
 	for k, v := range fields {
-		rec.AddAttributes(log.KeyValue{Key: k, Value: anyToOTELValue(v)})
+		rec.AddAttributes(attribute.KeyValue{Key: attribute.Key(k), Value: anyToOTELValue(v)})
 	}
 
 	w.logger.Emit(context.Background(), rec)
@@ -155,31 +156,31 @@ func parseTimestamp(v any) (time.Time, bool) {
 // anyToOTELValue maps a JSON-decoded Go value to a typed OTEL log
 // value. Falls back to a string repr for shapes the OTEL value model
 // doesn't carry directly (slices, nested maps, nil).
-func anyToOTELValue(v any) log.Value {
+func anyToOTELValue(v any) attribute.Value {
 	switch tv := v.(type) {
 	case string:
-		return log.StringValue(tv)
+		return attribute.StringValue(tv)
 	case bool:
-		return log.BoolValue(tv)
+		return attribute.BoolValue(tv)
 	case float64:
 		// JSON numbers always decode to float64. Promote to int64 if
 		// it's a clean integer so attribute consumers see the natural
 		// numeric type.
 		if tv == float64(int64(tv)) {
-			return log.Int64Value(int64(tv))
+			return attribute.Int64Value(int64(tv))
 		}
-		return log.Float64Value(tv)
+		return attribute.Float64Value(tv)
 	case nil:
-		return log.StringValue("")
+		return attribute.StringValue("")
 	default:
 		// Slices, maps, anything exotic — JSON-encode as a string so
 		// the value still surfaces in OpenSearch even if it can't
 		// be projected as a typed attribute.
 		if b, err := json.Marshal(tv); err == nil {
-			return log.StringValue(string(b))
+			return attribute.StringValue(string(b))
 		} else {
 			otel.Handle(fmt.Errorf("otelLogWriter: cannot encode attribute (%T): %w", tv, err))
 		}
-		return log.StringValue("")
+		return attribute.StringValue("")
 	}
 }

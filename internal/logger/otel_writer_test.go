@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/embedded"
 )
@@ -40,12 +41,12 @@ func (c *captureLogger) get() []log.Record {
 }
 
 // findAttr searches a record's attributes by key.
-func findAttr(t *testing.T, r log.Record, key string) (log.Value, bool) {
+func findAttr(t *testing.T, r log.Record, key string) (attribute.Value, bool) {
 	t.Helper()
-	var got log.Value
+	var got attribute.Value
 	var found bool
-	r.WalkAttributes(func(kv log.KeyValue) bool {
-		if kv.Key == key {
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if string(kv.Key) == key {
 			got = kv.Value
 			found = true
 			return false

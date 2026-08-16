@@ -140,22 +140,18 @@ func (e *otelEmitter) Emit(ctx context.Context, event QueryEvent) error {
 	record.SetObservedTimestamp(time.Now().UTC())
 	record.SetSeverity(otellog.SeverityInfo)
 	record.SetSeverityText("INFO")
-	record.SetBody(otellog.StringValue("CoreDNS query handled"))
+	record.SetBody(attribute.StringValue("CoreDNS query handled"))
 	record.AddAttributes(
-		otellog.String("client.address", event.ClientIP),
-		otellog.String("zone", event.Zone),
-		otellog.String("query_name", event.QueryName),
-		otellog.String("qtype", event.QueryType),
-		otellog.String("rcode", event.RCode),
-		otellog.Int("answer_count", event.AnswerCount),
-		otellog.Float64("duration_ms", float64(event.Duration)/float64(time.Millisecond)),
+		attribute.String("client.address", event.ClientIP),
+		attribute.String("zone", event.Zone),
+		attribute.String("query_name", event.QueryName),
+		attribute.String("qtype", event.QueryType),
+		attribute.String("rcode", event.RCode),
+		attribute.Int("answer_count", event.AnswerCount),
+		attribute.Float64("duration_ms", float64(event.Duration)/float64(time.Millisecond)),
 	)
 	if len(event.Answers) > 0 {
-		values := make([]otellog.Value, 0, len(event.Answers))
-		for _, answer := range event.Answers {
-			values = append(values, otellog.StringValue(answer))
-		}
-		record.AddAttributes(otellog.Slice("answers", values...))
+		record.AddAttributes(attribute.StringSlice("answers", event.Answers))
 	}
 	if event.Err != nil {
 		record.SetErr(event.Err)
