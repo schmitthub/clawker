@@ -200,7 +200,7 @@ All external dependencies pinned to exact versions with integrity verification. 
 
 | Context | Pinning requirement | Example |
 |---------|-------------------|---------|
-| Dockerfile base images | SHA256 digest | `FROM golang:1.25@sha256:abc...` |
+| Dockerfile base images | SHA256 digest | `FROM golang:1.26@sha256:abc...` |
 | CI workflow actions | SHA commit hash | `uses: actions/checkout@a1b2c3d...` |
 | Pre-commit hooks | SHA commit hash | `rev: 83d9cd68...  # frozen: v8.30.1` |
 | Container images in code | SHA256 digest | `DefaultGoBuilderImage = "golang:...@sha256:..."` |

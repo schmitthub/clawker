@@ -106,7 +106,7 @@ const (
 	//   docker buildx imagetools inspect golang:<version>-alpine
 	// MediaType must be `application/vnd.oci.image.index.v1+json` before
 	// updating this constant. Single-platform digests break multi-arch builds.
-	DefaultGoBuilderImage = "golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45"
+	DefaultGoBuilderImage = "golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df"
 )
 
 // DockerfileContext contains the template data for generating a Dockerfile.
@@ -177,7 +177,7 @@ type DockerfileContext struct {
 	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 
 	HasFirewallCA  bool   // CA cert exists for MITM inspection
-	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.25.10-alpine@sha256:...")
+	GoBuilderImage string // Go toolchain image for builder stages (e.g. "golang:1.26.6-alpine@sha256:...")
 }
 
 // ManagedPromptContext is the resolved managed_prompt render data: Dest
