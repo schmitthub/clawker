@@ -6,7 +6,7 @@ Thanks for your interest in contributing to Clawker! This project is currently i
 
 ### Prerequisites
 
-- **Go 1.26+**
+- **Go 1.25+**
 - **Docker** running locally
 - **Git**
 

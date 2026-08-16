@@ -148,7 +148,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 ```
 
-**Build from source** (requires Go 1.26+):
+**Build from source** (requires Go 1.25+):
 ```bash
 git clone https://github.com/schmitthub/clawker.git
 cd clawker && make clawker
