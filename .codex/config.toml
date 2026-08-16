@@ -12,8 +12,7 @@ args = [
     "start-mcp-server",
     "--context",
     "claude-code",
-    "--project",
-    "/Users/andrew/Code/clawker",
+    "--project-from-cwd",
     "--open-web-dashboard",
     "false",
 ]

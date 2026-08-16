@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-first.mjs'",
+            "command": "node '.codex/hooks/serena-first.mjs'",
             "timeout": 5
           }
         ]
@@ -16,11 +16,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'/Users/andrew/Code/clawker/.codex/hooks/git-checks.sh'"
+            "command": "'.codex/hooks/git-checks.sh'"
           },
           {
             "type": "command",
-            "command": "'/Users/andrew/Code/clawker/.codex/hooks/go-commands.sh'",
+            "command": "'.codex/hooks/go-commands.sh'",
             "timeout": 5
           }
         ]
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-init-marker.mjs'",
+            "command": "node '.codex/hooks/serena-init-marker.mjs'",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-session-start.mjs'",
+            "command": "node '.codex/hooks/serena-session-start.mjs'",
             "timeout": 5
           }
         ]
