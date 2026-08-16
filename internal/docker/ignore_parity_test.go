@@ -88,11 +88,21 @@ func gitCheckIgnoreVerdict(t *testing.T, gitPath string, patterns []string, path
 }
 
 // runGit runs git in repo with host/system config disabled, returning combined
-// output and exit code; non-exit errors fail the test.
+// output and exit code; non-exit errors fail the test. Inherited GIT_*
+// variables are dropped: a git hook (pre-commit in a linked worktree) exports
+// GIT_DIR / GIT_INDEX_FILE, which would point the throwaway repo at the real
+// one.
 func runGit(t *testing.T, gitPath, repo string, args ...string) ([]byte, int) {
 	t.Helper()
 	cmd := exec.Command(gitPath, append([]string{"-C", repo}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = env
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		var exitErr *exec.ExitError

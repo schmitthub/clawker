@@ -3,9 +3,11 @@ package netlogger
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -61,7 +63,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	rec.SetObservedTimestamp(time.Now().UTC())
 	rec.SetSeverity(otellog.SeverityInfo)
 	rec.SetSeverityText("INFO")
-	rec.SetBody(otellog.StringValue("ebpf egress"))
+	rec.SetBody(attribute.StringValue("ebpf egress"))
 
 	// Schema discipline:
 	//   - Routing + provenance live in the Resource layer
@@ -73,20 +75,27 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	//     strings so the OS index template maps them as keyword.
 	//     Numeric values would get OSD's thousands-separator
 	//     formatting ("4,318") which is wrong for IDs.
-	attrs := []otellog.KeyValue{
-		otellog.String("event.name", name),
-		otellog.String("action", ev.Verdict.String()),
-		otellog.String("container_id", ev.ContainerID),
-		otellog.String("agent", ev.Agent),
-		otellog.String("project", ev.Project),
-		otellog.String("cgroup_id", strconv.FormatUint(ev.CgroupID, 10)),
-		otellog.Int64("bpf_ts_ns", int64(ev.BPFTsNs)),
-		otellog.String("l4_proto", l4ProtoString(ev.L4Proto)),
-		otellog.Int("l4_proto_code", int(ev.L4Proto)),
-		otellog.Bool("ipv6", ev.IsIPv6),
-		otellog.Bool("ipv4_mapped", ev.IsMapped),
-		otellog.Bool("no_dst", ev.NoDst),
-		otellog.String("identity", strconv.FormatUint(uint64(ev.Identity), 10)),
+	//
+	// bpf_ktime_get_ns is monotonic ns since boot; it cannot reach
+	// MaxInt64 (~292 years). Clamp so the conversion is total.
+	bpfTS := int64(math.MaxInt64)
+	if ev.BPFTsNs <= math.MaxInt64 {
+		bpfTS = int64(ev.BPFTsNs)
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String("event.name", name),
+		attribute.String("action", ev.Verdict.String()),
+		attribute.String("container_id", ev.ContainerID),
+		attribute.String("agent", ev.Agent),
+		attribute.String("project", ev.Project),
+		attribute.String("cgroup_id", strconv.FormatUint(ev.CgroupID, 10)),
+		attribute.Int64("bpf_ts_ns", bpfTS),
+		attribute.String("l4_proto", l4ProtoString(ev.L4Proto)),
+		attribute.Int("l4_proto_code", int(ev.L4Proto)),
+		attribute.Bool("ipv6", ev.IsIPv6),
+		attribute.Bool("ipv4_mapped", ev.IsMapped),
+		attribute.Bool("no_dst", ev.NoDst),
+		attribute.String("identity", strconv.FormatUint(uint64(ev.Identity), 10)),
 	}
 	// dst_ip, dst_port, dst_host are omitted when BPF / enrichment did
 	// not carry them on this code path (sock_create — NoDst=true;
@@ -98,13 +107,13 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	// and tolerates the field being absent. dst_port stays keyword for
 	// ID-shape reasons (see cgroup_id rationale above).
 	if ev.DstIP.IsValid() {
-		attrs = append(attrs, otellog.String("dst_ip", ev.DstIP.String()))
+		attrs = append(attrs, attribute.String("dst_ip", ev.DstIP.String()))
 	}
 	if !ev.NoDst {
-		attrs = append(attrs, otellog.String("dst_port", strconv.FormatUint(uint64(ev.DstPort), 10)))
+		attrs = append(attrs, attribute.String("dst_port", strconv.FormatUint(uint64(ev.DstPort), 10)))
 	}
 	if ev.Domain != "" {
-		attrs = append(attrs, otellog.String("dst_host", ev.Domain))
+		attrs = append(attrs, attribute.String("dst_host", ev.Domain))
 	}
 
 	rec.AddAttributes(attrs...)
