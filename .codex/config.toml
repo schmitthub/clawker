@@ -1,1 +1,19 @@
 sandbox_mode = "danger-full-access"
+
+[mcp_servers.deepwiki]
+url = "https://mcp.deepwiki.com/mcp"
+
+[mcp_servers.serena]
+command = "uvx"
+args = [
+    "--from",
+    "git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5",
+    "serena",
+    "start-mcp-server",
+    "--context",
+    "claude-code",
+    "--project",
+    "/Users/andrew/Code/clawker",
+    "--open-web-dashboard",
+    "false",
+]

@@ -1,0 +1,53 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-first.mjs'",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/andrew/Code/clawker/.codex/hooks/git-checks.sh'"
+          },
+          {
+            "type": "command",
+            "command": "'/Users/andrew/Code/clawker/.codex/hooks/go-commands.sh'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__serena__check_onboarding_performed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-init-marker.mjs'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/andrew/Code/clawker/.codex/hooks/serena-session-start.mjs'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
