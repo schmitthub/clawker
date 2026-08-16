@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.8.4] - 2026-08-16
+
+- **Added:** Shell tab-completion suggests registered project names — when completing `clawker project info` and `clawker project remove` arguments and the `--project` flag value on `clawker ps`.
+
 ## [2026.8.3] - 2026-08-07
 
 - **Added:** Clawker runs on rootless Docker (Linux). A stock rootless install works without configuration — the full feature set is available, including the egress firewall and bind-mounted workspaces. Two steps ask for `sudo` once per boot: a BPF filesystem delegation for the firewall, and an ID-mapped workspace view so bind mounts reach the container user with correct ownership. See [Rootless Docker](https://docs.clawker.dev/container-internals#rootless-docker).
