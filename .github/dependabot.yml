@@ -13,14 +13,6 @@ updates:
         update-types:
           - minor
           - patch
-    # Go 1.25 is the supported toolchain floor (README). These lines require
-    # go >= 1.26; the Go minor only moves for a security fix, so hold them
-    # until the floor moves.
-    ignore:
-      - dependency-name: github.com/moby/buildkit
-        versions: [">= 0.32.0"]
-      - dependency-name: github.com/containerd/containerd/v2
-        versions: [">= 2.3.0"]
 
   - package-ecosystem: github-actions
     directory: /
