@@ -13,14 +13,15 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// TestMain clears the implicit host-passthrough vars so tests asserting the
-// exact resolved map do not depend on the developer's terminal. Tests that
-// cover passthrough set them explicitly with t.Setenv.
-func TestMain(m *testing.M) {
+// clearHostPassthrough unsets the implicit host-passthrough vars for the
+// test's lifetime so exact-map assertions do not depend on the developer's
+// terminal. t.Setenv registers the restore; the unset makes LookupEnv miss.
+func clearHostPassthrough(t *testing.T) {
+	t.Helper()
 	for _, name := range shared.HostPassthroughEnv() {
-		os.Unsetenv(name)
+		t.Setenv(name, "")
+		require.NoError(t, os.Unsetenv(name))
 	}
-	os.Exit(m.Run())
 }
 
 // envAgentCfg builds an AgentConfig carrying only the env spec under test.
@@ -56,6 +57,7 @@ func envHarnessCfg(envFile, fromEnv []string, env map[string]string) *config.Har
 // each spec keeps its internal env_file < from_env < env precedence, and a
 // nil harness config applies the base only.
 func TestResolveAgentEnv_HarnessLayering(t *testing.T) {
+	clearHostPassthrough(t)
 	log := logger.Nop()
 
 	t.Run("harness env overrides agent env on collision", func(t *testing.T) {
@@ -165,6 +167,7 @@ func resolveEnvFile(t *testing.T, content string) map[string]string {
 // quotes are syntax, not value; single quotes are literal; double quotes
 // process escapes; `export` prefixes and inline comments are tolerated.
 func TestResolveAgentEnv_EnvFileDotenvSemantics(t *testing.T) {
+	clearHostPassthrough(t)
 	tests := []struct {
 		name    string
 		content string
@@ -282,6 +285,7 @@ func TestResolveAgentEnv_EnvFileDotenvSemantics(t *testing.T) {
 // TestResolveAgentEnv_EnvFileOrdering pins that later env_file entries win on
 // key collision (list order = precedence order within the layer).
 func TestResolveAgentEnv_EnvFileOrdering(t *testing.T) {
+	clearHostPassthrough(t)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.env"), []byte("KEY=first\nA_ONLY=a\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.env"), []byte("KEY=second\nB_ONLY=b\n"), 0o600))
@@ -299,6 +303,7 @@ func TestResolveAgentEnv_EnvFileOrdering(t *testing.T) {
 // operators (${VAR:-default}, ${VAR:?required}) work, and single quotes
 // suppress expansion.
 func TestResolveAgentEnv_EnvFileExpansion(t *testing.T) {
+	clearHostPassthrough(t)
 	t.Setenv("CLAWKER_TEST_ENVFILE_HOST_VAR", "from-host")
 	t.Setenv("CLAWKER_TEST_ENVFILE_SHADOWED", "host-wins")
 
@@ -334,6 +339,7 @@ func TestResolveAgentEnv_EnvFileExpansion(t *testing.T) {
 // ${VAR:?message} required-variable operator surfaces as an error carrying
 // the env_file scope so the user can find the offending file.
 func TestResolveAgentEnv_EnvFileRequiredVarError(t *testing.T) {
+	clearHostPassthrough(t)
 	dir := t.TempDir()
 	content := "KEY=${CLAWKER_TEST_ENVFILE_DEFINITELY_UNSET:?must be set}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o600))
@@ -350,6 +356,7 @@ func TestResolveAgentEnv_EnvFileRequiredVarError(t *testing.T) {
 // inherited from the host environment, and the line is skipped silently when
 // the host variable is unset.
 func TestResolveAgentEnv_EnvFileBareKeyPassthrough(t *testing.T) {
+	clearHostPassthrough(t)
 	t.Setenv("CLAWKER_TEST_ENVFILE_BARE_KEY", "inherited")
 
 	got := resolveEnvFile(t,
@@ -364,6 +371,7 @@ func TestResolveAgentEnv_EnvFileBareKeyPassthrough(t *testing.T) {
 }
 
 func TestResolveAgentEnv_EnvFileBareKeyAtEOFNoNewline(t *testing.T) {
+	clearHostPassthrough(t)
 	t.Setenv("CLAWKER_TEST_ENVFILE_BARE_EOF", "inherited")
 
 	// No trailing newline: bare inherited key terminated by EOF must still
@@ -381,6 +389,7 @@ func TestResolveAgentEnv_EnvFileBareKeyAtEOFNoNewline(t *testing.T) {
 // APIs auto-load .env from the working directory — clawker must never do that
 // implicitly.
 func TestResolveAgentEnv_NoImplicitEnvFileLoad(t *testing.T) {
+	clearHostPassthrough(t)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("SHOULD_NOT_LOAD=leaked\n"), 0o600))
 
@@ -397,6 +406,7 @@ func TestResolveAgentEnv_NoImplicitEnvFileLoad(t *testing.T) {
 // through third-party logger output. Reporting is precise: a reference
 // rescued by a ${VAR:-default} operator does NOT warn.
 func TestResolveAgentEnv_EnvFileUnsetVarWarning(t *testing.T) {
+	clearHostPassthrough(t)
 	dir := t.TempDir()
 	content := `KEY="prefix $CLAWKER_TEST_ENVFILE_DEFINITELY_UNSET"` + "\n" +
 		"DEFAULTED=${CLAWKER_TEST_ENVFILE_ALSO_UNSET:-fallback}\n"
@@ -441,7 +451,8 @@ func TestResolveAgentEnv_HostPassthrough(t *testing.T) {
 }
 
 func TestResolveAgentEnv_HostPassthroughUnset(t *testing.T) {
-	// TestMain unset both vars; nothing must be forwarded and no warning raised.
+	clearHostPassthrough(t)
+	// Both vars unset on the host: nothing forwarded, no warning.
 	got, warnings, err := shared.ResolveAgentEnv(
 		envAgentCfg(nil, nil, nil), nil, "claude", t.TempDir(), logger.Nop())
 	require.NoError(t, err)

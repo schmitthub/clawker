@@ -13,7 +13,7 @@ Changed, Removed. Each release section lists those subsections directly.
 ## [2026.8.5] - 2026-08-17
 
 - **Added:** Shell tab-completion suggests registered project names — when completing `clawker project info` and `clawker project remove` arguments and the `--project` flag value on `clawker ps`.
-- **Added:** Clawker forwards the host terminal identity into the container automatically. `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` are set from the host terminal at create time, next to `TERM` and `COLORTERM`. You no longer need to list them in `agent.from_env`.
+- **Added:** Clawker forwards `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` from the host into the container automatically when the host terminal sets them. The harness now sees the real terminal emulator, so it detects the emulator's input and rendering features (key handling, hyperlinks, images) correctly instead of falling back to generic behavior. You no longer need to list these vars in `agent.from_env`.
 
 ## [2026.8.3] - 2026-08-07
 

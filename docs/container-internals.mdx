@@ -161,7 +161,7 @@ The canonical use case is `npm install` when `node_modules` lives in a tmpfs (wi
 
 ### Terminal Environment
 
-Clawker forwards the host terminal identity into the container automatically. `TERM`, `COLORTERM`, `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION` are set from the host terminal at create time when the host provides them, so in-container tools detect the same emulator and color capabilities as on the host. You do not need to list them in `agent.from_env`. Values in `agent.env_file`, `agent.from_env`, and `agent.env` (and their per-harness overlays) override them.
+Clawker gives the container the host terminal's identity so the harness detects the emulator's features — key handling, hyperlinks, images, color depth — the same way it does on the host, instead of falling back to generic behavior. `TERM` and `COLORTERM` are set from the detected host color capability (256-color, truecolor). `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` are copied from the host when the host terminal sets them. You do not need to list them in `agent.from_env`. Values in `agent.env_file`, `agent.from_env`, and `agent.env` (and their per-harness overlays) override them.
 
 ## Volumes and Naming
 
