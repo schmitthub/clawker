@@ -202,7 +202,7 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
 | `InjectHookScript(ctx, opts)` | Tar a shell-wrapped hook (shebang from `opts.Shell`, default `zsh`) to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
 | `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |
-| `ResolveAgentEnv(agent, harnessCfg, harnessName, projectDir, log) (map[string]string, []string, error)` | Merges `agent.*` then `harnesses.<harnessName>.*` (harness values win on key collision) into one map. Within each scope, precedence is env_file < from_env < env. Returns the merged env plus non-fatal warnings (missing `env_file` var, unset `from_env` var) |
+| `ResolveAgentEnv(agent, harnessCfg, harnessName, projectDir, log) (map[string]string, []string, error)` | Merges `agent.*` then `harnesses.<harnessName>.*` (harness values win on key collision) into one map. Seeds `HostPassthroughEnv()` (`TERM_PROGRAM`, `TERM_PROGRAM_VERSION`) from the host first when set, lowest precedence. Within each scope, precedence is env_file < from_env < env. Returns the merged env plus non-fatal warnings (missing `env_file` var, unset `from_env` var) |
 | `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
 | `WriteAgentBootstrapToContainer(...)` | Tar bootstrap files into container |
 | `InstallAgentBootstrapMaterial(...)` | Create-time install of agent bootstrap material |

@@ -13,6 +13,16 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// TestMain clears the implicit host-passthrough vars so tests asserting the
+// exact resolved map do not depend on the developer's terminal. Tests that
+// cover passthrough set them explicitly with t.Setenv.
+func TestMain(m *testing.M) {
+	for _, name := range shared.HostPassthroughEnv() {
+		os.Unsetenv(name)
+	}
+	os.Exit(m.Run())
+}
+
 // envAgentCfg builds an AgentConfig carrying only the env spec under test.
 func envAgentCfg(envFile, fromEnv []string, env map[string]string) config.AgentConfig {
 	return config.AgentConfig{
@@ -399,4 +409,42 @@ func TestResolveAgentEnv_EnvFileUnsetVarWarning(t *testing.T) {
 	require.Len(t, warnings, 1)
 	assert.Contains(t, warnings[0], `agent.env_file ".env"`)
 	assert.Contains(t, warnings[0], "CLAWKER_TEST_ENVFILE_DEFINITELY_UNSET")
+}
+
+func TestResolveAgentEnv_HostPassthrough(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	t.Setenv("TERM_PROGRAM_VERSION", "3.5.0")
+
+	t.Run("forwarded without from_env", func(t *testing.T) {
+		got, warnings, err := shared.ResolveAgentEnv(
+			envAgentCfg(nil, nil, nil), nil, "claude", t.TempDir(), logger.Nop())
+		require.NoError(t, err)
+		assert.Empty(t, warnings)
+		assert.Equal(t, map[string]string{"TERM_PROGRAM": "iTerm.app", "TERM_PROGRAM_VERSION": "3.5.0"}, got)
+	})
+
+	t.Run("agent.env overrides passthrough", func(t *testing.T) {
+		agent := envAgentCfg(nil, nil, map[string]string{"TERM_PROGRAM": "vscode"})
+		got, _, err := shared.ResolveAgentEnv(agent, nil, "claude", t.TempDir(), logger.Nop())
+		require.NoError(t, err)
+		assert.Equal(t, "vscode", got["TERM_PROGRAM"])
+		assert.Equal(t, "3.5.0", got["TERM_PROGRAM_VERSION"])
+	})
+
+	t.Run("harness env overrides passthrough", func(t *testing.T) {
+		harness := envHarnessCfg(nil, nil, map[string]string{"TERM_PROGRAM": "wezterm"})
+		got, _, err := shared.ResolveAgentEnv(
+			envAgentCfg(nil, nil, nil), harness, "codex", t.TempDir(), logger.Nop())
+		require.NoError(t, err)
+		assert.Equal(t, "wezterm", got["TERM_PROGRAM"])
+	})
+}
+
+func TestResolveAgentEnv_HostPassthroughUnset(t *testing.T) {
+	// TestMain unset both vars; nothing must be forwarded and no warning raised.
+	got, warnings, err := shared.ResolveAgentEnv(
+		envAgentCfg(nil, nil, nil), nil, "claude", t.TempDir(), logger.Nop())
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	assert.Nil(t, got)
 }

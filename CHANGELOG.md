@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [Unreleased]
+
+- **Added:** Clawker forwards the host terminal identity into the container automatically. `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` are set from the host terminal at create time, next to `TERM` and `COLORTERM`. You no longer need to list them in `agent.from_env`.
+
 ## [2026.8.4] - 2026-08-16
 
 - **Added:** Shell tab-completion suggests registered project names — when completing `clawker project info` and `clawker project remove` arguments and the `--project` flag value on `clawker ps`.
