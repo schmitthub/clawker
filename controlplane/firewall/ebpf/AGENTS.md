@@ -1,0 +1,162 @@
+# eBPF Subsystem (under the control plane)
+
+BPF loader + manager for clawker's cgroup programs. Lives under `internal/controlplane/` because ebpf is a **feature of the control plane**, not a peer service: once BPF programs are loaded into the kernel they persist independently of any userspace process, so there is no separate "ebpf service" to run. The CP owns `Manager.Load()` lifetime and drives everything through direct Go imports.
+
+The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/CLAUDE.md`), but the real interface is `AdminService` gRPC.
+
+## Layout
+
+```
+bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, getpeername4/6, sock_create)
+bpf/common.h         Shared structs: container_config, dns_entry, route_key/val, metric_key
+gen.go               //go:generate bpf2go directive
+clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make ebpf`)
+clawker_*_bpfel.o    BPF bytecode (gitignored)
+manager.go           Go-side Manager: Load/Enable/Disable/SyncRoutes/Bypass/DNS helpers
+types.go             Exported types: ContainerConfig, DNSEntry, RouteKey/Val, MetricKey
+bpffs.go             Portable half of the rootless delegation arm: kernel floor (6.9),
+                     the ErrKernelUnsupported/ErrDelegationRequired/
+                     ErrUnsupportedPlatform sentinels, release parsing
+bpffs_linux.go       CheckKernelSupport — the version gate run before any delegation
+                     attempt
+bpffs_darwin.go      Forced platform half — the package compiles into the darwin CLI
+delegate_linux.go    DelegatedFS: OpenForDelegation (fsopen + refused-configure probe)
+                     and the delegation handoff (SCM_RIGHTS over a 0600 unix socket)
+delegation/          The contract both sides of the privilege boundary compile against:
+                     the four delegate_* masks, the uid/gid/mode owner params, the
+                     handoff socket name and ack byte, and Mounted (the bpffs state
+                     check the spec builders and the helper share). Its own package so
+                     the elevated helper (cmd/bpffs-delegate) links the syscalls it
+                     makes and NOT this loader — it runs as root
+manager_test.go      Unit tests (no kernel required — exercises non-BPF code paths)
+bpf/tests/           SYSCALL-type wrapper progs #including common.h for BPF_PROG_TEST_RUN
+bpftest/             Privileged prog-run harness (cilium bpf/tests pattern): loads the
+                     wrappers + real production maps unpinned, seeds them, runs via
+                     prog.Run(). Gated on PRIVILEGED_TESTS=1 (`make test-bpf` / CI bpf
+                     job) — always skips in the zero-cap dev container.
+cmd/                 break-glass ebpf-manager binary (see cmd/CLAUDE.md)
+```
+
+## Lifetime ownership
+
+The `clawker-controlplane` container runs `clawkercp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/firewall/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning under `PinPath` is purely a crash-recovery mechanism, not load-bearing state.
+
+`Load()` runs `cleanupStaleLinks()` which checks each pinned `link_*` file against `container_map` — links to dead cgroups are removed, links to live cgroups are preserved. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY by the daemon on shutdown when no agent containers remain.
+
+Command-mode access to pinned state is done via the `cmd/ebpf-manager` break-glass binary + `OpenPinned()` (which opens handles to already-pinned maps without re-running Load). That binary is packaged in the CP image alongside `clawkercp` for emergency debugging.
+
+## Pinned Maps
+
+All maps live at `PinPath` (`/sys/fs/bpf/clawker`) — the clawker subdirectory of whatever BPF filesystem the container spec bound at `consts.SysFSBPFPath`. Both the CP and the CoreDNS container bind the SAME source (no propagation options), so a pin written by one is the path the other opens. The default deployment binds the host's own `/sys/fs/bpf`, exactly as it always has, and none of the delegation machinery runs. Only a permission-denied `Load()` — rootless Docker — engages the delegation arm: the CP fsopens a filesystem context (`delegate_linux.go`), the elevated helper (`cmd/bpffs-delegate`) applies the masks + owner params and attaches it at clawker's host path (`consts.BPFFSSubdir`), and a FRESH CP container binds it (the bpffs-source drift gate in `controlplane/manager`). `delegation/` holds the masks and the wire contract the helper shares, and `CheckKernelSupport` gates the delegation arm at kernel 6.9:
+
+| Map | Key | Value | Written by | Read by |
+|-----|-----|-------|-----------|---------|
+| `container_map` | cgroup ID (u64) | `container_config` | `Install`/`Remove` | BPF fast path |
+| `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Disable`/`Enable`, cleared by `Install`/`Remove` | BPF fast path |
+| `dns_cache` | IPv4 (u32) | `dns_entry` {identity, expire_ts, source} | `SyncRoutes` seeds (DNSSourceSeed, IP-literal rules), `internal/dnsbpf` CoreDNS plugin (DNSSourceDNS; refuses to overwrite seeds), `UpdateDNSCache` (break-glass) | BPF fast path |
+| `route_map` | `{identity, dst_port, l4_proto}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
+| `udp_flow_map` | `{socket_cookie, backend_ip, backend_port}` (LRU) | `{orig_dst_ip, orig_dst_port}` | `connect4`/`sendmsg4` (`record_udp_flow`); drained by `FlushAll` | `recvmsg4` (reply source) + `getpeername4` (reported peer) |
+| `metrics_map` | `{cgroup_id, identity, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
+| `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
+| `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
+| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take`; drained by `FlushAll` | BPF fast path |
+| `ratelimit_drops` | cgroup ID (u64) | u64 counter | BPF `ratelimit_check_and_take` on empty bucket; drained by `FlushAll` | userspace `netlogger` per-cgroup attribution |
+
+`route_map` is **global** — container enforcement is gated by presence in `container_map`, so a single `SyncRoutes` call updates routing for every enforced container atomically.
+
+`events_ringbuf` is single-producer-per-decision-point (each cgroup BPF program), single-consumer (one userspace reader). 256 KiB ring sized for `egress_event` records (48 bytes each — see `_Static_assert` in `bpf/common.h` and the Go-side `TestEgressEvent_SizeMatchesABI` guard). The buffer is a power-of-2 multiple of the page size so `cilium/ebpf` accepts it. Records dropped on a full ring increment `events_drops`; rate-limited records increment `ratelimit_drops` and never touch the ring.
+
+`ratelimit_state` is `BPF_MAP_TYPE_LRU_HASH` so dead cgroups evict without a userspace sweep. Refill arithmetic in `ratelimit_check_and_take` is intentionally non-atomic — bucket inaccuracy under racing CPUs is cheaper than the cmpxchg cost on the hot path. Token-bucket tunables (`RATELIMIT_BURST=64`, `RATELIMIT_REFILL_NS=100ms`, `RATELIMIT_TOKENS_PER=64`) live as `#define` constants in `bpf/common.h`.
+
+### Endianness convention for `struct egress_event`
+
+| Field | Byte order | Why |
+|-------|-----------|-----|
+| `ts_ns`, `cgroup_id`, `identity`, `dst_port`, `verdict`, `flags`, `l4_proto` | host | Userspace consumes via `binary.NativeEndian` on a `clawkerEgressEvent` struct (CO-RE `structs.HostLayout`). |
+| `dst_ip` | network (`[16]uint8` slot) | IPv4 destinations occupy the first 4 bytes (network order, matching `ctx->user_ip4`); IPv6 fills all 16 bytes. Userspace decodes via `netip.AddrFrom4` (v4) or `netip.AddrFrom16` (v6) using `EgressFlagIPv6`/`EgressFlagIPv4Mapped`/`EgressFlagNoDst` to discriminate. `IPToBytes16` converts a `net.IP` to this slot shape. |
+
+Callers MUST `bpf_ntohs(ctx->user_port)` before passing `dst_port` to `submit_event`. The helper itself never swaps; pick-one-side keeps every emit site explicit and prevents double-swap bugs.
+
+### `enter_state` enum
+
+`enter_enforced` returns `enum enter_state`. Values:
+
+| State | Meaning | Caller action |
+|-------|---------|---------------|
+| `ENTER_NOT_MANAGED` | uid==0, or container not in `container_map`. | `return 1;` (pass-through, no event). |
+| `ENTER_BYPASSED` | Managed and bypass flag set (only when caller passed `check_bypass=true`). | `submit_event(BYPASSED)` then `return 1;`. |
+| `ENTER_ENFORCED` | Managed, proceed to routing decision. `*cfg` and `*cgroup_id` populated. | Run `decide_connect` / `decide_sendmsg`, `submit_event(verdict)`, return verdict. |
+
+`enter_enforced` calls `metric_inc(ACTION_BYPASS)` on the confirmed bypass path so the existing `metrics_map` dump (consumed by the break-glass `ebpf-manager` CLI) keeps working; the `submit_event(BYPASSED)` record is the finer-grained signal for the netlogger pipeline.
+
+## Key Types and Functions
+
+```go
+type Manager struct { /* pin path, logger, loaded objects, per-cgroup links */ }
+func NewManager(log *logger.Logger) *Manager
+
+func (m *Manager) Load() error                              // CP startup: parse ELF, pin all
+func (m *Manager) OpenPinned() error                        // break-glass: attach to pinned
+func (m *Manager) Close() error                             // detach links, close programs/maps
+func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg BPFContainerConfig) error
+func (m *Manager) Remove(cgroupID uint64) error
+func (m *Manager) SyncRoutes(routes []Route) error          // replace global route_map atomically
+func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
+func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
+func (m *Manager) UpdateDNSCache(ip uint32, identity RouteIdentity, ttlSeconds uint32) error
+func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns number cleared + a non-nil err when the sweep could not reclaim (wedged iterator or any expired-entry delete failed), so the CP main loop's degraded-GC detector trips on a wedge instead of treating a no-op pass as progress. CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Spares DNSSourceSeed entries (SyncRoutes-owned) and expired entries whose IP has a live udp_flow_map flow (zombie-DNS analog; protects mid-stream QUIC).
+func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
+
+// Startup / shutdown maintenance — not on EBPFManager interface; called
+// by cmd/clawkercp directly so the RPC surface stays pure.
+func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
+func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map + ratelimit_state + udp_flow_map + ratelimit_drops, unpin links
+
+// Read-only accessors for the netlogger subpackage. Return nil before
+// Load/OpenPinned; callers MUST nil-check.
+func (m *Manager) EventsRingbuf() *ebpf.Map                 // ringbuf.NewReader source for egress events
+func (m *Manager) EventsDrops() *ebpf.Map                   // PERCPU_ARRAY of kernel-fault drop counts (key=0)
+func (m *Manager) RatelimitDrops() *ebpf.Map                // HASH of {cgroup_id → intentional rate-limit drops}
+func (m *Manager) DNSCache() *ebpf.Map                      // HASH of {IPv4 → dns_entry}; netlogger reverse-DNS source
+```
+
+Helpers in `types.go`:
+
+```go
+const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix // /sys/fs/bpf/clawker
+
+type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
+type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
+type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
+
+func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
+func Uint32ToIP(uint32) net.IP
+func IPToBytes16(net.IP) [16]uint8                          // converts to EgressEvent.DstIp slot (IPv4 in first 4 bytes, IPv6 fills all 16)
+func CIDRToAddrMask(cidr string) (addr, mask uint32, err error)
+func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr, hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error)
+func CgroupPath(containerID string) string                  // /sys/fs/cgroup/system.slice/docker-<id>.scope
+func CgroupID(cgroupPath string) (uint64, error)            // validated against path-injection, returns inode
+func Supported() error                                       // checks cgroup v2 available
+```
+
+## Invariants
+
+- Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
+- `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
+- `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
+- `CgroupID(path)` validates `path` against `/sys/fs/cgroup/` + `..` + control-char sanitization (defense in depth for the privileged `ebpf-manager` break-glass paths).
+- Stale pinned maps with mismatched key/value sizes are detected in `Load()` and removed before loading.
+- `connect6` / `sendmsg6` are installed even when the firewall only cares about IPv4 — dual-stack sockets can be opened as AF_INET6 and would otherwise bypass enforcement.
+
+## Build and Provenance
+
+The BPF toolchain pins (clang, libbpf-dev, linux-libc-dev) live in the Makefile's `BPF_APT_DEPS` variable; the bpf2go version + clang flags live in `gen.go`. CI runs `sudo apt-get update && sudo make bpf-deps` on the pinned `ubuntu-24.04` runner to apt-install the pinned toolchain, then `make ebpf` (native `go generate`) produces `clawker_*_bpfel.{go,o}` on the host tree. macOS dev routes through `Dockerfile.controlplane`, which `COPY`s the same Makefile and runs `make bpf-deps` inside a pinned `ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b` image. Either path produces identical bpf2go bindings; nothing generated is committed.
+
+To bump pins: resolve fresh apt versions against the pinned `ubuntu:24.04@sha256:...` with `docker run --rm ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b bash -c 'apt-get update >/dev/null && apt-cache policy clang llvm libbpf-dev linux-libc-dev | grep Candidate'`, paste each `Candidate:` into `BPF_APT_DEPS` in the Makefile. The Dockerfile picks up the new values automatically.
+
+`make ebpf-binary` / `make cp-binary` / `make coredns-binary` / `make clawkerd-binary` are plain `CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILDX_TARGETARCH) go build` targets. The `//go:embed` of the BPF `.o` bytecode is pulled in by `clawker_*_bpfel.go`, so the binary build itself never touches clang or Docker.
+
+## Imports
+
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` overseer event type), `internal/dnsbpf` (reuses `IPToUint32`/`Uint32ToIP` + `DNSSource*` constants to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
+- **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

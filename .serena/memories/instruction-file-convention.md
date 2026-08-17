@@ -1,0 +1,1 @@
+Project instruction files use `AGENTS.md` as the regular canonical file. Each canonical file has a sibling `CLAUDE.md` symbolic link with the relative target `AGENTS.md`. The 2026-08-17 conversion applied to the main repository only. It excluded `.claude/` and all Git submodules.

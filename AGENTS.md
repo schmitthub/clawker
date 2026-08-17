@@ -20,9 +20,9 @@ Prioritize fixing technical debt and improving architecture over completing the 
 
 ### Workflow Requirements
 
-**Planning**: Adhere to `.Codex/docs/DESIGN.md` and `.Codex/docs/ARCHITECTURE.md`. Update those docs if changes are needed.
+**Planning**: Adhere to `.claude/docs/DESIGN.md` and `.claude/docs/ARCHITECTURE.md`. Update those docs if changes are needed.
 **Testing**: TDD — write tests before code. All tests must pass. Add fixtures, golden files, interfaces, mocks, fakes, and test helpers as needed. Integration tests go in `test/*/`.
-**Documentation**: Update README.md, relevant AGENTS.md files, and memories after completing changes.
+**Documentation**: Update README.md, relevant CLAUDE.md files, and memories after completing changes.
 
 </critical_instructions>
 
@@ -87,7 +87,7 @@ If you're tempted to write `panic()` in CP code, ask: "would this leave eBPF pro
 
 ## Repository Structure
 
-Full directory tree with per-package purpose: `.Codex/docs/REPO-STRUCTURE.md`. Key roots: `cmd/` binaries, `internal/` packages, `pkg/whail/` reusable Docker client, `test/{e2e,whail}/` Docker-required suites, `api/` protobuf.
+Full directory tree with per-package purpose: `.claude/docs/REPO-STRUCTURE.md`. Key roots: `cmd/` binaries, `internal/` packages, `pkg/whail/` reusable Docker client, `test/{e2e,whail}/` Docker-required suites, `api/` protobuf.
 
 ## Build Commands
 
@@ -130,7 +130,7 @@ Embeds persist for the container's lifetime — they are only absent in a fresh 
 
 ## Key Concepts
 
-See `.Codex/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-specific `internal/*/AGENTS.md` files are the source of truth for API surface.
+See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-specific `internal/*/CLAUDE.md` files are the source of truth for API surface.
 
 ## CLI Commands
 
@@ -141,13 +141,13 @@ See `docs/cli-reference/` for auto-generated command reference.
 
 ## Configuration
 
-> Always use `Config` interface accessors — never hardcode filenames or env var names. See `internal/config/AGENTS.md`.
+> Always use `Config` interface accessors — never hardcode filenames or env var names. See `internal/config/CLAUDE.md`.
 
 ### Project Config (`clawker.yaml`)
 
 ```yaml
 build:
-  harness: "Codex"
+  harness: "claude"
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
@@ -200,7 +200,7 @@ All external dependencies pinned to exact versions with integrity verification. 
 
 | Context | Pinning requirement | Example |
 |---------|-------------------|---------|
-| Dockerfile base images | SHA256 digest | `FROM golang:1.25@sha256:abc...` |
+| Dockerfile base images | SHA256 digest | `FROM golang:1.26@sha256:abc...` |
 | CI workflow actions | SHA commit hash | `uses: actions/checkout@a1b2c3d...` |
 | Pre-commit hooks | SHA commit hash | `rev: 83d9cd68...  # frozen: v8.30.1` |
 | Container images in code | SHA256 digest | `DefaultGoBuilderImage = "golang:...@sha256:..."` |
@@ -210,15 +210,15 @@ All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.imag
 
 ## Testing
 
-All tests must pass before any change is complete. See `.Codex/rules/testing.md` for conventions.
+All tests must pass before any change is complete. See `.claude/rules/testing.md` for conventions.
 
 > **CRITICAL — IF RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set):** Do NOT run `go test ./...`. The e2e suite tears down the host CP. Use targeted tests or `make test`.
 
 ## Documentation
 
-* `.Codex/rules/` — Auto-loaded guidelines (code style, testing, package rules)
-* `.Codex/docs/` — On-demand reference (architecture, design, key concepts)
-* `internal/*/AGENTS.md` — Package-specific API references (lazy-loaded)
+* `.claude/rules/` — Auto-loaded guidelines (code style, testing, package rules)
+* `.claude/docs/` — On-demand reference (architecture, design, key concepts)
+* `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
 
 ### Completion Gate
 
@@ -230,4 +230,4 @@ After bug fixes or feature changes:
 
 Regenerate CLI reference: `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas`
 Local preview: `npx mintlify dev --docs-directory docs`
-See `.Codex/rules/mintlify-docs.md` for conventions.
+See `.claude/rules/mintlify-docs.md` for conventions.
