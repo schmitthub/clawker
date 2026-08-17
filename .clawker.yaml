@@ -14,10 +14,16 @@ harnesses:
     config:
       strategy: copy
     post_init: |
-      claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@ad7cf51ec3cd69f4e1cc6d2eab679f8876897b7a serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+      claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@949a27ef1e5fda1a6e7b561e777bcece345c6ffd serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
       claude mcp add -s local -t http deepwiki https://mcp.deepwiki.com/mcp
       claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
-  codex: {}
+  codex:
+    post_init: |
+      uvx --from git+https://github.com/oraios/serena@949a27ef1e5fda1a6e7b561e777bcece345c6ffd serena setup codex
+      codex mcp add serena --enable codex_hooks --env PATH="$PATH" --env SSL_CERT_FILE="$SSL_CERT_FILE" --env CURL_CA_BUNDLE="$CURL_CA_BUNDLE" --env NODE_USE_SYSTEM_CA=1 -- uvx --from git+https://github.com/oraios/serena@949a27ef1e5fda1a6e7b561e777bcece345c6ffd serena start-mcp-server --context=codex --project-from-cwd --enable-web-dashboard false
+      codex mcp add deepwiki --url https://mcp.deepwiki.com/mcp
+      codex mcp add context7 --env PATH="$PATH" --env SSL_CERT_FILE="$SSL_CERT_FILE" --env CURL_CA_BUNDLE="$CURL_CA_BUNDLE" --env NODE_USE_SYSTEM_CA=1 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
+      sed -i -e '/^\[mcp_servers\.serena\]$/a startup_timeout_sec = 30' -e '/^\[mcp_servers\.context7\]$/a startup_timeout_sec = 30' "$CODEX_HOME/config.toml"
 build:
   stacks:
     - go
@@ -243,6 +249,8 @@ security:
           - action: allow
             path: /oraios/serena/
           - action: allow
+            path: ~/openai/codex(\.git)?(/.*)?
+          - action: allow
             path: ~/golangci/golangci-lint(\.git)?(/.*)?
           - action: allow
             path: /koalaman/shellcheck/
@@ -285,6 +293,8 @@ security:
             path: /repos/envoyproxy/
           - action: allow
             path: /repos/oraios/serena/commits/
+          - action: allow
+            path: ~/repos/openai/codex(/.*)?
           - action: allow
             path: /anthropics/claude-code/
           - action: allow
@@ -356,6 +366,8 @@ security:
           - action: allow
             path: /oraios/serena/
           - action: allow
+            path: /openai/codex/
+          - action: allow
             path: /anthropics/claude-code/
           - action: allow
             path: /upstash/context7/master/plugins/claude/context7/skills/context7-mcp/
@@ -426,6 +438,15 @@ security:
             path: /ubuntu-ports/dists/
         port: 80
         proto: http
+      - action: allow
+        dst: developers.openai.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: ~/codex(/.*)?
+        port: 443
+        proto: https
       # Kernel BPF token / bpffs delegation research (rootless eBPF support):
       # how bpffs ownership and pinning are meant to work for unprivileged
       # containers, and how other runtimes already ship it.
