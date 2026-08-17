@@ -16,6 +16,21 @@ import (
 // userHomeDir is injectable for testing (avoids writing to real home dir in tests).
 var userHomeDir = os.UserHomeDir
 
+// Host env vars clawker forwards into every container without a from_env
+// entry: terminal emulator identity, which tools in the container use to
+// select emulator-specific features.
+const (
+	envTermProgram        = "TERM_PROGRAM"
+	envTermProgramVersion = "TERM_PROGRAM_VERSION"
+)
+
+// HostPassthroughEnv returns the host env var names forwarded into every
+// container implicitly. Forwarded only when set on the host; lowest
+// precedence, so env_file / from_env / env override them.
+func HostPassthroughEnv() []string {
+	return []string{envTermProgram, envTermProgramVersion}
+}
+
 // ResolveAgentEnv merges the shared agent env spec with the selected
 // harness's env spec into a single map. Within each spec, precedence (lowest
 // to highest) is env_file < from_env < env; the harness spec as a whole
@@ -30,6 +45,13 @@ func ResolveAgentEnv(
 	log *logger.Logger,
 ) (map[string]string, []string, error) {
 	result := make(map[string]string)
+
+	// Layer 0: implicit host passthrough (lowest precedence, silent when unset).
+	for _, name := range HostPassthroughEnv() {
+		if val, ok := os.LookupEnv(name); ok {
+			result[name] = val
+		}
+	}
 
 	warnings, err := applyEnvSpec(result, "agent", agent.EnvFile, agent.FromEnv, agent.Env, projectDir, log)
 	if err != nil {
