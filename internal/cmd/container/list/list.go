@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	projectshared "github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -17,9 +19,10 @@ var containerListValidFilterKeys = []string{"name", "status", "agent"}
 
 // ListOptions holds options for the list command.
 type ListOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI       *tui.TUI
-	Client    func(context.Context) (*docker.Client, error)
+	IOStreams      *iostreams.IOStreams
+	TUI            *tui.TUI
+	Client         func(context.Context) (*docker.Client, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	Format  *cmdutil.FormatFlags
 	Filter  *cmdutil.FilterFlags
@@ -41,9 +44,10 @@ type containerRow struct {
 // NewCmdList creates the container list command.
 func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
 	opts := &ListOptions{
-		IOStreams: f.IOStreams,
-		TUI:       f.TUI,
-		Client:    f.Client,
+		IOStreams:      f.IOStreams,
+		TUI:            f.TUI,
+		Client:         f.Client,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -90,6 +94,10 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	opts.Filter = cmdutil.AddFilterFlags(cmd)
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Show all containers (including stopped)")
 	cmd.Flags().StringVarP(&opts.Project, "project", "p", "", "Filter by project name")
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // errs only on bad wiring
+		"project",
+		projectshared.NameCompletions(opts.ProjectManager),
+	)
 
 	return cmd
 }

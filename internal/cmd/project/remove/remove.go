@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -55,6 +56,8 @@ Use 'clawker project list' to see registered project names.`,
 			return removeRun(cmd.Context(), opts)
 		},
 	}
+
+	cmd.ValidArgsFunction = shared.NameCompletions(opts.ProjectManager)
 
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Skip confirmation prompt")
 
