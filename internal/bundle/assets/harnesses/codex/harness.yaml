@@ -12,6 +12,11 @@ version:
   package: openai/codex
   tag_prefix: rust-v
 
+# Codex reads the system config from /etc/codex/config.toml. The root
+# fragment encodes this shared prompt as additional developer instructions.
+managed_prompt:
+  dest: /etc/codex/clawker-agent-prompt.md
+
 # Persisted dir: codex keeps all state under $CODEX_HOME (default ~/.codex).
 volumes:
   - name: config
@@ -62,4 +67,3 @@ egress:
   # capability on those allowed paths.
   - dst: chatgpt.com
     proto: wss
-

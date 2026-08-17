@@ -31,6 +31,32 @@ func TestConfigFile_ValidJSON(t *testing.T) {
 	require.Equal(t, true, val, "hasCompletedOnboarding must be true")
 }
 
+func TestCodexConfigFile_SystemDefaults(t *testing.T) {
+	src, err := bundle.FloorFS(bundle.ComponentHarness, "codex")
+	require.NoError(t, err)
+	raw, err := fs.ReadFile(src, "assets/codex-config.toml")
+	require.NoError(t, err)
+
+	assert.Equal(t, `[tui]
+status_line = ["project-name", "git-branch", "branch-changes", "codex-version", "model-with-reasoning", "context-used", "used-tokens", "five-hour-limit", "weekly-limit"]
+`, string(raw))
+
+	gen := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), t.TempDir())
+	gen.Harness = "codex"
+	contextDir := t.TempDir()
+	require.NoError(t, gen.WriteHarnessBuildContextToDir(contextDir, []byte("FROM scratch\n")))
+
+	contextRaw, err := os.ReadFile(filepath.Join(contextDir, "assets", "codex-config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, raw, contextRaw,
+		"the codex system config must be present in the harness build context")
+
+	promptRaw, err := os.ReadFile(filepath.Join(contextDir, "clawker-agent-prompt.md"))
+	require.NoError(t, err)
+	assert.Equal(t, AgentPromptContent, string(promptRaw),
+		"the codex managed prompt must be present in the harness build context")
+}
+
 func TestWriteHarnessBuildContextToDir(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"

@@ -22,6 +22,23 @@ RUN curl -fsSL https://chatgpt.com/codex/install.sh | \
       CODEX_HOME=/home/${USERNAME}/.local/share/codex-install sh
 {{- end}}
 
+{{define "root_before_entrypoint" -}}
+# Install the container defaults in the Codex system config. The manifest
+# puts the shared prompt in the build context and the master template copies
+# it again after this fragment. This early copy lets this root fragment encode
+# the prompt before it installs the final config file.
+COPY --chown=root:root --chmod=0644 assets/codex-config.toml /etc/codex/config.toml
+COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/codex/clawker-agent-prompt.md
+RUN { \
+      printf 'developer_instructions = ' && \
+      jq -Rs . /etc/codex/clawker-agent-prompt.md && \
+      cat /etc/codex/config.toml; \
+    } > /etc/codex/config.toml.tmp && \
+    chmod 755 /etc/codex && \
+    chmod 0644 /etc/codex/config.toml.tmp && \
+    mv /etc/codex/config.toml.tmp /etc/codex/config.toml
+{{- end}}
+
 {{define "cmd" -}}
 CMD ["codex"]
 {{- end}}

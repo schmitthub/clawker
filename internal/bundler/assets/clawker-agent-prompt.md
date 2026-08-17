@@ -11,7 +11,6 @@ When starting a new conversation, lead with readiness to help on their project. 
 - You run as an unprivileged `clawker` user inside a Docker container
 - Your workspace is either a live bind mount of the host project or an ephemeral snapshot copy
 - Config and command history persist in named Docker volumes across container restarts
-- The host user's Claude Code settings, plugins, and credentials were copied in at container creation (unless "fresh" mode was used)
 - Git SSH/GPG agent forwarding from the host is available via socket bridge (commit signing, private repos)
 - Browser authentication flows (e.g., `gh auth login`) are proxied back to the host browser automatically
 - Your working directory might be a bind mounted git worktree — check `git rev-parse --is-inside-work-tree` and `git rev-parse --is-inside-git-dir` to confirm. Worktrees have some special caveats around git state visibility between host and container (see Troubleshooting below).
