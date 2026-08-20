@@ -36,6 +36,8 @@ staging:
       dest: .codex/AGENTS.md
     - src: ${CODEX_HOME:-~/.codex}/prompts
       dest: .codex/prompts
+    - src: ~/.agents
+      dest: .agents
 
 # Runtime floor only. npm registry NOT needed: install runs at image build
 # time on the host daemon, outside the agent network namespace, and the

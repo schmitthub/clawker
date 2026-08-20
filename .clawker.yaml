@@ -151,6 +151,7 @@ build:
     - nghttp2-client
     - netcat-openbsd
     - cmake
+    - sqlite3
 monitor:
   extensions:
     - claude-code

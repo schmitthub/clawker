@@ -9,6 +9,20 @@
                         "command": "serena-hooks remind --client=codex"
                     }
                 ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                {
+                    "type": "command",
+                    "command": "'/Users/andrew/Code/clawker/.codex/hooks/git-checks.sh'"
+                },
+                {
+                    "type": "command",
+                    "command": "'/Users/andrew/Code/clawker/.codex/hooks/go-commands.sh'",
+                    "timeout": 5
+                }
+                ]
             }
         ],
         "SessionStart": [
