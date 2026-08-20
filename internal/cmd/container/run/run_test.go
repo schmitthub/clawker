@@ -50,22 +50,23 @@ func TestNewCmdRun(t *testing.T) {
 		wantErr    bool
 		wantErrMsg string
 		// Expected values (checked only when wantErr is false)
-		wantAgent      string
-		wantName       string
-		wantDetach     bool
-		wantMode       string
-		wantImage      string
-		wantCommand    []string
-		wantEnv        []string
-		wantVolumes    []string
-		wantPublish    []string
-		wantUser       string
-		wantEntrypoint string
-		wantTTY        bool
-		wantStdin      bool
-		wantNetwork    string
-		wantLabels     []string
-		wantAutoRemove bool
+		wantAgent         string
+		wantName          string
+		wantDetach        bool
+		wantMode          string
+		wantImage         string
+		wantCommand       []string
+		wantEnv           []string
+		wantVolumes       []string
+		wantPublish       []string
+		wantUser          string
+		wantEntrypoint    string
+		wantTTY           bool
+		wantStdin         bool
+		wantNetwork       string
+		wantLabels        []string
+		wantAutoRemove    bool
+		wantApproveGrants bool
 	}{
 		{
 			name:    "no image specified",
@@ -339,6 +340,13 @@ func TestNewCmdRun(t *testing.T) {
 			wantImage:      "alpine",
 			wantCommand:    []string{"--flag1", "value1", "--flag2", "value2"},
 		},
+		{
+			name:              "approve grants",
+			input:             "--approve-grants",
+			args:              []string{"alpine"},
+			wantImage:         "alpine",
+			wantApproveGrants: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -386,6 +394,7 @@ func TestNewCmdRun(t *testing.T) {
 			require.Equal(t, tt.wantAgent, gotOpts.ContainerCreateOptions.Agent)
 			require.Equal(t, tt.wantName, gotOpts.ContainerCreateOptions.Name)
 			require.Equal(t, tt.wantDetach, gotOpts.Detach)
+			require.Equal(t, tt.wantApproveGrants, gotOpts.ApproveGrants)
 			require.Equal(t, tt.wantMode, gotOpts.ContainerCreateOptions.Mode)
 			require.Equal(t, tt.wantImage, gotOpts.ContainerCreateOptions.Image)
 			require.Equal(t, tt.wantCommand, gotOpts.ContainerCreateOptions.Command)

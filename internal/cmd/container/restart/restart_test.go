@@ -67,6 +67,11 @@ func TestNewCmdRestart(t *testing.T) {
 			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"dev"}},
 		},
 		{
+			name:     "with approve grants",
+			input:    "--approve-grants mycontainer",
+			wantOpts: RestartOptions{ApproveGrants: true, Timeout: 10, Signal: "", Containers: []string{"mycontainer"}},
+		},
+		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
@@ -112,6 +117,7 @@ func TestNewCmdRestart(t *testing.T) {
 			require.Equal(t, tt.wantOpts.Timeout, gotOpts.Timeout)
 			require.Equal(t, tt.wantOpts.Signal, gotOpts.Signal)
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.ApproveGrants, gotOpts.ApproveGrants)
 			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}

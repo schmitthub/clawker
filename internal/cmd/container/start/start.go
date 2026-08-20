@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -35,12 +36,14 @@ type StartOptions struct {
 	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	SocketGrants   func() (db.SocketGrantStore, error)
 	Logger         func() (*logger.Logger, error)
 
-	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
-	Attach      bool
-	Containers  []string
-	Interactive bool
+	Agent         bool // Use agent name (resolves to clawker.<project>.<agent>)
+	Attach        bool
+	Containers    []string
+	Interactive   bool
+	ApproveGrants bool
 }
 
 // NewCmdStart creates the container start command.
@@ -54,7 +57,19 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
-		Logger:         f.Logger,
+		SocketGrants: func() (db.SocketGrantStore, error) {
+			database, err := f.DB()
+			if err != nil {
+				return nil, err
+			}
+			return db.NewSocketGrantStore(database), nil
+		},
+		Logger:        f.Logger,
+		Agent:         false,
+		Attach:        false,
+		Containers:    nil,
+		Interactive:   false,
+		ApproveGrants: false,
 	}
 
 	cmd := &cobra.Command{
@@ -92,6 +107,7 @@ Container names can be:
 	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Attach, "attach", "a", false, "Attach STDOUT/STDERR and forward signals")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Attach container's STDIN")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	return cmd
 }
@@ -148,17 +164,22 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		// then handles attach + docker start + post-start without re-running
 		// pre-start.
 		cmdOpts := shared.CommandOpts{
-			IOStreams:    ios,
-			Client:       opts.Client,
-			Config:       opts.Config,
-			HostProxy:    opts.HostProxy,
-			ControlPlane: opts.ControlPlane,
-			AdminClient:  opts.AdminClient,
-			SocketBridge: opts.SocketBridge,
-			Logger:       opts.Logger,
+			IOStreams:     ios,
+			Client:        opts.Client,
+			Config:        opts.Config,
+			HostProxy:     opts.HostProxy,
+			ControlPlane:  opts.ControlPlane,
+			AdminClient:   opts.AdminClient,
+			SocketBridge:  opts.SocketBridge,
+			SocketGrants:  opts.SocketGrants,
+			Logger:        opts.Logger,
+			ApproveGrants: opts.ApproveGrants,
+			AgentName:     "",
+			Project:       "",
 		}
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-			return shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+			_, bootstrapErr := shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+			return bootstrapErr
 		}); err != nil {
 			// Reap a never-started --rm container so its name is freed.
 			return shared.ReapFailedStart(client, containerName, fmt.Errorf("pre-start bootstrapping failed: %w", err))
@@ -411,14 +432,18 @@ func startContainersWithoutAttach(
 	for _, name := range containers {
 		_, err := shared.ContainerStart(ctx,
 			shared.CommandOpts{
-				IOStreams:    opts.IOStreams,
-				Client:       opts.Client,
-				Config:       opts.Config,
-				HostProxy:    opts.HostProxy,
-				ControlPlane: opts.ControlPlane,
-				AdminClient:  opts.AdminClient,
-				SocketBridge: opts.SocketBridge,
-				Logger:       opts.Logger,
+				IOStreams:     opts.IOStreams,
+				Client:        opts.Client,
+				Config:        opts.Config,
+				HostProxy:     opts.HostProxy,
+				ControlPlane:  opts.ControlPlane,
+				AdminClient:   opts.AdminClient,
+				SocketBridge:  opts.SocketBridge,
+				SocketGrants:  opts.SocketGrants,
+				Logger:        opts.Logger,
+				ApproveGrants: opts.ApproveGrants,
+				AgentName:     "",
+				Project:       "",
 			},
 			docker.ContainerStartOptions{
 				ContainerID: name,

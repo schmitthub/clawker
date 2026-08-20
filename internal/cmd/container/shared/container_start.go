@@ -15,6 +15,7 @@ import (
 	cpshared "github.com/schmitthub/clawker/internal/cmd/controlplane/shared"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -32,13 +33,15 @@ type CommandOpts struct {
 	// wiring's). BootstrapServicesPreStart refuses a nil up front.
 	IOStreams *iostreams.IOStreams
 
-	Client       func(context.Context) (*docker.Client, error)
-	Config       func() (config.Config, error)
-	HostProxy    func() hostproxy.Service
-	ControlPlane func(context.Context) (cpmanager.Manager, error)
-	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
-	SocketBridge func() socketbridge.SocketBridgeManager
-	Logger       func() (*logger.Logger, error)
+	Client        func(context.Context) (*docker.Client, error)
+	Config        func() (config.Config, error)
+	HostProxy     func() hostproxy.Service
+	ControlPlane  func(context.Context) (cpmanager.Manager, error)
+	AdminClient   func(context.Context) (adminv1.AdminServiceClient, error)
+	SocketBridge  func() socketbridge.SocketBridgeManager
+	SocketGrants  func() (db.SocketGrantStore, error)
+	Logger        func() (*logger.Logger, error)
+	ApproveGrants bool
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
 	// NOT the AgentFullName "clawker.project.agent" form — the
@@ -111,24 +114,28 @@ func ensureHostProxyRunning(
 	return nil
 }
 
-func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
+func BootstrapServicesPreStart(
+	ctx context.Context,
+	container string,
+	cmdOpts CommandOpts,
+) ([]socketbridge.BridgedSocket, error) {
 	if cmdOpts.Config == nil {
-		return fmt.Errorf("bootstrapping services: config provider is nil")
+		return nil, fmt.Errorf("bootstrapping services: config provider is nil")
 	}
 	// A nil IOStreams is always a wiring bug, never a headless caller —
 	// non-interactive runs carry a non-TTY IOStreams and are filtered by
 	// CanPrompt inside AssistSOS. Failing loud here keeps a forgotten
 	// field from silently declining control plane assistance requests.
 	if cmdOpts.IOStreams == nil {
-		return errors.New("bootstrapping services: no IOStreams provided")
+		return nil, errors.New("bootstrapping services: no IOStreams provided")
 	}
 
 	cfg, err := cmdOpts.Config()
 	if err != nil {
-		return fmt.Errorf("bootstrapping services: loading config: %w", err)
+		return nil, fmt.Errorf("bootstrapping services: loading config: %w", err)
 	}
 	if cfg == nil {
-		return fmt.Errorf("bootstrapping services: config is nil")
+		return nil, fmt.Errorf("bootstrapping services: config is nil")
 	}
 
 	security := cfg.SecurityConfig()
@@ -137,7 +144,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if cmdOpts.Logger != nil {
 		log, err = cmdOpts.Logger()
 		if err != nil {
-			return fmt.Errorf("bootstrapping services: initializing logger: %w", err)
+			return nil, fmt.Errorf("bootstrapping services: initializing logger: %w", err)
 		}
 	} else {
 		log = logger.Nop()
@@ -155,33 +162,33 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// the single place that bootstraps CP — all other admin commands
 	// are pure dials and fail-fast if CP is absent.
 	if cmdOpts.ControlPlane == nil {
-		return fmt.Errorf("bootstrapping services: no control plane manager provided")
+		return nil, fmt.Errorf("bootstrapping services: no control plane manager provided")
 	}
 	mgr, cpErr := cmdOpts.ControlPlane(ctx)
 	if cpErr != nil {
-		return fmt.Errorf("bootstrapping services: %w", cpErr)
+		return nil, fmt.Errorf("bootstrapping services: %w", cpErr)
 	}
 	startErr := mgr.Start(ctx)
 	var sos *cpmanager.CPSOSError
 	if errors.As(startErr, &sos) {
 		if assistErr := cpshared.AssistSOS(ctx, sos, cmdOpts.IOStreams); assistErr != nil {
-			return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", assistErr)
+			return nil, fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", assistErr)
 		}
 		startErr = mgr.Start(ctx)
 	}
 	if startErr != nil {
-		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", startErr)
+		return nil, fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", startErr)
 	}
 
 	if cmdOpts.Client == nil {
-		return errors.New("bootstrapping services: docker client provider is nil")
+		return nil, errors.New("bootstrapping services: docker client provider is nil")
 	}
 	client, err := cmdOpts.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("bootstrapping services: creating docker client: %w", err)
+		return nil, fmt.Errorf("bootstrapping services: creating docker client: %w", err)
 	}
 	if client == nil {
-		return errors.New("bootstrapping services: docker client is nil")
+		return nil, errors.New("bootstrapping services: docker client is nil")
 	}
 
 	// Containers created against ID-mapped workspace views (rootless
@@ -189,15 +196,15 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// sources at start — they die at reboot, and starting over the bare
 	// mount-point directory hands the container an empty workspace.
 	if err = ensureIDMappedViewsAtStart(ctx, client, container, cmdOpts.IOStreams, log); err != nil {
-		return fmt.Errorf("bootstrapping services: %w", err)
+		return nil, fmt.Errorf("bootstrapping services: %w", err)
 	}
 
 	// The container's harness label (stamped at create from the image) is
 	// the runtime identity — egress floor and pre_run compose against it,
 	// not against whatever the configured default happens to be today.
-	harnessName, err := containerHarnessName(ctx, client, cfg, container, log)
+	harnessName, hasHarnessLabel, err := containerHarnessName(ctx, client, cfg, container, log)
 	if err != nil {
-		return fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
+		return nil, fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
 	}
 
 	// A container must never start with a weaker egress floor than it was built
@@ -207,7 +214,20 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// because the harness egress floor is load-bearing whether or not the
 	// project firewall is enabled.
 	if resolveErr := assertHarnessResolvable(cfg, harnessName); resolveErr != nil {
-		return resolveErr
+		return nil, resolveErr
+	}
+
+	bridgedSockets, err := authorizeSocketBridges(
+		container,
+		harnessName,
+		hasHarnessLabel,
+		cfg,
+		cmdOpts,
+		log,
+		defaultSocketAuthorizationDeps(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrapping services: %w", err)
 	}
 
 	// Firewall is one feature hosted by the CP. Bring the stack up and
@@ -216,12 +236,12 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// cgroup only exists after docker start creates the init process.
 	if cfg.FirewallEnabled() {
 		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harnessName); fwErr != nil {
-			return fwErr
+			return nil, fwErr
 		}
 	}
 
 	if err = ensureHostProxyRunning(security, cmdOpts.HostProxy, log); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always
@@ -240,10 +260,10 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		CopyToContainer: NewCopyToContainerFn(client),
 		Log:             log,
 	}); err != nil {
-		return fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
+		return nil, fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
 	}
 
-	return nil
+	return bridgedSockets, nil
 }
 
 // bringUpFirewall performs the pre-start half of firewall bootstrap: dial the
@@ -315,7 +335,7 @@ func containerHarnessName(
 	cfg config.Config,
 	container string,
 	log *logger.Logger,
-) (string, error) {
+) (string, bool, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -325,17 +345,17 @@ func containerHarnessName(
 	case err == nil:
 		if inspect.Container.Config != nil {
 			if name := inspect.Container.Config.Labels[consts.LabelHarness]; name != "" {
-				return name, nil
+				return name, true, nil
 			}
 		}
 	case docker.IsNotFound(err):
 		reason = "container not found or not clawker-managed"
 	default:
-		return "", fmt.Errorf("resolving harness identity: inspect container %s: %w", container, err)
+		return "", false, fmt.Errorf("resolving harness identity: inspect container %s: %w", container, err)
 	}
 	name, resolveErr := bundler.ResolveHarnessName(cfg, "")
 	if resolveErr != nil {
-		return "", fmt.Errorf(
+		return "", false, fmt.Errorf(
 			"container %s carries no harness label and default resolution failed: %w", container, resolveErr)
 	}
 	log.Warn().
@@ -343,7 +363,7 @@ func containerHarnessName(
 		Str("harness", name).
 		Str("reason", reason).
 		Msg("falling back to the configured default harness")
-	return name, nil
+	return name, false, nil
 }
 
 func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
@@ -604,7 +624,7 @@ func ContainerStart(
 		return nil, fmt.Errorf("starting container: docker client is nil")
 	}
 
-	if err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts); err != nil {
+	if _, err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts); err != nil {
 		//nolint:contextcheck // reap is cleanup — it must run on Background even when ctx is dead
 		return nil, ReapFailedStart(
 			client,

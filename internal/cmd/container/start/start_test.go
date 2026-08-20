@@ -131,6 +131,15 @@ func TestNewCmdStart(t *testing.T) {
 				Containers: []string{"dev", "writer"},
 			},
 		},
+		{
+			name:  "approve grants",
+			input: "--approve-grants",
+			args:  []string{"clawker.myapp.dev"},
+			wantOpts: StartOptions{
+				ApproveGrants: true,
+				Containers:    []string{"clawker.myapp.dev"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -173,6 +182,7 @@ func TestNewCmdStart(t *testing.T) {
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
 			require.Equal(t, tt.wantOpts.Attach, gotOpts.Attach)
 			require.Equal(t, tt.wantOpts.Interactive, gotOpts.Interactive)
+			require.Equal(t, tt.wantOpts.ApproveGrants, gotOpts.ApproveGrants)
 			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}

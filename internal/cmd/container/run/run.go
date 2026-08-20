@@ -19,6 +19,7 @@ import (
 	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -44,13 +45,15 @@ type RunOptions struct {
 	ControlPlane    func(context.Context) (cpmanager.Manager, error)
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
+	SocketGrants    func() (db.SocketGrantStore, error)
 	Prompter        func() *prompter.Prompter
 	Logger          func() (*logger.Logger, error)
 	BundleManager   func() (*bundle.Manager, error)
 	Version         string
 
 	// Run-specific options
-	Detach bool
+	Detach        bool
+	ApproveGrants bool
 
 	// Computed fields (set during execution)
 	AgentName string
@@ -75,10 +78,22 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		ControlPlane:           f.ControlPlane,
 		AdminClient:            f.AdminClient,
 		SocketBridge:           f.SocketBridge,
-		Prompter:               f.Prompter,
-		Logger:                 f.Logger,
-		BundleManager:          f.BundleManager,
-		Version:                f.Version,
+		SocketGrants: func() (db.SocketGrantStore, error) {
+			database, err := f.DB()
+			if err != nil {
+				return nil, err
+			}
+			return db.NewSocketGrantStore(database), nil
+		},
+		Prompter:      f.Prompter,
+		Logger:        f.Logger,
+		BundleManager: f.BundleManager,
+		Version:       f.Version,
+		Detach:        false,
+		ApproveGrants: false,
+		AgentName:     "",
+		Project:       "",
+		flags:         nil,
 	}
 
 	cmd := &cobra.Command{
@@ -145,6 +160,7 @@ image built with "clawker build -t <harness>".`,
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background and print container ID")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
@@ -274,19 +290,22 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
-		IOStreams:    ios,
-		Client:       opts.Client,
-		Config:       opts.Config,
-		HostProxy:    opts.HostProxy,
-		ControlPlane: opts.ControlPlane,
-		AdminClient:  opts.AdminClient,
-		SocketBridge: opts.SocketBridge,
-		Logger:       opts.Logger,
-		AgentName:    opts.AgentName,
-		Project:      opts.Project,
+		IOStreams:     ios,
+		Client:        opts.Client,
+		Config:        opts.Config,
+		HostProxy:     opts.HostProxy,
+		ControlPlane:  opts.ControlPlane,
+		AdminClient:   opts.AdminClient,
+		SocketBridge:  opts.SocketBridge,
+		SocketGrants:  opts.SocketGrants,
+		Logger:        opts.Logger,
+		ApproveGrants: opts.ApproveGrants,
+		AgentName:     opts.AgentName,
+		Project:       opts.Project,
 	}
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
+		_, bootstrapErr := shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
+		return bootstrapErr
 	}); err != nil {
 		// Reap-on-failed-start: this invocation just created the container —
 		// free its name so the same command can simply be re-run.

@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -30,12 +31,14 @@ type RestartOptions struct {
 	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	SocketGrants   func() (db.SocketGrantStore, error)
 	Logger         func() (*logger.Logger, error)
 
-	Agent      bool // treat arguments as agents names
-	Timeout    int
-	Signal     string
-	Containers []string
+	Agent         bool // treat arguments as agents names
+	Timeout       int
+	Signal        string
+	Containers    []string
+	ApproveGrants bool
 }
 
 // NewCmdRestart creates a new restart command.
@@ -49,7 +52,19 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
-		Logger:         f.Logger,
+		SocketGrants: func() (db.SocketGrantStore, error) {
+			database, err := f.DB()
+			if err != nil {
+				return nil, err
+			}
+			return db.NewSocketGrantStore(database), nil
+		},
+		Logger:        f.Logger,
+		Agent:         false,
+		Timeout:       0,
+		Signal:        "",
+		Containers:    nil,
+		ApproveGrants: false,
 	}
 
 	cmd := &cobra.Command{
@@ -91,6 +106,7 @@ Container names can be:
 		BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().IntVarP(&opts.Timeout, "time", "t", 10, "Seconds to wait before killing the container")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "", "Signal to send (default: SIGTERM)")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	return cmd
 }
@@ -162,16 +178,18 @@ func restartContainer(
 
 	// Restart carries no agent identity — AgentName/Project stay empty.
 	cmdOpts := shared.CommandOpts{
-		IOStreams:    opts.IOStreams,
-		Client:       opts.Client,
-		Config:       opts.Config,
-		HostProxy:    opts.HostProxy,
-		ControlPlane: opts.ControlPlane,
-		AdminClient:  opts.AdminClient,
-		SocketBridge: opts.SocketBridge,
-		Logger:       opts.Logger,
-		AgentName:    "",
-		Project:      "",
+		IOStreams:     opts.IOStreams,
+		Client:        opts.Client,
+		Config:        opts.Config,
+		HostProxy:     opts.HostProxy,
+		ControlPlane:  opts.ControlPlane,
+		AdminClient:   opts.AdminClient,
+		SocketBridge:  opts.SocketBridge,
+		SocketGrants:  opts.SocketGrants,
+		Logger:        opts.Logger,
+		ApproveGrants: opts.ApproveGrants,
+		AgentName:     "",
+		Project:       "",
 	}
 
 	// If signal specified, kill with that signal first, then start
@@ -194,7 +212,7 @@ func restartContainer(
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	if errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
+	if _, errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
 		// Reap a never-started --rm container so its name is freed.
 		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))

@@ -32,7 +32,7 @@ redesign, do not expand scope.
 | 2 | CLI database package (`internal/db`) with grant store | DONE |
 | 3 | Path + listener-identity utils | DONE |
 | 4 | `clawker sockets` command group | DONE |
-| 5 | Pre-start authorization + `--approve-grants` | TODO |
+| 5 | Pre-start authorization + `--approve-grants` | DONE |
 | 6 | Bridge generalization | TODO |
 | 7 | Readiness barrier | TODO |
 | 8 | Integration tests | TODO |
@@ -452,6 +452,11 @@ required.
 Run: `go test ./internal/cmd/container/... ./internal/cmdutil/...`
 
 ### Learnings (task 5)
+
+- Socket authorization runs after explicit harness resolution and before firewall setup. A container without its harness label cannot use socket declarations from the configured fallback harness.
+- Built-in harnesses use their trusted tier and do not open the grant store. Third-party harnesses use the resolved harness directory as the principal, prune only that principal's declared paths, and compare listener identity by numeric UID and GID.
+- The shared prompt uses one buffered reader for repeated input. This keeps piped answers available when an empty or invalid answer causes another prompt.
+- Run, start, and restart share the approval flag and compose the socket-grant store over the Factory DB closure. Pre-start returns the active socket set for task 6 without mutable command state.
 
 ---
 

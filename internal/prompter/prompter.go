@@ -2,6 +2,7 @@ package prompter
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -94,6 +95,51 @@ func (p *Prompter) String(cfg PromptConfig) (string, error) {
 	}
 
 	return response, nil
+}
+
+// StringUntilValid asks for a string until it is present and valid. It uses
+// one buffered reader, so multiple answers from a pipe stay available.
+func (p *Prompter) StringUntilValid(cfg PromptConfig) (string, error) {
+	if !p.ios.IsInteractive() {
+		return p.String(cfg)
+	}
+
+	prompt := cfg.Message
+	if cfg.Default != "" {
+		prompt = fmt.Sprintf("%s [%s]", cfg.Message, cfg.Default)
+	}
+	reader := bufio.NewReader(p.ios.In)
+	for {
+		if _, err := fmt.Fprintf(p.ios.ErrOut, "%s: ", prompt); err != nil {
+			return "", fmt.Errorf("write prompt: %w", err)
+		}
+		response, err := reader.ReadString('\n')
+		if err != nil && !(errors.Is(err, io.EOF) && response != "") {
+			return "", fmt.Errorf("failed to read input: %w", err)
+		}
+		response = strings.TrimSpace(response)
+		if response == "" {
+			response = cfg.Default
+		}
+		if cfg.Required && response == "" {
+			if errors.Is(err, io.EOF) {
+				return "", fmt.Errorf("required input missing: %w", io.EOF)
+			}
+			continue
+		}
+		if cfg.Validator != nil {
+			if validateErr := cfg.Validator(response); validateErr != nil {
+				if _, writeErr := fmt.Fprintln(p.ios.ErrOut, validateErr); writeErr != nil {
+					return "", fmt.Errorf("write validation error: %w", writeErr)
+				}
+				if errors.Is(err, io.EOF) {
+					return "", validateErr
+				}
+				continue
+			}
+		}
+		return response, nil
+	}
 }
 
 // Confirm prompts the user for a yes/no confirmation.

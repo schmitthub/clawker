@@ -128,7 +128,7 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := BootstrapServicesPreStart(context.Background(), "ctr", tt.cmdOpts)
+			_, err := BootstrapServicesPreStart(context.Background(), "ctr", tt.cmdOpts)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
@@ -139,7 +139,7 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
-	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+	_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 		IOStreams:    testIOStreams(),
 		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 		ControlPlane: noopCPManager(),
@@ -161,7 +161,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
@@ -177,7 +177,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
@@ -193,7 +193,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainerError(errors.New("copy boom"))
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 			IOStreams:    testIOStreams(),
 			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
