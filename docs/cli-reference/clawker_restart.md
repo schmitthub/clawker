@@ -43,10 +43,11 @@ clawker restart [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent           Treat arguments as agent names (resolves to clawker.<project>.<agent>)
-  -h, --help            help for restart
-  -s, --signal string   Signal to send (default: SIGTERM)
-  -t, --time int        Seconds to wait before killing the container (default 10)
+      --agent            Treat arguments as agent names (resolves to clawker.<project>.<agent>)
+      --approve-grants   Approve this start's declared host socket requests without prompting
+  -h, --help             help for restart
+  -s, --signal string    Signal to send (default: SIGTERM)
+  -t, --time int         Seconds to wait before killing the container (default 10)
 ```
 
 ### Options inherited from parent commands

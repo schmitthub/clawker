@@ -1,0 +1,82 @@
+---
+title: "Host socket bridges"
+description: "Approve and manage the Unix sockets that a harness can use"
+icon: "plug"
+keywords: ["Unix socket", "host socket", "socket bridge", "harness access", "socket grant"]
+---
+
+A harness can request access to a Unix socket on your host. Clawker shows the
+exact host path, the container path, the purpose, and the host listener identity
+before it starts a bridge. Access is for the specified harness and socket only.
+
+Built-in harnesses are trusted clawker components. A third-party harness must
+have your approval before it can use a declared host socket.
+
+## Approve a request
+
+The first `run`, `start`, or `restart` that needs a socket shows an approval
+prompt. The prompt gives these choices:
+
+- `always` stores an approval and starts the bridge.
+- `yes` starts the bridge for this start only.
+- `no` declines this start and does not store a decision.
+- `never` stores a denial.
+
+A required socket stops the container start when access is not available. An
+optional socket is omitted, and the container can start without it. A stored
+denial stops future prompts until you revoke it.
+
+For a non-interactive start, use `--approve-grants` to approve new requests:
+
+```bash
+clawker start my-agent --approve-grants
+```
+
+This flag does not override a stored denial. It also does not permit the Docker
+socket. Use the project `security.docker_socket` setting for Docker socket
+access.
+
+<Warning>
+  Approve only a socket and purpose that you trust. A socket can give an agent
+  access to a host service and to the authority of that service.
+</Warning>
+
+## Identity changes
+
+Clawker records the owner, group, user ID, and group ID of the socket listener.
+If this identity changes, clawker asks for approval again. It also checks the
+identity when it opens each connection.
+
+## Manage stored decisions
+
+List all stored approvals and denials:
+
+```bash
+clawker sockets list
+```
+
+Show the full data for one grant:
+
+```bash
+clawker sockets info 7
+```
+
+Revoke one decision, all decisions for a harness name, or all decisions:
+
+```bash
+clawker sockets revoke 7
+clawker sockets revoke --harness acme
+clawker sockets revoke --all --yes
+```
+
+Remove decisions that no current harness declaration uses:
+
+```bash
+clawker sockets prune
+```
+
+Revocation applies on the next start. A bridge in a running container stays
+active until that container stops or restarts.
+
+For the manifest fields and container group setup, see
+[Authoring harnesses](/authoring-harnesses#sockets).

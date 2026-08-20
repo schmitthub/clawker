@@ -36,7 +36,7 @@ redesign, do not expand scope.
 | 6 | Bridge generalization | DONE |
 | 7 | Readiness barrier | DONE |
 | 8 | Integration tests | DONE |
-| 9 | Docs, schemas, memories | TODO |
+| 9 | Docs, schemas, memories | DONE |
 
 ---
 
@@ -739,6 +739,24 @@ required, host only).
 Run: `make test` clean; docs build via `npx mintlify dev` spot check.
 
 ### Learnings (task 9)
+
+- The docs generator added the `sockets` command group, the shared
+  `--approve-grants` flag, and the complete harness socket JSON schema.
+- The host socket guide documents approval, non-interactive use, stored
+  decisions, identity drift, revocation timing, and the Docker socket boundary.
+  The harness author guide documents the full `sockets:` shape, including
+  `container.group` and `container.mode`.
+- A harness Dockerfile must create each declared group and add `CLAWKER_USER`
+  to it. `root_before_entrypoint` runs under zsh, so `USERNAME` is not the
+  correct build value for this operation.
+- Package docs record the permanent boundary: `DB` owns connection machinery
+  only, `SocketGrantStore` owns grant verbs, and commands compose the store
+  over the one Factory `DB` noun.
+- No existing clawker-support known issue describes this feature or a fixed
+  socket-bridge fault, so the plugin submodule needs no update.
+- `make test` passed 6,633 unit tests with 11 environment-dependent skips. The
+  user ran the Mintlify preview on the host and confirmed the new docs look
+  correct; Mintlify is a host-side preview gate, not a container-side command.
 
 ---
 

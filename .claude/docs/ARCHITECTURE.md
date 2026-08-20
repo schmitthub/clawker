@@ -24,7 +24,7 @@
 │              │  │                     │  │                       │
 │ docker/      │  │ storage/ (engine)   │  │ controlplane/ (CP daemon — Envoy+DNS+BPF) │
 │ workspace/   │  │ config/ (project)   │  │ hostproxy/ (auth)     │
-│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/ (SSH)   │
+│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/         │
 │ bundler/     │  │ project/ (registry) │  │ keyring/ (creds)      │
 │              │  │ storeui/ (TUI edit) │  │                       │
 │ pkg/whail    │  │                     │  │                       │
@@ -360,6 +360,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — only internal import is `internal/consts` (stdlib-only). See `internal/storage/CLAUDE.md` |
 | `internal/config` | Domain facade composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with value-specific/group accessors, path/constant helpers (~40 methods), and `ProjectStore()`/`SettingsStore()` as the raw-verb escape hatch. **Foundation** — imports storage, consts, build. See `internal/config/CLAUDE.md` |
+| `internal/db` | Process-wide CLI SQLite connection and schema migrations. `DB` is connection machinery only; table verbs live on separate stores such as `SocketGrantStore`. Factory noun `f.DB()`. See `internal/db/CLAUDE.md` |
 | `internal/state` | `StateStore` — domain facade over `Store[State]` for the CLI's persisted runtime state (update-check cache + changelog cursor). The reference implementation of `.claude/rules/store-backed-package.md`. Factory noun `f.CLIState()`. See `internal/state/CLAUDE.md` |
 | `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
@@ -388,7 +389,7 @@ User interaction utilities with TTY and CI awareness.
 | `controlplane/firewall` | Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS container lifecycle), `ActionQueue` (serialized mutation, rule writes included), Envoy/CoreDNS config generators, certificate PKI, `EgressRulesStore`/`RouteIdentityStore` facades, cgroup helpers, drift resolver, rich error types |
 | `controlplane/firewall/ebpf` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |
 | `controlplane/firewall/ebpf/netlogger` | Per-decision-point egress event emitter — drains BPF `events_ringbuf`, enriches by `cgroup_id` via pub/sub enrollment events, emits OTLP log records (`service.name=ebpf-egress`) on the trusted infra lane |
-| `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
+| `internal/socketbridge` | SSH/GPG forwarding and approved harness-declared Unix socket bridges via muxrpc over `docker exec` |
 | `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
@@ -431,7 +432,7 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - URL opening: Container → `host-open` script → POST /open/url → host browser
 - OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
-- SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
+- SSH/GPG and approved harness sockets: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
 ### Firewall Subsystem (CP-owned)
 
@@ -733,6 +734,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │  controlplane/adminclient → auth, consts, api/admin/v1           │
 │  hostproxy → config, logger                                     │
 │  socketbridge → config, logger                                  │
+│  db → config, logger, socketbridge                              │
 │  containerfs → config, keyring, logger                          │
 │  monitor → config                                               │
 │  docs → config, storage                                         │
@@ -746,7 +748,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │           pkg/whail, pkg/whail/buildkit                         │
 │  workspace → config, docker, logger                             │
 │  cmdutil → config, controlplane/manager, controlplane/adminclient,│
-│            docker, git, hostproxy, iostreams, logger, project,  │
+│            db, docker, git, hostproxy, iostreams, logger, project,│
 │            prompter, socketbridge, tui, api/admin/v1            │
 │            (mostly type-level imports for Factory struct fields) │
 └─────────────────────────────────────────────────────────────────┘
@@ -792,13 +794,14 @@ Each package with complex dependencies provides test infrastructure:
 | `controlplane/firewall/ebpf/netlogger/` (test-only) | In-package seams: `Sink` interface (`recordingSink` for processor tests), `ContainerInspecter` interface (`fakeInspecter`), `readerSource` interface (`fakeRingbuf`); `newTestService` helper wires bus subscriptions without requiring CAP_BPF |
 | `hostproxy/hostproxytest/` | `MockHostProxy` |
 | `socketbridge/mocks/` | `SocketBridgeManagerMock` (moq-generated) |
+| `db/mocks/` | `SocketGrantStoreMock` (moq-generated) |
 | `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `storage` | `ValidateDirectories()` — XDG directory collision detection |
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **composite package** by import count — it imports config, controlplane/manager, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)` and `ControlPlane func() manager.Manager`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities.
+`cmdutil` is a **composite package** by import count — it imports config, controlplane/manager, db, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)`, `ControlPlane func() manager.Manager`, and `DB func() (*db.DB, error)`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities. `DB` is the only permanent CLI database noun; commands compose table stores over it in their Options closures.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 
