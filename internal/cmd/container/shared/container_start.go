@@ -229,6 +229,17 @@ func BootstrapServicesPreStart(
 	if err != nil {
 		return nil, fmt.Errorf("bootstrapping services: %w", err)
 	}
+	if err := InjectHookScript(ctx, InjectHookOpts{
+		ContainerID:     container,
+		Script:          socketsWaitScript(bridgedSockets, socketWaitTimeoutSeconds),
+		Shell:           "",
+		Name:            consts.HookSocketsWait,
+		Cfg:             cfg,
+		CopyToContainer: NewCopyToContainerFn(client),
+		Log:             log,
+	}); err != nil {
+		return nil, fmt.Errorf("bootstrapping services: injecting sockets-wait script: %w", err)
+	}
 
 	// Firewall is one feature hosted by the CP. Bring the stack up and
 	// sync project rules only when firewall.enable (settings.yaml) is

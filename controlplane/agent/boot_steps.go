@@ -32,6 +32,18 @@ func preRunStep() ShellStep {
 	}
 }
 
+func socketsWaitStep() ShellStep {
+	return ShellStep{
+		Name: consts.HookSocketsWait,
+		Shell: &clawkerdv1.ShellCommand{
+			Stages:         []*clawkerdv1.PipeStage{userStage(SocketsWaitScript)},
+			TimeoutSeconds: execStepTimeoutPostInit,
+			ExitOnNonZero:  true,
+			PrintOutput:    true,
+		},
+	}
+}
+
 // bootPlanPost is the fixed boot tail: pre_run (the last user hook before
 // the CMD) then agent-ready (releases the CMD, must be terminal so no Step
 // races the CMD past the entrypoint fifo). New boot steps prepend to
@@ -52,5 +64,6 @@ func bootPlanPost(defaultCmd string) []Step {
 func BootPlan(defaultCmd string) []Step {
 	return append([]Step{
 		dockerSocketStep(),
+		socketsWaitStep(),
 	}, bootPlanPost(defaultCmd)...)
 }

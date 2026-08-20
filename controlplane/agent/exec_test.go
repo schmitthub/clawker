@@ -194,10 +194,19 @@ func TestInitPlan_PrivilegeAndShape(t *testing.T) {
 // marker. It must run before the terminal agent-ready (which is last so
 // no step races the CMD past the entrypoint fifo release).
 func TestBootPlan_PreRunShape(t *testing.T) {
-	idxPreRun, idxReady := -1, -1
+	idxSocketsWait, idxPreRun, idxReady := -1, -1, -1
+	var names []string
 	for i, st := range agent.BootPlan("claude") {
 		switch s := st.(type) {
 		case agent.ShellStep:
+			names = append(names, s.Name)
+			if s.Name == consts.HookSocketsWait {
+				idxSocketsWait = i
+				require.Len(t, s.Shell.Stages, 1)
+				assert.Equal(t, []string{"sh", "-c", agent.SocketsWaitScript}, s.Shell.GetStages()[0].GetArgv())
+				assert.True(t, s.Shell.ExitOnNonZero)
+				assert.True(t, s.Shell.PrintOutput)
+			}
 			if s.Name == consts.HookPreRun {
 				idxPreRun = i
 				require.Len(t, s.Shell.Stages, 1)
@@ -208,11 +217,13 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 					"pre-run must carry no idempotency marker")
 			}
 		case agent.AgentReadyStep:
+			names = append(names, s.Name)
 			if s.Name == "agent-ready" {
 				idxReady = i
 			}
 		}
 	}
+	require.NotEqual(t, -1, idxSocketsWait, "sockets-wait must be present in the boot plan")
 	require.NotEqual(t, -1, idxPreRun, "pre-run must be present in the boot plan")
 	require.NotEqual(t, -1, idxReady, "agent-ready must be present in the boot plan")
 	// The boot tail is fixed: pre-run second-to-last, agent-ready last. New
@@ -222,6 +233,7 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 	assert.Equal(t, len(agent.BootPlan("claude"))-1, idxReady, "agent-ready must be the terminal step")
 	assert.Equal(t, len(agent.BootPlan("claude"))-2, idxPreRun,
 		"pre-run must be the second-to-last step (immediately before agent-ready)")
+	assert.Equal(t, []string{"docker-socket", consts.HookSocketsWait, consts.HookPreRun, "agent-ready"}, names)
 }
 
 // TestPreRunScript_GuardSemantics executes agent.PreRunScript the same way the
@@ -567,7 +579,7 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 			closeCount++
 		}
 	}
-	assert.Equal(t, 2, shellCount, "expected 2 shell steps in the static boot plan (pre-run, docker-socket)")
+	assert.Equal(t, 3, shellCount, "expected 3 shell steps in the static boot plan (docker-socket, sockets-wait, pre-run)")
 	assert.Equal(t, 1, agentReadyCount, "expected exactly one AgentReady step")
 	assert.Equal(t, shellCount, closeCount,
 		"every shell step needs exactly one CloseStdin (none for AgentReady)")

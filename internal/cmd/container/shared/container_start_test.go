@@ -150,10 +150,9 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	}
 }
 
-// TestBootstrapServices_PreRunDelivery proves the every-start pre_run
-// contract: the hook script is always copied to the container (user body
-// when set, no-op wrapper when unset so a removed hook overwrites stale
-// content), and a copy failure aborts the start.
+// TestBootstrapServices_PreRunDelivery proves the every-start hook delivery
+// contract: sockets-wait and pre_run are always copied to the container, and
+// a copy failure aborts the start.
 func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +169,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		fake.AssertCalledN(t, "CopyToContainer", 1)
+		fake.AssertCalledN(t, "CopyToContainer", 2)
 	})
 
 	t.Run("delivers no-op when pre_run unset", func(t *testing.T) {
@@ -186,7 +185,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		fake.AssertCalledN(t, "CopyToContainer", 1)
+		fake.AssertCalledN(t, "CopyToContainer", 2)
 	})
 
 	t.Run("copy failure aborts the start", func(t *testing.T) {
@@ -199,8 +198,8 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
 		})
-		if err == nil || !strings.Contains(err.Error(), "injecting pre-run script") {
-			t.Fatalf("expected pre-run injection error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "injecting sockets-wait script") {
+			t.Fatalf("expected sockets-wait injection error, got %v", err)
 		}
 	})
 }

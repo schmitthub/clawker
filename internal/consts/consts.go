@@ -392,8 +392,9 @@ const PostInitMarkerFile = "post-initialized"
 // in-container DotClawkerDir; clawkerd's init plan runs the matching
 // step (the plan step Name and the script basename must agree).
 const (
-	HookPostInit = "post-init"
-	HookPreRun   = "pre-run"
+	HookPostInit    = "post-init"
+	HookSocketsWait = "sockets-wait"
+	HookPreRun      = "pre-run"
 )
 
 // Auth material subdirectory segments under authDir. Shared by the

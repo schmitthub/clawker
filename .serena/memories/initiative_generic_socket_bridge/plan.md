@@ -34,7 +34,7 @@ redesign, do not expand scope.
 | 4 | `clawker sockets` command group | DONE |
 | 5 | Pre-start authorization + `--approve-grants` | DONE |
 | 6 | Bridge generalization | DONE |
-| 7 | Readiness barrier | TODO |
+| 7 | Readiness barrier | DONE |
 | 8 | Integration tests | TODO |
 | 9 | Docs, schemas, memories | TODO |
 
@@ -596,6 +596,18 @@ timeout exit code); existing executor tests pass.
 Run: `go test ./controlplane/agent/... ./internal/cmd/container/...`
 
 ### Learnings (task 7)
+
+- Pre-start always overwrites the sockets-wait hook after authorization. An
+  empty active set produces the standard no-op wrapper, so a later start
+  cannot run stale socket targets.
+- The generated script quotes each container target, probes each active socket
+  once per loop, and uses one 60-second timeout for the full set. On timeout it
+  prints the first missing target to stdout and exits with status 1.
+- The boot plan order is docker-socket, sockets-wait, pre-run, and agent-ready.
+  The existing pre-run and agent-ready tail stays terminal and unchanged.
+- Readiness failure uses the existing fatal `ShellStep` contract. The control
+  plane only dispatches the injected script and gains no panic or process-exit
+  path.
 
 ---
 
