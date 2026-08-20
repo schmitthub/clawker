@@ -57,4 +57,13 @@ func TestResolveHostPath(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorContains(t, err, missing)
 	})
+
+	t.Run("empty environment expansion is not the current directory", func(t *testing.T) {
+		t.Setenv("CLAWKER_TEST_MISSING_SOCKET", "")
+
+		_, err := cmdutil.ResolveHostPath("$CLAWKER_TEST_MISSING_SOCKET")
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "$CLAWKER_TEST_MISSING_SOCKET")
+	})
 }

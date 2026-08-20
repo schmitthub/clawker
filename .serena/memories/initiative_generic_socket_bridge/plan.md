@@ -257,7 +257,7 @@ Run: `go test ./internal/cmdutil/... ./internal/socketbridge/...`
 
 ### Learnings (task 3)
 
-- `ResolveHostPath` makes the expanded path absolute before it resolves symlinks. Errors include the source expression and the path that failed.
+- `ResolveHostPath` rejects an empty environment expansion before absolute-path resolution, so a missing variable cannot resolve to the current directory. Other errors include the source expression and the path that failed.
 - The shared listener probe owns connection and name-resolution handling. Linux reads `SO_PEERCRED`; Darwin reads `LOCAL_PEERCRED` and uses the first returned group as the peer group.
 - The Darwin socketbridge package compiles for arm64 with the platform implementation.
 

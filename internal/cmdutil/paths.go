@@ -15,6 +15,9 @@ func ResolveHostPath(expression string) (string, error) {
 		return "", errors.New("resolve host path: expression is required")
 	}
 	expanded := os.ExpandEnv(expression)
+	if expanded == "" {
+		return "", fmt.Errorf("resolve host path %q: expansion is empty", expression)
+	}
 	if expanded == "~" || strings.HasPrefix(expanded, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
