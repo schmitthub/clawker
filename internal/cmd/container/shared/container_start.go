@@ -366,7 +366,12 @@ func containerHarnessName(
 	return name, false, nil
 }
 
-func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
+func BootstrapServicesPostStart(
+	ctx context.Context,
+	container string,
+	bridgedSockets []socketbridge.BridgedSocket,
+	cmdOpts CommandOpts,
+) error {
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
 	}
@@ -419,8 +424,8 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 
 	precheckForwarders(ctx, security, cmdOpts, log)
 
-	if NeedsSocketBridge(security) {
-		if bridgeErr := startSocketBridge(container, security, cmdOpts, log); bridgeErr != nil {
+	if NeedsSocketBridge(security) || len(bridgedSockets) > 0 {
+		if bridgeErr := startSocketBridge(container, security, bridgedSockets, cmdOpts, log); bridgeErr != nil {
 			return bridgeErr
 		}
 	}
@@ -434,6 +439,7 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 func startSocketBridge(
 	container string,
 	security config.SecurityConfig,
+	bridgedSockets []socketbridge.BridgedSocket,
 	cmdOpts CommandOpts,
 	log *logger.Logger,
 ) error {
@@ -451,7 +457,11 @@ func startSocketBridge(
 		return nil
 	}
 	gpgEnabled := security.GitCredentials != nil && security.GitCredentials.GPGEnabled()
-	if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
+	if err := sb.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: container,
+		GPGEnabled:  gpgEnabled,
+		Sockets:     bridgedSockets,
+	}); err != nil {
 		if log != nil {
 			log.Error().Err(err).Msg("failed to start socket bridge")
 		}
@@ -624,7 +634,8 @@ func ContainerStart(
 		return nil, fmt.Errorf("starting container: docker client is nil")
 	}
 
-	if _, err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts); err != nil {
+	bridgedSockets, err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts)
+	if err != nil {
 		//nolint:contextcheck // reap is cleanup — it must run on Background even when ctx is dead
 		return nil, ReapFailedStart(
 			client,
@@ -637,7 +648,7 @@ func ContainerStart(
 		return &result, ReapFailedStart(client, startOpts.ContainerID, fmt.Errorf("starting container: %w", err))
 	}
 
-	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, cmdOpts); postErr != nil {
+	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, bridgedSockets, cmdOpts); postErr != nil {
 		return &result, postErr
 	}
 

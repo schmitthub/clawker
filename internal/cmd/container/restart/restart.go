@@ -212,7 +212,8 @@ func restartContainer(
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	if _, errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
+	bridgedSockets, errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts)
+	if errBootstrapPre != nil {
 		// Reap a never-started --rm container so its name is freed.
 		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))
@@ -223,7 +224,7 @@ func restartContainer(
 		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("restarting container: %w", err))
 	}
-	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, cmdOpts)
+	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, bridgedSockets, cmdOpts)
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
 	}

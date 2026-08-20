@@ -181,7 +181,7 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 
 	// This should NOT panic from containerID[:12] slicing
 	assert.NotPanics(t, func() {
-		err := m.EnsureBridge(shortContainerID, false)
+		err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{ContainerID: shortContainerID})
 		assert.NoError(t, err)
 	})
 }
@@ -196,7 +196,15 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	m.SetBridgeForTest(containerID, os.Getpid(), pidFile)
 
 	// EnsureBridge should be a no-op
-	err := m.EnsureBridge(containerID, false)
+	err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  true,
+		Sockets: []socketbridge.BridgedSocket{{
+			HostPath: "/host/service.sock",
+			Target:   "/run/service.sock",
+			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000},
+		}},
+	})
 	assert.NoError(t, err)
 
 	// Should still be the same process

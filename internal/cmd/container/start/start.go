@@ -177,14 +177,16 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 			AgentName:     "",
 			Project:       "",
 		}
+		var bridgedSockets []socketbridge.BridgedSocket
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-			_, bootstrapErr := shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+			var bootstrapErr error
+			bridgedSockets, bootstrapErr = shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
 			return bootstrapErr
 		}); err != nil {
 			// Reap a never-started --rm container so its name is freed.
 			return shared.ReapFailedStart(client, containerName, fmt.Errorf("pre-start bootstrapping failed: %w", err))
 		}
-		return attachAndStart(ctx, ios, log, client, containerName, cfg, cmdOpts, opts)
+		return attachAndStart(ctx, ios, log, client, containerName, cfg, bridgedSockets, cmdOpts, opts)
 	}
 
 	// Start all containers without attaching
@@ -207,6 +209,7 @@ func attachAndStart(
 	client *docker.Client,
 	containerName string,
 	cfg config.Config,
+	bridgedSockets []socketbridge.BridgedSocket,
 	cmdOpts shared.CommandOpts,
 	opts *StartOptions,
 ) error {
@@ -303,7 +306,7 @@ func attachAndStart(
 		log.Debug().Err(err).Msg("container start failed")
 		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
-	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
+	if err := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
 	log.Debug().Msg("container started successfully")

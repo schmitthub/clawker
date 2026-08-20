@@ -303,8 +303,10 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		AgentName:     opts.AgentName,
 		Project:       opts.Project,
 	}
+	var bridgedSockets []socketbridge.BridgedSocket
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-		_, bootstrapErr := shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
+		var bootstrapErr error
+		bridgedSockets, bootstrapErr = shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
 		return bootstrapErr
 	}); err != nil {
 		// Reap-on-failed-start: this invocation just created the container —
@@ -328,7 +330,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", startErr))
 		}
-		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, cmdOpts); err != nil {
+		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, bridgedSockets, cmdOpts); err != nil {
 			return fmt.Errorf("starting container: %w", err)
 		}
 
@@ -336,7 +338,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		return nil
 	}
 
-	return attachThenStart(ctx, client, o.result.ContainerID, cmdOpts, opts, log)
+	return attachThenStart(ctx, client, o.result.ContainerID, bridgedSockets, cmdOpts, opts, log)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
@@ -353,6 +355,7 @@ func attachThenStart(
 	ctx context.Context,
 	client *docker.Client,
 	containerID string,
+	bridgedSockets []socketbridge.BridgedSocket,
 	cmdOpts shared.CommandOpts,
 	opts *RunOptions,
 	log *logger.Logger,
@@ -433,7 +436,7 @@ func attachThenStart(
 		log.Debug().Err(err).Msg("container start failed")
 		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
-	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
+	if err := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
 	log.Debug().Msg("container started successfully")

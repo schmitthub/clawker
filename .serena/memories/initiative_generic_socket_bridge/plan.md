@@ -33,7 +33,7 @@ redesign, do not expand scope.
 | 3 | Path + listener-identity utils | DONE |
 | 4 | `clawker sockets` command group | DONE |
 | 5 | Pre-start authorization + `--approve-grants` | DONE |
-| 6 | Bridge generalization | TODO |
+| 6 | Bridge generalization | DONE |
 | 7 | Readiness barrier | TODO |
 | 8 | Integration tests | TODO |
 | 9 | Docs, schemas, memories | TODO |
@@ -493,9 +493,11 @@ container-side perms; SSH/GPG unchanged.
 2. Registration delivery daemon-ward: `startBridge` passes
    `--container/--pid-file/--gpg` argv today. Add `--sockets-file <path>`:
    the manager writes a JSON file (0600, under `cfg.BridgesSubdir()`) of
-   `{host_path, target, uid, gid}` entries before spawn; the daemon
-   (`clawker bridge serve`, `internal/cmd/bridge/bridge.go`) reads it at
-   startup. Never argv for the entries themselves.
+   `{host_path, target, uid, gid, group, mode}` entries before spawn — the
+   JSON serialization of `BridgedSocket`. Empty `group` and `mode` are
+   omitted and default in the forwarder. The daemon (`clawker bridge serve`,
+   `internal/cmd/bridge/bridge.go`) reads it at startup. Never argv for the
+   entries themselves.
 3. Container-side forwarder env: the host bridge launches the forwarder via
    `docker exec -i <id> /usr/local/bin/clawker-socket-server`
    (`internal/socketbridge/bridge.go` ~line 121). Change to
@@ -539,6 +541,22 @@ Makefile target that embeds `clawker-socket-server` and the CLAUDE.md
 "make clawker" gate before committing.
 
 ### Learnings (task 6)
+
+- The manager writes one owner-only registration file per container. Its flat
+  JSON entries contain the host path, target, numeric identity, group, and
+  mode; empty permission fields are omitted.
+- The daemon reads the container's create-time socket environment, keeps the
+  enabled SSH/GPG entries, and adds generic entries to the per-exec
+  environment. This preserves the existing credential-lane settings while it
+  supplies generic registrations at start time.
+- A generic OPEN uses the container target as its opaque registration ID. The
+  host maps it to the approved host path and checks peer credentials on the
+  established Unix connection before it records the stream.
+- The container forwarder applies a declared group and mode after it listens.
+  Setup errors send an ERROR frame before READY, and generic connection open
+  and close events carry metadata in the daemon log.
+- The socket server is embedded as Go source, not as a built asset, so task 6
+  required no `make clawker` rebuild.
 
 ---
 

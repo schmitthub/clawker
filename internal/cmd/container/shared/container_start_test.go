@@ -234,13 +234,13 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio, bothProjectYAML))
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "GPG forwarding is configured")
 		calls := sb.EnsureBridgeCalls()
 		require.Len(t, calls, 1)
-		assert.True(t, calls[0].GpgEnabled, "precheck must not change the configured GPG flag")
+		assert.True(t, calls[0].Opts.GPGEnabled, "precheck must not change the configured GPG flag")
 	})
 
 	t.Run("missing SSH agent warns", func(t *testing.T) {
@@ -251,7 +251,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio, bothProjectYAML))
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "SSH forwarding is configured")
@@ -269,7 +269,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio,
 			`security: { git_credentials: { forward_gpg: false, forward_ssh: true, copy_git_config: false } }`))
 		require.NoError(t, err)
 
@@ -295,7 +295,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		)
 		opts.HostProxy = func() hostproxy.Service { return hp }
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, opts)
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "HTTPS credential forwarding is configured")
@@ -319,7 +319,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
 		sb := sbmocks.NewMockManager()
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio,
 			`security: { git_credentials: { forward_gpg: false, forward_ssh: false, copy_git_config: true } }`))
 		require.NoError(t, err)
 
@@ -341,12 +341,35 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
 		)
 		opts.HostProxy = func() hostproxy.Service { return hp }
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, opts)
 		require.NoError(t, err)
 
 		assert.Empty(t, errOut.String())
 		require.Len(t, sb.EnsureBridgeCalls(), 1)
-		assert.True(t, sb.EnsureBridgeCalls()[0].GpgEnabled)
+		assert.True(t, sb.EnsureBridgeCalls()[0].Opts.GPGEnabled)
+	})
+
+	t.Run("generic sockets start a bridge without credential lanes", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		tio, _, _, _ := iostreams.Test()
+		sockets := []socketbridge.BridgedSocket{{
+			HostPath: "/host/service.sock",
+			Target:   "/run/service.sock",
+			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000},
+			Group:    "service",
+			Mode:     "0660",
+		}}
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", sockets, forwarderOpts(sb, tio,
+			`security: { git_credentials: { forward_gpg: false, forward_ssh: false, copy_git_config: false } }`))
+		require.NoError(t, err)
+
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.Equal(t, "ctr", calls[0].Opts.ContainerID)
+		assert.False(t, calls[0].Opts.GPGEnabled)
+		assert.Equal(t, sockets, calls[0].Opts.Sockets)
 	})
 }
 

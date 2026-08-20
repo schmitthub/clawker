@@ -21,6 +21,8 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+const bridgedSocketsFileSuffix = ".sockets.json"
+
 // SocketBridgeManager is the interface for managing socket bridge daemons.
 // Commands interact with this interface (not the concrete Manager) to enable
 // test mocking via sockebridgemocks.SocketBridgeManagerMock.
@@ -29,7 +31,7 @@ import (
 type SocketBridgeManager interface {
 	// EnsureBridge ensures a bridge daemon is running for the given container.
 	// It is idempotent — if a bridge is already running, it returns immediately.
-	EnsureBridge(containerID string, gpgEnabled bool) error
+	EnsureBridge(opts EnsureBridgeOpts) error
 	// StopBridge stops the bridge daemon for the given container.
 	StopBridge(containerID string) error
 	// StopAll stops all known bridge daemons.
@@ -44,6 +46,13 @@ type SocketBridgeManager interface {
 	// [errors.Is]. Callers warn the user, so a later bridge failure has a
 	// visible cause instead of an opaque daemon-side error.
 	Precheck(ctx context.Context, opts PrecheckOptions) error
+}
+
+// EnsureBridgeOpts contains the complete start-time bridge registration.
+type EnsureBridgeOpts struct {
+	ContainerID string
+	GPGEnabled  bool
+	Sockets     []BridgedSocket
 }
 
 // PrecheckOptions selects the forwarding lanes Precheck probes. Callers set
@@ -97,9 +106,10 @@ func NewManager(cfg config.Config, log *logger.Logger) *Manager {
 
 // EnsureBridge ensures a bridge daemon is running for the given container.
 // It is idempotent — if a bridge is already running, it returns immediately.
-func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
+func (m *Manager) EnsureBridge(opts EnsureBridgeOpts) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	containerID := opts.ContainerID
 
 	// Check if we already track a running bridge
 	if bp, ok := m.bridges[containerID]; ok {
@@ -124,7 +134,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	}
 
 	// Spawn a new bridge daemon
-	return m.startBridge(containerID, gpgEnabled, pidFile)
+	return m.startBridge(opts, pidFile)
 }
 
 // StopBridge stops the bridge daemon for the given container.
@@ -255,23 +265,30 @@ func checkHostSSHAgent(ctx context.Context) error {
 }
 
 // startBridge spawns a detached "clawker bridge serve" subprocess.
-func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile string) error {
+func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
+	containerID := opts.ContainerID
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
 	// BridgesSubdir() ensures the directory exists via MkdirAll.
-	if _, err := m.cfg.BridgesSubdir(); err != nil {
+	bridgesDir, err := m.cfg.BridgesSubdir()
+	if err != nil {
 		return fmt.Errorf("failed to get bridges directory: %w", err)
+	}
+	socketsFile := filepath.Join(bridgesDir, containerID+bridgedSocketsFileSuffix)
+	if err := WriteBridgedSocketsFile(socketsFile, opts.Sockets); err != nil {
+		return fmt.Errorf("failed to write bridge registrations: %w", err)
 	}
 
 	args := []string{
 		"bridge", "serve",
 		"--container", containerID,
 		"--pid-file", pidFile,
+		"--" + consts.BridgeSocketsFileFlag, socketsFile,
 	}
-	if gpgEnabled {
+	if opts.GPGEnabled {
 		args = append(args, "--gpg")
 	}
 

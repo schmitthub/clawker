@@ -856,12 +856,13 @@ const (
 	EnvGitHTTPS = "CLAWKER_GIT_HTTPS"
 )
 
-// Bridged socket types. Wire vocabulary shared by the env payload
-// builder (internal/docker), the in-container socket server, and the
-// host-side socket bridge.
+// Socket bridge wire vocabulary shared by the env payload builder, the
+// container socket server, the host bridge, and the daemon command.
 const (
-	SocketTypeSSHAgent = "ssh-agent"
-	SocketTypeGPGAgent = "gpg-agent"
+	SocketTypeSSHAgent    = "ssh-agent"
+	SocketTypeGPGAgent    = "gpg-agent"
+	SocketTypeBridged     = "bridged"
+	BridgeSocketsFileFlag = "sockets-file"
 )
 
 // ---------------------------------------------------------------------------

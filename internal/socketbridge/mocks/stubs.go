@@ -17,7 +17,7 @@ import (
 // so tests only need to override the methods they care about.
 func NewMockManager() *SocketBridgeManagerMock {
 	return &SocketBridgeManagerMock{
-		EnsureBridgeFunc: func(containerID string, gpgEnabled bool) error { return nil },
+		EnsureBridgeFunc: func(opts socketbridge.EnsureBridgeOpts) error { return nil },
 		StopBridgeFunc:   func(containerID string) error { return nil },
 		StopAllFunc:      func() error { return nil },
 		IsRunningFunc:    func(containerID string) bool { return false },
@@ -31,7 +31,7 @@ func CalledWith(mock *SocketBridgeManagerMock, method, containerID string) bool 
 	switch method {
 	case "EnsureBridge":
 		for _, c := range mock.EnsureBridgeCalls() {
-			if c.ContainerID == containerID {
+			if c.Opts.ContainerID == containerID {
 				return true
 			}
 		}

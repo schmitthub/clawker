@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 // fakeEventsClient implements dockerEventsClient for testing.
@@ -19,6 +22,34 @@ type fakeEventsClient struct {
 	errCh           chan error
 	closed          atomic.Bool
 	capturedOptions client.EventsListOptions
+}
+
+func TestLoadBridgedSockets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sockets.json")
+	want := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1001},
+		Group:    "service",
+		Mode:     "0660",
+	}}
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(path, want))
+
+	got, err := loadBridgedSockets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, want[0].HostPath, got[0].HostPath)
+	assert.Equal(t, want[0].Target, got[0].Target)
+	assert.Equal(t, want[0].Identity.UID, got[0].Identity.UID)
+	assert.Equal(t, want[0].Identity.GID, got[0].Identity.GID)
+	assert.Equal(t, want[0].Group, got[0].Group)
+	assert.Equal(t, want[0].Mode, got[0].Mode)
+}
+
+func TestLoadBridgedSocketsAllowsNoFile(t *testing.T) {
+	got, err := loadBridgedSockets("")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func newFakeEventsClient() *fakeEventsClient {

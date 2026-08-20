@@ -54,6 +54,8 @@ const (
 	MsgError  byte = 6 // Error message
 )
 
+const socketTypeBridged = "bridged"
+
 // Buffer and message size limits.
 const (
 	readBufSize    = 64 * 1024 // Per-stream read buffer
@@ -111,8 +113,10 @@ func logln(msg string) {
 
 // SocketConfig defines a socket to create and forward.
 type SocketConfig struct {
-	Path string `json:"path"` // Unix socket path
-	Type string `json:"type"` // "gpg-agent" or "ssh-agent"
+	Path  string `json:"path"`            // Unix socket path
+	Type  string `json:"type"`            // "gpg-agent", "ssh-agent", or "bridged"
+	Group string `json:"group,omitempty"` // Bridged socket group
+	Mode  string `json:"mode,omitempty"`  // Bridged socket mode
 }
 
 // Message represents a protocol message.
@@ -249,19 +253,10 @@ func run() int {
 		}
 	}
 
-	// Create socket listeners
-	listeners := make(map[string]net.Listener)
-	for _, sock := range sockets {
-		listener, err := f.createSocketListener(sock)
-		if err != nil {
-			logf("[socket-forwarder] error: failed to create socket %s: %v\n", sock.Path, err)
-			f.sendError(0, fmt.Sprintf("failed to create socket %s: %v", sock.Path, err))
-			return 1
-		}
-		listeners[sock.Type] = listener
-
-		// Start accept goroutine
-		go f.acceptLoop(listener, sock.Type)
+	// Create socket listeners.
+	listeners, err := f.createSocketListeners()
+	if err != nil {
+		return 1
 	}
 
 	// Send READY
@@ -288,6 +283,8 @@ func run() int {
 			f.handleData(msg)
 		case MsgClose:
 			f.handleClose(msg)
+		case MsgError:
+			f.handleError(msg)
 		default:
 			// Ignore unknown messages
 		}
@@ -388,11 +385,14 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 		return nil, fmt.Errorf("mkdir failed: %w", err)
 	}
 
-	// Get target user from socket path
-	uid, gid := getTargetUserFromPath(sock.Path)
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(dir, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
+	uid, gid := -1, -1
+	if sock.Type != socketTypeBridged {
+		// SSH and GPG paths use the canonical container user.
+		uid, gid = getTargetUserFromPath(sock.Path)
+		if uid >= 0 && gid >= 0 {
+			if err := os.Chown(dir, uid, gid); err != nil {
+				logf("[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
+			}
 		}
 	}
 
@@ -407,19 +407,83 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 		return nil, err
 	}
 
-	// Set permissions and ownership
-	if err := os.Chmod(sock.Path, 0600); err != nil {
-		listener.Close()
-		return nil, err
-	}
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(sock.Path, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
+	if sock.Type == socketTypeBridged {
+		if err := applyBridgedSocketPermissions(sock); err != nil {
+			if closeErr := listener.Close(); closeErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
+			}
+			return nil, err
+		}
+	} else {
+		// Preserve the existing SSH and GPG permission behavior.
+		if err := os.Chmod(sock.Path, 0600); err != nil {
+			if closeErr := listener.Close(); closeErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
+			}
+			return nil, err
+		}
+		if uid >= 0 && gid >= 0 {
+			if err := os.Chown(sock.Path, uid, gid); err != nil {
+				logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
+			}
 		}
 	}
 
 	logf("[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
 	return listener, nil
+}
+
+func (f *Forwarder) createSocketListeners() (map[string]net.Listener, error) {
+	listeners := make(map[string]net.Listener, len(f.sockets))
+	for _, socket := range f.sockets {
+		listener, err := f.createSocketListener(socket)
+		if err != nil {
+			for _, active := range listeners {
+				if closeErr := active.Close(); closeErr != nil {
+					logf("[socket-forwarder] warning: failed to close socket after setup error: %v\n", closeErr)
+				}
+			}
+			wrapped := fmt.Errorf("failed to create socket %s: %w", socket.Path, err)
+			logf("[socket-forwarder] error: %v\n", wrapped)
+			f.sendError(0, wrapped.Error())
+			return nil, wrapped
+		}
+		identifier := socket.Type
+		if socket.Type == socketTypeBridged {
+			identifier = socket.Path
+		}
+		listeners[identifier] = listener
+		go f.acceptLoop(listener, identifier)
+	}
+	return listeners, nil
+}
+
+func applyBridgedSocketPermissions(socket SocketConfig) error {
+	if socket.Group != "" {
+		group, err := user.LookupGroup(socket.Group)
+		if err != nil {
+			return fmt.Errorf("lookup group %q: %w", socket.Group, err)
+		}
+		gid, err := strconv.Atoi(group.Gid)
+		if err != nil {
+			return fmt.Errorf("parse group ID %q for %s: %w", group.Gid, socket.Group, err)
+		}
+		if err := os.Chown(socket.Path, -1, gid); err != nil {
+			return fmt.Errorf("set socket group %q: %w", socket.Group, err)
+		}
+	}
+	mode := os.FileMode(0o600)
+	if socket.Mode != "" {
+		parsed, err := strconv.ParseUint(socket.Mode, 8, 12)
+		if err != nil || parsed > 0o777 {
+			return fmt.Errorf("parse socket mode %q", socket.Mode)
+		}
+		mode = os.FileMode(parsed)
+	}
+	if err := os.Chmod(socket.Path, mode); err != nil {
+		return fmt.Errorf("set socket mode %04o: %w", mode, err)
+	}
+	return nil
 }
 
 func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
@@ -492,6 +556,11 @@ func (f *Forwarder) handleData(msg Message) {
 }
 
 func (f *Forwarder) handleClose(msg Message) {
+	f.closeStream(msg.StreamID)
+}
+
+func (f *Forwarder) handleError(msg Message) {
+	logf("[socket-forwarder] host rejected stream %d: %s\n", msg.StreamID, msg.Payload)
 	f.closeStream(msg.StreamID)
 }
 

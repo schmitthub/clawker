@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -42,10 +43,21 @@ const (
 	maxMessageSize = 1 << 20   // 1 MiB maximum message payload
 )
 
+const (
+	eventBridgedSocketOpen             = "bridged_socket_open"
+	eventBridgedSocketClose            = "bridged_socket_close"
+	eventBridgedSocketIdentityError    = "bridged_socket_identity_error"
+	eventBridgedSocketIdentityMismatch = "bridged_socket_identity_mismatch"
+	dockerInspectEnvironmentFormat     = "{{json .Config.Env}}"
+	containerSocketServerPath          = "/usr/local/bin/clawker-socket-server"
+)
+
 // SocketConfig defines a socket to forward.
 type SocketConfig struct {
-	Path string `json:"path"` // Unix socket path in container
-	Type string `json:"type"` // consts.SocketTypeGPGAgent or consts.SocketTypeSSHAgent
+	Path  string `json:"path"`            // Unix socket path in container
+	Type  string `json:"type"`            // Socket type or registration class
+	Group string `json:"group,omitempty"` // Container socket group
+	Mode  string `json:"mode,omitempty"`  // Container socket mode
 }
 
 // Message represents a protocol message.
@@ -61,6 +73,8 @@ type Bridge struct {
 	gpgEnabled  bool   // Whether GPG forwarding is enabled
 	gpgPubkey   []byte // GPG public key to send
 	log         *logger.Logger
+	sockets     map[string]BridgedSocket
+	socketList  []BridgedSocket
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -71,6 +85,7 @@ type Bridge struct {
 	Warnings io.Writer
 
 	streams  map[uint32]net.Conn
+	bridged  map[uint32]BridgedSocket
 	streamMu sync.RWMutex
 	writeMu  sync.Mutex
 
@@ -82,12 +97,22 @@ type Bridge struct {
 
 // NewBridge creates a new socket bridge for the given container.
 // gpgEnabled indicates whether GPG agent forwarding is configured.
-func NewBridge(containerID string, gpgEnabled bool, log *logger.Logger) *Bridge {
+func NewBridge(containerID string, gpgEnabled bool, sockets []BridgedSocket, log *logger.Logger) *Bridge {
+	if log == nil {
+		log = logger.Nop()
+	}
+	registrations := make(map[string]BridgedSocket, len(sockets))
+	for _, socket := range sockets {
+		registrations[socket.Target] = socket
+	}
 	return &Bridge{
 		containerID: containerID,
 		gpgEnabled:  gpgEnabled,
 		log:         log,
+		sockets:     registrations,
+		socketList:  append([]BridgedSocket(nil), sockets...),
 		streams:     make(map[uint32]net.Conn),
+		bridged:     make(map[uint32]BridgedSocket),
 		done:        make(chan struct{}),
 		errCh:       make(chan error, 1),
 	}
@@ -116,11 +141,21 @@ func (b *Bridge) Start(ctx context.Context) error {
 			b.gpgPubkey = pubkey
 		}
 	}
+	existingSockets, err := readContainerSocketConfig(ctx, b.containerID)
+	if err != nil {
+		return fmt.Errorf("read container socket configuration: %w", err)
+	}
+	if !b.gpgEnabled {
+		existingSockets = removeSocketType(existingSockets, consts.SocketTypeGPGAgent)
+	}
+	socketsJSON, err := buildRemoteSocketConfig(existingSockets, b.socketList)
+	if err != nil {
+		return fmt.Errorf("build start-time socket configuration: %w", err)
+	}
 
 	// Start docker exec
-	b.cmd = exec.CommandContext(ctx, "docker", "exec", "-i", b.containerID, "/usr/local/bin/clawker-socket-server")
+	b.cmd = exec.CommandContext(ctx, "docker", forwarderCommandArgs(b.containerID, socketsJSON)...)
 
-	var err error
 	b.stdin, err = b.cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to get stdin pipe: %w", err)
@@ -178,10 +213,19 @@ func (b *Bridge) Stop() error {
 
 	// Close streams
 	b.streamMu.Lock()
-	for _, conn := range b.streams {
+	for streamID, conn := range b.streams {
 		conn.Close()
+		if registration, ok := b.bridged[streamID]; ok {
+			b.log.Info().
+				Str("event", eventBridgedSocketClose).
+				Uint32("stream", streamID).
+				Str("target", registration.Target).
+				Str("host_path", registration.HostPath).
+				Msg("closed bridged host socket")
+		}
 	}
 	b.streams = make(map[uint32]net.Conn)
+	b.bridged = make(map[uint32]BridgedSocket)
 	b.streamMu.Unlock()
 
 	// Close pipes
@@ -286,34 +330,105 @@ func (b *Bridge) readLoop() {
 }
 
 func (b *Bridge) handleOpen(msg Message) {
-	socketType := string(msg.Payload)
+	socketID := string(msg.Payload)
 	streamID := msg.StreamID
 
-	socketPath, err := resolveHostSocket(socketType)
+	socketPath, registration, err := b.resolveOpenTarget(socketID)
 	if err != nil {
-		b.log.Error().Err(err).Str("type", socketType).Msg("failed to resolve host socket")
+		b.log.Error().Err(err).Str("socket_id", socketID).Msg("failed to resolve host socket")
 		if b.Warnings != nil {
-			fmt.Fprintf(b.Warnings, "Warning: %v\n", err)
+			if _, warningErr := fmt.Fprintf(b.Warnings, "Warning: %v\n", err); warningErr != nil {
+				b.log.Debug().Err(warningErr).Msg("failed to write socket bridge warning")
+			}
 		}
-		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		if registration == nil {
+			b.sendOpenError(streamID, err)
+		} else {
+			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		}
 		return
 	}
 
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if err != nil {
 		b.log.Error().Err(err).Str("socket", socketPath).Msg("failed to connect to host socket")
-		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		if registration != nil {
+			b.sendOpenError(streamID, fmt.Errorf("connect to registered socket: %w", err))
+		} else {
+			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		}
 		return
+	}
+	if registration != nil {
+		uid, gid, identityErr := readListenerCredentials(conn)
+		if identityErr != nil {
+			conn.Close()
+			err = fmt.Errorf("read registered listener identity: %w", identityErr)
+			b.log.Error().Err(err).
+				Str("event", eventBridgedSocketIdentityError).
+				Str("target", registration.Target).
+				Str("host_path", registration.HostPath).
+				Msg("failed to verify bridged socket listener")
+			b.sendOpenError(streamID, err)
+			return
+		}
+		if uid != registration.Identity.UID || gid != registration.Identity.GID {
+			conn.Close()
+			err = fmt.Errorf(
+				"listener identity mismatch for %s: approved uid=%d gid=%d, observed uid=%d gid=%d",
+				registration.HostPath,
+				registration.Identity.UID,
+				registration.Identity.GID,
+				uid,
+				gid,
+			)
+			b.log.Error().Err(err).
+				Str("event", eventBridgedSocketIdentityMismatch).
+				Str("target", registration.Target).
+				Str("host_path", registration.HostPath).
+				Msg("listener identity mismatch")
+			b.sendOpenError(streamID, err)
+			return
+		}
 	}
 
 	b.streamMu.Lock()
 	b.streams[streamID] = conn
+	if registration != nil {
+		b.bridged[streamID] = *registration
+	}
 	b.streamMu.Unlock()
 
 	// Start reading from the host socket
 	go b.readFromHostSocket(streamID, conn)
 
-	b.log.Debug().Uint32("stream", streamID).Str("type", socketType).Msg("opened host socket")
+	if registration != nil {
+		b.log.Info().
+			Str("event", eventBridgedSocketOpen).
+			Uint32("stream", streamID).
+			Str("target", registration.Target).
+			Str("host_path", registration.HostPath).
+			Msg("opened bridged host socket")
+		return
+	}
+	b.log.Debug().Uint32("stream", streamID).Str("type", socketID).Msg("opened host socket")
+}
+
+func (b *Bridge) resolveOpenTarget(socketID string) (string, *BridgedSocket, error) {
+	if registration, ok := b.sockets[socketID]; ok {
+		return registration.HostPath, &registration, nil
+	}
+	path, err := resolveHostSocket(socketID)
+	if err != nil {
+		return "", nil, fmt.Errorf("unknown socket registration %q", socketID)
+	}
+	return path, nil, nil
+}
+
+func (b *Bridge) sendOpenError(streamID uint32, cause error) {
+	if err := b.sendMessage(Message{Type: MsgError, StreamID: streamID, Payload: []byte(cause.Error())}); err != nil {
+		b.log.Error().Err(err).Uint32("stream", streamID).Msg("failed to send socket open error")
+	}
 }
 
 // resolveHostSocket returns the host Unix socket path for the given type.
@@ -373,14 +488,85 @@ func (b *Bridge) handleClose(msg Message) {
 func (b *Bridge) closeStream(streamID uint32) {
 	b.streamMu.Lock()
 	conn, ok := b.streams[streamID]
+	registration, bridged := b.bridged[streamID]
 	if ok {
 		delete(b.streams, streamID)
+		delete(b.bridged, streamID)
 	}
 	b.streamMu.Unlock()
 
 	if ok {
 		conn.Close()
 		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		if bridged {
+			b.log.Info().
+				Str("event", eventBridgedSocketClose).
+				Uint32("stream", streamID).
+				Str("target", registration.Target).
+				Str("host_path", registration.HostPath).
+				Msg("closed bridged host socket")
+		}
+	}
+}
+
+func readContainerSocketConfig(ctx context.Context, containerID string) ([]SocketConfig, error) {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", dockerInspectEnvironmentFormat, containerID)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("inspect container environment: %w", err)
+	}
+	var environment []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(output))), &environment); err != nil {
+		return nil, fmt.Errorf("parse container environment: %w", err)
+	}
+	prefix := consts.EnvRemoteSockets + "="
+	for _, entry := range environment {
+		if value, ok := strings.CutPrefix(entry, prefix); ok {
+			var sockets []SocketConfig
+			if err := json.Unmarshal([]byte(value), &sockets); err != nil {
+				return nil, fmt.Errorf("parse %s: %w", consts.EnvRemoteSockets, err)
+			}
+			return sockets, nil
+		}
+	}
+	return nil, nil
+}
+
+func removeSocketType(sockets []SocketConfig, socketType string) []SocketConfig {
+	filtered := make([]SocketConfig, 0, len(sockets))
+	for _, socket := range sockets {
+		if socket.Type != socketType {
+			filtered = append(filtered, socket)
+		}
+	}
+	return filtered
+}
+
+func buildRemoteSocketConfig(existing []SocketConfig, bridged []BridgedSocket) ([]byte, error) {
+	sockets := append([]SocketConfig(nil), existing...)
+	for _, registration := range bridged {
+		sockets = append(sockets, SocketConfig{
+			Path:  registration.Target,
+			Type:  consts.SocketTypeBridged,
+			Group: registration.Group,
+			Mode:  registration.Mode,
+		})
+	}
+	data, err := json.Marshal(sockets)
+	if err != nil {
+		return nil, fmt.Errorf("marshal remote sockets: %w", err)
+	}
+	return data, nil
+}
+
+func forwarderCommandArgs(containerID string, socketsJSON []byte) []string {
+	return []string{
+		"exec",
+		"-i",
+		"-e",
+		consts.EnvRemoteSockets + "=" + string(socketsJSON),
+		containerID,
+		containerSocketServerPath,
 	}
 }
 

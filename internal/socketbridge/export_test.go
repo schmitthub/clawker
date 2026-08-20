@@ -38,6 +38,30 @@ func (b *Bridge) SendMessageForTest(msg Message) error {
 	return b.sendMessage(msg)
 }
 
+// HandleOpenForTest calls the private OPEN handler.
+func (b *Bridge) HandleOpenForTest(msg Message) {
+	b.handleOpen(msg)
+}
+
+// HasStreamForTest reports whether the bridge tracks a stream.
+func (b *Bridge) HasStreamForTest(streamID uint32) bool {
+	b.streamMu.RLock()
+	defer b.streamMu.RUnlock()
+	_, ok := b.streams[streamID]
+	return ok
+}
+
+// CloseStreamForTest closes one tracked stream.
+func (b *Bridge) CloseStreamForTest(streamID uint32) {
+	b.closeStream(streamID)
+}
+
+// BuildRemoteSocketConfigForTest exposes the start-time socket env builder.
+var BuildRemoteSocketConfigForTest = buildRemoteSocketConfig
+
+// ForwarderCommandArgsForTest exposes docker exec argument construction.
+var ForwarderCommandArgsForTest = forwarderCommandArgs
+
 // ReadMessageForTest exposes the package-level readMessage function.
 var ReadMessageForTest = func(r *bufio.Reader) (Message, error) {
 	return readMessage(r)
