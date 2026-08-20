@@ -31,7 +31,7 @@ redesign, do not expand scope.
 | 1 | Manifest contract (`sockets:` in harness.yaml) | DONE |
 | 2 | CLI database package (`internal/db`) with grant store | DONE |
 | 3 | Path + listener-identity utils | DONE |
-| 4 | `clawker sockets` command group | TODO |
+| 4 | `clawker sockets` command group | DONE |
 | 5 | Pre-start authorization + `--approve-grants` | TODO |
 | 6 | Bridge generalization | TODO |
 | 7 | Readiness barrier | TODO |
@@ -333,6 +333,11 @@ error (mirror `worktree/remove_test.go` / `firewall/remove/remove_test.go`).
 Run: `go test ./internal/cmd/sockets/...`
 
 ### Learnings (task 4)
+
+- The Factory caches one `*db.DB` connection. Each sockets command composes `db.NewSocketGrantStore` in its Options closure, which keeps table-specific APIs out of the Factory and keeps command tests on the generated store mock.
+- `tui.TUI.RenderDetails` provides the generic aligned detail view and applies the active color scheme to labels. List and machine output use the common TUI table and format helpers.
+- Explicit prune groups rows by the real harness principal. It removes missing or replaced harness principals and keeps only socket declarations that resolve in the current host environment.
+- Grant ID and harness completion functions use the store interface directly. Store failures produce debug completion output and no suggestions.
 
 ---
 

@@ -21,6 +21,8 @@ import (
 	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -69,6 +71,7 @@ func New(version string) *cmdutil.Factory {
 	f.Config = configFunc(f)                 // depends on ProjectRegistry (walk-up anchor)
 	f.ProjectManager = projectManagerFunc(f) // depends on Config (name override) + Logger + ProjectRegistry
 	f.Logger = loggerLazy(f)                 // depends on Config
+	f.DB = dbFunc(f)                         // depends on Logger
 	f.HostProxy = hostProxyFunc(f)           // depends on Config
 	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
 	f.IOStreams = ioStreams()                // TTY/color/CI detection
@@ -82,6 +85,36 @@ func New(version string) *cmdutil.Factory {
 	f.BundleManager = bundleManagerFunc(f) // depends on Config
 
 	return f
+}
+
+// dbFunc returns one process-wide CLI database connection.
+func dbFunc(f *cmdutil.Factory) func() (*db.DB, error) {
+	var (
+		once     sync.Once
+		database *db.DB
+		err      error
+	)
+	return func() (*db.DB, error) {
+		once.Do(func() {
+			var path string
+			path, err = consts.SocketGrantsDBPath()
+			if err != nil {
+				err = fmt.Errorf("CLI database: get path: %w", err)
+				return
+			}
+			var log *logger.Logger
+			log, err = f.Logger()
+			if err != nil {
+				err = fmt.Errorf("CLI database: get logger: %w", err)
+				return
+			}
+			database, err = db.Open(path, log)
+			if err != nil {
+				err = fmt.Errorf("CLI database: %w", err)
+			}
+		})
+		return database, err
+	}
 }
 
 func sessionFunc() func() clawker.Session {

@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	promptcmd "github.com/schmitthub/clawker/internal/cmd/prompt"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
+	socketscmd "github.com/schmitthub/clawker/internal/cmd/sockets"
 	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
@@ -82,6 +83,7 @@ Workspace modes:
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))
+	cmd.AddCommand(socketscmd.NewCmdSockets(f))
 	cmd.AddCommand(image.NewCmdImage(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
