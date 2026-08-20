@@ -29,7 +29,7 @@ redesign, do not expand scope.
 | # | Task | Status |
 |---|------|--------|
 | 1 | Manifest contract (`sockets:` in harness.yaml) | DONE |
-| 2 | CLI database package (`internal/db`) with grant store | TODO |
+| 2 | CLI database package (`internal/db`) with grant store | DONE |
 | 3 | Path + listener-identity utils | TODO |
 | 4 | `clawker sockets` command group | TODO |
 | 5 | Pre-start authorization + `--approve-grants` | TODO |
@@ -175,9 +175,9 @@ re-declares declaration fields.
   ListSocketGrants() ([]SocketGrant, error)
   PruneHarnessSockets(harnessPath string, declaredHostPaths []string) error // decision 20 autoprune
   ```
-  `socketbridge.ListenerIdentity` is created in task 3; if task 2 runs
-  first, declare the struct there instead and have task 3 alias it —
-  whichever task lands first owns it, the other reuses.
+  `socketbridge.ListenerIdentity` is declared in
+  `internal/socketbridge/identity.go` by this task. Task 3 adds the platform
+  probes and reuses this type.
 - Grant ID: the auto-increment integer PK, assigned by the db. `sockets
   list` shows it; `RevokeSocket` deletes by `WHERE id = ?`. AUTOINCREMENT so
   a revoked ID is never reused.
@@ -197,6 +197,10 @@ undeclared, never touches other harness_path rows; two concurrent processes
 Run: `go test ./internal/db/...`
 
 ### Learnings (task 2)
+
+- `internal/db` owns the host-only SQLite connection and grant verbs. Each process handle uses one connection; WAL and the busy timeout coordinate concurrent CLI writers.
+- `socketbridge.ListenerIdentity` is the shared declaration type. This keeps the database API in the planned form and keeps `socketbridge` independent from `db`.
+- The installed `moq` v0.7.1 binary was built with Go 1.27 and failed to load this Go 1.26.6 module. Running the same pinned version with Go 1.26.6 generated the mock correctly.
 
 ---
 

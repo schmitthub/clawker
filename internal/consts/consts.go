@@ -313,6 +313,9 @@ const (
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
 	CLIStateFile = "update-state.yaml"
+	// SocketGrantsDBFile is the CLI-owned socket grant database in the state
+	// directory.
+	SocketGrantsDBFile = "socket-grants.db"
 )
 
 // SysFSBPFPath is the kernel's canonical BPF filesystem mount point. It is
@@ -1326,6 +1329,16 @@ func ReadyFilePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, ReadyFile), nil
+}
+
+// SocketGrantsDBPath ensures the state directory and returns the socket grant
+// database path.
+func SocketGrantsDBPath() (string, error) {
+	dir, err := ensureDir(StateDir())
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, SocketGrantsDBFile), nil
 }
 
 // AuditLogPath ensures <StateDir>/audit and returns the audit log file path.
