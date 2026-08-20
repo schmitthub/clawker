@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 )
@@ -211,6 +212,29 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	pid, ok := m.BridgePIDForTest(containerID)
 	assert.True(t, ok)
 	assert.Equal(t, os.Getpid(), pid)
+}
+
+func TestBridgeExecutable(t *testing.T) {
+	t.Run("configured override", func(t *testing.T) {
+		const override = "/test/bin/clawker"
+		t.Setenv(consts.EnvExecutable, override)
+
+		got, err := socketbridge.BridgeExecutableForTest()
+
+		require.NoError(t, err)
+		assert.Equal(t, override, got)
+	})
+
+	t.Run("current executable fallback", func(t *testing.T) {
+		t.Setenv(consts.EnvExecutable, "")
+		want, err := os.Executable()
+		require.NoError(t, err)
+
+		got, err := socketbridge.BridgeExecutableForTest()
+
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
 }
 
 // TestCheckHostSSHAgent pins the SSH lane precheck contract: every failure

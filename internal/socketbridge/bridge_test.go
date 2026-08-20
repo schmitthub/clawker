@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
@@ -116,7 +117,7 @@ func TestForwarderCommandArgsCarryStartTimeSocketConfig(t *testing.T) {
 	args := socketbridge.ForwarderCommandArgsForTest("container-id", raw)
 
 	assert.Equal(t, []string{
-		"exec", "-i", "-e", "CLAWKER_REMOTE_SOCKETS=" + string(raw),
+		"exec", "-i", "-e", consts.EnvRemoteSockets + "=" + string(raw),
 		"container-id", "/usr/local/bin/clawker-socket-server",
 	}, args)
 }
@@ -126,7 +127,9 @@ func TestBridgeRejectsUnknownBridgedTarget(t *testing.T) {
 	b := socketbridge.NewBridge("test-container-id", false, nil, logger.Nop())
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &output})
 
-	b.HandleOpenForTest(socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 41, Payload: []byte("/run/unknown.sock")})
+	b.HandleOpenForTest(
+		socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 41, Payload: []byte("/run/unknown.sock")},
+	)
 
 	msg, err := socketbridge.ReadMessageForTest(bufio.NewReader(&output))
 	require.NoError(t, err)
@@ -157,7 +160,9 @@ func TestBridgeOpensApprovedBridgedTargetAndLogsLifecycle(t *testing.T) {
 	}}, logger.NewWriter(&logs))
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &output})
 
-	b.HandleOpenForTest(socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 42, Payload: []byte("/run/service.sock")})
+	b.HandleOpenForTest(
+		socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 42, Payload: []byte("/run/service.sock")},
+	)
 	require.True(t, b.HasStreamForTest(42))
 	connection := <-accepted
 	b.CloseStreamForTest(42)
@@ -190,7 +195,9 @@ func TestBridgeRejectsChangedListenerIdentity(t *testing.T) {
 	}}, logger.NewWriter(&logs))
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &output})
 
-	b.HandleOpenForTest(socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 43, Payload: []byte("/run/service.sock")})
+	b.HandleOpenForTest(
+		socketbridge.Message{Type: socketbridge.MsgOpen, StreamID: 43, Payload: []byte("/run/service.sock")},
+	)
 	connection := <-accepted
 	require.NoError(t, connection.Close())
 

@@ -83,7 +83,10 @@ func newSocketAuthorizationFixture(t *testing.T, tier bundle.Tier) *socketAuthor
 	return fixture
 }
 
-func (f *socketAuthorizationFixture) authorize(t *testing.T, hasHarnessLabel bool) ([]socketbridge.BridgedSocket, error) {
+func (f *socketAuthorizationFixture) authorize(
+	t *testing.T,
+	hasHarnessLabel bool,
+) ([]socketbridge.BridgedSocket, error) {
 	t.Helper()
 	return authorizeSocketBridges(
 		"clawker.project.agent",
@@ -124,8 +127,13 @@ func TestAuthorizeSocketBridgesApproveFlagPersistsRequiredAndOptional(t *testing
 			fixture.declaration.Optional = optional
 			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-					Sockets:    []config.HarnessSocket{fixture.declaration},
+					Provenance: bundle.Provenance{
+						Tier:    bundle.TierLooseProject,
+						Dir:     fixture.principal,
+						Bundle:  bundle.BundleID{},
+						Shadows: nil,
+					},
+					Sockets: []config.HarnessSocket{fixture.declaration},
 				}, nil
 			}
 			fixture.opts.ApproveGrants = true
@@ -177,7 +185,11 @@ func TestAuthorizeSocketBridgesStoredAllowUsesCurrentIdentity(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
 	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-		return &db.SocketGrant{ID: 7, Status: db.GrantAllow, Identity: fixture.identity}, nil //nolint:exhaustruct // only decision fields are read
+		return &db.SocketGrant{
+			ID:       7,
+			Status:   db.GrantAllow,
+			Identity: fixture.identity,
+		}, nil //nolint:exhaustruct // only decision fields are read
 	}
 
 	bridges, err := fixture.authorize(t, true)
@@ -197,7 +209,11 @@ func TestAuthorizeSocketBridgesIdentityDriftPrompts(t *testing.T) {
 	oldIdentity := socketbridge.ListenerIdentity{UID: 2001, GID: 2002, Owner: "old-user", Group: "old-group"}
 	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
 	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-		return &db.SocketGrant{ID: 7, Status: db.GrantAllow, Identity: oldIdentity}, nil //nolint:exhaustruct // only decision fields are read
+		return &db.SocketGrant{
+			ID:       7,
+			Status:   db.GrantAllow,
+			Identity: oldIdentity,
+		}, nil //nolint:exhaustruct // only decision fields are read
 	}
 
 	bridges, err := fixture.authorize(t, true)
@@ -216,14 +232,23 @@ func TestAuthorizeSocketBridgesStoredDeny(t *testing.T) {
 			fixture.declaration.Optional = optional
 			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-					Sockets:    []config.HarnessSocket{fixture.declaration},
+					Provenance: bundle.Provenance{
+						Tier:    bundle.TierLooseProject,
+						Dir:     fixture.principal,
+						Bundle:  bundle.BundleID{},
+						Shadows: nil,
+					},
+					Sockets: []config.HarnessSocket{fixture.declaration},
 				}, nil
 			}
 			fixture.opts.ApproveGrants = true
 			fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
 			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-				return &db.SocketGrant{ID: 19, Status: db.GrantDeny, Identity: fixture.identity}, nil //nolint:exhaustruct // only decision fields are read
+				return &db.SocketGrant{
+					ID:       19,
+					Status:   db.GrantDeny,
+					Identity: fixture.identity,
+				}, nil //nolint:exhaustruct // only decision fields are read
 			}
 
 			bridges, err := fixture.authorize(t, true)
@@ -266,8 +291,13 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 			fixture.declaration.Optional = tt.optional
 			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-					Sockets:    []config.HarnessSocket{fixture.declaration},
+					Provenance: bundle.Provenance{
+						Tier:    bundle.TierLooseProject,
+						Dir:     fixture.principal,
+						Bundle:  bundle.BundleID{},
+						Shadows: nil,
+					},
+					Sockets: []config.HarnessSocket{fixture.declaration},
 				}, nil
 			}
 			fixture.ios.SetStdinTTY(true)
@@ -278,7 +308,11 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
 				lookups++
 				if tt.wantDeny && lookups > 1 {
-					return &db.SocketGrant{ID: 33, Status: db.GrantDeny, Identity: fixture.identity}, nil //nolint:exhaustruct // only decision fields are read
+					return &db.SocketGrant{
+						ID:       33,
+						Status:   db.GrantDeny,
+						Identity: fixture.identity,
+					}, nil //nolint:exhaustruct // only decision fields are read
 				}
 				return nil, nil
 			}
@@ -364,8 +398,13 @@ func TestAuthorizeSocketBridgesBannedPathFailsBeforeProbe(t *testing.T) {
 			fixture.declaration.Optional = true
 			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{Tier: tier, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-					Sockets:    []config.HarnessSocket{fixture.declaration},
+					Provenance: bundle.Provenance{
+						Tier:    tier,
+						Dir:     fixture.principal,
+						Bundle:  bundle.BundleID{},
+						Shadows: nil,
+					},
+					Sockets: []config.HarnessSocket{fixture.declaration},
 				}, nil
 			}
 			fixture.deps.resolveHostPath = func(string) (string, error) { return consts.DockerSocketPath, nil }
@@ -386,13 +425,59 @@ func TestAuthorizeSocketBridgesBannedPathFailsBeforeProbe(t *testing.T) {
 	}
 }
 
+func TestAuthorizeSocketBridgesResolvedBannedPathFailsBeforeProbe(t *testing.T) {
+	const (
+		aliasPath    = "/tmp/docker-alias.sock"
+		resolvedPath = "/host/docker-desktop/docker.sock"
+	)
+	fixture := newSocketAuthorizationFixture(t, bundle.TierFloor)
+	fixture.declaration.Source = aliasPath
+	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
+		return resolvedSocketHarness{
+			Provenance: bundle.Provenance{
+				Tier:    bundle.TierFloor,
+				Dir:     fixture.principal,
+				Bundle:  bundle.BundleID{},
+				Shadows: nil,
+			},
+			Sockets: []config.HarnessSocket{fixture.declaration},
+		}, nil
+	}
+	fixture.deps.resolveHostPath = func(expression string) (string, error) {
+		switch expression {
+		case aliasPath, consts.DockerSocketPath:
+			return resolvedPath, nil
+		default:
+			return cmdutil.ResolveHostPath(expression)
+		}
+	}
+	probed := false
+	fixture.deps.readListenerIdentity = func(string) (socketbridge.ListenerIdentity, error) {
+		probed = true
+		return fixture.identity, nil
+	}
+
+	bridges, err := fixture.authorize(t, true)
+
+	assert.Empty(t, bridges)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, consts.DockerSocketPath)
+	assert.ErrorContains(t, err, "security.docker_socket")
+	assert.False(t, probed)
+}
+
 func TestAuthorizeSocketBridgesOptionalUnapprovedNoninteractivePrintsNotice(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
 	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-			Sockets:    []config.HarnessSocket{fixture.declaration},
+			Provenance: bundle.Provenance{
+				Tier:    bundle.TierLooseProject,
+				Dir:     fixture.principal,
+				Bundle:  bundle.BundleID{},
+				Shadows: nil,
+			},
+			Sockets: []config.HarnessSocket{fixture.declaration},
 		}, nil
 	}
 	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
@@ -411,8 +496,13 @@ func TestAuthorizeSocketBridgesOptionalProbeFailurePrintsNotice(t *testing.T) {
 	fixture.declaration.Optional = true
 	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-			Sockets:    []config.HarnessSocket{fixture.declaration},
+			Provenance: bundle.Provenance{
+				Tier:    bundle.TierLooseProject,
+				Dir:     fixture.principal,
+				Bundle:  bundle.BundleID{},
+				Shadows: nil,
+			},
+			Sockets: []config.HarnessSocket{fixture.declaration},
 		}, nil
 	}
 	fixture.deps.readListenerIdentity = func(string) (socketbridge.ListenerIdentity, error) {
@@ -436,8 +526,13 @@ func TestAuthorizeSocketBridgesOptionalResolutionFailurePrintsNotice(t *testing.
 	fixture.declaration.Optional = true
 	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
 		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{Tier: bundle.TierLooseProject, Dir: fixture.principal, Bundle: bundle.BundleID{}, Shadows: nil},
-			Sockets:    []config.HarnessSocket{fixture.declaration},
+			Provenance: bundle.Provenance{
+				Tier:    bundle.TierLooseProject,
+				Dir:     fixture.principal,
+				Bundle:  bundle.BundleID{},
+				Shadows: nil,
+			},
+			Sockets: []config.HarnessSocket{fixture.declaration},
 		}, nil
 	}
 	fixture.deps.resolveHostPath = func(value string) (string, error) {

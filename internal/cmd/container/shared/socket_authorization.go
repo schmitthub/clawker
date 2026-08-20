@@ -155,7 +155,14 @@ func resolveSocketCandidates(
 		hostPath, err := deps.resolveHostPath(declaration.Source)
 		if err != nil {
 			if declaration.Optional {
-				if noticeErr := reportOptionalSocketSkip(cmdOpts, log, harnessName, declaration.Target, "host path did not resolve", err); noticeErr != nil {
+				if noticeErr := reportOptionalSocketSkip(
+					cmdOpts,
+					log,
+					harnessName,
+					declaration.Target,
+					"host path did not resolve",
+					err,
+				); noticeErr != nil {
 					return nil, noticeErr
 				}
 				continue
@@ -167,20 +174,28 @@ func resolveSocketCandidates(
 				err,
 			)
 		}
-		if isBannedSocketPath(hostPath) {
-			if hostPath == consts.DockerSocketPath {
+		bannedPath, banned := bannedSocketPath(hostPath, deps.resolveHostPath)
+		if banned {
+			if bannedPath == consts.DockerSocketPath {
 				return nil, fmt.Errorf(
 					"host socket %s is banned; use %s for Docker daemon access",
-					hostPath,
+					bannedPath,
 					dockerSocketSetting,
 				)
 			}
-			return nil, fmt.Errorf("host socket %s is banned", hostPath)
+			return nil, fmt.Errorf("host socket %s is banned", bannedPath)
 		}
 		identity, err := deps.readListenerIdentity(hostPath)
 		if err != nil {
 			if declaration.Optional {
-				if noticeErr := reportOptionalSocketSkip(cmdOpts, log, harnessName, declaration.Target, "listener probe failed", err); noticeErr != nil {
+				if noticeErr := reportOptionalSocketSkip(
+					cmdOpts,
+					log,
+					harnessName,
+					declaration.Target,
+					"listener probe failed",
+					err,
+				); noticeErr != nil {
 					return nil, noticeErr
 				}
 				continue
@@ -212,7 +227,11 @@ func authorizeSocketCandidate(
 ) (socketbridge.BridgedSocket, bool, error) {
 	grant, err := store.LookupSocketGrant(principal, candidate.hostPath)
 	if err != nil {
-		return socketbridge.BridgedSocket{}, false, fmt.Errorf("lookup socket grant for %s: %w", candidate.hostPath, err)
+		return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+			"lookup socket grant for %s: %w",
+			candidate.hostPath,
+			err,
+		)
 	}
 	if grant != nil {
 		switch grant.Status {
@@ -250,7 +269,11 @@ func authorizeSocketCandidate(
 			candidate.declaration,
 			candidate.identity,
 		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf("store socket grant for %s: %w", candidate.hostPath, err)
+			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+				"store socket grant for %s: %w",
+				candidate.hostPath,
+				err,
+			)
 		}
 		if err := printSocketApproval(cmdOpts, candidate.hostPath); err != nil {
 			return socketbridge.BridgedSocket{}, false, err
@@ -271,7 +294,14 @@ func authorizePromptedSocket(
 ) (socketbridge.BridgedSocket, bool, error) {
 	if !cmdOpts.IOStreams.CanPrompt() {
 		if candidate.declaration.Optional {
-			if err := reportOptionalSocketSkip(cmdOpts, log, harnessName, candidate.declaration.Target, "approval requires an interactive start", nil); err != nil {
+			if err := reportOptionalSocketSkip(
+				cmdOpts,
+				log,
+				harnessName,
+				candidate.declaration.Target,
+				"approval requires an interactive start",
+				nil,
+			); err != nil {
 				return socketbridge.BridgedSocket{}, false, err
 			}
 			return socketbridge.BridgedSocket{}, false, nil
@@ -298,7 +328,11 @@ func authorizePromptedSocket(
 			candidate.declaration,
 			candidate.identity,
 		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf("store socket grant for %s: %w", candidate.hostPath, err)
+			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+				"store socket grant for %s: %w",
+				candidate.hostPath,
+				err,
+			)
 		}
 		if err := printSocketApproval(cmdOpts, candidate.hostPath); err != nil {
 			return socketbridge.BridgedSocket{}, false, err
@@ -308,7 +342,14 @@ func authorizePromptedSocket(
 		return candidate.bridge(), true, nil
 	case socketAnswerNo:
 		if candidate.declaration.Optional {
-			if err := reportOptionalSocketSkip(cmdOpts, log, harnessName, candidate.declaration.Target, "approval was declined", nil); err != nil {
+			if err := reportOptionalSocketSkip(
+				cmdOpts,
+				log,
+				harnessName,
+				candidate.declaration.Target,
+				"approval was declined",
+				nil,
+			); err != nil {
 				return socketbridge.BridgedSocket{}, false, err
 			}
 			return socketbridge.BridgedSocket{}, false, nil
@@ -322,7 +363,11 @@ func authorizePromptedSocket(
 			candidate.declaration,
 			candidate.identity,
 		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf("store socket denial for %s: %w", candidate.hostPath, err)
+			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+				"store socket denial for %s: %w",
+				candidate.hostPath,
+				err,
+			)
 		}
 		if candidate.declaration.Optional {
 			return socketbridge.BridgedSocket{}, false, nil
@@ -332,10 +377,17 @@ func authorizePromptedSocket(
 		}
 		stored, err := store.LookupSocketGrant(principal, candidate.hostPath)
 		if err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf("read stored socket denial for %s: %w", candidate.hostPath, err)
+			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+				"read stored socket denial for %s: %w",
+				candidate.hostPath,
+				err,
+			)
 		}
 		if stored == nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf("stored socket denial for %s was not found", candidate.hostPath)
+			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+				"stored socket denial for %s was not found",
+				candidate.hostPath,
+			)
 		}
 		return socketbridge.BridgedSocket{}, false, storedDenyError(candidate.hostPath, stored.ID)
 	default:
@@ -489,13 +541,24 @@ func formatListenerIdentity(identity socketbridge.ListenerIdentity) string {
 	return fmt.Sprintf("%s:%s (uid %d, gid %d)", identity.Owner, identity.Group, identity.UID, identity.GID)
 }
 
-func isBannedSocketPath(path string) bool {
+func bannedSocketPath(
+	path string,
+	resolveHostPath func(string) (string, error),
+) (string, bool) {
 	for _, banned := range consts.BannedSocketPaths {
 		if path == banned {
-			return true
+			return banned, true
+		}
+		resolved, err := resolveHostPath(banned)
+		if err != nil {
+			// A banned path that is absent on this host cannot alias path.
+			continue
+		}
+		if path == resolved {
+			return banned, true
 		}
 	}
-	return false
+	return "", false
 }
 
 func storedDenyError(hostPath string, id int64) error {

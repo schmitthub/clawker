@@ -35,7 +35,7 @@ redesign, do not expand scope.
 | 5 | Pre-start authorization + `--approve-grants` | DONE |
 | 6 | Bridge generalization | DONE |
 | 7 | Readiness barrier | DONE |
-| 8 | Integration tests | TODO |
+| 8 | Integration tests | DONE |
 | 9 | Docs, schemas, memories | TODO |
 
 ---
@@ -377,9 +377,10 @@ Run: `go test ./internal/cmd/sockets/...`
 3. Resolve every `decl.Source` with `cmdutil.ResolveHostPath`. A resolution
    error: required decl → fail closed; optional decl → skip that socket
    with a one-line ErrOut notice + log entry and continue. Check every
-   resolved path against `consts.BannedSocketPaths` — a match fails the
-   start closed for every tier, `Optional` included, with an error naming
-   the banned path (for the Docker daemon socket, point at
+   resolved path against both the literal and resolved real path of each
+   `consts.BannedSocketPaths` entry — a match fails the start closed for
+   every tier, `Optional` included, with an error naming the banned path
+   (for the Docker daemon socket, point at
    `security.docker_socket`); no prompt, no grant, `ApproveGrants` never
    consulted (decision 21).
 4. Probe each surviving resolved path with
@@ -446,7 +447,8 @@ deny + optional → silent skip, no notice, no prompt; answer `never` → deny
 row written then required fails closed; answer `yes` → pair collected, no
 row written; empty answer re-asks; autoprune called with this principal
 only; missing harness label + declared sockets → fail closed; banned path
-→ fail closed before prompt even when optional, all tiers; optional
+→ fail closed before prompt even when optional, all tiers, including a
+source alias that resolves to a banned path; optional
 unresolvable source → skip + notice; optional approved → identical to
 required.
 Run: `go test ./internal/cmd/container/... ./internal/cmdutil/...`
@@ -457,6 +459,9 @@ Run: `go test ./internal/cmd/container/... ./internal/cmdutil/...`
 - Built-in harnesses use their trusted tier and do not open the grant store. Third-party harnesses use the resolved harness directory as the principal, prune only that principal's declared paths, and compare listener identity by numeric UID and GID.
 - The shared prompt uses one buffered reader for repeated input. This keeps piped answers available when an empty or invalid answer causes another prompt.
 - Run, start, and restart share the approval flag and compose the socket-grant store over the Factory DB closure. Pre-start returns the active socket set for task 6 without mutable command state.
+- Runtime banned-path checks resolve the banned entries too. This keeps the
+  Docker socket banned when a host, such as Docker Desktop, exposes the fixed
+  path as a symbolic link to its user socket.
 
 ---
 
@@ -497,7 +502,9 @@ container-side perms; SSH/GPG unchanged.
    JSON serialization of `BridgedSocket`. Empty `group` and `mode` are
    omitted and default in the forwarder. The daemon (`clawker bridge serve`,
    `internal/cmd/bridge/bridge.go`) reads it at startup. Never argv for the
-   entries themselves.
+   entries themselves. When the manager starts this daemon, it uses the
+   `consts.EnvExecutable` override before `os.Executable`, matching the host
+   proxy and the e2e harness's built-CLI path.
 3. Container-side forwarder env: the host bridge launches the forwarder via
    `docker exec -i <id> /usr/local/bin/clawker-socket-server`
    (`internal/socketbridge/bridge.go` ~line 121). Change to
@@ -507,7 +514,9 @@ container-side perms; SSH/GPG unchanged.
    `{path:<target>, type:"bridged", group:<group>, mode:<mode>}` for
    generic sockets.
 4. Forwarder (`clawker-socket-server/main.go` — stdlib-only TRIPWIRE, keep
-   it dependency-free; runs as the container agent user): for type
+   it dependency-free): it starts with root only to open its log, restores the
+   configured agent user's primary and supplementary groups, then drops its
+   GID and UID before socket or GPG setup. For type
    "bridged", listen on path, then apply the entry's group and mode —
    resolve group name via `os/user.LookupGroup`, `os.Chown(path, -1, gid)`,
    `os.Chmod(path, mode)`; empty group/mode → leave owner-default and
@@ -552,9 +561,18 @@ Makefile target that embeds `clawker-socket-server` and the CLAUDE.md
 - A generic OPEN uses the container target as its opaque registration ID. The
   host maps it to the approved host path and checks peer credentials on the
   established Unix connection before it records the stream.
+- The manager honors the common CLI executable override when it starts a
+  bridge daemon. A Go e2e test process therefore starts the built clawker CLI,
+  not a recursive copy of its test binary.
+- The bridge starts the socket server as root only for log setup. The server
+  restores the configured agent user's primary and supplementary groups, then
+  drops its GID and UID before socket or GPG setup. Docker exec with `--user`
+  is not sufficient because it omits supplementary image groups.
 - The container forwarder applies a declared group and mode after it listens.
-  Setup errors send an ERROR frame before READY, and generic connection open
-  and close events carry metadata in the daemon log.
+  It resolves these values before it creates the listener, so an unknown group
+  cannot expose a transient target to the file-based readiness check. Setup
+  errors send an ERROR frame before READY, and generic connection open and
+  close events carry metadata in the daemon log.
 - The socket server is embedded as Go source, not as a built asset, so task 6
   required no `make clawker` rebuild.
 
@@ -608,6 +626,9 @@ Run: `go test ./controlplane/agent/... ./internal/cmd/container/...`
 - Readiness failure uses the existing fatal `ShellStep` contract. The control
   plane only dispatches the injected script and gains no panic or process-exit
   path.
+- The Docker e2e gate uses the embedded control-plane executable. Changes to
+  the boot plan require `make cp-binary` before that host gate; otherwise the
+  container runs the previous boot plan even when the source tests pass.
 
 ---
 
@@ -663,6 +684,35 @@ Run: `go test ./test/e2e/... -run TestSocket -v -timeout 10m` (Docker
 required, host only).
 
 ### Learnings (task 8)
+
+- The host e2e fixture uses a loose harness, an in-test Unix HTTP listener,
+  and `curl --unix-socket` inside the real agent container. Interactive
+  answers are queued for one `h.Run()` call, so each command still uses a
+  fresh production-shaped Factory.
+- The e2e Factory now mirrors the permanent process-wide `DB` noun. Commands
+  continue to construct `SocketGrantStore` over that connection; the Factory
+  has no table-specific noun.
+- Listener-identity drift to a different uid and open-time peer-credential
+  mismatch remain in the task 5 and task 6 unit suites. An unprivileged e2e
+  host cannot create the required listener under a different uid, so the
+  Docker journeys do not duplicate those two cases.
+- Test listener paths use a short `/tmp/clawker-socket-*` directory because
+  macOS rejects Unix socket names that exceed its fixed address length.
+- The real image runs clawkerd as root. Docker exec with `--user` omits the
+  agent user's supplementary groups. The socket server therefore starts with
+  root only for log setup, restores the configured agent user's full group
+  set, and drops its GID and UID before socket or GPG setup. This makes a
+  declared image group usable without leaving the forwarder privileged.
+- The missing-group check uses a fresh image and container variant. The
+  forwarder resolves the declared group before it creates the listener, so a
+  failed group lookup cannot satisfy the socket-file readiness probe.
+- Root harness blocks run under zsh. Its `USERNAME` parameter reports the
+  active user (`root`) instead of the Docker build argument. The permission
+  fixture therefore uses the stable `CLAWKER_USER` environment variable when
+  it adds the agent user to its test group.
+- Failed e2e tests now include the shared socket-bridge daemon log with the
+  other isolated logs. A deleted listener can fail during path resolution
+  before the later identity probe; both are pre-start failures.
 
 ---
 

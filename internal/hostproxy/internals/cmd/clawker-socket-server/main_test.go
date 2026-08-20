@@ -43,6 +43,46 @@ func TestCreateBridgedSocketListenerAppliesGroupAndMode(t *testing.T) {
 	assert.Equal(t, uint32(wantGID), stat.Gid)
 }
 
+func TestDropAgentPrivilegesRestoresSupplementaryGroups(t *testing.T) {
+	var (
+		steps     []string
+		gotGroups []int
+		gotGID    int
+		gotUID    int
+	)
+	ops := privilegeOps{
+		effectiveUID: func() int { return 0 },
+		lookupUser: func(username string) (*user.User, error) {
+			assert.Equal(t, "agent", username)
+			return &user.User{Uid: "1001", Gid: "1002"}, nil
+		},
+		groupIDs: func(*user.User) ([]string, error) {
+			return []string{"1002", "2001"}, nil
+		},
+		setGroups: func(groups []int) error {
+			steps = append(steps, "groups")
+			gotGroups = groups
+			return nil
+		},
+		setGID: func(gid int) error {
+			steps = append(steps, "gid")
+			gotGID = gid
+			return nil
+		},
+		setUID: func(uid int) error {
+			steps = append(steps, "uid")
+			gotUID = uid
+			return nil
+		},
+	}
+
+	require.NoError(t, dropAgentPrivileges("agent", ops))
+	assert.Equal(t, []string{"groups", "gid", "uid"}, steps)
+	assert.Equal(t, []int{1002, 2001}, gotGroups)
+	assert.Equal(t, 1002, gotGID)
+	assert.Equal(t, 1001, gotUID)
+}
+
 func TestCreateBridgedSocketListenerUsesDefaultPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.sock")
 	forwarder := &Forwarder{}

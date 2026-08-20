@@ -264,10 +264,19 @@ func checkHostSSHAgent(ctx context.Context) error {
 	return nil
 }
 
+// bridgeExecutable returns the CLI binary used for a bridge daemon. The e2e
+// harness supplies the built CLI because os.Executable is its Go test binary.
+func bridgeExecutable() (string, error) {
+	if executable := os.Getenv(consts.EnvExecutable); executable != "" {
+		return executable, nil
+	}
+	return os.Executable()
+}
+
 // startBridge spawns a detached "clawker bridge serve" subprocess.
 func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
 	containerID := opts.ContainerID
-	exe, err := os.Executable()
+	exe, err := bridgeExecutable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}

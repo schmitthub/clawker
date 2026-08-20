@@ -39,6 +39,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 )
 
 // ProtocolVersion is the muxrpc wire protocol version.
@@ -54,7 +55,11 @@ const (
 	MsgError  byte = 6 // Error message
 )
 
-const socketTypeBridged = "bridged"
+const (
+	socketTypeBridged = "bridged"
+	envClawkerUser    = "CLAWKER_USER"
+	defaultAgentUser  = "clawker"
+)
 
 // Buffer and message size limits.
 const (
@@ -75,7 +80,7 @@ const (
 // initLogging sets up file logging alongside stderr. Returns a cleanup function
 // that closes the log file. Errors are non-fatal — logging degrades to stderr only.
 func initLogging() func() {
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot create log dir %s: %v\n", logDir, err)
 		return func() {}
 	}
@@ -87,7 +92,7 @@ func initLogging() func() {
 		_ = os.Rename(logPath, logPath+".1")
 	}
 
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot open log file %s: %v\n", logPath, err)
 		return func() {}
@@ -119,6 +124,12 @@ type SocketConfig struct {
 	Mode  string `json:"mode,omitempty"`  // Bridged socket mode
 }
 
+type bridgedSocketPermissions struct {
+	group string
+	gid   int
+	mode  os.FileMode
+}
+
 // Message represents a protocol message.
 type Message struct {
 	Type     byte
@@ -134,6 +145,74 @@ type Forwarder struct {
 	nextID   uint32
 	writeMu  sync.Mutex
 	stdout   *bufio.Writer
+}
+
+type privilegeOps struct {
+	effectiveUID func() int
+	lookupUser   func(string) (*user.User, error)
+	groupIDs     func(*user.User) ([]string, error)
+	setGroups    func([]int) error
+	setGID       func(int) error
+	setUID       func(int) error
+}
+
+var systemPrivilegeOps = privilegeOps{
+	effectiveUID: os.Geteuid,
+	lookupUser:   user.Lookup,
+	groupIDs:     func(account *user.User) ([]string, error) { return account.GroupIds() },
+	setGroups:    syscall.Setgroups,
+	setGID:       syscall.Setgid,
+	setUID:       syscall.Setuid,
+}
+
+func dropAgentPrivileges(username string, ops privilegeOps) error {
+	if ops.effectiveUID() != 0 {
+		return nil
+	}
+
+	account, err := ops.lookupUser(username)
+	if err != nil {
+		return fmt.Errorf("lookup agent user %q: %w", username, err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse agent user UID %q: %w", account.Uid, err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return fmt.Errorf("parse agent user GID %q: %w", account.Gid, err)
+	}
+
+	rawGroups, err := ops.groupIDs(account)
+	if err != nil {
+		return fmt.Errorf("list groups for agent user %q: %w", username, err)
+	}
+	groups := make([]int, 0, len(rawGroups)+1)
+	seen := make(map[int]struct{}, len(rawGroups)+1)
+	groups = append(groups, gid)
+	seen[gid] = struct{}{}
+	for _, rawGroup := range rawGroups {
+		groupID, parseErr := strconv.Atoi(rawGroup)
+		if parseErr != nil {
+			return fmt.Errorf("parse group ID %q for agent user %q: %w", rawGroup, username, parseErr)
+		}
+		if _, exists := seen[groupID]; exists {
+			continue
+		}
+		groups = append(groups, groupID)
+		seen[groupID] = struct{}{}
+	}
+
+	if err := ops.setGroups(groups); err != nil {
+		return fmt.Errorf("set supplementary groups for agent user %q: %w", username, err)
+	}
+	if err := ops.setGID(gid); err != nil {
+		return fmt.Errorf("set primary group for agent user %q: %w", username, err)
+	}
+	if err := ops.setUID(uid); err != nil {
+		return fmt.Errorf("set UID for agent user %q: %w", username, err)
+	}
+	return nil
 }
 
 // getTargetUserFromPath extracts the username from a path like /home/<user>/.gnupg
@@ -175,7 +254,11 @@ func getTargetUserFromPath(path string) (int, int) {
 func killExistingGPGAgent(gnupgDir string) {
 	cmd := exec.Command("gpgconf", "--homedir", gnupgDir, "--kill", "gpg-agent")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		logf("[socket-forwarder] warning: gpgconf --kill gpg-agent failed: %v (output: %s)\n", err, strings.TrimSpace(string(output)))
+		logf(
+			"[socket-forwarder] warning: gpgconf --kill gpg-agent failed: %v (output: %s)\n",
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	} else {
 		logf("[socket-forwarder] killed existing gpg-agent for %s\n", gnupgDir)
 	}
@@ -214,6 +297,28 @@ func run() int {
 	}
 
 	reader := bufio.NewReader(os.Stdin)
+	agentUser := os.Getenv(envClawkerUser)
+	if agentUser == "" {
+		agentUser = defaultAgentUser
+	}
+	if err := dropAgentPrivileges(agentUser, systemPrivilegeOps); err != nil {
+		logf("[socket-forwarder] error: failed to drop privileges: %v\n", err)
+		f.sendError(0, "failed to drop privileges: "+err.Error())
+		return 1
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		logf("[socket-forwarder] error: failed to read process groups: %v\n", err)
+		f.sendError(0, "failed to read process groups: "+err.Error())
+		return 1
+	}
+	logf(
+		"[socket-forwarder] running as user %q uid=%d gid=%d groups=%v\n",
+		agentUser,
+		os.Geteuid(),
+		os.Getegid(),
+		groups,
+	)
 
 	// Check if GPG forwarding is enabled - if so, wait for PUBKEY message
 	hasGPG := false
@@ -314,7 +419,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	uid, gid := getTargetUserFromPath(gnupgDir)
 
 	// Create .gnupg directory
-	if err := os.MkdirAll(gnupgDir, 0700); err != nil {
+	if err := os.MkdirAll(gnupgDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir failed: %w", err)
 	}
 	// Chown directory to target user
@@ -326,7 +431,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 
 	// Write pubring.kbx
 	pubringPath := filepath.Join(gnupgDir, "pubring.kbx")
-	if err := os.WriteFile(pubringPath, pubkey, 0600); err != nil {
+	if err := os.WriteFile(pubringPath, pubkey, 0o600); err != nil {
 		return fmt.Errorf("write failed: %w", err)
 	}
 	// Chown file to target user
@@ -346,7 +451,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	gpgConfContent := "# Written by clawker-socket-server to prevent gpg-agent auto-start.\n" +
 		"# The clawker socket bridge handles agent forwarding to the host.\n" +
 		"no-autostart\n"
-	if err := os.WriteFile(gpgConfPath, []byte(gpgConfContent), 0600); err != nil {
+	if err := os.WriteFile(gpgConfPath, []byte(gpgConfContent), 0o600); err != nil {
 		return fmt.Errorf("write gpg.conf failed: %w", err)
 	}
 	if uid >= 0 && gid >= 0 {
@@ -365,7 +470,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 		"# These do NOT prevent socket binding; see gpg.conf no-autostart for that.\n" +
 		"no-grab\n" +
 		"disable-scdaemon\n"
-	if err := os.WriteFile(agentConfPath, []byte(agentConfContent), 0600); err != nil {
+	if err := os.WriteFile(agentConfPath, []byte(agentConfContent), 0o600); err != nil {
 		return fmt.Errorf("write gpg-agent.conf failed: %w", err)
 	}
 	if uid >= 0 && gid >= 0 {
@@ -379,9 +484,18 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 }
 
 func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error) {
+	permissions := bridgedSocketPermissions{gid: -1, mode: 0o600}
+	if sock.Type == socketTypeBridged {
+		var err error
+		permissions, err = resolveBridgedSocketPermissions(sock)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Create parent directory
 	dir := filepath.Dir(sock.Path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir failed: %w", err)
 	}
 
@@ -408,7 +522,7 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 	}
 
 	if sock.Type == socketTypeBridged {
-		if err := applyBridgedSocketPermissions(sock); err != nil {
+		if err := applyResolvedBridgedSocketPermissions(sock.Path, permissions); err != nil {
 			if closeErr := listener.Close(); closeErr != nil {
 				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
 			}
@@ -416,7 +530,7 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 		}
 	} else {
 		// Preserve the existing SSH and GPG permission behavior.
-		if err := os.Chmod(sock.Path, 0600); err != nil {
+		if err := os.Chmod(sock.Path, 0o600); err != nil {
 			if closeErr := listener.Close(); closeErr != nil {
 				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
 			}
@@ -458,30 +572,38 @@ func (f *Forwarder) createSocketListeners() (map[string]net.Listener, error) {
 	return listeners, nil
 }
 
-func applyBridgedSocketPermissions(socket SocketConfig) error {
+func resolveBridgedSocketPermissions(socket SocketConfig) (bridgedSocketPermissions, error) {
+	permissions := bridgedSocketPermissions{gid: -1, mode: 0o600}
 	if socket.Group != "" {
 		group, err := user.LookupGroup(socket.Group)
 		if err != nil {
-			return fmt.Errorf("lookup group %q: %w", socket.Group, err)
+			return permissions, fmt.Errorf("lookup group %q: %w", socket.Group, err)
 		}
 		gid, err := strconv.Atoi(group.Gid)
 		if err != nil {
-			return fmt.Errorf("parse group ID %q for %s: %w", group.Gid, socket.Group, err)
+			return permissions, fmt.Errorf("parse group ID %q for %s: %w", group.Gid, socket.Group, err)
 		}
-		if err := os.Chown(socket.Path, -1, gid); err != nil {
-			return fmt.Errorf("set socket group %q: %w", socket.Group, err)
-		}
+		permissions.gid = gid
+		permissions.group = socket.Group
 	}
-	mode := os.FileMode(0o600)
 	if socket.Mode != "" {
 		parsed, err := strconv.ParseUint(socket.Mode, 8, 12)
 		if err != nil || parsed > 0o777 {
-			return fmt.Errorf("parse socket mode %q", socket.Mode)
+			return permissions, fmt.Errorf("parse socket mode %q", socket.Mode)
 		}
-		mode = os.FileMode(parsed)
+		permissions.mode = os.FileMode(parsed)
 	}
-	if err := os.Chmod(socket.Path, mode); err != nil {
-		return fmt.Errorf("set socket mode %04o: %w", mode, err)
+	return permissions, nil
+}
+
+func applyResolvedBridgedSocketPermissions(path string, permissions bridgedSocketPermissions) error {
+	if permissions.gid >= 0 {
+		if err := os.Chown(path, -1, permissions.gid); err != nil {
+			return fmt.Errorf("set socket group %q: %w", permissions.group, err)
+		}
+	}
+	if err := os.Chmod(path, permissions.mode); err != nil {
+		return fmt.Errorf("set socket mode %04o: %w", permissions.mode, err)
 	}
 	return nil
 }
