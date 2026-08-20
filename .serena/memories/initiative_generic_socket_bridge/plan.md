@@ -150,7 +150,11 @@ re-declares declaration fields.
   );
   ```
   `PRAGMA user_version = 1`. WAL + busy_timeout on open.
-- API (store verbs on `*DB`; interface + moq mock for command-layer tests):
+- API split (no god struct): `db.go`'s `*DB` is connection machinery ONLY —
+  Open, migrate, Close, zero table methods, forever. Store verbs live on a
+  separate store type in `grants.go`, constructed by
+  `NewSocketGrantStore(*DB)`. A future table = a new store file; `*DB` and
+  its API never grow. Verbs:
   ```go
   type SocketGrant struct {
       ID          int64  // auto-increment PK; the user-facing grant ID
@@ -182,7 +186,8 @@ re-declares declaration fields.
   list` shows it; `RevokeSocket` deletes by `WHERE id = ?`. AUTOINCREMENT so
   a revoked ID is never reused.
 - Command-layer seam: declare a `SocketGrantStore` interface in the package
-  covering the verbs above; moq it. Prod passes `*DB`.
+  covering the verbs above; moq it. Prod passes the
+  `NewSocketGrantStore(*DB)` concrete.
 - `GrantSocket`/`DenySocket` know nothing about prompts or flags: they
   write the row, log the event (principal, resolved path, identity, status,
   time) via an injected `*logger.Logger` (constructor-injected per
@@ -198,7 +203,8 @@ Run: `go test ./internal/db/...`
 
 ### Learnings (task 2)
 
-- `internal/db` owns the host-only SQLite connection and grant verbs. Each process handle uses one connection; WAL and the busy timeout coordinate concurrent CLI writers.
+- `internal/db.DB` owns only the host-side SQLite connection, migrations, and close operation. `NewSocketGrantStore(*DB)` composes the table-specific grant API without adding table methods to the connection type.
+- Each process database handle uses one connection; WAL and the busy timeout coordinate concurrent CLI writers.
 - `socketbridge.ListenerIdentity` is the shared declaration type. This keeps the database API in the planned form and keeps `socketbridge` independent from `db`.
 - The installed `moq` v0.7.1 binary was built with Go 1.27 and failed to load this Go 1.26.6 module. Running the same pinned version with Go 1.26.6 generated the mock correctly.
 
@@ -271,10 +277,22 @@ prints.
   sibling: management group over a store).
 - Register in `internal/cmd/root/root.go` beside
   `firewallcmd.NewCmdFirewall(f)`.
-- Factory noun: add `SocketGrants func() (db.SocketGrantStore, error)` to the
-  Factory struct (`internal/cmd/factory/`) — lazy, sync.Once-cached like the
-  other nouns. Commands resolve it in their run function (`NewCmd(f, runF)`
-  pattern; `Example` field; `PersistentPreRunE` if any hook needed).
+- Factory noun: add `DB func() (*db.DB, error)` to the Factory struct
+  (`internal/cmd/factory/`) — lazy, sync.Once-cached like the other nouns.
+  This is the CLI database's ONE permanent Factory noun; the Factory never
+  gains per-table nouns. Each command's `NewCmd(f, runF)` composes the store
+  in a closure on its Options struct:
+  ```go
+  opts.SocketGrants = func() (db.SocketGrantStore, error) {
+      d, err := f.DB()
+      if err != nil { return nil, err }
+      return db.NewSocketGrantStore(d), nil
+  }
+  ```
+  Options fields stay typed as the store interface, so tests inject the moq
+  mock through the same field. Commands resolve in their run function
+  (`NewCmd(f, runF)` pattern; `Example` field; `PersistentPreRunE` if any
+  hook needed).
 
 **Behavior:**
 - `list`: table via `f.TUI.NewTable(...)` + `--format` machine output.
@@ -329,8 +347,9 @@ Run: `go test ./internal/cmd/sockets/...`
 - Add to `CommandOpts`: `SocketGrants func() (db.SocketGrantStore, error)` and
   `ApproveGrants bool` (the flag value). All construction sites of
   `CommandOpts` (run/start/restart commands under `internal/cmd/container/`)
-  pass the Factory noun through; find them with serena references on
-  `CommandOpts`.
+  build the closure over the `f.DB()` Factory noun
+  (`db.NewSocketGrantStore` over the handle — same shape as task 4); find
+  them with serena references on `CommandOpts`.
 - Shared flag: new `internal/cmdutil/flags.go` with
   `AddApproveGrantsFlag(cmd *cobra.Command, p *bool)` registering
   `--approve-grants` (bool, default false, help: approve this start's

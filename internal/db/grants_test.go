@@ -15,14 +15,14 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
-func openTestDB(t *testing.T) *db.DB {
+func openTestStore(t *testing.T) db.SocketGrantStore {
 	t.Helper()
-	store, err := db.Open(filepath.Join(t.TempDir(), "grants.db"), logger.Nop())
+	database, err := db.Open(filepath.Join(t.TempDir(), "grants.db"), logger.Nop())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, store.Close())
+		require.NoError(t, database.Close())
 	})
-	return store
+	return db.NewSocketGrantStore(database)
 }
 
 func testDecl(purpose string) config.HarnessSocket {
@@ -42,15 +42,19 @@ func TestSocketGrantRoundTrip(t *testing.T) {
 	cases := []struct {
 		name   string
 		status string
-		write  func(*db.DB, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error
+		write  func(db.SocketGrantStore, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error
 	}{
-		{name: "allow", status: db.GrantAllow, write: (*db.DB).GrantSocket},
-		{name: "deny", status: db.GrantDeny, write: (*db.DB).DenySocket},
+		{name: "allow", status: db.GrantAllow, write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+			return store.GrantSocket(harnessPath, harnessName, hostPath, declaration, identity)
+		}},
+		{name: "deny", status: db.GrantDeny, write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+			return store.DenySocket(harnessPath, harnessName, hostPath, declaration, identity)
+		}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := openTestDB(t)
+			store := openTestStore(t)
 			decl := testDecl("Connects to the test daemon.")
 			identity := testIdentity(1001, 1002)
 
@@ -72,7 +76,7 @@ func TestSocketGrantRoundTrip(t *testing.T) {
 }
 
 func TestLookupSocketGrantMissing(t *testing.T) {
-	store := openTestDB(t)
+	store := openTestStore(t)
 
 	grant, err := store.LookupSocketGrant("/harness/missing", "/run/missing.sock")
 
@@ -81,7 +85,7 @@ func TestLookupSocketGrantMissing(t *testing.T) {
 }
 
 func TestSocketGrantUpsert(t *testing.T) {
-	store := openTestDB(t)
+	store := openTestStore(t)
 	firstIdentity := testIdentity(1001, 1002)
 	secondIdentity := testIdentity(2001, 2002)
 
@@ -103,7 +107,7 @@ func TestSocketGrantUpsert(t *testing.T) {
 }
 
 func TestRevokeSocketDoesNotReuseID(t *testing.T) {
-	store := openTestDB(t)
+	store := openTestStore(t)
 	require.NoError(t, store.GrantSocket("/harness/one", "one", "/run/one.sock", testDecl("One."), testIdentity(1, 1)))
 	first, err := store.LookupSocketGrant("/harness/one", "/run/one.sock")
 	require.NoError(t, err)
@@ -122,7 +126,7 @@ func TestRevokeSocketDoesNotReuseID(t *testing.T) {
 }
 
 func TestRevokeHarnessAndAllSockets(t *testing.T) {
-	store := openTestDB(t)
+	store := openTestStore(t)
 	for _, row := range []struct {
 		harnessPath string
 		hostPath    string
@@ -147,7 +151,7 @@ func TestRevokeHarnessAndAllSockets(t *testing.T) {
 }
 
 func TestPruneHarnessSockets(t *testing.T) {
-	store := openTestDB(t)
+	store := openTestStore(t)
 	for _, row := range []struct {
 		harnessPath string
 		hostPath    string
@@ -179,7 +183,9 @@ func TestConcurrentOpensDoNotLoseWrites(t *testing.T) {
 	start := make(chan struct{})
 	errs := make(chan error, writesPerStore*2)
 	var wg sync.WaitGroup
-	writeRows := func(store *db.DB, prefix string) {
+	firstStore := db.NewSocketGrantStore(first)
+	secondStore := db.NewSocketGrantStore(second)
+	writeRows := func(store db.SocketGrantStore, prefix string) {
 		defer wg.Done()
 		<-start
 		for i := range writesPerStore {
@@ -189,8 +195,8 @@ func TestConcurrentOpensDoNotLoseWrites(t *testing.T) {
 	}
 
 	wg.Add(2)
-	go writeRows(first, "first")
-	go writeRows(second, "second")
+	go writeRows(firstStore, "first")
+	go writeRows(secondStore, "second")
 	close(start)
 	wg.Wait()
 	close(errs)
@@ -198,7 +204,7 @@ func TestConcurrentOpensDoNotLoseWrites(t *testing.T) {
 		require.NoError(t, writeErr)
 	}
 
-	grants, err := first.ListSocketGrants()
+	grants, err := firstStore.ListSocketGrants()
 	require.NoError(t, err)
 	assert.Len(t, grants, writesPerStore*2)
 }

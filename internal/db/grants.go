@@ -68,14 +68,23 @@ type SocketGrantStore interface {
 	PruneHarnessSockets(harnessPath string, declaredHostPaths []string) error
 }
 
+type socketGrantStore struct {
+	database *DB
+}
+
+// NewSocketGrantStore creates the socket grant store for a CLI database.
+func NewSocketGrantStore(database *DB) SocketGrantStore {
+	return &socketGrantStore{database: database}
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 // LookupSocketGrant returns the stored row for a harness and host path. It
 // returns nil without an error when the pair has no row.
-func (d *DB) LookupSocketGrant(harnessPath, hostPath string) (*SocketGrant, error) {
-	grant, err := scanSocketGrant(d.sql.QueryRow(lookupGrantSQL, harnessPath, hostPath))
+func (s *socketGrantStore) LookupSocketGrant(harnessPath, hostPath string) (*SocketGrant, error) {
+	grant, err := scanSocketGrant(s.database.sql.QueryRow(lookupGrantSQL, harnessPath, hostPath))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -86,18 +95,18 @@ func (d *DB) LookupSocketGrant(harnessPath, hostPath string) (*SocketGrant, erro
 }
 
 // GrantSocket stores a persistent approval.
-func (d *DB) GrantSocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-	return d.writeSocketGrant(harnessPath, harnessName, hostPath, GrantAllow, declaration, identity)
+func (s *socketGrantStore) GrantSocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+	return s.writeSocketGrant(harnessPath, harnessName, hostPath, GrantAllow, declaration, identity)
 }
 
 // DenySocket stores a persistent denial.
-func (d *DB) DenySocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-	return d.writeSocketGrant(harnessPath, harnessName, hostPath, GrantDeny, declaration, identity)
+func (s *socketGrantStore) DenySocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+	return s.writeSocketGrant(harnessPath, harnessName, hostPath, GrantDeny, declaration, identity)
 }
 
-func (d *DB) writeSocketGrant(harnessPath, harnessName, hostPath, status string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (s *socketGrantStore) writeSocketGrant(harnessPath, harnessName, hostPath, status string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
 	grantedAt := time.Now().UTC().Truncate(time.Second)
-	if _, err := d.sql.Exec(
+	if _, err := s.database.sql.Exec(
 		writeGrantSQL,
 		harnessPath,
 		harnessName,
@@ -112,7 +121,7 @@ func (d *DB) writeSocketGrant(harnessPath, harnessName, hostPath, status string,
 	); err != nil {
 		return fmt.Errorf("write socket grant: %w", err)
 	}
-	d.log.Info().
+	s.database.log.Info().
 		Str("event", eventSocketGrantWrite).
 		Str("harness_path", harnessPath).
 		Str("host_path", hostPath).
@@ -127,22 +136,22 @@ func (d *DB) writeSocketGrant(harnessPath, harnessName, hostPath, status string,
 }
 
 // RevokeSocket deletes one grant by its user-facing ID.
-func (d *DB) RevokeSocket(id int64) error {
-	return d.deleteAndLog(revokeGrantSQL, id)
+func (s *socketGrantStore) RevokeSocket(id int64) error {
+	return s.deleteAndLog(revokeGrantSQL, id)
 }
 
 // RevokeHarnessSockets deletes all rows for one harness principal.
-func (d *DB) RevokeHarnessSockets(harnessPath string) error {
-	return d.deleteAndLog(revokeHarnessGrantsSQL, harnessPath)
+func (s *socketGrantStore) RevokeHarnessSockets(harnessPath string) error {
+	return s.deleteAndLog(revokeHarnessGrantsSQL, harnessPath)
 }
 
 // RevokeAllSockets deletes all socket grant rows.
-func (d *DB) RevokeAllSockets() error {
-	return d.deleteAndLog(revokeAllGrantsSQL)
+func (s *socketGrantStore) RevokeAllSockets() error {
+	return s.deleteAndLog(revokeAllGrantsSQL)
 }
 
-func (d *DB) deleteAndLog(query string, args ...any) error {
-	result, err := d.sql.Exec(query, args...)
+func (s *socketGrantStore) deleteAndLog(query string, args ...any) error {
+	result, err := s.database.sql.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("revoke socket grants: %w", err)
 	}
@@ -150,13 +159,13 @@ func (d *DB) deleteAndLog(query string, args ...any) error {
 	if err != nil {
 		return fmt.Errorf("read revoked socket grant count: %w", err)
 	}
-	d.log.Info().Str("event", eventSocketGrantRevoke).Int64("rows", rows).Msg(messageSocketRevoke)
+	s.database.log.Info().Str("event", eventSocketGrantRevoke).Int64("rows", rows).Msg(messageSocketRevoke)
 	return nil
 }
 
 // ListSocketGrants returns all rows in grant ID order.
-func (d *DB) ListSocketGrants() ([]SocketGrant, error) {
-	rows, err := d.sql.Query(listGrantsSQL)
+func (s *socketGrantStore) ListSocketGrants() ([]SocketGrant, error) {
+	rows, err := s.database.sql.Query(listGrantsSQL)
 	if err != nil {
 		return nil, fmt.Errorf("list socket grants: %w", err)
 	}
@@ -179,9 +188,9 @@ func (d *DB) ListSocketGrants() ([]SocketGrant, error) {
 
 // PruneHarnessSockets deletes rows for one harness that are not in the
 // current resolved declaration list.
-func (d *DB) PruneHarnessSockets(harnessPath string, declaredHostPaths []string) error {
+func (s *socketGrantStore) PruneHarnessSockets(harnessPath string, declaredHostPaths []string) error {
 	if len(declaredHostPaths) == 0 {
-		return d.pruneAndLog(revokeHarnessGrantsSQL, harnessPath, harnessPath)
+		return s.pruneAndLog(revokeHarnessGrantsSQL, harnessPath, harnessPath)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(declaredHostPaths)), ",")
 	query := pruneGrantPrefixSQL + placeholders + ")"
@@ -190,11 +199,11 @@ func (d *DB) PruneHarnessSockets(harnessPath string, declaredHostPaths []string)
 	for _, hostPath := range declaredHostPaths {
 		args = append(args, hostPath)
 	}
-	return d.pruneAndLog(query, harnessPath, args...)
+	return s.pruneAndLog(query, harnessPath, args...)
 }
 
-func (d *DB) pruneAndLog(query, harnessPath string, args ...any) error {
-	result, err := d.sql.ExecContext(context.Background(), query, args...)
+func (s *socketGrantStore) pruneAndLog(query, harnessPath string, args ...any) error {
+	result, err := s.database.sql.ExecContext(context.Background(), query, args...)
 	if err != nil {
 		return fmt.Errorf("prune socket grants for %q: %w", harnessPath, err)
 	}
@@ -202,7 +211,7 @@ func (d *DB) pruneAndLog(query, harnessPath string, args ...any) error {
 	if err != nil {
 		return fmt.Errorf("read pruned socket grant count for %q: %w", harnessPath, err)
 	}
-	d.log.Info().
+	s.database.log.Info().
 		Str("event", eventSocketGrantPrune).
 		Str("harness_path", harnessPath).
 		Int64("rows", rows).
