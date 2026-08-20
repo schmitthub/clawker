@@ -30,7 +30,7 @@ redesign, do not expand scope.
 |---|------|--------|
 | 1 | Manifest contract (`sockets:` in harness.yaml) | DONE |
 | 2 | CLI database package (`internal/db`) with grant store | DONE |
-| 3 | Path + listener-identity utils | TODO |
+| 3 | Path + listener-identity utils | DONE |
 | 4 | `clawker sockets` command group | TODO |
 | 5 | Pre-start authorization + `--approve-grants` | TODO |
 | 6 | Bridge generalization | TODO |
@@ -250,6 +250,10 @@ socket errors.
 Run: `go test ./internal/cmdutil/... ./internal/socketbridge/...`
 
 ### Learnings (task 3)
+
+- `ResolveHostPath` makes the expanded path absolute before it resolves symlinks. Errors include the source expression and the path that failed.
+- The shared listener probe owns connection and name-resolution handling. Linux reads `SO_PEERCRED`; Darwin reads `LOCAL_PEERCRED` and uses the first returned group as the peer group.
+- The Darwin socketbridge package compiles for arm64 with the platform implementation.
 
 ---
 
