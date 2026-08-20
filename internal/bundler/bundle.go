@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,13 @@ const HarnessTemplateFile = "Dockerfile.harness.tmpl"
 // verbatim under the same assets/ prefix; the template's COPY instructions
 // and seeds[].file entries reference assets/-relative paths.
 const AssetsDir = "assets"
+
+const dockerSocketSetting = "security.docker_socket"
+
+var (
+	socketEnvNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	socketGroupRE   = regexp.MustCompile(`^[a-z_][a-z0-9_-]*\$?$`)
+)
 
 // File modes for staged build-context files.
 const (
@@ -88,6 +96,9 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	if egressErr := validateEgressFloor(name, m.Egress); egressErr != nil {
 		return nil, egressErr
 	}
+	if socketErr := validateSockets(name, m.Sockets); socketErr != nil {
+		return nil, socketErr
+	}
 	if mpErr := validateManagedPrompt(name, m.Volumes, m.ManagedPrompt); mpErr != nil {
 		return nil, mpErr
 	}
@@ -103,6 +114,105 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 		Template: string(rawTmpl),
 		fsys:     fsys,
 	}, nil
+}
+
+func validateSockets(name string, sockets []config.HarnessSocket) error {
+	seenTargets := make(map[string]bool, len(sockets))
+	for i, socket := range sockets {
+		field := fmt.Sprintf("sockets[%d]", i)
+		if strings.TrimSpace(socket.Source) == "" {
+			return fmt.Errorf("harness %q: %s.source is required", name, field)
+		}
+		if strings.TrimSpace(socket.Target) == "" {
+			return fmt.Errorf("harness %q: %s.target is required", name, field)
+		}
+		if strings.TrimSpace(socket.Purpose) == "" {
+			return fmt.Errorf("harness %q: %s.purpose is required", name, field)
+		}
+		if !path.IsAbs(socket.Target) {
+			return fmt.Errorf("harness %q: %s.target %q must be an absolute container path", name, field, socket.Target)
+		}
+		if err := validateSocketSource(socket.Source); err != nil {
+			return fmt.Errorf("harness %q: %s.source %q: %w", name, field, socket.Source, err)
+		}
+		if seenTargets[socket.Target] {
+			return fmt.Errorf("harness %q: duplicate socket target %q", name, socket.Target)
+		}
+		seenTargets[socket.Target] = true
+
+		for bannedIndex, bannedPath := range consts.BannedSocketPaths {
+			if socket.Source != bannedPath {
+				continue
+			}
+			if bannedIndex == 0 {
+				return fmt.Errorf(
+					"harness %q: %s.source %q is banned; use %s for Docker daemon access",
+					name, field, bannedPath, dockerSocketSetting,
+				)
+			}
+			return fmt.Errorf("harness %q: %s.source %q is banned", name, field, bannedPath)
+		}
+
+		if socket.Container.Mode != "" {
+			mode, err := strconv.ParseUint(socket.Container.Mode, 8, 16)
+			if err != nil || len(socket.Container.Mode) != 4 || mode > 0o777 {
+				return fmt.Errorf(
+					"harness %q: %s.container.mode %q must be an octal permission value from 0000 through 0777",
+					name, field, socket.Container.Mode,
+				)
+			}
+		}
+		if socket.Container.Group != "" && !socketGroupRE.MatchString(socket.Container.Group) {
+			return fmt.Errorf("harness %q: %s.container.group %q is not a valid group name", name, field, socket.Container.Group)
+		}
+	}
+	return nil
+}
+
+func validateSocketSource(source string) error {
+	if strings.Contains(source, "`") || strings.Contains(source, "$(") {
+		return errors.New("command substitution is not permitted")
+	}
+	if strings.ContainsAny(source, "*?") {
+		return errors.New("glob syntax is not permitted")
+	}
+	if tildeIndex := strings.IndexByte(source, '~'); tildeIndex >= 0 {
+		if tildeIndex != 0 || (len(source) > 1 && source[1] != '/') {
+			return errors.New("tilde expansion is permitted only as a leading ~/ prefix")
+		}
+	}
+
+	for dollarIndex := strings.IndexByte(source, '$'); dollarIndex >= 0; {
+		source = source[dollarIndex+1:]
+		if source == "" {
+			return errors.New("environment variables must use $VAR or ${VAR} syntax")
+		}
+		if source[0] == '{' {
+			closeIndex := strings.IndexByte(source, '}')
+			if closeIndex < 0 || !socketEnvNameRE.MatchString(source[1:closeIndex]) {
+				return errors.New("environment variables must use $VAR or ${VAR} syntax")
+			}
+			source = source[closeIndex+1:]
+		} else {
+			nameEnd := 0
+			for nameEnd < len(source) && isSocketEnvNameByte(source[nameEnd], nameEnd == 0) {
+				nameEnd++
+			}
+			if nameEnd == 0 {
+				return errors.New("environment variables must use $VAR or ${VAR} syntax")
+			}
+			source = source[nameEnd:]
+		}
+		dollarIndex = strings.IndexByte(source, '$')
+	}
+	return nil
+}
+
+func isSocketEnvNameByte(b byte, first bool) bool {
+	if b == '_' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' {
+		return true
+	}
+	return !first && b >= '0' && b <= '9'
 }
 
 // validateStaging checks the staging vocabulary at the load front door so a

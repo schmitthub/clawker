@@ -10,11 +10,12 @@ package config
 
 // Manifest is the parsed harness.yaml.
 type Manifest struct {
-	Version VersionSpec  `yaml:"version"`
-	Volumes []VolumeSpec `yaml:"volumes,omitempty"`
-	Seeds   []Seed       `yaml:"seeds,omitempty"`
-	Staging Staging      `yaml:"staging,omitempty"`
-	Egress  []EgressRule `yaml:"egress,omitempty"`
+	Version VersionSpec     `yaml:"version"`
+	Volumes []VolumeSpec    `yaml:"volumes,omitempty"`
+	Seeds   []Seed          `yaml:"seeds,omitempty"`
+	Staging Staging         `yaml:"staging,omitempty"`
+	Egress  []EgressRule    `yaml:"egress,omitempty"`
+	Sockets []HarnessSocket `yaml:"sockets,omitempty"`
 
 	// Stacks declares the stack definitions this harness's blocks require,
 	// as possibly-qualified addresses resolved by the one algorithm at
@@ -34,6 +35,23 @@ type Manifest struct {
 	// time — never seeded or staged at runtime. Absent = the harness has no
 	// managed-context location and gets no copy.
 	ManagedPrompt *ManagedPromptSpec `yaml:"managed_prompt,omitempty"`
+}
+
+// HarnessSocket declares one host socket bridge.
+type HarnessSocket struct {
+	Source    string                 `yaml:"source"`
+	Target    string                 `yaml:"target"`
+	Purpose   string                 `yaml:"purpose"`
+	Optional  bool                   `yaml:"optional,omitempty"`
+	Container HarnessSocketContainer `yaml:"container,omitempty"`
+}
+
+// HarnessSocketContainer sets the group and mode of the socket file in the
+// container. The harness image must contain the group and must make the agent
+// user a member of it. Clawker does not create users or groups.
+type HarnessSocketContainer struct {
+	Group string `yaml:"group,omitempty"`
+	Mode  string `yaml:"mode,omitempty"`
 }
 
 // ManagedPromptSpec is the harness manifest's managed_prompt block: the

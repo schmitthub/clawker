@@ -1,6 +1,7 @@
 package bundler_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 func mapFile(data string) *fstest.MapFile {
@@ -96,6 +98,151 @@ stacks: [node, acme.tools.node]
 `))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "acme.tools.node"}, b.Manifest.Stacks)
+}
+
+func TestLoadBundle_SocketValidation(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest string
+		wantErr  string
+		check    func(*testing.T, *bundler.Bundle)
+	}{
+		{
+			name: "full socket declaration is valid",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $AGENTD_HOME/control.sock
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+    optional: true
+    container:
+      group: agentd
+      mode: "0660"
+`,
+			check: func(t *testing.T, b *bundler.Bundle) {
+				t.Helper()
+				require.Len(t, b.Manifest.Sockets, 1)
+				socket := b.Manifest.Sockets[0]
+				assert.Equal(t, "$AGENTD_HOME/control.sock", socket.Source)
+				assert.Equal(t, "/home/clawker/.agentd/control.sock", socket.Target)
+				assert.Equal(t, "Connects to the host agent daemon.", socket.Purpose)
+				assert.True(t, socket.Optional)
+				assert.Equal(t, "agentd", socket.Container.Group)
+				assert.Equal(t, "0660", socket.Container.Mode)
+			},
+		},
+		{
+			name: "omitted optional defaults false",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: ~/.agentd/control.sock
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+`,
+			check: func(t *testing.T, b *bundler.Bundle) {
+				t.Helper()
+				require.Len(t, b.Manifest.Sockets, 1)
+				assert.False(t, b.Manifest.Sockets[0].Optional)
+			},
+		},
+		{
+			name: "missing purpose rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $AGENTD_HOME/control.sock
+    target: /home/clawker/.agentd/control.sock
+`,
+			wantErr: "sockets[0].purpose",
+		},
+		{
+			name: "relative target rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $AGENTD_HOME/control.sock
+    target: home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+`,
+			wantErr: "absolute container path",
+		},
+		{
+			name: "command substitution rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $(agentd socket)
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+`,
+			wantErr: "command substitution",
+		},
+		{
+			name: "duplicate target rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $FIRST_SOCKET
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the first host daemon.
+  - source: $SECOND_SOCKET
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the second host daemon.
+`,
+			wantErr: "duplicate socket target",
+		},
+		{
+			name: "optional banned path rejected",
+			manifest: fmt.Sprintf(`
+version: { resolver: none }
+sockets:
+  - source: %s
+    target: /home/clawker/docker.sock
+    purpose: Connects to the Docker daemon.
+    optional: true
+`, consts.BannedSocketPaths[0]),
+			wantErr: "security.docker_socket",
+		},
+		{
+			name: "invalid mode rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $AGENTD_HOME/control.sock
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+    container: { mode: rw-rw---- }
+`,
+			wantErr: "sockets[0].container.mode",
+		},
+		{
+			name: "invalid group rejected",
+			manifest: `
+version: { resolver: none }
+sockets:
+  - source: $AGENTD_HOME/control.sock
+    target: /home/clawker/.agentd/control.sock
+    purpose: Connects to the host agent daemon.
+    container: { group: "bad group" }
+`,
+			wantErr: "sockets[0].container.group",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := bundler.LoadBundle("test", manifestFS(tc.manifest))
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.ErrorContains(t, err, "test")
+				return
+			}
+			require.NoError(t, err)
+			tc.check(t, b)
+		})
+	}
 }
 
 // managed_prompt is validated at the load front door: dest must be an
