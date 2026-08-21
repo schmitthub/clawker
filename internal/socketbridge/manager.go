@@ -21,7 +21,10 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-const bridgedSocketsFileSuffix = ".sockets.json"
+const (
+	bridgedSocketsFileSuffix = ".sockets.json"
+	bridgePIDFileTimeout     = 5 * time.Second
+)
 
 // SocketBridgeManager is the interface for managing socket bridge daemons.
 // Commands interact with this interface (not the concrete Manager) to enable
@@ -265,35 +268,53 @@ func checkHostSSHAgent(ctx context.Context) error {
 }
 
 // bridgeExecutable returns the CLI binary used for a bridge daemon. The e2e
-// harness supplies the built CLI because os.Executable is its Go test binary.
+// harness supplies the built CLI because [os.Executable] is its Go test binary.
 func bridgeExecutable() (string, error) {
 	if executable := os.Getenv(consts.EnvExecutable); executable != "" {
 		return executable, nil
 	}
-	return os.Executable()
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("get current executable: %w", err)
+	}
+	return executable, nil
 }
 
 // startBridge spawns a detached "clawker bridge serve" subprocess.
 func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
 	containerID := opts.ContainerID
-	exe, err := bridgeExecutable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+	exe, executableErr := bridgeExecutable()
+	if executableErr != nil {
+		return fmt.Errorf("failed to get executable path: %w", executableErr)
 	}
 
 	// BridgesSubdir() ensures the directory exists via MkdirAll.
-	bridgesDir, err := m.cfg.BridgesSubdir()
-	if err != nil {
-		return fmt.Errorf("failed to get bridges directory: %w", err)
+	bridgesDir, directoryErr := m.cfg.BridgesSubdir()
+	if directoryErr != nil {
+		return fmt.Errorf("failed to get bridges directory: %w", directoryErr)
 	}
 	socketsFile := filepath.Join(bridgesDir, containerID+bridgedSocketsFileSuffix)
-	if err := WriteBridgedSocketsFile(socketsFile, opts.Sockets); err != nil {
-		return fmt.Errorf("failed to write bridge registrations: %w", err)
+	writeErr := WriteBridgedSocketsFile(socketsFile, opts.Sockets)
+	if writeErr != nil {
+		return fmt.Errorf("failed to write bridge registrations: %w", writeErr)
 	}
 
+	cmd := newBridgeCommand(exe, opts, pidFile, socketsFile)
+	logFile := m.configureBridgeOutput(cmd)
+	if startErr := cmd.Start(); startErr != nil {
+		if logFile != nil {
+			_ = logFile.Close() // The start error is the actionable error.
+		}
+		return fmt.Errorf("failed to start bridge daemon: %w", startErr)
+	}
+
+	return m.registerBridgeProcess(containerID, pidFile, cmd, logFile)
+}
+
+func newBridgeCommand(executable string, opts EnsureBridgeOpts, pidFile, socketsFile string) *exec.Cmd {
 	args := []string{
 		"bridge", "serve",
-		"--container", containerID,
+		"--container", opts.ContainerID,
 		"--pid-file", pidFile,
 		"--" + consts.BridgeSocketsFileFlag, socketsFile,
 	}
@@ -301,12 +322,18 @@ func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
 		args = append(args, "--gpg")
 	}
 
-	cmd := exec.Command(exe, args...)
+	cmd := exec.CommandContext(
+		context.Background(),
+		executable,
+		args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true, // Detach from parent session
 	}
+	cmd.Stdin = nil
+	return cmd
+}
 
-	// Redirect output to log file
+func (m *Manager) configureBridgeOutput(cmd *exec.Cmd) *os.File {
 	logFile, err := m.openBridgeLogFile()
 	if err != nil {
 		m.log.Debug().Err(err).Msg("failed to open bridge log file, output will be discarded")
@@ -316,33 +343,30 @@ func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 	}
-	cmd.Stdin = nil
+	return logFile
+}
 
-	if err := cmd.Start(); err != nil {
-		if logFile != nil {
-			logFile.Close()
-		}
-		return fmt.Errorf("failed to start bridge daemon: %w", err)
-	}
-
+func (m *Manager) registerBridgeProcess(containerID, pidFile string, cmd *exec.Cmd, logFile *os.File) error {
 	// Capture PID before Release — the Process handle may be invalid after Release.
 	pid := cmd.Process.Pid
 
 	// Close the log file in parent — child inherited the fd.
 	if logFile != nil {
-		logFile.Close()
+		if closeErr := logFile.Close(); closeErr != nil {
+			m.log.Debug().Err(closeErr).Msg("failed to close parent bridge log file")
+		}
 	}
 
 	// Release the child process so it can run independently
-	if err := cmd.Process.Release(); err != nil {
-		m.log.Debug().Err(err).Msg("failed to release bridge process (non-fatal)")
+	if releaseErr := cmd.Process.Release(); releaseErr != nil {
+		m.log.Debug().Err(releaseErr).Msg("failed to release bridge process (non-fatal)")
 	}
 
 	m.log.Debug().Str("container", ShortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
 
 	// Wait for PID file to appear (confirms bridge is initialized)
-	if err := waitForPIDFile(pidFile, 5*time.Second); err != nil {
-		return fmt.Errorf("bridge started but PID file not created: %w", err)
+	if waitErr := waitForPIDFile(pidFile, bridgePIDFileTimeout); waitErr != nil {
+		return fmt.Errorf("bridge started but PID file not created: %w", waitErr)
 	}
 
 	m.bridges[containerID] = &bridgeProcess{pid: pid, pidFile: pidFile}

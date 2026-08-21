@@ -23,6 +23,14 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+func approveGrantsRestartOptions() RestartOptions {
+	var opts RestartOptions
+	opts.Timeout = 10
+	opts.Containers = []string{"mycontainer"}
+	opts.ApproveGrants = true
+	return opts
+}
+
 func TestNewCmdRestart(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -67,9 +75,11 @@ func TestNewCmdRestart(t *testing.T) {
 			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"dev"}},
 		},
 		{
-			name:     "with approve grants",
-			input:    "--approve-grants mycontainer",
-			wantOpts: RestartOptions{ApproveGrants: true, Timeout: 10, Signal: "", Containers: []string{"mycontainer"}},
+			name:       "with approve grants",
+			input:      "--approve-grants mycontainer",
+			wantOpts:   approveGrantsRestartOptions(),
+			wantErr:    false,
+			wantErrMsg: "",
 		},
 		{
 			name:       "no arguments",

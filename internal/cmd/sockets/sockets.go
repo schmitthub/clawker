@@ -2,6 +2,8 @@
 package sockets
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -10,7 +12,7 @@ import (
 
 // NewCmdSockets creates the socket grant management command group.
 func NewCmdSockets(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct_v5 // Cobra command fields use their documented zero-value defaults.
 		Use:   "sockets <command>",
 		Short: "Manage host socket bridge grants",
 		Long: `List, inspect, revoke, and prune approvals and denials for host
@@ -31,7 +33,7 @@ func socketGrants(f *cmdutil.Factory) socketGrantStoreFunc {
 	return func() (db.SocketGrantStore, error) {
 		database, err := f.DB()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("open CLI database: %w", err)
 		}
 		return db.NewSocketGrantStore(database), nil
 	}

@@ -108,7 +108,8 @@ func TestLoadBundle_SocketValidation(t *testing.T) {
 		check    func(*testing.T, *bundler.Bundle)
 	}{
 		{
-			name: "full socket declaration is valid",
+			name:    "full socket declaration is valid",
+			wantErr: "",
 			manifest: `
 version: { resolver: none }
 sockets:
@@ -133,7 +134,8 @@ sockets:
 			},
 		},
 		{
-			name: "omitted optional defaults false",
+			name:    "omitted optional defaults false",
+			wantErr: "",
 			manifest: `
 version: { resolver: none }
 sockets:
@@ -156,6 +158,7 @@ sockets:
     target: /home/clawker/.agentd/control.sock
 `,
 			wantErr: "sockets[0].purpose",
+			check:   nil,
 		},
 		{
 			name: "relative target rejected",
@@ -167,6 +170,7 @@ sockets:
     purpose: Connects to the host agent daemon.
 `,
 			wantErr: "absolute container path",
+			check:   nil,
 		},
 		{
 			name: "command substitution rejected",
@@ -178,6 +182,7 @@ sockets:
     purpose: Connects to the host agent daemon.
 `,
 			wantErr: "command substitution",
+			check:   nil,
 		},
 		{
 			name: "duplicate target rejected",
@@ -192,6 +197,7 @@ sockets:
     purpose: Connects to the second host daemon.
 `,
 			wantErr: "duplicate socket target",
+			check:   nil,
 		},
 		{
 			name: "optional banned path rejected",
@@ -202,8 +208,9 @@ sockets:
     target: /home/clawker/docker.sock
     purpose: Connects to the Docker daemon.
     optional: true
-`, consts.BannedSocketPaths[0]),
+`, consts.BannedSocketPaths()[0]),
 			wantErr: "security.docker_socket",
+			check:   nil,
 		},
 		{
 			name: "invalid mode rejected",
@@ -216,6 +223,7 @@ sockets:
     container: { mode: rw-rw---- }
 `,
 			wantErr: "sockets[0].container.mode",
+			check:   nil,
 		},
 		{
 			name: "invalid group rejected",
@@ -228,6 +236,7 @@ sockets:
     container: { group: "bad group" }
 `,
 			wantErr: "sockets[0].container.group",
+			check:   nil,
 		},
 	}
 

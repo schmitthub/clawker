@@ -57,13 +57,17 @@ func (b *Bridge) CloseStreamForTest(streamID uint32) {
 }
 
 // BuildRemoteSocketConfigForTest exposes the start-time socket env builder.
-var BuildRemoteSocketConfigForTest = buildRemoteSocketConfig
+func BuildRemoteSocketConfigForTest(existing []SocketConfig, bridged []BridgedSocket) ([]byte, error) {
+	return buildRemoteSocketConfig(existing, bridged)
+}
 
 // ForwarderCommandArgsForTest exposes docker exec argument construction.
-var ForwarderCommandArgsForTest = forwarderCommandArgs
+func ForwarderCommandArgsForTest(containerID string, socketsJSON []byte) []string {
+	return forwarderCommandArgs(containerID, socketsJSON)
+}
 
 // ReadMessageForTest exposes the package-level readMessage function.
-var ReadMessageForTest = func(r *bufio.Reader) (Message, error) {
+func ReadMessageForTest(r *bufio.Reader) (Message, error) {
 	return readMessage(r)
 }
 
@@ -97,18 +101,24 @@ func (m *Manager) BridgeCountForTest() int {
 // --- Package-level function accessors ---
 
 // ReadPIDFileForTest exposes the private readPIDFile function.
-var ReadPIDFileForTest = readPIDFile
+func ReadPIDFileForTest(path string) int {
+	return readPIDFile(path)
+}
 
 // IsProcessAliveForTest exposes the private isProcessAlive function.
-var IsProcessAliveForTest = isProcessAlive
+func IsProcessAliveForTest(pid int) bool {
+	return isProcessAlive(pid)
+}
 
 // WaitForPIDFileForTest exposes the private waitForPIDFile function.
-var WaitForPIDFileForTest = func(path string, timeout time.Duration) error {
+func WaitForPIDFileForTest(path string, timeout time.Duration) error {
 	return waitForPIDFile(path, timeout)
 }
 
 // BridgeExecutableForTest exposes daemon executable resolution.
-var BridgeExecutableForTest = bridgeExecutable
+func BridgeExecutableForTest() (string, error) {
+	return bridgeExecutable()
+}
 
 // CheckHostSSHAgentForTest exposes the private checkHostSSHAgent function.
 func CheckHostSSHAgentForTest(ctx context.Context) error {

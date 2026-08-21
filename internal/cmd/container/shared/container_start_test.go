@@ -76,6 +76,20 @@ func floorRuntimeHarness() RuntimeHarness {
 	}
 }
 
+func preStartTestOpts(
+	streams *iostreams.IOStreams,
+	cfg func() (config.Config, error),
+	client func(context.Context) (*docker.Client, error),
+) CommandOpts {
+	var opts CommandOpts
+	opts.IOStreams = streams
+	opts.Config = cfg
+	opts.ControlPlane = noopCPManager()
+	opts.Client = client
+	opts.Harness = floorRuntimeHarness()
+	return opts
+}
+
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 	t.Parallel()
 
@@ -155,13 +169,12 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
-	_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		IOStreams:    testIOStreams(),
-		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
-		ControlPlane: noopCPManager(),
-		Client:       okClientProvider(t),
-		Harness:      floorRuntimeHarness(),
-	})
+	opts := preStartTestOpts(
+		testIOStreams(),
+		testRuntimeConfig("", `firewall: { enable: false }`),
+		okClientProvider(t),
+	)
+	_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)
 	}
@@ -177,13 +190,12 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-			Harness:      floorRuntimeHarness(),
-		})
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -194,13 +206,12 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-			Harness:      floorRuntimeHarness(),
-		})
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig("", `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -211,13 +222,12 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainerError(errors.New("copy boom"))
-		_, err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-			Harness:      floorRuntimeHarness(),
-		})
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 		if err == nil || !strings.Contains(err.Error(), "injecting sockets-wait script") {
 			t.Fatalf("expected sockets-wait injection error, got %v", err)
 		}
@@ -375,7 +385,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
 		sockets := []socketbridge.BridgedSocket{{
 			HostPath: "/host/service.sock",
 			Target:   "/run/service.sock",
-			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000},
+			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
 			Group:    "service",
 			Mode:     "0660",
 		}}
@@ -682,14 +692,17 @@ func TestLoadContainerHarness_DeclarationGated(t *testing.T) {
 	})
 	load := func(cfg config.Config, harnessName string) error {
 		fake := mocks.NewFakeClient(cfg)
-		fake.SetupContainerInspect("ctr", container.Summary{ //nolint:exhaustruct // the loader reads only labels
-			ID:    "ctr",
-			Names: []string{"/ctr"},
-			Labels: map[string]string{
-				cfg.LabelManaged():  cfg.ManagedLabelValue(),
-				consts.LabelHarness: harnessName,
+		fake.SetupContainerInspect(
+			"ctr",
+			container.Summary{ //nolint:exhaustruct,exhaustruct_v5 // The loader reads only labels.
+				ID:    "ctr",
+				Names: []string{"/ctr"},
+				Labels: map[string]string{
+					cfg.LabelManaged():  cfg.ManagedLabelValue(),
+					consts.LabelHarness: harnessName,
+				},
 			},
-		})
+		)
 		_, _, err := LoadContainerHarness(context.Background(), fake.Client, cfg, "ctr", logger.Nop())
 		return err
 	}

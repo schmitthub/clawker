@@ -2,7 +2,7 @@ package sockets
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -68,7 +68,7 @@ func harnessCompletions(socketGrants socketGrantStoreFunc) cobra.CompletionFunc 
 			seen[grant.HarnessName] = true
 			completions = append(completions, grant.HarnessName)
 		}
-		sort.Slice(completions, func(i, j int) bool { return completions[i] < completions[j] })
+		slices.Sort(completions)
 		return completions, cobra.ShellCompDirectiveNoFileComp
 	}
 }

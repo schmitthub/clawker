@@ -37,6 +37,13 @@ import (
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
+func approveGrantsStartOptions() StartOptions {
+	var opts StartOptions
+	opts.Containers = []string{"clawker.myapp.dev"}
+	opts.ApproveGrants = true
+	return opts
+}
+
 var _blankCfg = configmocks.NewBlankConfig()
 
 func TestNewCmdStart(t *testing.T) {
@@ -143,13 +150,12 @@ func TestNewCmdStart(t *testing.T) {
 			},
 		},
 		{
-			name:  "approve grants",
-			input: "--approve-grants",
-			args:  []string{"clawker.myapp.dev"},
-			wantOpts: StartOptions{
-				ApproveGrants: true,
-				Containers:    []string{"clawker.myapp.dev"},
-			},
+			name:       "approve grants",
+			input:      "--approve-grants",
+			args:       []string{"clawker.myapp.dev"},
+			wantOpts:   approveGrantsStartOptions(),
+			wantErr:    false,
+			wantErrMsg: "",
 		},
 	}
 
@@ -354,7 +360,7 @@ CMD ["sleep", "infinity"]
 	const containerName = "clawker.sockettest.agent"
 	fake.SetupContainerInspect(
 		containerName,
-		container.Summary{ //nolint:exhaustruct // the command reads only these inspect fields
+		container.Summary{ //nolint:exhaustruct,exhaustruct_v5 // The command reads only these inspect fields.
 			ID:    containerName,
 			Names: []string{"/" + containerName},
 			Image: "clawker:sockettest",

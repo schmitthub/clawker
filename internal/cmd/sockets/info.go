@@ -47,7 +47,7 @@ func newCmdInfo(f *cmdutil.Factory, runF func(context.Context, *InfoOptions) err
 		Format:       nil,
 		ID:           0,
 	}
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct_v5 // Cobra command fields use their documented zero-value defaults.
 		Use:   "info <id>",
 		Short: "Show one socket bridge grant",
 		Example: `  # Show all stored fields for grant 7
@@ -116,7 +116,10 @@ func renderGrantInfo(opts *InfoOptions, row infoRow) error {
 		return nil
 	}
 	if opts.Format.IsTemplate() {
-		return cmdutil.ExecuteTemplate(opts.IOStreams.Out, opts.Format.Template(), []any{row})
+		if err := cmdutil.ExecuteTemplate(opts.IOStreams.Out, opts.Format.Template(), []any{row}); err != nil {
+			return fmt.Errorf("write socket grant from template: %w", err)
+		}
+		return nil
 	}
 	listener := fmt.Sprintf(
 		"%s:%s (uid %d, gid %d)", row.ListenerOwner, row.ListenerGroup, row.ListenerUID, row.ListenerGID,
@@ -140,7 +143,10 @@ func renderGrantInfo(opts *InfoOptions, row infoRow) error {
 func parseGrantID(value string) (int64, error) {
 	id, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || id < 1 {
-		return 0, cmdutil.FlagErrorf("socket grant ID must be a positive integer: %q", value)
+		return 0, fmt.Errorf(
+			"parse socket grant ID: %w",
+			cmdutil.FlagErrorf("socket grant ID must be a positive integer: %q", value),
+		)
 	}
 	return id, nil
 }

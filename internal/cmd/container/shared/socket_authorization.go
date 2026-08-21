@@ -53,18 +53,36 @@ func authorizeSocketBridges(
 		)
 	}
 
-	candidates, err := resolveSocketCandidates(harness.Name, harness.Sockets, cmdOpts, log)
-	if err != nil {
-		return nil, err
+	candidates, resolveErr := resolveSocketCandidates(harness.Name, harness.Sockets, cmdOpts, log)
+	if resolveErr != nil {
+		return nil, resolveErr
 	}
 	if harness.Provenance.Tier == bundle.TierFloor {
 		return candidateBridges(candidates), nil
 	}
 
-	principal, err := cmdutil.ResolveHostPath(harness.Provenance.Dir)
-	if err != nil {
-		return nil, fmt.Errorf("authorize socket bridges for harness %q: resolve principal: %w", harness.Name, err)
+	principal, principalErr := cmdutil.ResolveHostPath(harness.Provenance.Dir)
+	if principalErr != nil {
+		return nil, fmt.Errorf(
+			"authorize socket bridges for harness %q: resolve principal: %w",
+			harness.Name,
+			principalErr,
+		)
 	}
+	store, storeErr := openSocketGrantStore(cmdOpts)
+	if storeErr != nil {
+		return nil, storeErr
+	}
+	if pruneErr := store.PruneHarnessSockets(principal, candidateHostPaths(candidates)); pruneErr != nil {
+		return nil, fmt.Errorf("authorize socket bridges: prune harness grants: %w", pruneErr)
+	}
+	return authorizeSocketCandidates(harness.Name, principal, candidates, cmdOpts, store, log)
+}
+
+//nolint:ireturn // Authorization uses the store seam.
+func openSocketGrantStore(
+	cmdOpts CommandOpts,
+) (db.SocketGrantStore, error) {
 	if cmdOpts.SocketGrants == nil {
 		return nil, errors.New("authorize socket bridges: socket grant store provider is nil")
 	}
@@ -75,18 +93,29 @@ func authorizeSocketBridges(
 	if store == nil {
 		return nil, errors.New("authorize socket bridges: socket grant store is nil")
 	}
+	return store, nil
+}
+
+func candidateHostPaths(candidates []socketCandidate) []string {
 	hostPaths := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		hostPaths = append(hostPaths, candidate.hostPath)
 	}
-	if err := store.PruneHarnessSockets(principal, hostPaths); err != nil {
-		return nil, fmt.Errorf("authorize socket bridges: prune harness grants: %w", err)
-	}
+	return hostPaths
+}
 
+func authorizeSocketCandidates(
+	harnessName,
+	principal string,
+	candidates []socketCandidate,
+	cmdOpts CommandOpts,
+	store db.SocketGrantStore,
+	log *logger.Logger,
+) ([]socketbridge.BridgedSocket, error) {
 	bridges := make([]socketbridge.BridgedSocket, 0, len(candidates))
 	for _, candidate := range candidates {
 		bridge, active, authorizeErr := authorizeSocketCandidate(
-			harness.Name,
+			harnessName,
 			principal,
 			candidate,
 			cmdOpts,
@@ -111,69 +140,66 @@ func resolveSocketCandidates(
 ) ([]socketCandidate, error) {
 	candidates := make([]socketCandidate, 0, len(declarations))
 	for _, declaration := range declarations {
-		hostPath, err := cmdutil.ResolveHostPath(declaration.Source)
-		if err != nil {
-			if declaration.Optional {
-				if noticeErr := reportOptionalSocketSkip(
-					cmdOpts,
-					log,
-					harnessName,
-					declaration.Target,
-					"host path did not resolve",
-					err,
-				); noticeErr != nil {
-					return nil, noticeErr
-				}
-				continue
-			}
-			return nil, fmt.Errorf(
-				"required socket bridge %s for harness %q: resolve host path: %w",
-				declaration.Target,
-				harnessName,
-				err,
-			)
+		candidate, include, resolveErr := resolveSocketCandidate(harnessName, declaration, cmdOpts, log)
+		if resolveErr != nil {
+			return nil, resolveErr
 		}
-		bannedPath, banned := bannedSocketPath(hostPath)
-		if banned {
-			if bannedPath == consts.DockerSocketPath {
-				return nil, fmt.Errorf(
-					"host socket %s is banned; use %s for Docker daemon access",
-					bannedPath,
-					dockerSocketSetting,
-				)
-			}
-			return nil, fmt.Errorf("host socket %s is banned", bannedPath)
+		if include {
+			candidates = append(candidates, candidate)
 		}
-		identity, err := socketbridge.ReadListenerIdentity(hostPath)
-		if err != nil {
-			if declaration.Optional {
-				if noticeErr := reportOptionalSocketSkip(
-					cmdOpts,
-					log,
-					harnessName,
-					declaration.Target,
-					"listener probe failed",
-					err,
-				); noticeErr != nil {
-					return nil, noticeErr
-				}
-				continue
-			}
-			return nil, fmt.Errorf(
-				"required socket bridge %s for harness %q: probe host listener %s: %w",
-				declaration.Target,
-				harnessName,
-				hostPath,
-				err,
-			)
-		}
-		candidates = append(candidates, socketCandidate{
-			declaration: declaration,
-			hostPath:    hostPath,
-			identity:    identity,
-		})
 	}
 	return candidates, nil
+}
+
+func resolveSocketCandidate(
+	harnessName string,
+	declaration config.HarnessSocket,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) (socketCandidate, bool, error) {
+	var empty socketCandidate
+	hostPath, resolveErr := cmdutil.ResolveHostPath(declaration.Source)
+	if resolveErr != nil {
+		if declaration.Optional {
+			noticeErr := reportOptionalSocketSkip(
+				cmdOpts, log, harnessName, declaration.Target, "host path did not resolve", resolveErr,
+			)
+			return empty, false, noticeErr
+		}
+		return empty, false, fmt.Errorf(
+			"required socket bridge %s for harness %q: resolve host path: %w",
+			declaration.Target,
+			harnessName,
+			resolveErr,
+		)
+	}
+	if bannedPath, banned := bannedSocketPath(hostPath); banned {
+		return empty, false, bannedSocketError(bannedPath)
+	}
+	identity, identityErr := socketbridge.ReadListenerIdentity(hostPath)
+	if identityErr != nil {
+		if declaration.Optional {
+			noticeErr := reportOptionalSocketSkip(
+				cmdOpts, log, harnessName, declaration.Target, "listener probe failed", identityErr,
+			)
+			return empty, false, noticeErr
+		}
+		return empty, false, fmt.Errorf(
+			"required socket bridge %s for harness %q: probe host listener %s: %w",
+			declaration.Target,
+			harnessName,
+			hostPath,
+			identityErr,
+		)
+	}
+	return socketCandidate{declaration: declaration, hostPath: hostPath, identity: identity}, true, nil
+}
+
+func bannedSocketError(path string) error {
+	if path == consts.DockerSocketPath {
+		return fmt.Errorf("host socket %s is banned; use %s for Docker daemon access", path, dockerSocketSetting)
+	}
+	return fmt.Errorf("host socket %s is banned", path)
 }
 
 func authorizeSocketCandidate(
@@ -184,62 +210,89 @@ func authorizeSocketCandidate(
 	store db.SocketGrantStore,
 	log *logger.Logger,
 ) (socketbridge.BridgedSocket, bool, error) {
-	grant, err := store.LookupSocketGrant(principal, candidate.hostPath)
-	if err != nil {
-		return socketbridge.BridgedSocket{}, false, fmt.Errorf(
+	grant, lookupErr := store.LookupSocketGrant(principal, candidate.hostPath)
+	if lookupErr != nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
 			"lookup socket grant for %s: %w",
 			candidate.hostPath,
-			err,
+			lookupErr,
 		)
 	}
 	if grant != nil {
-		switch grant.Status {
-		case db.GrantAllow:
-			if listenerIdentityMatches(grant.Identity, candidate.identity) {
-				return candidate.bridge(), true, nil
-			}
-			return authorizePromptedSocket(harnessName, principal, candidate, grant, cmdOpts, store, log)
-		case db.GrantDeny:
-			if candidate.declaration.Optional {
-				log.Info().
-					Str("event", eventStoredSocketDenied).
-					Str("harness", harnessName).
-					Str("host_path", candidate.hostPath).
-					Str("target", candidate.declaration.Target).
-					Int64("grant_id", grant.ID).
-					Msg("stored socket denial applied")
-				return socketbridge.BridgedSocket{}, false, nil
-			}
-			return socketbridge.BridgedSocket{}, false, storedDenyError(candidate.hostPath, grant.ID)
-		default:
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"socket grant %d has unknown status %q",
-				grant.ID,
-				grant.Status,
-			)
-		}
+		return authorizeStoredSocketGrant(harnessName, principal, candidate, grant, cmdOpts, store, log)
 	}
 
 	if cmdOpts.ApproveGrants {
-		if err := store.GrantSocket(
-			principal,
-			harnessName,
-			candidate.hostPath,
-			candidate.declaration,
-			candidate.identity,
-		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"store socket grant for %s: %w",
-				candidate.hostPath,
-				err,
-			)
-		}
-		if err := printSocketApproval(cmdOpts, candidate.hostPath); err != nil {
-			return socketbridge.BridgedSocket{}, false, err
-		}
-		return candidate.bridge(), true, nil
+		return approveSocketCandidate(harnessName, principal, candidate, cmdOpts, store)
 	}
 	return authorizePromptedSocket(harnessName, principal, candidate, nil, cmdOpts, store, log)
+}
+
+func authorizeStoredSocketGrant(
+	harnessName,
+	principal string,
+	candidate socketCandidate,
+	grant *db.SocketGrant,
+	cmdOpts CommandOpts,
+	store db.SocketGrantStore,
+	log *logger.Logger,
+) (socketbridge.BridgedSocket, bool, error) {
+	switch grant.Status {
+	case db.GrantAllow:
+		if listenerIdentityMatches(grant.Identity, candidate.identity) {
+			return candidate.bridge(), true, nil
+		}
+		return authorizePromptedSocket(harnessName, principal, candidate, grant, cmdOpts, store, log)
+	case db.GrantDeny:
+		if candidate.declaration.Optional {
+			logStoredSocketDenial(log, harnessName, candidate, grant.ID)
+			return emptyBridgedSocket(), false, nil
+		}
+		return emptyBridgedSocket(), false, storedDenyError(candidate.hostPath, grant.ID)
+	default:
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"socket grant %d has unknown status %q",
+			grant.ID,
+			grant.Status,
+		)
+	}
+}
+
+func logStoredSocketDenial(log *logger.Logger, harnessName string, candidate socketCandidate, grantID int64) {
+	log.Info().
+		Str("event", eventStoredSocketDenied).
+		Str("harness", harnessName).
+		Str("host_path", candidate.hostPath).
+		Str("target", candidate.declaration.Target).
+		Int64("grant_id", grantID).
+		Msg("stored socket denial applied")
+}
+
+func approveSocketCandidate(
+	harnessName,
+	principal string,
+	candidate socketCandidate,
+	cmdOpts CommandOpts,
+	store db.SocketGrantStore,
+) (socketbridge.BridgedSocket, bool, error) {
+	grantErr := store.GrantSocket(
+		principal,
+		harnessName,
+		candidate.hostPath,
+		candidate.declaration,
+		candidate.identity,
+	)
+	if grantErr != nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"store socket grant for %s: %w",
+			candidate.hostPath,
+			grantErr,
+		)
+	}
+	if printErr := printSocketApproval(cmdOpts, candidate.hostPath); printErr != nil {
+		return emptyBridgedSocket(), false, printErr
+	}
+	return candidate.bridge(), true, nil
 }
 
 func authorizePromptedSocket(
@@ -252,106 +305,121 @@ func authorizePromptedSocket(
 	log *logger.Logger,
 ) (socketbridge.BridgedSocket, bool, error) {
 	if !cmdOpts.IOStreams.CanPrompt() {
-		if candidate.declaration.Optional {
-			if err := reportOptionalSocketSkip(
-				cmdOpts,
-				log,
-				harnessName,
-				candidate.declaration.Target,
-				"approval requires an interactive start",
-				nil,
-			); err != nil {
-				return socketbridge.BridgedSocket{}, false, err
-			}
-			return socketbridge.BridgedSocket{}, false, nil
-		}
-		if previous != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"listener identity for socket bridge %s changed; run an interactive start to approve the current listener",
-				candidate.hostPath,
-			)
-		}
-		return socketbridge.BridgedSocket{}, false, missingGrantError(candidate.hostPath)
+		return authorizeNonInteractiveSocket(harnessName, candidate, previous, cmdOpts, log)
 	}
 
-	answer, err := promptForSocketGrant(cmdOpts, harnessName, principal, candidate, previous)
-	if err != nil {
-		return socketbridge.BridgedSocket{}, false, err
+	answer, promptErr := promptForSocketGrant(cmdOpts, harnessName, principal, candidate, previous)
+	if promptErr != nil {
+		return emptyBridgedSocket(), false, promptErr
 	}
 	switch answer {
 	case socketAnswerAlways:
-		if err := store.GrantSocket(
-			principal,
-			harnessName,
-			candidate.hostPath,
-			candidate.declaration,
-			candidate.identity,
-		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"store socket grant for %s: %w",
-				candidate.hostPath,
-				err,
-			)
-		}
-		if err := printSocketApproval(cmdOpts, candidate.hostPath); err != nil {
-			return socketbridge.BridgedSocket{}, false, err
-		}
-		return candidate.bridge(), true, nil
+		return approveSocketCandidate(harnessName, principal, candidate, cmdOpts, store)
 	case socketAnswerYes:
 		return candidate.bridge(), true, nil
 	case socketAnswerNo:
-		if candidate.declaration.Optional {
-			if err := reportOptionalSocketSkip(
-				cmdOpts,
-				log,
-				harnessName,
-				candidate.declaration.Target,
-				"approval was declined",
-				nil,
-			); err != nil {
-				return socketbridge.BridgedSocket{}, false, err
-			}
-			return socketbridge.BridgedSocket{}, false, nil
-		}
-		return socketbridge.BridgedSocket{}, false, missingGrantError(candidate.hostPath)
+		return declineSocketCandidate(harnessName, candidate, cmdOpts, log)
 	case socketAnswerNever:
-		if err := store.DenySocket(
-			principal,
-			harnessName,
-			candidate.hostPath,
-			candidate.declaration,
-			candidate.identity,
-		); err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"store socket denial for %s: %w",
-				candidate.hostPath,
-				err,
-			)
-		}
-		if candidate.declaration.Optional {
-			return socketbridge.BridgedSocket{}, false, nil
-		}
-		if previous != nil {
-			return socketbridge.BridgedSocket{}, false, storedDenyError(candidate.hostPath, previous.ID)
-		}
-		stored, err := store.LookupSocketGrant(principal, candidate.hostPath)
-		if err != nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"read stored socket denial for %s: %w",
-				candidate.hostPath,
-				err,
-			)
-		}
-		if stored == nil {
-			return socketbridge.BridgedSocket{}, false, fmt.Errorf(
-				"stored socket denial for %s was not found",
-				candidate.hostPath,
-			)
-		}
-		return socketbridge.BridgedSocket{}, false, storedDenyError(candidate.hostPath, stored.ID)
+		return denySocketCandidate(harnessName, principal, candidate, previous, store)
 	default:
-		return socketbridge.BridgedSocket{}, false, fmt.Errorf("unknown socket authorization answer %q", answer)
+		return emptyBridgedSocket(), false, fmt.Errorf("unknown socket authorization answer %q", answer)
 	}
+}
+
+func authorizeNonInteractiveSocket(
+	harnessName string,
+	candidate socketCandidate,
+	previous *db.SocketGrant,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) (socketbridge.BridgedSocket, bool, error) {
+	if candidate.declaration.Optional {
+		noticeErr := reportOptionalSocketSkip(
+			cmdOpts,
+			log,
+			harnessName,
+			candidate.declaration.Target,
+			"approval requires an interactive start",
+			nil,
+		)
+		return emptyBridgedSocket(), false, noticeErr
+	}
+	if previous != nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"listener identity for socket bridge %s changed; run an interactive start to approve the current listener",
+			candidate.hostPath,
+		)
+	}
+	return emptyBridgedSocket(), false, missingGrantError(candidate.hostPath)
+}
+
+func declineSocketCandidate(
+	harnessName string,
+	candidate socketCandidate,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) (socketbridge.BridgedSocket, bool, error) {
+	if !candidate.declaration.Optional {
+		return emptyBridgedSocket(), false, missingGrantError(candidate.hostPath)
+	}
+	noticeErr := reportOptionalSocketSkip(
+		cmdOpts,
+		log,
+		harnessName,
+		candidate.declaration.Target,
+		"approval was declined",
+		nil,
+	)
+	return emptyBridgedSocket(), false, noticeErr
+}
+
+func denySocketCandidate(
+	harnessName,
+	principal string,
+	candidate socketCandidate,
+	previous *db.SocketGrant,
+	store db.SocketGrantStore,
+) (socketbridge.BridgedSocket, bool, error) {
+	denyErr := store.DenySocket(
+		principal,
+		harnessName,
+		candidate.hostPath,
+		candidate.declaration,
+		candidate.identity,
+	)
+	if denyErr != nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"store socket denial for %s: %w",
+			candidate.hostPath,
+			denyErr,
+		)
+	}
+	if candidate.declaration.Optional {
+		return emptyBridgedSocket(), false, nil
+	}
+	if previous != nil {
+		return emptyBridgedSocket(), false, storedDenyError(candidate.hostPath, previous.ID)
+	}
+	stored, lookupErr := store.LookupSocketGrant(principal, candidate.hostPath)
+	if lookupErr != nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"read stored socket denial for %s: %w",
+			candidate.hostPath,
+			lookupErr,
+		)
+	}
+	if stored == nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"stored socket denial for %s was not found",
+			candidate.hostPath,
+		)
+	}
+	return emptyBridgedSocket(), false, storedDenyError(candidate.hostPath, stored.ID)
+}
+
+func emptyBridgedSocket() socketbridge.BridgedSocket {
+	var socket socketbridge.BridgedSocket
+	return socket
 }
 
 func promptForSocketGrant(
@@ -503,7 +571,7 @@ func formatListenerIdentity(identity socketbridge.ListenerIdentity) string {
 func bannedSocketPath(
 	path string,
 ) (string, bool) {
-	return bannedSocketPathFrom(path, consts.BannedSocketPaths)
+	return bannedSocketPathFrom(path, consts.BannedSocketPaths())
 }
 
 func bannedSocketPathFrom(path string, bannedPaths []string) (string, bool) {

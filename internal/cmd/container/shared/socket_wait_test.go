@@ -1,4 +1,4 @@
-package shared
+package shared_test
 
 import (
 	"bytes"
@@ -10,18 +10,31 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 func TestSocketsWaitScriptNoSocketsIsNoOp(t *testing.T) {
-	assert.Empty(t, socketsWaitScript(nil, socketWaitTimeoutSeconds))
+	assert.Empty(t, shared.SocketsWaitScriptForTest(nil, shared.SocketWaitTimeoutSecondsForTest()))
 }
 
 func TestSocketsWaitScriptProbesEachTarget(t *testing.T) {
-	script := socketsWaitScript([]socketbridge.BridgedSocket{
-		{Target: "/run/one.sock"},
-		{Target: "/run/two.sock"},
-	}, socketWaitTimeoutSeconds)
+	script := shared.SocketsWaitScriptForTest([]socketbridge.BridgedSocket{
+		{
+			HostPath: "",
+			Target:   "/run/one.sock",
+			Identity: socketbridge.ListenerIdentity{UID: 0, GID: 0, Owner: "", Group: ""},
+			Group:    "",
+			Mode:     "",
+		},
+		{
+			HostPath: "",
+			Target:   "/run/two.sock",
+			Identity: socketbridge.ListenerIdentity{UID: 0, GID: 0, Owner: "", Group: ""},
+			Group:    "",
+			Mode:     "",
+		},
+	}, shared.SocketWaitTimeoutSecondsForTest())
 
 	assert.Equal(t, 2, strings.Count(script, "[ -S "))
 	assert.Contains(t, script, "'/run/one.sock'")
@@ -31,7 +44,13 @@ func TestSocketsWaitScriptProbesEachTarget(t *testing.T) {
 
 func TestSocketsWaitScriptTimeoutReportsMissingTarget(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing-service.sock")
-	script := socketsWaitScript([]socketbridge.BridgedSocket{{Target: missing}}, 0)
+	script := shared.SocketsWaitScriptForTest([]socketbridge.BridgedSocket{{
+		HostPath: "",
+		Target:   missing,
+		Identity: socketbridge.ListenerIdentity{UID: 0, GID: 0, Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
+	}}, 0)
 	var stdout bytes.Buffer
 	command := exec.Command("sh", "-c", script)
 	command.Stdout = &stdout
@@ -45,7 +64,7 @@ func TestSocketsWaitScriptTimeoutReportsMissingTarget(t *testing.T) {
 }
 
 func TestShellQuoteSocketTarget(t *testing.T) {
-	quoted := shellQuoteSocketTarget("/run/agent's.sock")
+	quoted := shared.ShellQuoteSocketTargetForTest("/run/agent's.sock")
 	command := exec.Command("sh", "-c", "test "+quoted+" = \"/run/agent's.sock\"")
 
 	assert.NoError(t, command.Run())

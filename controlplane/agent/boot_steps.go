@@ -40,6 +40,7 @@ func socketsWaitStep() ShellStep {
 			TimeoutSeconds: execStepTimeoutPostInit,
 			ExitOnNonZero:  true,
 			PrintOutput:    true,
+			InitialStdin:   nil,
 		},
 	}
 }

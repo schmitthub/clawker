@@ -60,7 +60,7 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		SocketGrants: func() (db.SocketGrantStore, error) {
 			database, err := f.DB()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("open CLI database: %w", err)
 			}
 			return db.NewSocketGrantStore(database), nil
 		},
@@ -191,7 +191,10 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 			var bootstrapErr error
 			bridgedSockets, bootstrapErr = shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
-			return bootstrapErr
+			if bootstrapErr != nil {
+				return fmt.Errorf("bootstrap host services: %w", bootstrapErr)
+			}
+			return nil
 		}); err != nil {
 			// Reap a never-started --rm container so its name is freed.
 			return shared.ReapFailedStart(client, containerName, fmt.Errorf("pre-start bootstrapping failed: %w", err))
@@ -361,8 +364,9 @@ func attachAndStart(ctx context.Context, args attachAndStartOptions) error {
 		log.Debug().Err(err).Msg("container start failed")
 		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
-	if err := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts); err != nil {
-		return fmt.Errorf("starting container: %w", err)
+	postStartErr := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts)
+	if postStartErr != nil {
+		return fmt.Errorf("starting container: %w", postStartErr)
 	}
 	log.Debug().Msg("container started successfully")
 

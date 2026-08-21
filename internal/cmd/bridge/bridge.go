@@ -165,7 +165,11 @@ func loadBridgedSockets(path string) ([]socketbridge.BridgedSocket, error) {
 	if path == "" {
 		return nil, nil
 	}
-	return socketbridge.ReadBridgedSocketsFile(path)
+	sockets, err := socketbridge.ReadBridgedSocketsFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load bridge socket registrations: %w", err)
+	}
+	return sockets, nil
 }
 
 // dockerEventsClient is the subset of Docker API needed for events watching.

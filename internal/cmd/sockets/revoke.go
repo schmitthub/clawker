@@ -36,7 +36,7 @@ func newCmdRevoke(f *cmdutil.Factory, runF func(context.Context, *RevokeOptions)
 		All:          false,
 		Yes:          false,
 	}
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct_v5 // Cobra command fields use their documented zero-value defaults.
 		Use:   "revoke <id> | --harness <name> | --all",
 		Short: "Revoke stored socket bridge grants",
 		Long: `Delete one stored grant, all grants for a harness name, or all socket
@@ -71,13 +71,16 @@ new authorization prompt on the next container start.`,
 	cmd.Flags().StringVar(&opts.Harness, "harness", "", "Revoke all grants for this harness name")
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Revoke all socket grants")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Do not prompt for confirmation")
-	cmd.RegisterFlagCompletionFunc("harness", harnessCompletions(opts.SocketGrants)) //nolint:errcheck,gosec // the flag is defined above
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // The flag is defined above.
+		"harness",
+		harnessCompletions(opts.SocketGrants),
+	)
 	return cmd
 }
 
 func validateRevokeSelectors(args []string, opts *RevokeOptions) error {
 	if len(args) > 1 {
-		return cmdutil.FlagErrorf("revoke accepts one grant ID")
+		return fmt.Errorf("validate socket grant selectors: %w", cmdutil.FlagErrorf("revoke accepts one grant ID"))
 	}
 	selectors := len(args)
 	if opts.Harness != "" {
@@ -87,46 +90,57 @@ func validateRevokeSelectors(args []string, opts *RevokeOptions) error {
 		selectors++
 	}
 	if selectors != 1 {
-		return cmdutil.FlagErrorf("select exactly one grant ID, --harness, or --all")
+		return fmt.Errorf(
+			"validate socket grant selectors: %w",
+			cmdutil.FlagErrorf("select exactly one grant ID, --harness, or --all"),
+		)
 	}
 	return nil
 }
 
 func revokeRun(_ context.Context, opts *RevokeOptions) error {
-	store, err := opts.SocketGrants()
-	if err != nil {
-		return fmt.Errorf("revoke socket grants: open database: %w", err)
+	store, storeErr := opts.SocketGrants()
+	if storeErr != nil {
+		return fmt.Errorf("revoke socket grants: open database: %w", storeErr)
 	}
 	if opts.ID != 0 {
-		if err := store.RevokeSocket(opts.ID); err != nil {
-			return fmt.Errorf("revoke socket grant %d: %w", opts.ID, err)
+		if revokeErr := store.RevokeSocket(opts.ID); revokeErr != nil {
+			return fmt.Errorf("revoke socket grant %d: %w", opts.ID, revokeErr)
 		}
 		return printRevokeResult(opts)
 	}
 	if opts.Harness != "" {
-		grants, err := store.ListSocketGrants()
-		if err != nil {
-			return fmt.Errorf("list grants for harness %q: %w", opts.Harness, err)
-		}
-		for _, principal := range distinctHarnessPrincipals(grants, opts.Harness) {
-			if err := store.RevokeHarnessSockets(principal); err != nil {
-				return fmt.Errorf("revoke socket grants for harness %q: %w", opts.Harness, err)
-			}
-		}
-		return printRevokeResult(opts)
+		return revokeHarnessGrants(opts, store)
 	}
-	confirmed, err := confirmAllRevoke(opts)
-	if err != nil {
-		return err
+	return revokeAllGrants(opts, store)
+}
+
+func revokeHarnessGrants(opts *RevokeOptions, store db.SocketGrantStore) error {
+	grants, listErr := store.ListSocketGrants()
+	if listErr != nil {
+		return fmt.Errorf("list grants for harness %q: %w", opts.Harness, listErr)
+	}
+	for _, principal := range distinctHarnessPrincipals(grants, opts.Harness) {
+		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+			return fmt.Errorf("revoke socket grants for harness %q: %w", opts.Harness, revokeErr)
+		}
+	}
+	return printRevokeResult(opts)
+}
+
+func revokeAllGrants(opts *RevokeOptions, store db.SocketGrantStore) error {
+	confirmed, confirmErr := confirmAllRevoke(opts)
+	if confirmErr != nil {
+		return confirmErr
 	}
 	if !confirmed {
-		if _, err := fmt.Fprintln(opts.IOStreams.ErrOut, "Aborted."); err != nil {
-			return fmt.Errorf("write socket grant revoke result: %w", err)
+		if _, writeErr := fmt.Fprintln(opts.IOStreams.ErrOut, "Aborted."); writeErr != nil {
+			return fmt.Errorf("write socket grant revoke result: %w", writeErr)
 		}
 		return nil
 	}
-	if err := store.RevokeAllSockets(); err != nil {
-		return fmt.Errorf("revoke all socket grants: %w", err)
+	if revokeErr := store.RevokeAllSockets(); revokeErr != nil {
+		return fmt.Errorf("revoke all socket grants: %w", revokeErr)
 	}
 	return printRevokeResult(opts)
 }
@@ -150,7 +164,10 @@ func confirmAllRevoke(opts *RevokeOptions) (bool, error) {
 		return true, nil
 	}
 	if !opts.IOStreams.CanPrompt() {
-		return false, cmdutil.FlagErrorf("--yes is required to revoke all grants in a non-interactive session")
+		return false, fmt.Errorf(
+			"validate socket grant revoke flags: %w",
+			cmdutil.FlagErrorf("--yes is required to revoke all grants in a non-interactive session"),
+		)
 	}
 	warning := opts.IOStreams.ColorScheme().WarningIcon() + " Revoke all stored socket grants?"
 	confirmed, err := opts.Prompter().Confirm(warning, false)
@@ -162,7 +179,12 @@ func confirmAllRevoke(opts *RevokeOptions) (bool, error) {
 
 func printRevokeResult(opts *RevokeOptions) error {
 	cs := opts.IOStreams.ColorScheme()
-	if _, err := fmt.Fprintf(opts.IOStreams.Out, "%s Socket grants revoked. %s\n", cs.SuccessIcon(), runningBridgeNote); err != nil {
+	if _, err := fmt.Fprintf(
+		opts.IOStreams.Out,
+		"%s Socket grants revoked. %s\n",
+		cs.SuccessIcon(),
+		runningBridgeNote,
+	); err != nil {
 		return fmt.Errorf("write socket grant revoke result: %w", err)
 	}
 	return nil

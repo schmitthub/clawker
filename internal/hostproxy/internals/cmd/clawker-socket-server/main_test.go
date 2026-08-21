@@ -16,13 +16,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newTestForwarder(sockets []SocketConfig, stdout *bufio.Writer) *Forwarder {
+	var forwarder Forwarder
+	forwarder.sockets = sockets
+	forwarder.streams = make(map[uint32]net.Conn)
+	forwarder.stdout = stdout
+	return &forwarder
+}
+
 func TestCreateBridgedSocketListenerAppliesGroupAndMode(t *testing.T) {
 	current, err := user.Current()
 	require.NoError(t, err)
 	group, err := user.LookupGroupId(current.Gid)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "service.sock")
-	forwarder := &Forwarder{}
+	forwarder := newTestForwarder(nil, nil)
 
 	listener, err := forwarder.createSocketListener(SocketConfig{
 		Path:  path,
@@ -54,7 +62,7 @@ func TestDropAgentPrivilegesRestoresSupplementaryGroups(t *testing.T) {
 		effectiveUID: func() int { return 0 },
 		lookupUser: func(username string) (*user.User, error) {
 			assert.Equal(t, "agent", username)
-			return &user.User{Uid: "1001", Gid: "1002"}, nil
+			return &user.User{Uid: "1001", Gid: "1002", Username: "agent", Name: "", HomeDir: ""}, nil
 		},
 		groupIDs: func(*user.User) ([]string, error) {
 			return []string{"1002", "2001"}, nil
@@ -85,9 +93,14 @@ func TestDropAgentPrivilegesRestoresSupplementaryGroups(t *testing.T) {
 
 func TestCreateBridgedSocketListenerUsesDefaultPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.sock")
-	forwarder := &Forwarder{}
+	forwarder := newTestForwarder(nil, nil)
 
-	listener, err := forwarder.createSocketListener(SocketConfig{Path: path, Type: socketTypeBridged})
+	listener, err := forwarder.createSocketListener(SocketConfig{
+		Path:  path,
+		Type:  socketTypeBridged,
+		Group: "",
+		Mode:  "",
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 
@@ -98,20 +111,20 @@ func TestCreateBridgedSocketListenerUsesDefaultPermissions(t *testing.T) {
 
 func TestCreateBridgedSocketListenersReportsUnknownGroup(t *testing.T) {
 	var output bytes.Buffer
-	forwarder := &Forwarder{
-		sockets: []SocketConfig{{
+	forwarder := newTestForwarder(
+		[]SocketConfig{{
 			Path:  filepath.Join(t.TempDir(), "service.sock"),
 			Type:  socketTypeBridged,
 			Group: "clawker-group-that-does-not-exist",
+			Mode:  "",
 		}},
-		streams: make(map[uint32]net.Conn),
-		stdout:  bufio.NewWriter(&output),
-	}
+		bufio.NewWriter(&output),
+	)
 
 	listeners, err := forwarder.createSocketListeners()
 	require.Error(t, err)
 	assert.Empty(t, listeners)
-	assert.ErrorContains(t, err, "lookup group")
+	require.ErrorContains(t, err, "lookup group")
 
 	message, err := readMessage(bufio.NewReader(&output))
 	require.NoError(t, err)
@@ -122,11 +135,10 @@ func TestCreateBridgedSocketListenersReportsUnknownGroup(t *testing.T) {
 func TestBridgedSocketOpenUsesTargetAsIdentifier(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.sock")
 	reader, writer := io.Pipe()
-	forwarder := &Forwarder{
-		sockets: []SocketConfig{{Path: path, Type: socketTypeBridged}},
-		streams: make(map[uint32]net.Conn),
-		stdout:  bufio.NewWriter(writer),
-	}
+	forwarder := newTestForwarder(
+		[]SocketConfig{{Path: path, Type: socketTypeBridged, Group: "", Mode: ""}},
+		bufio.NewWriter(writer),
+	)
 	listeners, err := forwarder.createSocketListeners()
 	require.NoError(t, err)
 	listener := listeners[path]

@@ -67,6 +67,10 @@ type socketManifestOptions struct {
 	Mode     string
 }
 
+func defaultSocketManifest() socketManifestOptions {
+	return socketManifestOptions{Optional: false, Group: "", Mode: ""}
+}
+
 type socketGrantSummary struct {
 	ID      int64  `json:"id"`
 	Harness string `json:"harness"`
@@ -76,12 +80,12 @@ type socketGrantSummary struct {
 
 type socketGrantDetails struct {
 	ID          int64  `json:"id"`
-	HarnessName string `json:"harness_name"`
-	HarnessPath string `json:"harness_path"`
-	HostPath    string `json:"host_path"`
+	HarnessName string `json:"harness_name"` //nolint:tagliatelle // The command JSON contract uses snake_case.
+	HarnessPath string `json:"harness_path"` //nolint:tagliatelle // The command JSON contract uses snake_case.
+	HostPath    string `json:"host_path"`    //nolint:tagliatelle // The command JSON contract uses snake_case.
 	Status      string `json:"status"`
-	ListenerUID int    `json:"listener_uid"`
-	ListenerGID int    `json:"listener_gid"`
+	ListenerUID int    `json:"listener_uid"` //nolint:tagliatelle // The command JSON contract uses snake_case.
+	ListenerGID int    `json:"listener_gid"` //nolint:tagliatelle // The command JSON contract uses snake_case.
 }
 
 type socketE2EFixture struct {
@@ -110,7 +114,7 @@ func TestSocketCreateDefersApproval(t *testing.T) {
 		"socket-create",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 
@@ -141,7 +145,7 @@ func TestSocketApproveGrantAndUseBridge(t *testing.T) {
 		"socket-approve",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("approve-agent").Err)
@@ -173,7 +177,7 @@ func TestSocketStoredGrantAndRestart(t *testing.T) {
 		"socket-restart",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("restart-agent").Err)
@@ -198,7 +202,7 @@ func TestSocketListRevokeAndApproveAgain(t *testing.T) {
 		"socket-revoke",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("revoke-agent").Err)
@@ -236,7 +240,7 @@ func TestSocketResolvedPathDriftNeedsApproval(t *testing.T) {
 		"socket-drift",
 		socketTestHarness,
 		linkPath,
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("drift-agent").Err)
@@ -264,7 +268,7 @@ func TestSocketLooseShadowNeedsGrantButFloorDoesNotUseDB(t *testing.T) {
 			"socket-shadow",
 			"claude",
 			"",
-			socketManifestOptions{},
+			defaultSocketManifest(),
 			socketTestHarnessTemplate,
 		)
 		require.NoError(t, fixture.createContainer("shadow-agent").Err)
@@ -282,7 +286,7 @@ func TestSocketLooseShadowNeedsGrantButFloorDoesNotUseDB(t *testing.T) {
 			"socket-floor",
 			"claude",
 			"",
-			socketManifestOptions{},
+			defaultSocketManifest(),
 			socketTestHarnessTemplate,
 		)
 		require.NoError(t, fixture.createContainer("floor-agent").Err)
@@ -305,7 +309,7 @@ func TestSocketDeletedListenerDoesNotRunCMDOrLeaveBridge(t *testing.T) {
 		"socket-deleted",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("deleted-agent").Err)
@@ -336,7 +340,7 @@ func TestSocketPruneDeletedHarness(t *testing.T) {
 		"socket-prune",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("prune-agent").Err)
@@ -362,7 +366,7 @@ func TestSocketBannedResolvedPathFailsBeforePrompt(t *testing.T) {
 		"socket-banned",
 		socketTestHarness,
 		linkPath,
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("banned-agent").Err)
@@ -384,7 +388,7 @@ func TestSocketOptionalNoAndAlways(t *testing.T) {
 		"socket-optional",
 		socketTestHarness,
 		"",
-		socketManifestOptions{Optional: true},
+		socketManifestOptions{Optional: true, Group: "", Mode: ""},
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("optional-agent").Err)
@@ -415,7 +419,7 @@ func TestSocketNeverPersistsUntilRevoke(t *testing.T) {
 		"socket-never",
 		socketTestHarness,
 		"",
-		socketManifestOptions{},
+		defaultSocketManifest(),
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("never-agent").Err)
@@ -450,7 +454,7 @@ func TestSocketNeverPersistsUntilRevoke(t *testing.T) {
 // a missing image group keeps the user CMD behind the socket wait gate.
 func TestSocketContainerGroupAndMode(t *testing.T) {
 	t.Run("declared group and mode", func(t *testing.T) {
-		manifest := socketManifestOptions{Group: socketTestGroup, Mode: socketTestMode}
+		manifest := socketManifestOptions{Optional: false, Group: socketTestGroup, Mode: socketTestMode}
 		fixture := newSocketE2EFixture(
 			t,
 			"socket-perms",
@@ -469,7 +473,7 @@ func TestSocketContainerGroupAndMode(t *testing.T) {
 	})
 
 	t.Run("missing group", func(t *testing.T) {
-		manifest := socketManifestOptions{Group: socketTestMissingGroup, Mode: socketTestMode}
+		manifest := socketManifestOptions{Optional: false, Group: socketTestMissingGroup, Mode: socketTestMode}
 		fixture := newSocketE2EFixture(
 			t,
 			"socket-perms-missing",
@@ -506,7 +510,9 @@ func newSocketE2EFixture(
 	}
 	t.Setenv(socketTestSourceEnv, sourcePath)
 
-	h := &harness.Harness{T: t, Opts: socketHarnessOpts()}
+	h := new(harness.Harness)
+	h.T = t
+	h.Opts = socketHarnessOpts()
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: projectName})
 	harness.EnsureNoControlPlane(t, 30*time.Second)
 	initResult := h.Run("project", "init", projectName, "--yes", "--preset", "Bare", "--vcs", "github")
@@ -540,6 +546,8 @@ func socketHarnessOpts() *harness.FactoryOptions {
 		Config:         config.NewConfig,
 		Client:         docker.NewClient,
 		ProjectManager: project.NewProjectManager,
+		GitManager:     nil,
+		HostProxy:      nil,
 		SocketBridge: func(cfg config.Config, log *logger.Logger) socketbridge.SocketBridgeManager {
 			return socketbridge.NewManager(cfg, log)
 		},
@@ -596,7 +604,8 @@ func (f *socketE2EFixture) createContainer(agent string) *harness.RunResult {
 
 func (f *socketE2EFixture) startContainer(agent string, extra ...string) *harness.RunResult {
 	f.t.Helper()
-	args := []string{"container", "start", "--agent"}
+	args := make([]string, 0, 4+len(extra))
+	args = append(args, "container", "start", "--agent")
 	args = append(args, extra...)
 	args = append(args, agent)
 	return f.h.Run(args...)
@@ -662,7 +671,10 @@ func runFailure(operation string, result *harness.RunResult) string {
 
 func shortSocketTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp(socketTestTempRoot, socketTestTempPrefix)
+	dir, err := os.MkdirTemp( //nolint:usetesting // The short root keeps Unix socket paths below the platform limit.
+		socketTestTempRoot,
+		socketTestTempPrefix,
+	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, os.RemoveAll(dir))
@@ -674,11 +686,12 @@ func newSocketHTTPListener(t *testing.T, path string) *socketHTTPListener {
 	t.Helper()
 	listener, err := net.Listen("unix", path)
 	require.NoError(t, err)
-	server := &socketHTTPListener{listener: listener}
+	var server socketHTTPListener
+	server.listener = listener
 	server.wg.Add(1)
 	go server.serve()
 	t.Cleanup(server.Close)
-	return server
+	return &server
 }
 
 func (s *socketHTTPListener) serve() {
@@ -688,32 +701,32 @@ func (s *socketHTTPListener) serve() {
 		if err != nil {
 			return
 		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			defer func() {
-				// A close error cannot change the result of this test-only response.
-				_ = connection.Close()
-			}()
-			reader := bufio.NewReader(connection)
-			for {
-				line, readErr := reader.ReadString('\n')
-				if readErr != nil {
-					return
-				}
-				if line == "\r\n" {
-					break
-				}
-			}
-			response := fmt.Sprintf(
-				"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-				len(socketTestResponse),
-				socketTestResponse,
-			)
-			if _, err := io.WriteString(connection, response); err != nil {
-				return
-			}
-		}()
+		s.wg.Go(func() { serveSocketHTTPConnection(connection) })
+	}
+}
+
+func serveSocketHTTPConnection(connection net.Conn) {
+	defer func() {
+		// A close error cannot change the result of this test-only response.
+		_ = connection.Close()
+	}()
+	reader := bufio.NewReader(connection)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	response := fmt.Sprintf(
+		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		len(socketTestResponse),
+		socketTestResponse,
+	)
+	if _, writeErr := io.WriteString(connection, response); writeErr != nil {
+		return
 	}
 }
 

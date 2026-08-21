@@ -90,13 +90,13 @@ func TestSendMessage_ReducedAllocations(t *testing.T) {
 
 func TestBuildRemoteSocketConfigIncludesExistingAndBridgedSockets(t *testing.T) {
 	existing := []socketbridge.SocketConfig{
-		{Path: "/home/clawker/.ssh/agent.sock", Type: "ssh-agent"},
-		{Path: "/home/clawker/.gnupg/S.gpg-agent", Type: "gpg-agent"},
+		{Path: "/home/clawker/.ssh/agent.sock", Type: "ssh-agent", Group: "", Mode: ""},
+		{Path: "/home/clawker/.gnupg/S.gpg-agent", Type: "gpg-agent", Group: "", Mode: ""},
 	}
 	bridged := []socketbridge.BridgedSocket{{
 		HostPath: "/host/agentd.sock",
 		Target:   "/home/clawker/.agentd/control.sock",
-		Identity: socketbridge.ListenerIdentity{UID: 501, GID: 20},
+		Identity: socketbridge.ListenerIdentity{UID: 501, GID: 20, Owner: "", Group: ""},
 		Group:    "agentd",
 		Mode:     "0660",
 	}}
@@ -156,7 +156,9 @@ func TestBridgeOpensApprovedBridgedTargetAndLogsLifecycle(t *testing.T) {
 	b := socketbridge.NewBridge("test-container-id", false, []socketbridge.BridgedSocket{{
 		HostPath: path,
 		Target:   "/run/service.sock",
-		Identity: socketbridge.ListenerIdentity{UID: os.Getuid(), GID: os.Getgid()},
+		Identity: socketbridge.ListenerIdentity{UID: os.Getuid(), GID: os.Getgid(), Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
 	}}, logger.NewWriter(&logs))
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &output})
 
@@ -191,7 +193,9 @@ func TestBridgeRejectsChangedListenerIdentity(t *testing.T) {
 	b := socketbridge.NewBridge("test-container-id", false, []socketbridge.BridgedSocket{{
 		HostPath: path,
 		Target:   "/run/service.sock",
-		Identity: socketbridge.ListenerIdentity{UID: os.Getuid() + 1, GID: os.Getgid()},
+		Identity: socketbridge.ListenerIdentity{UID: os.Getuid() + 1, GID: os.Getgid(), Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
 	}}, logger.NewWriter(&logs))
 	b.SetBridgeIOForTest(io.NopCloser(strings.NewReader("")), &sockebridgemocks.FlushWriteCloser{W: &output})
 

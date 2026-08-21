@@ -12,11 +12,10 @@ import (
 
 func TestAddApproveGrantsFlag(t *testing.T) {
 	var approve bool
-	command := &cobra.Command{
-		Use: "test",
-		RunE: func(*cobra.Command, []string) error {
-			return nil
-		},
+	command := new(cobra.Command)
+	command.Use = "test"
+	command.RunE = func(*cobra.Command, []string) error {
+		return nil
 	}
 	cmdutil.AddApproveGrantsFlag(command, &approve)
 	command.SetArgs([]string{"--" + cmdutil.FlagApproveGrants})

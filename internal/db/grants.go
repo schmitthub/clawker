@@ -59,8 +59,16 @@ type SocketGrant struct {
 //go:generate moq -rm -pkg mocks -out mocks/grants_mock.go . SocketGrantStore
 type SocketGrantStore interface {
 	LookupSocketGrant(harnessPath, hostPath string) (*SocketGrant, error)
-	GrantSocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
-	DenySocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
+	GrantSocket(
+		harnessPath, harnessName, hostPath string,
+		declaration config.HarnessSocket,
+		identity socketbridge.ListenerIdentity,
+	) error
+	DenySocket(
+		harnessPath, harnessName, hostPath string,
+		declaration config.HarnessSocket,
+		identity socketbridge.ListenerIdentity,
+	) error
 	RevokeSocket(id int64) error
 	RevokeHarnessSockets(harnessPath string) error
 	RevokeAllSockets() error
@@ -73,7 +81,11 @@ type socketGrantStore struct {
 }
 
 // NewSocketGrantStore creates the socket grant store for a CLI database.
-func NewSocketGrantStore(database *DB) SocketGrantStore {
+//
+//nolint:ireturn // Commands depend on the documented store seam.
+func NewSocketGrantStore(
+	database *DB,
+) SocketGrantStore {
 	return &socketGrantStore{database: database}
 }
 
@@ -84,9 +96,14 @@ type rowScanner interface {
 // LookupSocketGrant returns the stored row for a harness and host path. It
 // returns nil without an error when the pair has no row.
 func (s *socketGrantStore) LookupSocketGrant(harnessPath, hostPath string) (*SocketGrant, error) {
-	grant, err := scanSocketGrant(s.database.sql.QueryRow(lookupGrantSQL, harnessPath, hostPath))
+	grant, err := scanSocketGrant(s.database.sql.QueryRowContext(
+		context.Background(),
+		lookupGrantSQL,
+		harnessPath,
+		hostPath,
+	))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No row is the documented lookup result.
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup socket grant: %w", err)
@@ -95,18 +112,31 @@ func (s *socketGrantStore) LookupSocketGrant(harnessPath, hostPath string) (*Soc
 }
 
 // GrantSocket stores a persistent approval.
-func (s *socketGrantStore) GrantSocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (s *socketGrantStore) GrantSocket(
+	harnessPath, harnessName, hostPath string,
+	declaration config.HarnessSocket,
+	identity socketbridge.ListenerIdentity,
+) error {
 	return s.writeSocketGrant(harnessPath, harnessName, hostPath, GrantAllow, declaration, identity)
 }
 
 // DenySocket stores a persistent denial.
-func (s *socketGrantStore) DenySocket(harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (s *socketGrantStore) DenySocket(
+	harnessPath, harnessName, hostPath string,
+	declaration config.HarnessSocket,
+	identity socketbridge.ListenerIdentity,
+) error {
 	return s.writeSocketGrant(harnessPath, harnessName, hostPath, GrantDeny, declaration, identity)
 }
 
-func (s *socketGrantStore) writeSocketGrant(harnessPath, harnessName, hostPath, status string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (s *socketGrantStore) writeSocketGrant(
+	harnessPath, harnessName, hostPath, status string,
+	declaration config.HarnessSocket,
+	identity socketbridge.ListenerIdentity,
+) error {
 	grantedAt := time.Now().UTC().Truncate(time.Second)
-	if _, err := s.database.sql.Exec(
+	if _, err := s.database.sql.ExecContext(
+		context.Background(),
 		writeGrantSQL,
 		harnessPath,
 		harnessName,
@@ -151,7 +181,7 @@ func (s *socketGrantStore) RevokeAllSockets() error {
 }
 
 func (s *socketGrantStore) deleteAndLog(query string, args ...any) error {
-	result, err := s.database.sql.Exec(query, args...)
+	result, err := s.database.sql.ExecContext(context.Background(), query, args...)
 	if err != nil {
 		return fmt.Errorf("revoke socket grants: %w", err)
 	}
@@ -165,10 +195,16 @@ func (s *socketGrantStore) deleteAndLog(query string, args ...any) error {
 
 // ListSocketGrants returns all rows in grant ID order.
 func (s *socketGrantStore) ListSocketGrants() ([]SocketGrant, error) {
-	rows, err := s.database.sql.Query(listGrantsSQL)
+	rows, err := s.database.sql.QueryContext(context.Background(), listGrantsSQL)
 	if err != nil {
 		return nil, fmt.Errorf("list socket grants: %w", err)
 	}
+	defer func() {
+		// Each return below closes the rows and reports the close error. This
+		// deferred close is only a safety action for an unexpected panic.
+		_ = rows.Close()
+	}()
+
 	grants := make([]SocketGrant, 0)
 	for rows.Next() {
 		grant, scanErr := scanSocketGrant(rows)
@@ -220,7 +256,7 @@ func (s *socketGrantStore) pruneAndLog(query, harnessPath string, args ...any) e
 }
 
 func scanSocketGrant(row rowScanner) (*SocketGrant, error) {
-	grant := &SocketGrant{}
+	var grant SocketGrant
 	var grantedAt string
 	if err := row.Scan(
 		&grant.ID,
@@ -235,19 +271,19 @@ func scanSocketGrant(row rowScanner) (*SocketGrant, error) {
 		&grant.Purpose,
 		&grantedAt,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan socket grant row: %w", err)
 	}
 	parsedTime, err := time.Parse(time.RFC3339, grantedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse granted_at %q: %w", grantedAt, err)
 	}
 	grant.GrantedAt = parsedTime
-	return grant, nil
+	return &grant, nil
 }
 
-func closeRowsWithError(rows *sql.Rows, err error) error {
+func closeRowsWithError(rows *sql.Rows, resultErr error) error {
 	if closeErr := rows.Close(); closeErr != nil {
-		return errors.Join(err, fmt.Errorf("close socket grant rows: %w", closeErr))
+		return errors.Join(resultErr, fmt.Errorf("close socket grant rows: %w", closeErr))
 	}
-	return err
+	return resultErr
 }

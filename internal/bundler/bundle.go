@@ -171,7 +171,7 @@ func validateSocketFields(name, field string, socket config.HarnessSocket) error
 }
 
 func validateBannedSocketSource(name, field, source string) error {
-	for bannedIndex, bannedPath := range consts.BannedSocketPaths {
+	for bannedIndex, bannedPath := range consts.BannedSocketPaths() {
 		if source != bannedPath {
 			continue
 		}

@@ -34,7 +34,7 @@ func newCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 		All:          false,
 		Yes:          false,
 	}
-	cmd := &cobra.Command{
+	cmd := &cobra.Command{ //nolint:exhaustruct_v5 // Cobra command fields use their documented zero-value defaults.
 		Use:   "prune",
 		Short: "Remove socket grants that no declaration uses",
 		Long: `Resolve each stored harness and its current socket declarations. Remove
@@ -59,36 +59,36 @@ resolved manifest no longer declares. With --all, remove every socket grant.`,
 }
 
 func pruneRun(_ context.Context, opts *PruneOptions) error {
-	confirmed, err := confirmSocketPrune(opts)
-	if err != nil {
-		return err
+	confirmed, confirmErr := confirmSocketPrune(opts)
+	if confirmErr != nil {
+		return confirmErr
 	}
 	if !confirmed {
-		if _, err := fmt.Fprintln(opts.IOStreams.ErrOut, "Aborted."); err != nil {
-			return fmt.Errorf("write socket grant prune result: %w", err)
+		if _, writeErr := fmt.Fprintln(opts.IOStreams.ErrOut, "Aborted."); writeErr != nil {
+			return fmt.Errorf("write socket grant prune result: %w", writeErr)
 		}
 		return nil
 	}
-	store, err := opts.SocketGrants()
-	if err != nil {
-		return fmt.Errorf("prune socket grants: open database: %w", err)
+	store, storeErr := opts.SocketGrants()
+	if storeErr != nil {
+		return fmt.Errorf("prune socket grants: open database: %w", storeErr)
 	}
 	if opts.All {
-		if err := store.RevokeAllSockets(); err != nil {
-			return fmt.Errorf("prune all socket grants: %w", err)
+		if revokeErr := store.RevokeAllSockets(); revokeErr != nil {
+			return fmt.Errorf("prune all socket grants: %w", revokeErr)
 		}
 		return printPruneResult(opts)
 	}
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("prune socket grants: load config: %w", err)
+	cfg, configErr := opts.Config()
+	if configErr != nil {
+		return fmt.Errorf("prune socket grants: load config: %w", configErr)
 	}
-	grants, err := store.ListSocketGrants()
-	if err != nil {
-		return fmt.Errorf("prune socket grants: list grants: %w", err)
+	grants, listErr := store.ListSocketGrants()
+	if listErr != nil {
+		return fmt.Errorf("prune socket grants: list grants: %w", listErr)
 	}
-	if err := pruneHarnessGroups(cfg, store, grants); err != nil {
-		return err
+	if pruneErr := pruneHarnessGroups(cfg, store, grants); pruneErr != nil {
+		return pruneErr
 	}
 	return printPruneResult(opts)
 }
@@ -102,27 +102,34 @@ func pruneHarnessGroups(cfg config.Config, store db.SocketGrantStore, grants []d
 	sort.Strings(principals)
 	for _, principal := range principals {
 		rows := groups[principal]
-		harness, err := bundler.LoadHarness(cfg, rows[0].HarnessName)
-		if err != nil {
-			if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
-				return fmt.Errorf("prune unresolved harness %q: %w", rows[0].HarnessName, revokeErr)
-			}
-			continue
+		if pruneErr := pruneHarnessGroup(cfg, store, principal, rows[0].HarnessName); pruneErr != nil {
+			return pruneErr
 		}
-		currentPrincipal, err := cmdutil.ResolveHostPath(harness.Provenance.Dir)
-		if err != nil {
-			return fmt.Errorf("prune harness %q: resolve principal: %w", rows[0].HarnessName, err)
+	}
+	return nil
+}
+
+func pruneHarnessGroup(cfg config.Config, store db.SocketGrantStore, principal, harnessName string) error {
+	harness, loadErr := bundler.LoadHarness(cfg, harnessName)
+	if loadErr != nil {
+		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+			return fmt.Errorf("prune unresolved harness %q: %w", harnessName, revokeErr)
 		}
-		if currentPrincipal != principal {
-			if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
-				return fmt.Errorf("prune replaced harness %q: %w", rows[0].HarnessName, revokeErr)
-			}
-			continue
+		return nil
+	}
+	currentPrincipal, resolveErr := cmdutil.ResolveHostPath(harness.Provenance.Dir)
+	if resolveErr != nil {
+		return fmt.Errorf("prune harness %q: resolve principal: %w", harnessName, resolveErr)
+	}
+	if currentPrincipal != principal {
+		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+			return fmt.Errorf("prune replaced harness %q: %w", harnessName, revokeErr)
 		}
-		declared := resolveDeclaredSocketPaths(harness.Manifest.Sockets)
-		if err := store.PruneHarnessSockets(principal, declared); err != nil {
-			return fmt.Errorf("prune harness %q grants: %w", rows[0].HarnessName, err)
-		}
+		return nil
+	}
+	declared := resolveDeclaredSocketPaths(harness.Manifest.Sockets)
+	if pruneErr := store.PruneHarnessSockets(principal, declared); pruneErr != nil {
+		return fmt.Errorf("prune harness %q grants: %w", harnessName, pruneErr)
 	}
 	return nil
 }
@@ -152,7 +159,10 @@ func confirmSocketPrune(opts *PruneOptions) (bool, error) {
 		return true, nil
 	}
 	if !opts.IOStreams.CanPrompt() {
-		return false, cmdutil.FlagErrorf("--yes is required to prune grants in a non-interactive session")
+		return false, fmt.Errorf(
+			"validate socket grant prune flags: %w",
+			cmdutil.FlagErrorf("--yes is required to prune grants in a non-interactive session"),
+		)
 	}
 	message := opts.IOStreams.ColorScheme().
 		WarningIcon() +

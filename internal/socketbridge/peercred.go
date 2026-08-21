@@ -30,7 +30,7 @@ func ReadListenerIdentity(path string) (ListenerIdentity, error) {
 		return ListenerIdentity{}, fmt.Errorf("close listener identity probe for %q: %w", path, closeErr)
 	}
 
-	identity := ListenerIdentity{UID: uid, GID: gid}
+	identity := ListenerIdentity{UID: uid, GID: gid, Owner: "", Group: ""}
 	if owner, lookupErr := user.LookupId(strconv.Itoa(uid)); lookupErr == nil {
 		identity.Owner = owner.Username
 	}

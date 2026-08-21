@@ -11,11 +11,12 @@ import (
 	"time"
 
 	moby "github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	clawkerdv1mocks "github.com/schmitthub/clawker/api/clawkerd/v1/mocks"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	agentmocks "github.com/schmitthub/clawker/controlplane/agent/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -114,7 +115,11 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 			fake := clawkerdv1mocks.NewFakeSessionStream(ctx)
 			stream := &panickingSendStream{FakeSessionStream: fake, panicAtSend: 1}
 
-			target := agent.ExecTarget{ContainerID: "c-panic-1234567890ab", AgentName: agentName, Project: projectClawker}
+			target := agent.ExecTarget{
+				ContainerID: "c-panic-1234567890ab",
+				AgentName:   agentName,
+				Project:     projectClawker,
+			}
 
 			// The panic must NOT propagate (which would crash CP); the
 			// recover converts it to an ordinary error return so the
@@ -123,8 +128,17 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 			require.Error(t, err, "panic must convert to an error return, not propagate")
 			assert.Contains(t, err.Error(), "panicked")
 
-			require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 }, time.Second, 10*time.Millisecond)
-			assert.Empty(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted), "completed must NOT fire on panic")
+			require.Eventually(
+				t,
+				func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 },
+				time.Second,
+				10*time.Millisecond,
+			)
+			assert.Empty(
+				t,
+				rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted),
+				"completed must NOT fire on panic",
+			)
 
 			failed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)
 			require.Len(t, failed, 1)
@@ -202,10 +216,10 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 			names = append(names, s.Name)
 			if s.Name == consts.HookSocketsWait {
 				idxSocketsWait = i
-				require.Len(t, s.Shell.Stages, 1)
+				require.Len(t, s.Shell.GetStages(), 1)
 				assert.Equal(t, []string{"sh", "-c", agent.SocketsWaitScript}, s.Shell.GetStages()[0].GetArgv())
-				assert.True(t, s.Shell.ExitOnNonZero)
-				assert.True(t, s.Shell.PrintOutput)
+				assert.True(t, s.Shell.GetExitOnNonZero())
+				assert.True(t, s.Shell.GetPrintOutput())
 			}
 			if s.Name == consts.HookPreRun {
 				idxPreRun = i
@@ -299,7 +313,12 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	<-doneFeeder
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted)) == 1 },
+		time.Second,
+		10*time.Millisecond,
+	)
 
 	started := rec.WithAction(agent.ExecutorEventType, agent.ActionExecStarted)
 	require.Len(t, started, 1, "exactly one started")
@@ -342,8 +361,14 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
 			return []*clawkerdv1.Response{
-				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("boom")}}},
-				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 2}}},
+				{
+					CommandId: cmd.GetCommandId(),
+					Payload:   &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("boom")}},
+				},
+				{
+					CommandId: cmd.GetCommandId(),
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 2}},
+				},
 			}
 		}
 		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
@@ -357,13 +382,22 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), initStepNames[failAtIdx])
 
-	require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 },
+		time.Second,
+		10*time.Millisecond,
+	)
 
 	stepFailed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed)
 	failed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)
 	require.Len(t, stepFailed, 1)
 	require.Len(t, failed, 1)
-	assert.Empty(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted), "completed must NOT fire on failure")
+	assert.Empty(
+		t,
+		rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted),
+		"completed must NOT fire on failure",
+	)
 	assert.Equal(t, initStepNames[failAtIdx], stepFailed[0].Message.StepName)
 	assert.Equal(t, int32(2), stepFailed[0].Message.ExitCode)
 	assert.Equal(t, agent.ReasonExitCode, stepFailed[0].Message.Reason)
@@ -372,8 +406,18 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	assert.Equal(t, agent.ReasonExitCode, failed[0].Message.Reason)
 
 	// Steps after the failure must not have started.
-	require.Len(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepStarted), failAtIdx+1, "step dispatch must halt at first failure")
-	require.Len(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepCompleted), failAtIdx, "no completed event for the failing step")
+	require.Len(
+		t,
+		rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepStarted),
+		failAtIdx+1,
+		"step dispatch must halt at first failure",
+	)
+	require.Len(
+		t,
+		rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepCompleted),
+		failAtIdx,
+		"no completed event for the failing step",
+	)
 }
 
 // TestExecutor_Run_TransportError covers the case where stream.Recv returns
@@ -398,7 +442,12 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rpc connection reset")
 
-	require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 },
+		time.Second,
+		10*time.Millisecond,
+	)
 	assert.Len(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed), 1,
 		"transport failure must carry a step-level event so subscribers see WHICH step was in flight")
 	assert.Empty(t, rec.WithAction(agent.ExecutorEventType, agent.ActionExecCompleted))
@@ -451,7 +500,12 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 			<-done
 			require.Error(t, err)
 
-			require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 }, time.Second, 10*time.Millisecond)
+			require.Eventually(
+				t,
+				func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 },
+				time.Second,
+				10*time.Millisecond,
+			)
 			stepFailed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed)
 			failed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)
 			require.Len(t, stepFailed, 1)
@@ -503,7 +557,12 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 		require.Error(t, err)
 	}
 
-	require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecFailed)) == 1 },
+		2*time.Second,
+		10*time.Millisecond,
+	)
 	require.Eventually(t, func() bool {
 		v, ok := store.Get(target.ContainerID)
 		return ok && v.Executor.Status() == agent.StatusFailed
@@ -579,7 +638,12 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 			closeCount++
 		}
 	}
-	assert.Equal(t, 3, shellCount, "expected 3 shell steps in the static boot plan (docker-socket, sockets-wait, pre-run)")
+	assert.Equal(
+		t,
+		3,
+		shellCount,
+		"expected 3 shell steps in the static boot plan (docker-socket, sockets-wait, pre-run)",
+	)
 	assert.Equal(t, 1, agentReadyCount, "expected exactly one AgentReady step")
 	assert.Equal(t, shellCount, closeCount,
 		"every shell step needs exactly one CloseStdin (none for AgentReady)")
@@ -598,7 +662,13 @@ func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
 	run := func(containerID string) error {
 		stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
 		feederDone := stream.FeedDone()
-		err := e.Run(ctx, stream, agent.ExecTarget{ContainerID: containerID, AgentName: agentName, Project: projectClawker}, agent.InitPlan(), "init")
+		err := e.Run(
+			ctx,
+			stream,
+			agent.ExecTarget{ContainerID: containerID, AgentName: agentName, Project: projectClawker},
+			agent.InitPlan(),
+			"init",
+		)
 		if cerr := stream.CloseSend(); cerr != nil {
 			t.Errorf("close send: %v", cerr)
 		}
@@ -673,13 +743,24 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 		return []*clawkerdv1.Response{
 			// Mismatched command_id — runStep continues past frames that
 			// don't address the in-flight command.
-			{CommandId: "noise-other-command", Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 99}}},
+			{
+				CommandId: "noise-other-command",
+				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 99}},
+			},
 			// Started: explicit continue arm.
 			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}}},
 			// Output: combined output, discarded here because the step succeeds.
-			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("captured output")}}},
+			{
+				CommandId: cmd.GetCommandId(),
+				Payload: &clawkerdv1.Response_Output{
+					Output: &clawkerdv1.OutputChunk{Data: []byte("captured output")},
+				},
+			},
 			// Real terminal frame.
-			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}}},
+			{
+				CommandId: cmd.GetCommandId(),
+				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+			},
 		}
 	})
 
@@ -688,8 +769,11 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 		t.Errorf("close send: %v", cerr)
 	}
 	<-doneFeeder
-	require.NoError(t, err,
-		"Run must tolerate noise frames (mismatched command_id, Started, Output) and succeed when the terminal Done lands")
+	require.NoError(
+		t,
+		err,
+		"Run must tolerate noise frames (mismatched command_id, Started, Output) and succeed when the terminal Done lands",
+	)
 }
 
 // TestExecutor_Run_CapturesCombinedOutputInDetail proves runStep folds the
@@ -708,8 +792,16 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
 			return []*clawkerdv1.Response{
-				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("combined-output-xyz")}}},
-				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}}},
+				{
+					CommandId: cmd.GetCommandId(),
+					Payload: &clawkerdv1.Response_Output{
+						Output: &clawkerdv1.OutputChunk{Data: []byte("combined-output-xyz")},
+					},
+				},
+				{
+					CommandId: cmd.GetCommandId(),
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}},
+				},
 			}
 		}
 		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
@@ -722,7 +814,12 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 	<-doneFeeder
 	require.Error(t, err)
 
-	require.Eventually(t, func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { return len(rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed)) == 1 },
+		time.Second,
+		10*time.Millisecond,
+	)
 	stepFailed := rec.WithAction(agent.ExecutorEventType, agent.ActionExecStepFailed)
 	assert.Contains(t, stepFailed[0].Message.Detail, "combined-output-xyz",
 		"combined output must be folded into the failure detail")

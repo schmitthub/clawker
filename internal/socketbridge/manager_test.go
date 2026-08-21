@@ -182,7 +182,11 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 
 	// This should NOT panic from containerID[:12] slicing
 	assert.NotPanics(t, func() {
-		err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{ContainerID: shortContainerID})
+		err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+			ContainerID: shortContainerID,
+			GPGEnabled:  false,
+			Sockets:     nil,
+		})
 		assert.NoError(t, err)
 	})
 }
@@ -203,7 +207,9 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 		Sockets: []socketbridge.BridgedSocket{{
 			HostPath: "/host/service.sock",
 			Target:   "/run/service.sock",
-			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000},
+			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
+			Group:    "",
+			Mode:     "",
 		}},
 	})
 	assert.NoError(t, err)

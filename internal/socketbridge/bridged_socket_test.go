@@ -29,7 +29,11 @@ func TestBridgedSocketsFileRoundTrip(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.JSONEq(t, `[{"host_path":"/host/agentd.sock","target":"/home/clawker/.agentd/control.sock","uid":501,"gid":20,"group":"agentd","mode":"0660"}]`, string(raw))
+	assert.JSONEq(
+		t,
+		`[{"host_path":"/host/agentd.sock","target":"/home/clawker/.agentd/control.sock","uid":501,"gid":20,"group":"agentd","mode":"0660"}]`,
+		string(raw),
+	)
 
 	got, err := socketbridge.ReadBridgedSocketsFile(path)
 	require.NoError(t, err)
@@ -46,11 +50,17 @@ func TestBridgedSocketJSONOmitsDefaultContainerPermissions(t *testing.T) {
 	raw, err := json.Marshal(socketbridge.BridgedSocket{
 		HostPath: "/host/service.sock",
 		Target:   "/run/service.sock",
-		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000},
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
 	})
 	require.NoError(t, err)
 
-	assert.JSONEq(t, `{"host_path":"/host/service.sock","target":"/run/service.sock","uid":1000,"gid":1000}`, string(raw))
+	assert.JSONEq(
+		t,
+		`{"host_path":"/host/service.sock","target":"/run/service.sock","uid":1000,"gid":1000}`,
+		string(raw),
+	)
 }
 
 func TestBridgedSocketsFileUsesAnEmptyArrayForNoRegistrations(t *testing.T) {

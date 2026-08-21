@@ -19,7 +19,7 @@ func TestNewTUI(t *testing.T) {
 }
 
 func TestTUI_RenderDetails(t *testing.T) {
-	ios, _, _, _ := iostreams.Test()
+	ios, _, _, errOut := iostreams.Test()
 	view := NewTUI(ios)
 
 	result := view.RenderDetails([]KeyValuePair{
@@ -29,6 +29,7 @@ func TestTUI_RenderDetails(t *testing.T) {
 
 	assert.Equal(t, "ID     : 7\nPurpose: Connect to the service.", result)
 	assert.Empty(t, view.RenderDetails(nil))
+	assert.Empty(t, errOut.String())
 }
 
 func TestTUI_RegisterHooks(t *testing.T) {

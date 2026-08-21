@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
-func openTestStore(t *testing.T) db.SocketGrantStore {
+func openTestStore(t *testing.T) db.SocketGrantStore { //nolint:ireturn // Tests use the documented store seam.
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "grants.db"), logger.Nop())
 	require.NoError(t, err)
@@ -26,7 +26,13 @@ func openTestStore(t *testing.T) db.SocketGrantStore {
 }
 
 func testDecl(purpose string) config.HarnessSocket {
-	return config.HarnessSocket{Purpose: purpose}
+	return config.HarnessSocket{
+		Source:    "",
+		Target:    "",
+		Optional:  false,
+		Purpose:   purpose,
+		Container: config.HarnessSocketContainer{Group: "", Mode: ""},
+	}
 }
 
 func testIdentity(uid, gid int) socketbridge.ListenerIdentity {
@@ -44,12 +50,20 @@ func TestSocketGrantRoundTrip(t *testing.T) {
 		status string
 		write  func(db.SocketGrantStore, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error
 	}{
-		{name: "allow", status: db.GrantAllow, write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-			return store.GrantSocket(harnessPath, harnessName, hostPath, declaration, identity)
-		}},
-		{name: "deny", status: db.GrantDeny, write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-			return store.DenySocket(harnessPath, harnessName, hostPath, declaration, identity)
-		}},
+		{
+			name:   "allow",
+			status: db.GrantAllow,
+			write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+				return store.GrantSocket(harnessPath, harnessName, hostPath, declaration, identity)
+			},
+		},
+		{
+			name:   "deny",
+			status: db.GrantDeny,
+			write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+				return store.DenySocket(harnessPath, harnessName, hostPath, declaration, identity)
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -89,12 +103,18 @@ func TestSocketGrantUpsert(t *testing.T) {
 	firstIdentity := testIdentity(1001, 1002)
 	secondIdentity := testIdentity(2001, 2002)
 
-	require.NoError(t, store.GrantSocket("/harness/acme", "old-name", "/run/acme.sock", testDecl("Old purpose."), firstIdentity))
+	require.NoError(
+		t,
+		store.GrantSocket("/harness/acme", "old-name", "/run/acme.sock", testDecl("Old purpose."), firstIdentity),
+	)
 	before, err := store.LookupSocketGrant("/harness/acme", "/run/acme.sock")
 	require.NoError(t, err)
 	require.NotNil(t, before)
 
-	require.NoError(t, store.DenySocket("/harness/acme", "new-name", "/run/acme.sock", testDecl("New purpose."), secondIdentity))
+	require.NoError(
+		t,
+		store.DenySocket("/harness/acme", "new-name", "/run/acme.sock", testDecl("New purpose."), secondIdentity),
+	)
 	after, err := store.LookupSocketGrant("/harness/acme", "/run/acme.sock")
 	require.NoError(t, err)
 	require.NotNil(t, after)
@@ -135,7 +155,10 @@ func TestRevokeHarnessAndAllSockets(t *testing.T) {
 		{harnessPath: "/harness/one", hostPath: "/run/one-b.sock"},
 		{harnessPath: "/harness/two", hostPath: "/run/two.sock"},
 	} {
-		require.NoError(t, store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)))
+		require.NoError(
+			t,
+			store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)),
+		)
 	}
 
 	require.NoError(t, store.RevokeHarnessSockets("/harness/one"))
@@ -160,7 +183,10 @@ func TestPruneHarnessSockets(t *testing.T) {
 		{harnessPath: "/harness/one", hostPath: "/run/remove.sock"},
 		{harnessPath: "/harness/two", hostPath: "/run/other.sock"},
 	} {
-		require.NoError(t, store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)))
+		require.NoError(
+			t,
+			store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)),
+		)
 	}
 
 	require.NoError(t, store.PruneHarnessSockets("/harness/one", []string{"/run/keep.sock"}))

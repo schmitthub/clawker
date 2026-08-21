@@ -110,36 +110,66 @@ func (p *Prompter) StringUntilValid(cfg PromptConfig) (string, error) {
 	}
 	reader := bufio.NewReader(p.ios.In)
 	for {
-		if _, err := fmt.Fprintf(p.ios.ErrOut, "%s: ", prompt); err != nil {
-			return "", fmt.Errorf("write prompt: %w", err)
+		response, eof, readErr := p.readPromptAttempt(reader, prompt, cfg.Default)
+		if readErr != nil {
+			return "", readErr
 		}
-		response, err := reader.ReadString('\n')
-		if err != nil && !(errors.Is(err, io.EOF) && response != "") {
-			return "", fmt.Errorf("failed to read input: %w", err)
+		accepted, validationErr := p.acceptPromptResponse(cfg, response, eof)
+		if validationErr != nil {
+			return "", validationErr
 		}
-		response = strings.TrimSpace(response)
-		if response == "" {
-			response = cfg.Default
-		}
-		if cfg.Required && response == "" {
-			if errors.Is(err, io.EOF) {
-				return "", fmt.Errorf("required input missing: %w", io.EOF)
-			}
+		if !accepted {
 			continue
-		}
-		if cfg.Validator != nil {
-			if validateErr := cfg.Validator(response); validateErr != nil {
-				if _, writeErr := fmt.Fprintln(p.ios.ErrOut, validateErr); writeErr != nil {
-					return "", fmt.Errorf("write validation error: %w", writeErr)
-				}
-				if errors.Is(err, io.EOF) {
-					return "", validateErr
-				}
-				continue
-			}
 		}
 		return response, nil
 	}
+}
+
+func (p *Prompter) acceptPromptResponse(cfg PromptConfig, response string, eof bool) (bool, error) {
+	if cfg.Required && response == "" {
+		if eof {
+			return false, fmt.Errorf("required input missing: %w", io.EOF)
+		}
+		return false, nil
+	}
+	validateErr := validatePromptResponse(cfg.Validator, response)
+	if validateErr == nil {
+		return true, nil
+	}
+	if _, writeErr := fmt.Fprintln(p.ios.ErrOut, validateErr); writeErr != nil {
+		return false, fmt.Errorf("write validation error: %w", writeErr)
+	}
+	if eof {
+		return false, validateErr
+	}
+	return false, nil
+}
+
+func (p *Prompter) readPromptAttempt(
+	reader *bufio.Reader,
+	prompt,
+	defaultValue string,
+) (string, bool, error) {
+	if _, writeErr := fmt.Fprintf(p.ios.ErrOut, "%s: ", prompt); writeErr != nil {
+		return "", false, fmt.Errorf("write prompt: %w", writeErr)
+	}
+	response, readErr := reader.ReadString('\n')
+	eof := errors.Is(readErr, io.EOF)
+	if readErr != nil && (!eof || response == "") {
+		return "", eof, fmt.Errorf("failed to read input: %w", readErr)
+	}
+	response = strings.TrimSpace(response)
+	if response == "" {
+		response = defaultValue
+	}
+	return response, eof, nil
+}
+
+func validatePromptResponse(validator func(string) error, response string) error {
+	if validator == nil {
+		return nil
+	}
+	return validator(response)
 }
 
 // Confirm prompts the user for a yes/no confirmation.

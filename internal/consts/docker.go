@@ -44,8 +44,10 @@ const (
 	DefaultDockerHost = "unix://" + DockerSocketPath
 )
 
-// BannedSocketPaths lists host sockets that harnesses cannot declare.
-var BannedSocketPaths = []string{DockerSocketPath}
+// BannedSocketPaths returns host sockets that harnesses cannot declare.
+func BannedSocketPaths() []string {
+	return []string{DockerSocketPath}
+}
 
 // DockerHostEnv returns $DOCKER_HOST verbatim, or "" when unset. It is a dumb
 // getter — no scheme validation: a malformed value passes through and fails at

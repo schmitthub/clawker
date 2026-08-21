@@ -132,7 +132,7 @@ func BootstrapServicesPreStart(
 	cmdOpts CommandOpts,
 ) ([]socketbridge.BridgedSocket, error) {
 	if cmdOpts.Config == nil {
-		return nil, fmt.Errorf("bootstrapping services: config provider is nil")
+		return nil, errors.New("bootstrapping services: config provider is nil")
 	}
 	// A nil IOStreams is always a wiring bug, never a headless caller —
 	// non-interactive runs carry a non-TTY IOStreams and are filtered by
@@ -142,24 +142,13 @@ func BootstrapServicesPreStart(
 		return nil, errors.New("bootstrapping services: no IOStreams provided")
 	}
 
-	cfg, err := cmdOpts.Config()
-	if err != nil {
-		return nil, fmt.Errorf("bootstrapping services: loading config: %w", err)
+	cfg, configErr := bootstrapConfig(cmdOpts)
+	if configErr != nil {
+		return nil, configErr
 	}
-	if cfg == nil {
-		return nil, fmt.Errorf("bootstrapping services: config is nil")
-	}
-
-	security := cfg.SecurityConfig()
-
-	var log *logger.Logger
-	if cmdOpts.Logger != nil {
-		log, err = cmdOpts.Logger()
-		if err != nil {
-			return nil, fmt.Errorf("bootstrapping services: initializing logger: %w", err)
-		}
-	} else {
-		log = logger.Nop()
+	log, loggerErr := bootstrapLogger(cmdOpts)
+	if loggerErr != nil {
+		return nil, loggerErr
 	}
 	// NOTE: do NOT defer log.Close() here. cmdOpts.Logger is a Factory
 	// noun (sync.Once-cached singleton) — closing it tears down the
@@ -167,31 +156,176 @@ func BootstrapServicesPreStart(
 	// process and silently kills the audit trail. Lifecycle is owned by
 	// Factory; per-command paths must not Close.
 
-	// CP is core infrastructure — always bring it up when an agent
-	// container is starting. The firewall, future webui, and any other
-	// CP-hosted service depend on the CP being live; individual features
-	// are configurable, CP itself is not. The container-start path is
-	// the single place that bootstraps CP — all other admin commands
-	// are pure dials and fail-fast if CP is absent.
+	return bootstrapPreparedServices(ctx, container, cfg, cmdOpts, log)
+}
+
+func bootstrapPreparedServices(
+	ctx context.Context,
+	container string,
+	cfg config.Config,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) ([]socketbridge.BridgedSocket, error) {
+	// CP is core infrastructure. Every container start must start it.
+	if controlPlaneErr := ensureControlPlane(ctx, cmdOpts); controlPlaneErr != nil {
+		return nil, controlPlaneErr
+	}
+
+	client, clientErr := bootstrapDockerClient(ctx, cmdOpts)
+	if clientErr != nil {
+		return nil, clientErr
+	}
+
+	// Containers created against ID-mapped workspace views (rootless
+	// daemons) need those views mounted BEFORE Docker resolves the bind
+	// sources at start — they die at reboot, and starting over the bare
+	// mount-point directory hands the container an empty workspace.
+	if viewErr := ensureIDMappedViewsAtStart(ctx, client, container, cmdOpts.IOStreams, log); viewErr != nil {
+		return nil, fmt.Errorf("bootstrapping services: %w", viewErr)
+	}
+
+	harness := cmdOpts.Harness
+	if harness.Name == "" {
+		return nil, errors.New("bootstrapping services: runtime harness is not loaded")
+	}
+
+	bridgedSockets, authorizationErr := authorizeSocketBridges(
+		container,
+		harness,
+		cmdOpts,
+		log,
+	)
+	if authorizationErr != nil {
+		return nil, fmt.Errorf("bootstrapping services: %w", authorizationErr)
+	}
+	if injectErr := injectSocketsWaitHook(ctx, container, bridgedSockets, cfg, client, log); injectErr != nil {
+		return nil, fmt.Errorf("bootstrapping services: injecting sockets-wait script: %w", injectErr)
+	}
+
+	if serviceErr := bootstrapPreStartServices(ctx, cfg, harness, cmdOpts, log); serviceErr != nil {
+		return nil, serviceErr
+	}
+
+	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always
+	// overwrite (user script when set, no-op wrapper when unset) so the
+	// on-disk script always reflects current config — value changes and
+	// removal are both handled with no staleness. CP runs it (pre-run
+	// step) right before the CMD. Not firewall-gated; a copy failure aborts
+	// the start.
+	if injectErr := injectPreRunHook(ctx, container, harness.Name, cfg, client, log); injectErr != nil {
+		return nil, fmt.Errorf("bootstrapping services: injecting pre-run script: %w", injectErr)
+	}
+
+	return bridgedSockets, nil
+}
+
+func injectSocketsWaitHook(
+	ctx context.Context,
+	container string,
+	bridgedSockets []socketbridge.BridgedSocket,
+	cfg config.Config,
+	client *docker.Client,
+	log *logger.Logger,
+) error {
+	return InjectHookScript(ctx, InjectHookOpts{
+		ContainerID:     container,
+		Script:          socketsWaitScript(bridgedSockets, socketWaitTimeoutSeconds),
+		Shell:           "",
+		Name:            consts.HookSocketsWait,
+		Cfg:             cfg,
+		CopyToContainer: NewCopyToContainerFn(client),
+		Log:             log,
+	})
+}
+
+func injectPreRunHook(
+	ctx context.Context,
+	container string,
+	harnessName string,
+	cfg config.Config,
+	client *docker.Client,
+	log *logger.Logger,
+) error {
+	return InjectHookScript(ctx, InjectHookOpts{
+		ContainerID:     container,
+		Script:          cfg.PreRunFor(harnessName),
+		Shell:           "",
+		Name:            consts.HookPreRun,
+		Cfg:             cfg,
+		CopyToContainer: NewCopyToContainerFn(client),
+		Log:             log,
+	})
+}
+
+func bootstrapPreStartServices(
+	ctx context.Context,
+	cfg config.Config,
+	harness RuntimeHarness,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) error {
+	// Firewall is one feature hosted by the CP. Bring the stack up and
+	// sync project rules only when firewall.enable (settings.yaml) is
+	// true. Per-container FirewallEnable runs post-start because the
+	// cgroup only exists after docker start creates the init process.
+	if cfg.FirewallEnabled() {
+		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harness.Egress); fwErr != nil {
+			return fwErr
+		}
+	}
+	return ensureHostProxyRunning(cfg.SecurityConfig(), cmdOpts.HostProxy, log)
+}
+
+//nolint:ireturn // Commands use the project config seam.
+func bootstrapConfig(
+	cmdOpts CommandOpts,
+) (config.Config, error) {
+	if cmdOpts.Config == nil {
+		return nil, errors.New("bootstrapping services: config provider is nil")
+	}
+	cfg, err := cmdOpts.Config()
+	if err != nil {
+		return nil, fmt.Errorf("bootstrapping services: loading config: %w", err)
+	}
+	if cfg == nil {
+		return nil, errors.New("bootstrapping services: config is nil")
+	}
+	return cfg, nil
+}
+
+func bootstrapLogger(cmdOpts CommandOpts) (*logger.Logger, error) {
+	if cmdOpts.Logger == nil {
+		return logger.Nop(), nil
+	}
+	log, err := cmdOpts.Logger()
+	if err != nil {
+		return nil, fmt.Errorf("bootstrapping services: initializing logger: %w", err)
+	}
+	return log, nil
+}
+
+func ensureControlPlane(ctx context.Context, cmdOpts CommandOpts) error {
 	if cmdOpts.ControlPlane == nil {
-		return nil, fmt.Errorf("bootstrapping services: no control plane manager provided")
+		return errors.New("bootstrapping services: no control plane manager provided")
 	}
 	mgr, cpErr := cmdOpts.ControlPlane(ctx)
 	if cpErr != nil {
-		return nil, fmt.Errorf("bootstrapping services: %w", cpErr)
+		return fmt.Errorf("bootstrapping services: %w", cpErr)
 	}
 	startErr := mgr.Start(ctx)
-	var sos *cpmanager.CPSOSError
-	if errors.As(startErr, &sos) {
+	if sos, ok := errors.AsType[*cpmanager.CPSOSError](startErr); ok {
 		if assistErr := cpshared.AssistSOS(ctx, sos, cmdOpts.IOStreams); assistErr != nil {
-			return nil, fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", assistErr)
+			return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", assistErr)
 		}
 		startErr = mgr.Start(ctx)
 	}
 	if startErr != nil {
-		return nil, fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", startErr)
+		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", startErr)
 	}
+	return nil
+}
 
+func bootstrapDockerClient(ctx context.Context, cmdOpts CommandOpts) (*docker.Client, error) {
 	if cmdOpts.Client == nil {
 		return nil, errors.New("bootstrapping services: docker client provider is nil")
 	}
@@ -202,75 +336,7 @@ func BootstrapServicesPreStart(
 	if client == nil {
 		return nil, errors.New("bootstrapping services: docker client is nil")
 	}
-
-	// Containers created against ID-mapped workspace views (rootless
-	// daemons) need those views mounted BEFORE Docker resolves the bind
-	// sources at start — they die at reboot, and starting over the bare
-	// mount-point directory hands the container an empty workspace.
-	if err = ensureIDMappedViewsAtStart(ctx, client, container, cmdOpts.IOStreams, log); err != nil {
-		return nil, fmt.Errorf("bootstrapping services: %w", err)
-	}
-
-	harness := cmdOpts.Harness
-	if harness.Name == "" {
-		return nil, errors.New("bootstrapping services: runtime harness is not loaded")
-	}
-
-	bridgedSockets, err := authorizeSocketBridges(
-		container,
-		harness,
-		cmdOpts,
-		log,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("bootstrapping services: %w", err)
-	}
-	if err := InjectHookScript(ctx, InjectHookOpts{
-		ContainerID:     container,
-		Script:          socketsWaitScript(bridgedSockets, socketWaitTimeoutSeconds),
-		Shell:           "",
-		Name:            consts.HookSocketsWait,
-		Cfg:             cfg,
-		CopyToContainer: NewCopyToContainerFn(client),
-		Log:             log,
-	}); err != nil {
-		return nil, fmt.Errorf("bootstrapping services: injecting sockets-wait script: %w", err)
-	}
-
-	// Firewall is one feature hosted by the CP. Bring the stack up and
-	// sync project rules only when firewall.enable (settings.yaml) is
-	// true. Per-container FirewallEnable runs post-start because the
-	// cgroup only exists after docker start creates the init process.
-	if cfg.FirewallEnabled() {
-		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harness.Egress); fwErr != nil {
-			return nil, fwErr
-		}
-	}
-
-	if err = ensureHostProxyRunning(security, cmdOpts.HostProxy, log); err != nil {
-		return nil, err
-	}
-
-	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always
-	// overwrite (user script when set, no-op wrapper when unset) so the
-	// on-disk script always reflects current config — value changes and
-	// removal are both handled with no staleness. CP runs it (pre-run
-	// step) right before the CMD. Not firewall-gated; a copy failure aborts
-	// the start.
-	preRun := cfg.PreRunFor(harness.Name)
-	if err := InjectHookScript(ctx, InjectHookOpts{
-		ContainerID:     container,
-		Script:          preRun,
-		Shell:           "",
-		Name:            consts.HookPreRun,
-		Cfg:             cfg,
-		CopyToContainer: NewCopyToContainerFn(client),
-		Log:             log,
-	}); err != nil {
-		return nil, fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
-	}
-
-	return bridgedSockets, nil
+	return client, nil
 }
 
 // bringUpFirewall performs the pre-start half of firewall bootstrap: dial the
@@ -386,29 +452,15 @@ func BootstrapServicesPostStart(
 	bridgedSockets []socketbridge.BridgedSocket,
 	cmdOpts CommandOpts,
 ) error {
-	if cmdOpts.Config == nil {
-		return fmt.Errorf("bootstrapping services: config provider is nil")
+	cfg, configErr := bootstrapConfig(cmdOpts)
+	if configErr != nil {
+		return configErr
 	}
-
-	cfg, err := cmdOpts.Config()
-	if err != nil {
-		return fmt.Errorf("bootstrapping services: loading config: %w", err)
+	log, loggerErr := bootstrapLogger(cmdOpts)
+	if loggerErr != nil {
+		return loggerErr
 	}
-	if cfg == nil {
-		return fmt.Errorf("bootstrapping services: config is nil")
-	}
-
 	security := cfg.SecurityConfig()
-
-	var log *logger.Logger
-	if cmdOpts.Logger != nil {
-		log, err = cmdOpts.Logger()
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: initializing logger: %w", err)
-		}
-	} else {
-		log = logger.Nop()
-	}
 	// NOTE: do NOT defer log.Close() here — see PreStart.
 
 	// Enroll this container's cgroup into BPF container_map. Cgroup only
@@ -416,23 +468,8 @@ func BootstrapServicesPostStart(
 	// this must run post-start. CP + stack + rules came up in pre-start.
 	// Drift-guarded per-container enroll (INV-B2-016).
 	if cfg.FirewallEnabled() {
-		if cmdOpts.AdminClient == nil {
-			return fmt.Errorf("bootstrapping services: firewall is enabled but no admin client provided")
-		}
-
-		client, err := cmdOpts.AdminClient(ctx)
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
-		}
-
-		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{
-			ContainerId: container,
-		}); err != nil {
-			return fmt.Errorf("bootstrapping services: enabling firewall for container: %w", err)
-		}
-
-		if log != nil {
-			log.Debug().Str("container", container).Msg("firewall enabled in container")
+		if firewallErr := enableContainerFirewall(ctx, container, cmdOpts, log); firewallErr != nil {
+			return firewallErr
 		}
 	}
 
@@ -443,6 +480,28 @@ func BootstrapServicesPostStart(
 			return bridgeErr
 		}
 	}
+	return nil
+}
+
+func enableContainerFirewall(
+	ctx context.Context,
+	container string,
+	cmdOpts CommandOpts,
+	log *logger.Logger,
+) error {
+	if cmdOpts.AdminClient == nil {
+		return errors.New("bootstrapping services: firewall is enabled but no admin client provided")
+	}
+	client, dialErr := cmdOpts.AdminClient(ctx)
+	if dialErr != nil {
+		return fmt.Errorf("bootstrapping services: connecting to control plane: %w", dialErr)
+	}
+	if _, enableErr := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{
+		ContainerId: container,
+	}); enableErr != nil {
+		return fmt.Errorf("bootstrapping services: enabling firewall for container: %w", enableErr)
+	}
+	log.Debug().Str("container", container).Msg("firewall enabled in container")
 	return nil
 }
 

@@ -803,6 +803,9 @@ Run: `make test` clean; docs build via `npx mintlify dev` spot check.
 - `make test` passed 6,628 unit tests with 11 environment-dependent skips. The
   user ran the Mintlify preview on the host and confirmed the new docs look
   correct; Mintlify is a host-side preview gate, not a container-side command.
+- The local hook and CI use golangci-lint v2.13.0. The prior v2.12.2 pin
+  crashed when it analyzed the Go 1.26 standard library. The updated pin runs
+  the unchanged branch-scoped configuration successfully.
 
 ---
 

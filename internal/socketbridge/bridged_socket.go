@@ -16,7 +16,7 @@ type BridgedSocket struct {
 }
 
 type bridgedSocketJSON struct {
-	HostPath string `json:"host_path"`
+	HostPath string `json:"host_path"` //nolint:tagliatelle // The daemon protocol uses snake_case.
 	Target   string `json:"target"`
 	UID      int    `json:"uid"`
 	GID      int    `json:"gid"`
@@ -26,7 +26,7 @@ type bridgedSocketJSON struct {
 
 // MarshalJSON writes the flat daemon registration shape.
 func (s BridgedSocket) MarshalJSON() ([]byte, error) {
-	return json.Marshal(bridgedSocketJSON{
+	data, err := json.Marshal(bridgedSocketJSON{
 		HostPath: s.HostPath,
 		Target:   s.Target,
 		UID:      s.Identity.UID,
@@ -34,18 +34,23 @@ func (s BridgedSocket) MarshalJSON() ([]byte, error) {
 		Group:    s.Group,
 		Mode:     s.Mode,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal bridged socket: %w", err)
+	}
+	return data, nil
 }
 
 // UnmarshalJSON reads the flat daemon registration shape.
 func (s *BridgedSocket) UnmarshalJSON(data []byte) error {
 	var wire bridgedSocketJSON
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
+	unmarshalErr := json.Unmarshal(data, &wire)
+	if unmarshalErr != nil {
+		return fmt.Errorf("unmarshal bridged socket: %w", unmarshalErr)
 	}
 	*s = BridgedSocket{
 		HostPath: wire.HostPath,
 		Target:   wire.Target,
-		Identity: ListenerIdentity{UID: wire.UID, GID: wire.GID},
+		Identity: ListenerIdentity{UID: wire.UID, GID: wire.GID, Owner: "", Group: ""},
 		Group:    wire.Group,
 		Mode:     wire.Mode,
 	}
@@ -61,11 +66,13 @@ func WriteBridgedSocketsFile(path string, sockets []BridgedSocket) error {
 	if err != nil {
 		return fmt.Errorf("marshal bridged sockets: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write bridged sockets file: %w", err)
+	writeErr := os.WriteFile(path, data, 0o600)
+	if writeErr != nil {
+		return fmt.Errorf("write bridged sockets file: %w", writeErr)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("set bridged sockets file permissions: %w", err)
+	chmodErr := os.Chmod(path, 0o600)
+	if chmodErr != nil {
+		return fmt.Errorf("set bridged sockets file permissions: %w", chmodErr)
 	}
 	return nil
 }
@@ -77,8 +84,9 @@ func ReadBridgedSocketsFile(path string) ([]BridgedSocket, error) {
 		return nil, fmt.Errorf("read bridged sockets file: %w", err)
 	}
 	var sockets []BridgedSocket
-	if err := json.Unmarshal(data, &sockets); err != nil {
-		return nil, fmt.Errorf("parse bridged sockets file: %w", err)
+	unmarshalErr := json.Unmarshal(data, &sockets)
+	if unmarshalErr != nil {
+		return nil, fmt.Errorf("parse bridged sockets file: %w", unmarshalErr)
 	}
 	return sockets, nil
 }

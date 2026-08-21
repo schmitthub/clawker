@@ -430,7 +430,13 @@ func (h *Harness) Run(args ...string) *RunResult {
 		f.IOStreams.SetStdinTTY(true)
 		f.IOStreams.SetStdoutTTY(true)
 		if _, err := in.WriteString(input); err != nil {
-			return &RunResult{ExitCode: 1, Err: fmt.Errorf("harness: queue prompt input: %w", err)}
+			return &RunResult{
+				ExitCode: 1,
+				Err:      fmt.Errorf("harness: queue prompt input: %w", err),
+				Stdout:   "",
+				Stderr:   "",
+				Factory:  nil,
+			}
 		}
 	}
 

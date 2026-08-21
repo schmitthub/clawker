@@ -29,7 +29,7 @@ func TestLoadBridgedSockets(t *testing.T) {
 	want := []socketbridge.BridgedSocket{{
 		HostPath: "/host/service.sock",
 		Target:   "/run/service.sock",
-		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1001},
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1001, Owner: "", Group: ""},
 		Group:    "service",
 		Mode:     "0660",
 	}}

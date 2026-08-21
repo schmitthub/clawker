@@ -55,7 +55,7 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		SocketGrants: func() (db.SocketGrantStore, error) {
 			database, err := f.DB()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("open CLI database: %w", err)
 			}
 			return db.NewSocketGrantStore(database), nil
 		},

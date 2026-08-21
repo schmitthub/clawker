@@ -154,7 +154,11 @@ func (b *Bridge) Start(ctx context.Context) error {
 	}
 
 	// Start docker exec
-	b.cmd = exec.CommandContext(ctx, "docker", forwarderCommandArgs(b.containerID, socketsJSON)...)
+	b.cmd = exec.CommandContext( //nolint:gosec // CommandContext passes each validated Docker argument without a shell.
+		ctx,
+		"docker",
+		forwarderCommandArgs(b.containerID, socketsJSON)...,
+	)
 
 	b.stdin, err = b.cmd.StdinPipe()
 	if err != nil {
@@ -344,7 +348,7 @@ func (b *Bridge) handleOpen(msg Message) {
 		if registration == nil {
 			b.sendOpenError(streamID, err)
 		} else {
-			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+			b.sendClose(streamID)
 		}
 		return
 	}
@@ -355,14 +359,14 @@ func (b *Bridge) handleOpen(msg Message) {
 		if registration != nil {
 			b.sendOpenError(streamID, fmt.Errorf("connect to registered socket: %w", err))
 		} else {
-			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+			b.sendClose(streamID)
 		}
 		return
 	}
 	if registration != nil {
 		uid, gid, identityErr := readListenerCredentials(conn)
 		if identityErr != nil {
-			conn.Close()
+			b.closeConnection(streamID, conn)
 			err = fmt.Errorf("read registered listener identity: %w", identityErr)
 			b.log.Error().Err(err).
 				Str("event", eventBridgedSocketIdentityError).
@@ -373,7 +377,7 @@ func (b *Bridge) handleOpen(msg Message) {
 			return
 		}
 		if uid != registration.Identity.UID || gid != registration.Identity.GID {
-			conn.Close()
+			b.closeConnection(streamID, conn)
 			err = fmt.Errorf(
 				"listener identity mismatch for %s: approved uid=%d gid=%d, observed uid=%d gid=%d",
 				registration.HostPath,
@@ -428,6 +432,18 @@ func (b *Bridge) resolveOpenTarget(socketID string) (string, *BridgedSocket, err
 func (b *Bridge) sendOpenError(streamID uint32, cause error) {
 	if err := b.sendMessage(Message{Type: MsgError, StreamID: streamID, Payload: []byte(cause.Error())}); err != nil {
 		b.log.Error().Err(err).Uint32("stream", streamID).Msg("failed to send socket open error")
+	}
+}
+
+func (b *Bridge) sendClose(streamID uint32) {
+	if err := b.sendMessage(Message{Type: MsgClose, StreamID: streamID, Payload: nil}); err != nil {
+		b.log.Debug().Err(err).Uint32("stream", streamID).Msg("failed to send socket close")
+	}
+}
+
+func (b *Bridge) closeConnection(streamID uint32, connection net.Conn) {
+	if err := connection.Close(); err != nil {
+		b.log.Debug().Err(err).Uint32("stream", streamID).Msg("failed to close host socket")
 	}
 }
 
@@ -496,8 +512,8 @@ func (b *Bridge) closeStream(streamID uint32) {
 	b.streamMu.Unlock()
 
 	if ok {
-		conn.Close()
-		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		b.closeConnection(streamID, conn)
+		b.sendClose(streamID)
 		if bridged {
 			b.log.Info().
 				Str("event", eventBridgedSocketClose).
@@ -511,20 +527,22 @@ func (b *Bridge) closeStream(streamID uint32) {
 
 func readContainerSocketConfig(ctx context.Context, containerID string) ([]SocketConfig, error) {
 	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", dockerInspectEnvironmentFormat, containerID)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("inspect container environment: %w", err)
+	output, outputErr := cmd.Output()
+	if outputErr != nil {
+		return nil, fmt.Errorf("inspect container environment: %w", outputErr)
 	}
 	var environment []string
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(output))), &environment); err != nil {
-		return nil, fmt.Errorf("parse container environment: %w", err)
+	unmarshalErr := json.Unmarshal([]byte(strings.TrimSpace(string(output))), &environment)
+	if unmarshalErr != nil {
+		return nil, fmt.Errorf("parse container environment: %w", unmarshalErr)
 	}
 	prefix := consts.EnvRemoteSockets + "="
 	for _, entry := range environment {
 		if value, ok := strings.CutPrefix(entry, prefix); ok {
 			var sockets []SocketConfig
-			if err := json.Unmarshal([]byte(value), &sockets); err != nil {
-				return nil, fmt.Errorf("parse %s: %w", consts.EnvRemoteSockets, err)
+			socketsErr := json.Unmarshal([]byte(value), &sockets)
+			if socketsErr != nil {
+				return nil, fmt.Errorf("parse %s: %w", consts.EnvRemoteSockets, socketsErr)
 			}
 			return sockets, nil
 		}

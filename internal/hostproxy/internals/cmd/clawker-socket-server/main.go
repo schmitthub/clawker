@@ -25,6 +25,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,7 @@ const (
 	socketTypeBridged = "bridged"
 	envClawkerUser    = "CLAWKER_USER"
 	defaultAgentUser  = "clawker"
+	defaultSocketMode = 0o600
 )
 
 // Buffer and message size limits.
@@ -80,7 +82,7 @@ const (
 // initLogging sets up file logging alongside stderr. Returns a cleanup function
 // that closes the log file. Errors are non-fatal — logging degrades to stderr only.
 func initLogging() func() {
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot create log dir %s: %v\n", logDir, err)
 		return func() {}
 	}
@@ -92,7 +94,7 @@ func initLogging() func() {
 		_ = os.Rename(logPath, logPath+".1")
 	}
 
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot open log file %s: %v\n", logPath, err)
 		return func() {}
@@ -156,13 +158,15 @@ type privilegeOps struct {
 	setUID       func(int) error
 }
 
-var systemPrivilegeOps = privilegeOps{
-	effectiveUID: os.Geteuid,
-	lookupUser:   user.Lookup,
-	groupIDs:     func(account *user.User) ([]string, error) { return account.GroupIds() },
-	setGroups:    syscall.Setgroups,
-	setGID:       syscall.Setgid,
-	setUID:       syscall.Setuid,
+func systemPrivilegeOperations() privilegeOps {
+	return privilegeOps{
+		effectiveUID: os.Geteuid,
+		lookupUser:   user.Lookup,
+		groupIDs:     func(account *user.User) ([]string, error) { return account.GroupIds() },
+		setGroups:    syscall.Setgroups,
+		setGID:       syscall.Setgid,
+		setUID:       syscall.Setuid,
+	}
 }
 
 func dropAgentPrivileges(username string, ops privilegeOps) error {
@@ -170,22 +174,47 @@ func dropAgentPrivileges(username string, ops privilegeOps) error {
 		return nil
 	}
 
-	account, err := ops.lookupUser(username)
-	if err != nil {
-		return fmt.Errorf("lookup agent user %q: %w", username, err)
+	account, uid, gid, lookupErr := lookupPrivilegeIdentity(username, ops)
+	if lookupErr != nil {
+		return lookupErr
 	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return fmt.Errorf("parse agent user UID %q: %w", account.Uid, err)
-	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
-		return fmt.Errorf("parse agent user GID %q: %w", account.Gid, err)
+	groups, groupsErr := privilegeGroups(username, account, gid, ops)
+	if groupsErr != nil {
+		return groupsErr
 	}
 
-	rawGroups, err := ops.groupIDs(account)
-	if err != nil {
-		return fmt.Errorf("list groups for agent user %q: %w", username, err)
+	if setGroupsErr := ops.setGroups(groups); setGroupsErr != nil {
+		return fmt.Errorf("set supplementary groups for agent user %q: %w", username, setGroupsErr)
+	}
+	if setGIDErr := ops.setGID(gid); setGIDErr != nil {
+		return fmt.Errorf("set primary group for agent user %q: %w", username, setGIDErr)
+	}
+	if setUIDErr := ops.setUID(uid); setUIDErr != nil {
+		return fmt.Errorf("set UID for agent user %q: %w", username, setUIDErr)
+	}
+	return nil
+}
+
+func lookupPrivilegeIdentity(username string, ops privilegeOps) (*user.User, int, int, error) {
+	account, lookupErr := ops.lookupUser(username)
+	if lookupErr != nil {
+		return nil, 0, 0, fmt.Errorf("lookup agent user %q: %w", username, lookupErr)
+	}
+	uid, uidErr := strconv.Atoi(account.Uid)
+	if uidErr != nil {
+		return nil, 0, 0, fmt.Errorf("parse agent user UID %q: %w", account.Uid, uidErr)
+	}
+	gid, gidErr := strconv.Atoi(account.Gid)
+	if gidErr != nil {
+		return nil, 0, 0, fmt.Errorf("parse agent user GID %q: %w", account.Gid, gidErr)
+	}
+	return account, uid, gid, nil
+}
+
+func privilegeGroups(username string, account *user.User, gid int, ops privilegeOps) ([]int, error) {
+	rawGroups, groupsErr := ops.groupIDs(account)
+	if groupsErr != nil {
+		return nil, fmt.Errorf("list groups for agent user %q: %w", username, groupsErr)
 	}
 	groups := make([]int, 0, len(rawGroups)+1)
 	seen := make(map[int]struct{}, len(rawGroups)+1)
@@ -194,7 +223,7 @@ func dropAgentPrivileges(username string, ops privilegeOps) error {
 	for _, rawGroup := range rawGroups {
 		groupID, parseErr := strconv.Atoi(rawGroup)
 		if parseErr != nil {
-			return fmt.Errorf("parse group ID %q for agent user %q: %w", rawGroup, username, parseErr)
+			return nil, fmt.Errorf("parse group ID %q for agent user %q: %w", rawGroup, username, parseErr)
 		}
 		if _, exists := seen[groupID]; exists {
 			continue
@@ -203,16 +232,7 @@ func dropAgentPrivileges(username string, ops privilegeOps) error {
 		seen[groupID] = struct{}{}
 	}
 
-	if err := ops.setGroups(groups); err != nil {
-		return fmt.Errorf("set supplementary groups for agent user %q: %w", username, err)
-	}
-	if err := ops.setGID(gid); err != nil {
-		return fmt.Errorf("set primary group for agent user %q: %w", username, err)
-	}
-	if err := ops.setUID(uid); err != nil {
-		return fmt.Errorf("set UID for agent user %q: %w", username, err)
-	}
-	return nil
+	return groups, nil
 }
 
 // getTargetUserFromPath extracts the username from a path like /home/<user>/.gnupg
@@ -301,7 +321,7 @@ func run() int {
 	if agentUser == "" {
 		agentUser = defaultAgentUser
 	}
-	if err := dropAgentPrivileges(agentUser, systemPrivilegeOps); err != nil {
+	if err := dropAgentPrivileges(agentUser, systemPrivilegeOperations()); err != nil {
 		logf("[socket-forwarder] error: failed to drop privileges: %v\n", err)
 		f.sendError(0, "failed to drop privileges: "+err.Error())
 		return 1
@@ -484,7 +504,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 }
 
 func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error) {
-	permissions := bridgedSocketPermissions{gid: -1, mode: 0o600}
+	permissions := bridgedSocketPermissions{group: "", gid: -1, mode: defaultSocketMode}
 	if sock.Type == socketTypeBridged {
 		var err error
 		permissions, err = resolveBridgedSocketPermissions(sock)
@@ -516,35 +536,38 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 	}
 
 	// Create listener
-	listener, err := net.Listen("unix", sock.Path)
-	if err != nil {
-		return nil, err
+	var listenConfig net.ListenConfig
+	listener, listenErr := listenConfig.Listen(context.Background(), "unix", sock.Path)
+	if listenErr != nil {
+		return nil, fmt.Errorf("listen on socket %q: %w", sock.Path, listenErr)
 	}
 
-	if sock.Type == socketTypeBridged {
-		if err := applyResolvedBridgedSocketPermissions(sock.Path, permissions); err != nil {
-			if closeErr := listener.Close(); closeErr != nil {
-				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
-			}
-			return nil, err
+	permissionErr := applySocketPermissions(sock, permissions, uid, gid)
+	if permissionErr != nil {
+		if closeErr := listener.Close(); closeErr != nil {
+			return nil, errors.Join(permissionErr, fmt.Errorf("close failed socket listener: %w", closeErr))
 		}
-	} else {
-		// Preserve the existing SSH and GPG permission behavior.
-		if err := os.Chmod(sock.Path, 0o600); err != nil {
-			if closeErr := listener.Close(); closeErr != nil {
-				return nil, errors.Join(err, fmt.Errorf("close failed socket listener: %w", closeErr))
-			}
-			return nil, err
-		}
-		if uid >= 0 && gid >= 0 {
-			if err := os.Chown(sock.Path, uid, gid); err != nil {
-				logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
-			}
-		}
+		return nil, permissionErr
 	}
 
 	logf("[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
 	return listener, nil
+}
+
+func applySocketPermissions(sock SocketConfig, permissions bridgedSocketPermissions, uid, gid int) error {
+	if sock.Type == socketTypeBridged {
+		return applyResolvedBridgedSocketPermissions(sock.Path, permissions)
+	}
+	// Preserve the existing SSH and GPG permission behavior.
+	if chmodErr := os.Chmod(sock.Path, 0o600); chmodErr != nil {
+		return fmt.Errorf("set socket mode: %w", chmodErr)
+	}
+	if uid >= 0 && gid >= 0 {
+		if chownErr := os.Chown(sock.Path, uid, gid); chownErr != nil {
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, chownErr)
+		}
+	}
+	return nil
 }
 
 func (f *Forwarder) createSocketListeners() (map[string]net.Listener, error) {
@@ -573,7 +596,7 @@ func (f *Forwarder) createSocketListeners() (map[string]net.Listener, error) {
 }
 
 func resolveBridgedSocketPermissions(socket SocketConfig) (bridgedSocketPermissions, error) {
-	permissions := bridgedSocketPermissions{gid: -1, mode: 0o600}
+	permissions := bridgedSocketPermissions{group: "", gid: -1, mode: defaultSocketMode}
 	if socket.Group != "" {
 		group, err := user.LookupGroup(socket.Group)
 		if err != nil {
