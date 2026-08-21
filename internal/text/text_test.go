@@ -37,6 +37,30 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+func TestSanitizeSingleLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "plain text", input: "Host service", want: "Host service"},
+		{name: "CSI color and newline", input: "\x1b[31mHost service\x1b[0m\nforged", want: "Host service"},
+		{name: "OSC hyperlink", input: "\x1b]8;;https://example.com\x07Host service\x1b]8;;\x07", want: "Host service"},
+		{name: "carriage return", input: "Host service\rforged", want: "Host service"},
+		{name: "inline controls", input: "Host\t\b service", want: "Host service"},
+		{name: "Unicode direction control", input: "Host\u202e service", want: "Host service"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, SanitizeSingleLine(tt.input))
+		})
+	}
+}
+
 func TestTruncateMiddle(t *testing.T) {
 	tests := []struct {
 		name  string

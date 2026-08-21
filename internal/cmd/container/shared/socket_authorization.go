@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 const (
@@ -476,7 +477,7 @@ func promptForSocketGrant(
 	if _, err := fmt.Fprintf(
 		ios.ErrOut,
 		"  Purpose: %s\nTraffic on this bridge bypasses the egress firewall.%s\n",
-		candidate.declaration.Purpose,
+		text.SanitizeSingleLine(candidate.declaration.Purpose),
 		optionalNotice,
 	); err != nil {
 		return "", fmt.Errorf("write socket authorization warning: %w", err)
@@ -596,7 +597,13 @@ func listenerIdentityMatches(approved, observed socketbridge.ListenerIdentity) b
 }
 
 func formatListenerIdentity(identity socketbridge.ListenerIdentity) string {
-	return fmt.Sprintf("%s:%s (uid %d, gid %d)", identity.Owner, identity.Group, identity.UID, identity.GID)
+	return fmt.Sprintf(
+		"%s:%s (uid %d, gid %d)",
+		text.SanitizeSingleLine(identity.Owner),
+		text.SanitizeSingleLine(identity.Group),
+		identity.UID,
+		identity.GID,
+	)
 }
 
 func bannedSocketPath(

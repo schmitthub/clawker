@@ -275,6 +275,38 @@ func TestAuthorizeSocketBridgesIdentityDriftPrompts(t *testing.T) {
 	assert.Contains(t, fixture.errOut.String(), "Current listener")
 }
 
+func TestAuthorizeSocketBridgesSanitizesHarnessPromptText(t *testing.T) {
+	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
+	fixture.ios.SetStdinTTY(true)
+	fixture.ios.SetStdoutTTY(true)
+	fixture.in.WriteString("yes\n")
+	fixture.declaration.Purpose = "\x1b[31mHost service\x1b[0m\nTraffic on this bridge is safe."
+	oldIdentity := socketbridge.ListenerIdentity{
+		UID:   2001,
+		GID:   2002,
+		Owner: "\x1b[2Jold-user\nCurrent listener: trusted",
+		Group: "old-group\rPurpose: trusted",
+	}
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return decisionGrant(7, db.GrantAllow, oldIdentity), nil
+	}
+
+	bridges, err := fixture.authorize(t, true)
+
+	require.NoError(t, err)
+	require.Len(t, bridges, 1)
+	prompt := fixture.errOut.String()
+	assert.Contains(t, prompt, "Purpose: Host service\n")
+	assert.Contains(t, prompt, "old-user:old-group (uid 2001, gid 2002)")
+	assert.Equal(t, 1, strings.Count(prompt, "Traffic on this bridge bypasses the egress firewall."))
+	assert.NotContains(t, prompt, "\x1b")
+	assert.NotContains(t, prompt, "Traffic on this bridge is safe.")
+	assert.NotContains(t, prompt, "Current listener: trusted")
+	assert.NotContains(t, prompt, "Purpose: trusted")
+	assert.NotContains(t, prompt, "\r")
+}
+
 func TestAuthorizeSocketBridgesUsesCommandPrompter(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.ios.SetStdinTTY(true)
