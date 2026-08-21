@@ -96,8 +96,13 @@ func NewCmdBridgeServe() *cobra.Command {
 					log.Error().Err(err).Msg("failed to write PID file")
 					return err
 				}
-				defer os.Remove(pidFile)
 			}
+			defer func() {
+				cleanupErr := socketbridge.RemoveOwnedBridgeStateFiles(pidFile, socketsFile, os.Getpid())
+				if cleanupErr != nil {
+					log.Warn().Err(cleanupErr).Msg("failed to remove bridge state files")
+				}
+			}()
 
 			// Create bridge
 			bridge := socketbridge.NewBridge(containerID, gpgEnabled, sockets, log)

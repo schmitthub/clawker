@@ -74,8 +74,8 @@ func ReadMessageForTest(r *bufio.Reader) (Message, error) {
 // --- Manager accessors ---
 
 // SetBridgeForTest injects a bridge tracking entry into the Manager for testing.
-func (m *Manager) SetBridgeForTest(id string, pid int, pidFile string) {
-	m.bridges[id] = &bridgeProcess{pid: pid, pidFile: pidFile}
+func (m *Manager) SetBridgeForTest(id string, pid int, pidFile, socketsFile string) {
+	m.bridges[id] = &bridgeProcess{pid: pid, pidFile: pidFile, socketsFile: socketsFile}
 }
 
 // HasBridgeForTest returns true if the Manager is tracking a bridge for the given container.
