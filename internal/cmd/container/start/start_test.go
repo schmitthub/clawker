@@ -32,6 +32,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	socketbridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -161,10 +162,12 @@ func TestNewCmdStart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			expectedPrompter := prompter.NewPrompter(nil)
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
 					return configmocks.NewBlankConfig(), nil
 				},
+				Prompter: func() *prompter.Prompter { return expectedPrompter },
 			}
 
 			var gotOpts *StartOptions
@@ -196,6 +199,7 @@ func TestNewCmdStart(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
+			require.Same(t, expectedPrompter, gotOpts.Prompter())
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
 			require.Equal(t, tt.wantOpts.Attach, gotOpts.Attach)
 			require.Equal(t, tt.wantOpts.Interactive, gotOpts.Interactive)
@@ -379,7 +383,7 @@ CMD ["sleep", "infinity"]
 		},
 	)
 
-	database, err := db.Open(filepath.Join(env.Dirs.State, "socket-grants.db"), logger.Nop())
+	database, err := db.Open(filepath.Join(env.Dirs.State, consts.ClawkerCLIDBFile), logger.Nop())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, database.Close())
@@ -402,7 +406,7 @@ CMD ["sleep", "infinity"]
 	require.Len(t, bridge.EnsureBridgeCalls(), 1)
 	require.Len(t, bridge.EnsureBridgeCalls()[0].Opts.Sockets, 1)
 	assert.Equal(t, fallbackPath, bridge.EnsureBridgeCalls()[0].Opts.Sockets[0].HostPath)
-	grants, err := db.NewSocketGrantStore(database).ListSocketGrants()
+	grants, err := db.NewSocketGrantStore(database, logger.Nop()).ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	require.Len(t, grants, 1)
 	assert.Equal(t, fallbackPath, grants[0].HostPath)
@@ -430,7 +434,7 @@ CMD ["sleep", "infinity"]
 
 	require.ErrorIs(t, cmd.Execute(), cmdutil.SilentError)
 	assert.Contains(t, errOut.String(), alternatePath)
-	grants, err = db.NewSocketGrantStore(database).ListSocketGrants()
+	grants, err = db.NewSocketGrantStore(database, logger.Nop()).ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, grants)
 }

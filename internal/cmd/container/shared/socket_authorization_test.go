@@ -2,6 +2,7 @@ package shared_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -21,6 +22,7 @@ import (
 	dbmocks "github.com/schmitthub/clawker/internal/db/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -83,6 +85,9 @@ func newSocketAuthorizationFixture(t *testing.T, tier bundle.Tier) *socketAuthor
 			SocketGrants: func() (db.SocketGrantStore, error) {
 				return &store, nil
 			},
+			Prompter: func() *prompter.Prompter {
+				return prompter.NewPrompter(ios)
+			},
 		},
 		harness: shared.RuntimeHarness{
 			Name: "acme",
@@ -130,6 +135,7 @@ func (f *socketAuthorizationFixture) authorize(
 	f.harness.HasContainerLabel = hasHarnessLabel
 	f.harness.Sockets = []config.HarnessSocket{f.declaration}
 	return shared.AuthorizeSocketBridgesForTest(
+		t.Context(),
 		"clawker.project.agent",
 		f.harness,
 		f.opts,
@@ -164,18 +170,21 @@ func TestAuthorizeSocketBridgesApproveFlagPersistsRequiredAndOptional(t *testing
 			fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 			fixture.declaration.Optional = optional
 			fixture.opts.ApproveGrants = true
-			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-				return nil, nil //nolint:nilnil // No stored row is the planned lookup result.
+			fixture.store.LookupSocketGrantFunc = func(ctx context.Context, _, _ string) (*db.SocketGrant, error) {
+				assert.Same(t, t.Context(), ctx)
+				return nil, db.ErrGrantNotFound
 			}
 			var prunedPrincipal string
 			var prunedPaths []string
-			fixture.store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+			fixture.store.PruneHarnessSocketsFunc = func(ctx context.Context, principal string, paths []string) error {
+				assert.Same(t, t.Context(), ctx)
 				prunedPrincipal = principal
 				prunedPaths = append([]string(nil), paths...)
 				return nil
 			}
 			var granted bool
-			fixture.store.GrantSocketFunc = func(principal, harness, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+			fixture.store.GrantSocketFunc = func(ctx context.Context, principal, harness, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+				assert.Same(t, t.Context(), ctx)
 				granted = true
 				assert.Equal(t, fixture.principal, principal)
 				assert.Equal(t, "acme", harness)
@@ -199,9 +208,9 @@ func TestAuthorizeSocketBridgesApproveFlagPersistsRequiredAndOptional(t *testing
 
 func TestAuthorizeSocketBridgesNoninteractiveFailsClosedWithRemedies(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
-	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-		return nil, nil //nolint:nilnil // No stored row is the planned lookup result.
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return nil, db.ErrGrantNotFound
 	}
 
 	bridges, err := fixture.authorize(t, true)
@@ -214,8 +223,8 @@ func TestAuthorizeSocketBridgesNoninteractiveFailsClosedWithRemedies(t *testing.
 
 func TestAuthorizeSocketBridgesStoredAllowUsesCurrentIdentity(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
-	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
 		return decisionGrant(7, db.GrantAllow, fixture.identity), nil
 	}
 
@@ -228,14 +237,32 @@ func TestAuthorizeSocketBridgesStoredAllowUsesCurrentIdentity(t *testing.T) {
 	assert.Empty(t, fixture.errOut.String())
 }
 
+func TestAuthorizeSocketBridgesLookupFailureDoesNotPrompt(t *testing.T) {
+	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
+	fixture.ios.SetStdinTTY(true)
+	fixture.ios.SetStdoutTTY(true)
+	fixture.in.WriteString("yes\n")
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	lookupErr := errors.New("lookup failed")
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return nil, lookupErr
+	}
+
+	bridges, err := fixture.authorize(t, true)
+
+	assert.Empty(t, bridges)
+	require.ErrorIs(t, err, lookupErr)
+	assert.NotContains(t, fixture.errOut.String(), "Allow this socket bridge?")
+}
+
 func TestAuthorizeSocketBridgesIdentityDriftPrompts(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.ios.SetStdinTTY(true)
 	fixture.ios.SetStdoutTTY(true)
 	fixture.in.WriteString("yes\n")
 	oldIdentity := socketbridge.ListenerIdentity{UID: 2001, GID: 2002, Owner: "old-user", Group: "old-group"}
-	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
 		return decisionGrant(7, db.GrantAllow, oldIdentity), nil
 	}
 
@@ -248,14 +275,42 @@ func TestAuthorizeSocketBridgesIdentityDriftPrompts(t *testing.T) {
 	assert.Contains(t, fixture.errOut.String(), "Current listener")
 }
 
+func TestAuthorizeSocketBridgesUsesCommandPrompter(t *testing.T) {
+	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
+	fixture.ios.SetStdinTTY(true)
+	fixture.ios.SetStdoutTTY(true)
+	fixture.in.WriteString("no\n")
+	promptIO, promptIn, _, promptErrOut := iostreams.Test()
+	promptIO.SetStdinTTY(true)
+	promptIO.SetStdoutTTY(true)
+	promptIn.WriteString("yes\n")
+	prompterCalls := 0
+	fixture.opts.Prompter = func() *prompter.Prompter {
+		prompterCalls++
+		return prompter.NewPrompter(promptIO)
+	}
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return nil, db.ErrGrantNotFound
+	}
+
+	bridges, err := fixture.authorize(t, true)
+
+	require.NoError(t, err)
+	require.Len(t, bridges, 1)
+	assert.Equal(t, 1, prompterCalls)
+	assert.NotContains(t, fixture.errOut.String(), "Allow this socket bridge?")
+	assert.Contains(t, promptErrOut.String(), "Allow this socket bridge?")
+}
+
 func TestAuthorizeSocketBridgesStoredDeny(t *testing.T) {
 	for _, optional := range []bool{false, true} {
 		t.Run(map[bool]string{false: "required", true: "optional"}[optional], func(t *testing.T) {
 			fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 			fixture.declaration.Optional = optional
 			fixture.opts.ApproveGrants = true
-			fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
+			fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+			fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
 				return decisionGrant(19, db.GrantDeny, fixture.identity), nil
 			}
 
@@ -345,15 +400,15 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 			fixture.ios.SetStdinTTY(true)
 			fixture.ios.SetStdoutTTY(true)
 			fixture.in.WriteString(tt.answer)
-			fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
+			fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
 			fixture.store.LookupSocketGrantFunc = promptAnswerLookup(tt, fixture.identity)
 			granted := false
-			fixture.store.GrantSocketFunc = func(string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error {
+			fixture.store.GrantSocketFunc = func(context.Context, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error {
 				granted = true
 				return nil
 			}
 			denied := false
-			fixture.store.DenySocketFunc = func(string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error {
+			fixture.store.DenySocketFunc = func(context.Context, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error {
 				denied = true
 				return nil
 			}
@@ -368,14 +423,14 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 func promptAnswerLookup(
 	testCase promptAnswerCase,
 	identity socketbridge.ListenerIdentity,
-) func(string, string) (*db.SocketGrant, error) {
+) func(context.Context, string, string) (*db.SocketGrant, error) {
 	lookups := 0
-	return func(string, string) (*db.SocketGrant, error) {
+	return func(context.Context, string, string) (*db.SocketGrant, error) {
 		lookups++
 		if testCase.wantDeny && lookups > 1 {
 			return decisionGrant(33, db.GrantDeny, identity), nil
 		}
-		return nil, nil
+		return nil, db.ErrGrantNotFound
 	}
 }
 
@@ -418,9 +473,9 @@ func TestAuthorizeSocketBridgesInvalidPromptAnswersAskAgain(t *testing.T) {
 	fixture.ios.SetStdinTTY(true)
 	fixture.ios.SetStdoutTTY(true)
 	fixture.in.WriteString("\nmaybe\nyes\n")
-	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-		return nil, nil //nolint:nilnil // No stored row is the planned lookup result.
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return nil, db.ErrGrantNotFound
 	}
 
 	bridges, err := fixture.authorize(t, true)
@@ -463,9 +518,9 @@ func TestBannedSocketPathResolvesAliases(t *testing.T) {
 func TestAuthorizeSocketBridgesOptionalUnapprovedNoninteractivePrintsNotice(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
-	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
-	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
-		return nil, nil //nolint:nilnil // No stored row is the planned lookup result.
+	fixture.store.PruneHarnessSocketsFunc = func(context.Context, string, []string) error { return nil }
+	fixture.store.LookupSocketGrantFunc = func(context.Context, string, string) (*db.SocketGrant, error) {
+		return nil, db.ErrGrantNotFound
 	}
 
 	bridges, err := fixture.authorize(t, true)
@@ -482,7 +537,7 @@ func TestAuthorizeSocketBridgesOptionalProbeFailurePrintsNotice(t *testing.T) {
 	regularPath := filepath.Join(fixture.principal, "regular-file")
 	require.NoError(t, os.WriteFile(regularPath, nil, 0o600))
 	fixture.declaration.Source = regularPath
-	fixture.store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+	fixture.store.PruneHarnessSocketsFunc = func(_ context.Context, principal string, paths []string) error {
 		assert.Equal(t, fixture.principal, principal)
 		assert.Empty(t, paths)
 		return nil
@@ -499,7 +554,7 @@ func TestAuthorizeSocketBridgesOptionalResolutionFailurePrintsNotice(t *testing.
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
 	fixture.declaration.Source = filepath.Join(fixture.principal, "missing.sock")
-	fixture.store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+	fixture.store.PruneHarnessSocketsFunc = func(_ context.Context, principal string, paths []string) error {
 		assert.Equal(t, fixture.principal, principal)
 		assert.Empty(t, paths)
 		return nil

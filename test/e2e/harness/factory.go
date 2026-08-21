@@ -185,7 +185,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	f.DB = func() (*db.DB, error) {
 		dbOnce.Do(func() {
 			var path string
-			path, dbErr = consts.SocketGrantsDBPath()
+			path, dbErr = consts.ClawkerCLIDBPath()
 			if dbErr != nil {
 				dbErr = fmt.Errorf("harness: CLI database path: %w", dbErr)
 				return

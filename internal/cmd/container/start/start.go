@@ -22,6 +22,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
@@ -37,6 +38,7 @@ type StartOptions struct {
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
 	SocketGrants   func() (db.SocketGrantStore, error)
+	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 
 	Agent         bool // Use agent name (resolves to clawker.<project>.<agent>)
@@ -57,19 +59,14 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
-		SocketGrants: func() (db.SocketGrantStore, error) {
-			database, err := f.DB()
-			if err != nil {
-				return nil, fmt.Errorf("open CLI database: %w", err)
-			}
-			return db.NewSocketGrantStore(database), nil
-		},
-		Logger:        f.Logger,
-		Agent:         false,
-		Attach:        false,
-		Containers:    nil,
-		Interactive:   false,
-		ApproveGrants: false,
+		SocketGrants:   cmdutil.SocketGrantStore(f),
+		Prompter:       f.Prompter,
+		Logger:         f.Logger,
+		Agent:          false,
+		Attach:         false,
+		Containers:     nil,
+		Interactive:    false,
+		ApproveGrants:  false,
 	}
 
 	cmd := &cobra.Command{
@@ -181,6 +178,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 			AdminClient:   opts.AdminClient,
 			SocketBridge:  opts.SocketBridge,
 			SocketGrants:  opts.SocketGrants,
+			Prompter:      opts.Prompter,
 			Logger:        opts.Logger,
 			ApproveGrants: opts.ApproveGrants,
 			Harness:       harness,
@@ -518,6 +516,7 @@ func startContainersWithoutAttach(ctx context.Context, args startContainersOptio
 				AdminClient:   opts.AdminClient,
 				SocketBridge:  opts.SocketBridge,
 				SocketGrants:  opts.SocketGrants,
+				Prompter:      opts.Prompter,
 				Logger:        opts.Logger,
 				ApproveGrants: opts.ApproveGrants,
 				Harness:       harness,

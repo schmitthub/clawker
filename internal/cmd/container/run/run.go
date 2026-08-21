@@ -79,22 +79,16 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		ControlPlane:           f.ControlPlane,
 		AdminClient:            f.AdminClient,
 		SocketBridge:           f.SocketBridge,
-		SocketGrants: func() (db.SocketGrantStore, error) {
-			database, err := f.DB()
-			if err != nil {
-				return nil, fmt.Errorf("open CLI database: %w", err)
-			}
-			return db.NewSocketGrantStore(database), nil
-		},
-		Prompter:      f.Prompter,
-		Logger:        f.Logger,
-		BundleManager: f.BundleManager,
-		Version:       f.Version,
-		Detach:        false,
-		ApproveGrants: false,
-		AgentName:     "",
-		Project:       "",
-		flags:         nil,
+		SocketGrants:           cmdutil.SocketGrantStore(f),
+		Prompter:               f.Prompter,
+		Logger:                 f.Logger,
+		BundleManager:          f.BundleManager,
+		Version:                f.Version,
+		Detach:                 false,
+		ApproveGrants:          false,
+		AgentName:              "",
+		Project:                "",
+		flags:                  nil,
 	}
 
 	cmd := &cobra.Command{
@@ -307,6 +301,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		AdminClient:   opts.AdminClient,
 		SocketBridge:  opts.SocketBridge,
 		SocketGrants:  opts.SocketGrants,
+		Prompter:      opts.Prompter,
 		Logger:        opts.Logger,
 		ApproveGrants: opts.ApproveGrants,
 		Harness: shared.RuntimeHarness{

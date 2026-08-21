@@ -70,7 +70,7 @@
 | `hostproxy.Service` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL, PrecheckGitCredential — mirrors the `/git/credential` handler: git on PATH + a configured credential helper); mock: `hostproxytest.MockManager` |
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `Service` |
 | `db.DB` | Process-wide CLI SQLite connection. Owns only `Open`, schema migration, and `Close`; it has no table-specific methods. Factory noun `f.DB()` |
-| `db.SocketGrantStore` | Table-specific interface for stored host socket approvals and denials. Construct with `db.NewSocketGrantStore(f.DB())` at the command boundary. Mock: `db/mocks.SocketGrantStoreMock` |
+| `db.SocketGrantStore` | Table-specific interface for stored host socket approvals and denials. Commands compose it with `cmdutil.SocketGrantStore(f)`. Mock: `db/mocks.SocketGrantStoreMock` |
 | `config.HarnessSocket` | Harness manifest declaration for one required or optional host Unix socket: source, target, purpose, and optional container group/mode |
 | `socketbridge.BridgedSocket` | One approved bridge registration: host path, container target, pinned host listener uid/gid, and optional container group/mode. Its JSON form is the sockets-file contract read by the daemon |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations. `EnsureBridge` accepts approved generic sockets. `Precheck(ctx)` checks the configured SSH/GPG lanes against the exact host state they need; failures wrap `ErrGPGUnavailable`/`ErrSSHAgentUnavailable` and surface as one stderr warning per lane. Mock: `sockebridgemocks.SocketBridgeManagerMock` |

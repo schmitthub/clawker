@@ -1,8 +1,11 @@
 package db_test
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -15,14 +18,19 @@ import (
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
-func openTestStore(t *testing.T) db.SocketGrantStore { //nolint:ireturn // Tests use the documented store seam.
+func openTestDatabase(t *testing.T) *db.DB {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "grants.db"), logger.Nop())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, database.Close())
 	})
-	return db.NewSocketGrantStore(database)
+	return database
+}
+
+func openTestStore(t *testing.T) *db.SocketGrantSQLStore {
+	t.Helper()
+	return db.NewSocketGrantStore(openTestDatabase(t), nil)
 }
 
 func testDecl(purpose string) config.HarnessSocket {
@@ -44,24 +52,98 @@ func testIdentity(uid, gid int) socketbridge.ListenerIdentity {
 	}
 }
 
+func TestSocketGrantStoreHonorsCanceledContext(t *testing.T) {
+	store := openTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.ListSocketGrants(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSocketGrantStoreUsesInjectedLogger(t *testing.T) {
+	var output bytes.Buffer
+	store := db.NewSocketGrantStore(openTestDatabase(t), logger.NewWriter(&output))
+
+	err := store.GrantSocket(
+		context.Background(),
+		"/harness/acme",
+		"acme",
+		"/run/acme.sock",
+		testDecl("Acme socket."),
+		testIdentity(1, 2),
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, output.String(), `"event":"socket_grant_write"`)
+}
+
+func TestRevokeSocketReturnsCountAndLogsGrantID(t *testing.T) {
+	var output bytes.Buffer
+	store := db.NewSocketGrantStore(openTestDatabase(t), logger.NewWriter(&output))
+	require.NoError(t, store.GrantSocket(
+		t.Context(),
+		"/harness/acme",
+		"acme",
+		"/run/acme.sock",
+		testDecl("Acme socket."),
+		testIdentity(1, 2),
+	))
+	grant, err := store.LookupSocketGrant(t.Context(), "/harness/acme", "/run/acme.sock")
+	require.NoError(t, err)
+	output.Reset()
+
+	count, err := store.RevokeSocket(t.Context(), grant.ID)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	assert.Contains(t, output.String(), `"grant_id":`+strconv.FormatInt(grant.ID, 10))
+	assert.Contains(t, output.String(), `"rows":1`)
+
+	count, err = store.RevokeSocket(t.Context(), grant.ID)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+}
+
+func TestRevokeHarnessSocketsLogsHarnessPath(t *testing.T) {
+	var output bytes.Buffer
+	store := db.NewSocketGrantStore(openTestDatabase(t), logger.NewWriter(&output))
+	require.NoError(t, store.GrantSocket(
+		t.Context(),
+		"/harness/acme",
+		"acme",
+		"/run/acme.sock",
+		testDecl("Acme socket."),
+		testIdentity(1, 2),
+	))
+	output.Reset()
+
+	count, err := store.RevokeHarnessSockets(t.Context(), "/harness/acme")
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	assert.Contains(t, output.String(), `"harness_path":"/harness/acme"`)
+}
+
 func TestSocketGrantRoundTrip(t *testing.T) {
 	cases := []struct {
 		name   string
 		status string
-		write  func(db.SocketGrantStore, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error
+		write  func(context.Context, db.SocketGrantStore, string, string, string, config.HarnessSocket, socketbridge.ListenerIdentity) error
 	}{
 		{
 			name:   "allow",
 			status: db.GrantAllow,
-			write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-				return store.GrantSocket(harnessPath, harnessName, hostPath, declaration, identity)
+			write: func(ctx context.Context, store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+				return store.GrantSocket(ctx, harnessPath, harnessName, hostPath, declaration, identity)
 			},
 		},
 		{
 			name:   "deny",
 			status: db.GrantDeny,
-			write: func(store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
-				return store.DenySocket(harnessPath, harnessName, hostPath, declaration, identity)
+			write: func(ctx context.Context, store db.SocketGrantStore, harnessPath, harnessName, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+				return store.DenySocket(ctx, harnessPath, harnessName, hostPath, declaration, identity)
 			},
 		},
 	}
@@ -72,9 +154,9 @@ func TestSocketGrantRoundTrip(t *testing.T) {
 			decl := testDecl("Connects to the test daemon.")
 			identity := testIdentity(1001, 1002)
 
-			require.NoError(t, tc.write(store, "/harness/acme", "acme", "/run/acme.sock", decl, identity))
+			require.NoError(t, tc.write(t.Context(), store, "/harness/acme", "acme", "/run/acme.sock", decl, identity))
 
-			grant, err := store.LookupSocketGrant("/harness/acme", "/run/acme.sock")
+			grant, err := store.LookupSocketGrant(t.Context(), "/harness/acme", "/run/acme.sock")
 			require.NoError(t, err)
 			require.NotNil(t, grant)
 			assert.Positive(t, grant.ID)
@@ -92,9 +174,9 @@ func TestSocketGrantRoundTrip(t *testing.T) {
 func TestLookupSocketGrantMissing(t *testing.T) {
 	store := openTestStore(t)
 
-	grant, err := store.LookupSocketGrant("/harness/missing", "/run/missing.sock")
+	grant, err := store.LookupSocketGrant(t.Context(), "/harness/missing", "/run/missing.sock")
 
-	require.NoError(t, err)
+	require.ErrorIs(t, err, db.ErrGrantNotFound)
 	assert.Nil(t, grant)
 }
 
@@ -105,17 +187,31 @@ func TestSocketGrantUpsert(t *testing.T) {
 
 	require.NoError(
 		t,
-		store.GrantSocket("/harness/acme", "old-name", "/run/acme.sock", testDecl("Old purpose."), firstIdentity),
+		store.GrantSocket(
+			t.Context(),
+			"/harness/acme",
+			"old-name",
+			"/run/acme.sock",
+			testDecl("Old purpose."),
+			firstIdentity,
+		),
 	)
-	before, err := store.LookupSocketGrant("/harness/acme", "/run/acme.sock")
+	before, err := store.LookupSocketGrant(t.Context(), "/harness/acme", "/run/acme.sock")
 	require.NoError(t, err)
 	require.NotNil(t, before)
 
 	require.NoError(
 		t,
-		store.DenySocket("/harness/acme", "new-name", "/run/acme.sock", testDecl("New purpose."), secondIdentity),
+		store.DenySocket(
+			t.Context(),
+			"/harness/acme",
+			"new-name",
+			"/run/acme.sock",
+			testDecl("New purpose."),
+			secondIdentity,
+		),
 	)
-	after, err := store.LookupSocketGrant("/harness/acme", "/run/acme.sock")
+	after, err := store.LookupSocketGrant(t.Context(), "/harness/acme", "/run/acme.sock")
 	require.NoError(t, err)
 	require.NotNil(t, after)
 
@@ -128,25 +224,34 @@ func TestSocketGrantUpsert(t *testing.T) {
 
 func TestRevokeSocketDoesNotReuseID(t *testing.T) {
 	store := openTestStore(t)
-	require.NoError(t, store.GrantSocket("/harness/one", "one", "/run/one.sock", testDecl("One."), testIdentity(1, 1)))
-	first, err := store.LookupSocketGrant("/harness/one", "/run/one.sock")
+	require.NoError(
+		t,
+		store.GrantSocket(t.Context(), "/harness/one", "one", "/run/one.sock", testDecl("One."), testIdentity(1, 1)),
+	)
+	first, err := store.LookupSocketGrant(t.Context(), "/harness/one", "/run/one.sock")
 	require.NoError(t, err)
 	require.NotNil(t, first)
 
-	require.NoError(t, store.RevokeSocket(first.ID))
-	missing, err := store.LookupSocketGrant("/harness/one", "/run/one.sock")
-	require.NoError(t, err)
+	rows, revokeErr := store.RevokeSocket(t.Context(), first.ID)
+	require.NoError(t, revokeErr)
+	assert.Equal(t, int64(1), rows)
+	missing, err := store.LookupSocketGrant(t.Context(), "/harness/one", "/run/one.sock")
+	require.ErrorIs(t, err, db.ErrGrantNotFound)
 	assert.Nil(t, missing)
 
-	require.NoError(t, store.GrantSocket("/harness/two", "two", "/run/two.sock", testDecl("Two."), testIdentity(2, 2)))
-	second, err := store.LookupSocketGrant("/harness/two", "/run/two.sock")
+	require.NoError(
+		t,
+		store.GrantSocket(t.Context(), "/harness/two", "two", "/run/two.sock", testDecl("Two."), testIdentity(2, 2)),
+	)
+	second, err := store.LookupSocketGrant(t.Context(), "/harness/two", "/run/two.sock")
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	assert.Greater(t, second.ID, first.ID)
 }
 
 func TestRevokeHarnessAndAllSockets(t *testing.T) {
-	store := openTestStore(t)
+	var output bytes.Buffer
+	store := db.NewSocketGrantStore(openTestDatabase(t), logger.NewWriter(&output))
 	for _, row := range []struct {
 		harnessPath string
 		hostPath    string
@@ -157,18 +262,32 @@ func TestRevokeHarnessAndAllSockets(t *testing.T) {
 	} {
 		require.NoError(
 			t,
-			store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)),
+			store.GrantSocket(
+				t.Context(),
+				row.harnessPath,
+				"test",
+				row.hostPath,
+				testDecl(row.hostPath),
+				testIdentity(1, 1),
+			),
 		)
 	}
 
-	require.NoError(t, store.RevokeHarnessSockets("/harness/one"))
-	grants, err := store.ListSocketGrants()
+	rows, revokeErr := store.RevokeHarnessSockets(t.Context(), "/harness/one")
+	require.NoError(t, revokeErr)
+	assert.Equal(t, int64(2), rows)
+	grants, err := store.ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	require.Len(t, grants, 1)
 	assert.Equal(t, "/harness/two", grants[0].HarnessPath)
 
-	require.NoError(t, store.RevokeAllSockets())
-	grants, err = store.ListSocketGrants()
+	output.Reset()
+	rows, revokeErr = store.RevokeAllSockets(t.Context())
+	require.NoError(t, revokeErr)
+	assert.Equal(t, int64(1), rows)
+	assert.Contains(t, output.String(), `"scope":"all"`)
+	assert.Contains(t, output.String(), `"rows":1`)
+	grants, err = store.ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, grants)
 }
@@ -185,12 +304,19 @@ func TestPruneHarnessSockets(t *testing.T) {
 	} {
 		require.NoError(
 			t,
-			store.GrantSocket(row.harnessPath, "test", row.hostPath, testDecl(row.hostPath), testIdentity(1, 1)),
+			store.GrantSocket(
+				t.Context(),
+				row.harnessPath,
+				"test",
+				row.hostPath,
+				testDecl(row.hostPath),
+				testIdentity(1, 1),
+			),
 		)
 	}
 
-	require.NoError(t, store.PruneHarnessSockets("/harness/one", []string{"/run/keep.sock"}))
-	grants, err := store.ListSocketGrants()
+	require.NoError(t, store.PruneHarnessSockets(t.Context(), "/harness/one", []string{"/run/keep.sock"}))
+	grants, err := store.ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	require.Len(t, grants, 2)
 	assert.Equal(t, []string{"/run/keep.sock", "/run/other.sock"}, []string{grants[0].HostPath, grants[1].HostPath})
@@ -209,14 +335,15 @@ func TestConcurrentOpensDoNotLoseWrites(t *testing.T) {
 	start := make(chan struct{})
 	errs := make(chan error, writesPerStore*2)
 	var wg sync.WaitGroup
-	firstStore := db.NewSocketGrantStore(first)
-	secondStore := db.NewSocketGrantStore(second)
+	firstStore := db.NewSocketGrantStore(first, nil)
+	secondStore := db.NewSocketGrantStore(second, nil)
+	ctx := t.Context()
 	writeRows := func(store db.SocketGrantStore, prefix string) {
 		defer wg.Done()
 		<-start
 		for i := range writesPerStore {
 			hostPath := fmt.Sprintf("/run/%s-%d.sock", prefix, i)
-			errs <- store.GrantSocket("/harness/"+prefix, prefix, hostPath, testDecl(hostPath), testIdentity(i, i))
+			errs <- store.GrantSocket(ctx, "/harness/"+prefix, prefix, hostPath, testDecl(hostPath), testIdentity(i, i))
 		}
 	}
 
@@ -230,7 +357,7 @@ func TestConcurrentOpensDoNotLoseWrites(t *testing.T) {
 		require.NoError(t, writeErr)
 	}
 
-	grants, err := firstStore.ListSocketGrants()
+	grants, err := firstStore.ListSocketGrants(t.Context())
 	require.NoError(t, err)
 	assert.Len(t, grants, writesPerStore*2)
 }

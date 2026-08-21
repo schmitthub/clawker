@@ -23,6 +23,7 @@ Heavy command helpers have been extracted to dedicated packages:
 | `template.go` | `DefaultFuncMap`, `ExecuteTemplate` -- Go template execution for `--format TEMPLATE` output |
 | `inventory.go` | `NewInventoryListCommand`, `InventorySpec`, `InventoryOptions` -- shared read-only per-type component inventory command (`stack list`/`harness list`/`monitor extensions`): NAME/VERSION/SOURCE over `bundle.Manager.Inventory`, `!` shadow markers, bundle-sourced rows name their owning bundle |
 | `paths.go` | `ResolveHostPath` -- resolves an already-expanded absolute host path through symlinks; it does not read configuration or expand expressions |
+| `socket_grants.go` | `SocketGrantStore` -- composes a store closure from the Factory database and logger nouns |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 | `slugify.go` | `ProjectSlugify` -- normalizes raw project-name candidates into slugs safe for Docker/x509/gRPC |
 
@@ -72,7 +73,7 @@ type Factory struct {
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 - `AdminClient(ctx)` -- lazy `adminv1.AdminServiceClient` (gRPC client to the CP AdminService). Pure dial — it does NOT bootstrap the CP (CP lifecycle is owned by the explicit bootstrap verbs via `f.ControlPlane`); `adminclient.Dial` (package `controlplane/adminclient`) with mTLS + OAuth2 JWT + keepalive; the closure caches `grpc.ClientConn` and only rebuilds on `TransientFailure`/`Shutdown`. Commands call the 13 `Firewall*` RPCs directly. Mock: `api/admin/v1/mocks.AdminServiceClientMock`
 - `HttpClient()` -- lazy `*http.Client` for outbound HTTP from the CLI (first consumer: npm registry lookups during Claude Code version resolution in `bundler.ResolveLatestClaudeCodeVersion`). Tests substitute by setting `f.HttpClient = func() *http.Client { return &http.Client{Transport: stubRoundTripper{}} }` — `http.RoundTripper` is the stdlib mock seam (same shape as gh-CLI's `pkg/httpmock.Registry`). No project-defined interface; no test seam on production API.
-- `DB()` -- lazy, once-cached CLI database connection. Commands create table stores, such as `db.NewSocketGrantStore(database)`, in their `Options` closures. The Factory has no table-specific database field.
+- `DB()` -- lazy, once-cached CLI database connection. Commands use `SocketGrantStore(f)` to compose the table store closure for their Options. The Factory has no table-specific database field.
 - `BundleManager()` -- lazy bundle-model facade bound to the loaded config.
 - `Session()` -- lazy clawker session noun.
 - `ControlPlane(ctx)` -- lazy `cpmanager.Manager` (host-side CP container lifecycle noun, `controlplane/manager`, imported as `cpmanager`). Methods: `Start` (idempotent bringup; a boot the CP cannot finish alone surfaces as `*cpmanager.CPSOSError` for the caller to assist via `internal/cmd/controlplane/shared.AssistSOS`), `Stop`, `IsRunning`, `ProbeHealthz`. The wiring (`controlPlaneFunc`) resolves Docker/Config/Logger once and hands the manager concrete values — nothing lazy inside it. Used by the `clawker controlplane up/down/status` break-glass verbs, `firewall up`, and the container-start bootstrap. Mock: `cpmanagermocks.ManagerMock` (`controlplane/manager/mocks`, moq-generated)

@@ -18,11 +18,13 @@ table-specific Factory noun.
 func Open(path string, log *logger.Logger) (*DB, error)
 func (d *DB) Close() error
 
-func NewSocketGrantStore(database *DB) SocketGrantStore
+func NewSocketGrantStore(database *DB, log *logger.Logger) *SocketGrantSQLStore
 ```
 
 `SocketGrantStore` owns all socket grant operations. Consumers depend on this
-interface. Its moq-generated test double is
+interface. Each operation takes `context.Context` as its first parameter.
+Lookup reports `ErrGrantNotFound` when no row matches. Revoke operations return
+the number of deleted rows. Its moq-generated test double is
 `internal/db/mocks.SocketGrantStoreMock`.
 
 The socket grant principal is the resolved harness component directory plus the
@@ -31,13 +33,14 @@ and group ID.
 
 ## Schema
 
-The schema uses SQLite `PRAGMA user_version`. Migrations run in `Open` before
-the connection is returned. Add migrations in version order. Do not change an
-old migration after release.
+Goose applies the embedded SQL files in `migrations/` when `Open` starts. Goose
+stores versions in its `goose_db_version` table. Add migration files in version
+order. Do not change an old migration after release.
 
 The connection uses WAL mode, a busy timeout, and one open connection. This
 configuration serializes CLI writers and prevents lock failures between short
-CLI processes.
+CLI processes. The state directory has mode `0700`. The database, WAL, and
+shared-memory files have mode `0600`.
 
 ## Testing
 

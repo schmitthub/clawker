@@ -21,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
 
 func approveGrantsRestartOptions() RestartOptions {
@@ -91,10 +92,12 @@ func TestNewCmdRestart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			expectedPrompter := prompter.NewPrompter(nil)
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
 					return configmocks.NewBlankConfig(), nil
 				},
+				Prompter: func() *prompter.Prompter { return expectedPrompter },
 			}
 
 			var gotOpts *RestartOptions
@@ -124,6 +127,7 @@ func TestNewCmdRestart(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
+			require.Same(t, expectedPrompter, gotOpts.Prompter())
 			require.Equal(t, tt.wantOpts.Timeout, gotOpts.Timeout)
 			require.Equal(t, tt.wantOpts.Signal, gotOpts.Signal)
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)

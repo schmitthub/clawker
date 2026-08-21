@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -20,28 +21,28 @@ var _ db.SocketGrantStore = &SocketGrantStoreMock{}
 //
 //		// make and configure a mocked db.SocketGrantStore
 //		mockedSocketGrantStore := &SocketGrantStoreMock{
-//			DenySocketFunc: func(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+//			DenySocketFunc: func(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
 //				panic("mock out the DenySocket method")
 //			},
-//			GrantSocketFunc: func(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+//			GrantSocketFunc: func(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
 //				panic("mock out the GrantSocket method")
 //			},
-//			ListSocketGrantsFunc: func() ([]db.SocketGrant, error) {
+//			ListSocketGrantsFunc: func(ctx context.Context) ([]db.SocketGrant, error) {
 //				panic("mock out the ListSocketGrants method")
 //			},
-//			LookupSocketGrantFunc: func(harnessPath string, hostPath string) (*db.SocketGrant, error) {
+//			LookupSocketGrantFunc: func(ctx context.Context, harnessPath string, hostPath string) (*db.SocketGrant, error) {
 //				panic("mock out the LookupSocketGrant method")
 //			},
-//			PruneHarnessSocketsFunc: func(harnessPath string, declaredHostPaths []string) error {
+//			PruneHarnessSocketsFunc: func(ctx context.Context, harnessPath string, declaredHostPaths []string) error {
 //				panic("mock out the PruneHarnessSockets method")
 //			},
-//			RevokeAllSocketsFunc: func() error {
+//			RevokeAllSocketsFunc: func(ctx context.Context) (int64, error) {
 //				panic("mock out the RevokeAllSockets method")
 //			},
-//			RevokeHarnessSocketsFunc: func(harnessPath string) error {
+//			RevokeHarnessSocketsFunc: func(ctx context.Context, harnessPath string) (int64, error) {
 //				panic("mock out the RevokeHarnessSockets method")
 //			},
-//			RevokeSocketFunc: func(id int64) error {
+//			RevokeSocketFunc: func(ctx context.Context, id int64) (int64, error) {
 //				panic("mock out the RevokeSocket method")
 //			},
 //		}
@@ -52,33 +53,35 @@ var _ db.SocketGrantStore = &SocketGrantStoreMock{}
 //	}
 type SocketGrantStoreMock struct {
 	// DenySocketFunc mocks the DenySocket method.
-	DenySocketFunc func(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
+	DenySocketFunc func(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
 
 	// GrantSocketFunc mocks the GrantSocket method.
-	GrantSocketFunc func(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
+	GrantSocketFunc func(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error
 
 	// ListSocketGrantsFunc mocks the ListSocketGrants method.
-	ListSocketGrantsFunc func() ([]db.SocketGrant, error)
+	ListSocketGrantsFunc func(ctx context.Context) ([]db.SocketGrant, error)
 
 	// LookupSocketGrantFunc mocks the LookupSocketGrant method.
-	LookupSocketGrantFunc func(harnessPath string, hostPath string) (*db.SocketGrant, error)
+	LookupSocketGrantFunc func(ctx context.Context, harnessPath string, hostPath string) (*db.SocketGrant, error)
 
 	// PruneHarnessSocketsFunc mocks the PruneHarnessSockets method.
-	PruneHarnessSocketsFunc func(harnessPath string, declaredHostPaths []string) error
+	PruneHarnessSocketsFunc func(ctx context.Context, harnessPath string, declaredHostPaths []string) error
 
 	// RevokeAllSocketsFunc mocks the RevokeAllSockets method.
-	RevokeAllSocketsFunc func() error
+	RevokeAllSocketsFunc func(ctx context.Context) (int64, error)
 
 	// RevokeHarnessSocketsFunc mocks the RevokeHarnessSockets method.
-	RevokeHarnessSocketsFunc func(harnessPath string) error
+	RevokeHarnessSocketsFunc func(ctx context.Context, harnessPath string) (int64, error)
 
 	// RevokeSocketFunc mocks the RevokeSocket method.
-	RevokeSocketFunc func(id int64) error
+	RevokeSocketFunc func(ctx context.Context, id int64) (int64, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// DenySocket holds details about calls to the DenySocket method.
 		DenySocket []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// HarnessPath is the harnessPath argument value.
 			HarnessPath string
 			// HarnessName is the harnessName argument value.
@@ -92,6 +95,8 @@ type SocketGrantStoreMock struct {
 		}
 		// GrantSocket holds details about calls to the GrantSocket method.
 		GrantSocket []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// HarnessPath is the harnessPath argument value.
 			HarnessPath string
 			// HarnessName is the harnessName argument value.
@@ -105,9 +110,13 @@ type SocketGrantStoreMock struct {
 		}
 		// ListSocketGrants holds details about calls to the ListSocketGrants method.
 		ListSocketGrants []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 		}
 		// LookupSocketGrant holds details about calls to the LookupSocketGrant method.
 		LookupSocketGrant []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// HarnessPath is the harnessPath argument value.
 			HarnessPath string
 			// HostPath is the hostPath argument value.
@@ -115,6 +124,8 @@ type SocketGrantStoreMock struct {
 		}
 		// PruneHarnessSockets holds details about calls to the PruneHarnessSockets method.
 		PruneHarnessSockets []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// HarnessPath is the harnessPath argument value.
 			HarnessPath string
 			// DeclaredHostPaths is the declaredHostPaths argument value.
@@ -122,14 +133,20 @@ type SocketGrantStoreMock struct {
 		}
 		// RevokeAllSockets holds details about calls to the RevokeAllSockets method.
 		RevokeAllSockets []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 		}
 		// RevokeHarnessSockets holds details about calls to the RevokeHarnessSockets method.
 		RevokeHarnessSockets []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// HarnessPath is the harnessPath argument value.
 			HarnessPath string
 		}
 		// RevokeSocket holds details about calls to the RevokeSocket method.
 		RevokeSocket []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// ID is the id argument value.
 			ID int64
 		}
@@ -145,17 +162,19 @@ type SocketGrantStoreMock struct {
 }
 
 // DenySocket calls DenySocketFunc.
-func (mock *SocketGrantStoreMock) DenySocket(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (mock *SocketGrantStoreMock) DenySocket(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
 	if mock.DenySocketFunc == nil {
 		panic("SocketGrantStoreMock.DenySocketFunc: method is nil but SocketGrantStore.DenySocket was just called")
 	}
 	callInfo := struct {
+		Ctx         context.Context
 		HarnessPath string
 		HarnessName string
 		HostPath    string
 		Declaration config.HarnessSocket
 		Identity    socketbridge.ListenerIdentity
 	}{
+		Ctx:         ctx,
 		HarnessPath: harnessPath,
 		HarnessName: harnessName,
 		HostPath:    hostPath,
@@ -165,7 +184,7 @@ func (mock *SocketGrantStoreMock) DenySocket(harnessPath string, harnessName str
 	mock.lockDenySocket.Lock()
 	mock.calls.DenySocket = append(mock.calls.DenySocket, callInfo)
 	mock.lockDenySocket.Unlock()
-	return mock.DenySocketFunc(harnessPath, harnessName, hostPath, declaration, identity)
+	return mock.DenySocketFunc(ctx, harnessPath, harnessName, hostPath, declaration, identity)
 }
 
 // DenySocketCalls gets all the calls that were made to DenySocket.
@@ -173,6 +192,7 @@ func (mock *SocketGrantStoreMock) DenySocket(harnessPath string, harnessName str
 //
 //	len(mockedSocketGrantStore.DenySocketCalls())
 func (mock *SocketGrantStoreMock) DenySocketCalls() []struct {
+	Ctx         context.Context
 	HarnessPath string
 	HarnessName string
 	HostPath    string
@@ -180,6 +200,7 @@ func (mock *SocketGrantStoreMock) DenySocketCalls() []struct {
 	Identity    socketbridge.ListenerIdentity
 } {
 	var calls []struct {
+		Ctx         context.Context
 		HarnessPath string
 		HarnessName string
 		HostPath    string
@@ -193,17 +214,19 @@ func (mock *SocketGrantStoreMock) DenySocketCalls() []struct {
 }
 
 // GrantSocket calls GrantSocketFunc.
-func (mock *SocketGrantStoreMock) GrantSocket(harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
+func (mock *SocketGrantStoreMock) GrantSocket(ctx context.Context, harnessPath string, harnessName string, hostPath string, declaration config.HarnessSocket, identity socketbridge.ListenerIdentity) error {
 	if mock.GrantSocketFunc == nil {
 		panic("SocketGrantStoreMock.GrantSocketFunc: method is nil but SocketGrantStore.GrantSocket was just called")
 	}
 	callInfo := struct {
+		Ctx         context.Context
 		HarnessPath string
 		HarnessName string
 		HostPath    string
 		Declaration config.HarnessSocket
 		Identity    socketbridge.ListenerIdentity
 	}{
+		Ctx:         ctx,
 		HarnessPath: harnessPath,
 		HarnessName: harnessName,
 		HostPath:    hostPath,
@@ -213,7 +236,7 @@ func (mock *SocketGrantStoreMock) GrantSocket(harnessPath string, harnessName st
 	mock.lockGrantSocket.Lock()
 	mock.calls.GrantSocket = append(mock.calls.GrantSocket, callInfo)
 	mock.lockGrantSocket.Unlock()
-	return mock.GrantSocketFunc(harnessPath, harnessName, hostPath, declaration, identity)
+	return mock.GrantSocketFunc(ctx, harnessPath, harnessName, hostPath, declaration, identity)
 }
 
 // GrantSocketCalls gets all the calls that were made to GrantSocket.
@@ -221,6 +244,7 @@ func (mock *SocketGrantStoreMock) GrantSocket(harnessPath string, harnessName st
 //
 //	len(mockedSocketGrantStore.GrantSocketCalls())
 func (mock *SocketGrantStoreMock) GrantSocketCalls() []struct {
+	Ctx         context.Context
 	HarnessPath string
 	HarnessName string
 	HostPath    string
@@ -228,6 +252,7 @@ func (mock *SocketGrantStoreMock) GrantSocketCalls() []struct {
 	Identity    socketbridge.ListenerIdentity
 } {
 	var calls []struct {
+		Ctx         context.Context
 		HarnessPath string
 		HarnessName string
 		HostPath    string
@@ -241,16 +266,19 @@ func (mock *SocketGrantStoreMock) GrantSocketCalls() []struct {
 }
 
 // ListSocketGrants calls ListSocketGrantsFunc.
-func (mock *SocketGrantStoreMock) ListSocketGrants() ([]db.SocketGrant, error) {
+func (mock *SocketGrantStoreMock) ListSocketGrants(ctx context.Context) ([]db.SocketGrant, error) {
 	if mock.ListSocketGrantsFunc == nil {
 		panic("SocketGrantStoreMock.ListSocketGrantsFunc: method is nil but SocketGrantStore.ListSocketGrants was just called")
 	}
 	callInfo := struct {
-	}{}
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
 	mock.lockListSocketGrants.Lock()
 	mock.calls.ListSocketGrants = append(mock.calls.ListSocketGrants, callInfo)
 	mock.lockListSocketGrants.Unlock()
-	return mock.ListSocketGrantsFunc()
+	return mock.ListSocketGrantsFunc(ctx)
 }
 
 // ListSocketGrantsCalls gets all the calls that were made to ListSocketGrants.
@@ -258,8 +286,10 @@ func (mock *SocketGrantStoreMock) ListSocketGrants() ([]db.SocketGrant, error) {
 //
 //	len(mockedSocketGrantStore.ListSocketGrantsCalls())
 func (mock *SocketGrantStoreMock) ListSocketGrantsCalls() []struct {
+	Ctx context.Context
 } {
 	var calls []struct {
+		Ctx context.Context
 	}
 	mock.lockListSocketGrants.RLock()
 	calls = mock.calls.ListSocketGrants
@@ -268,21 +298,23 @@ func (mock *SocketGrantStoreMock) ListSocketGrantsCalls() []struct {
 }
 
 // LookupSocketGrant calls LookupSocketGrantFunc.
-func (mock *SocketGrantStoreMock) LookupSocketGrant(harnessPath string, hostPath string) (*db.SocketGrant, error) {
+func (mock *SocketGrantStoreMock) LookupSocketGrant(ctx context.Context, harnessPath string, hostPath string) (*db.SocketGrant, error) {
 	if mock.LookupSocketGrantFunc == nil {
 		panic("SocketGrantStoreMock.LookupSocketGrantFunc: method is nil but SocketGrantStore.LookupSocketGrant was just called")
 	}
 	callInfo := struct {
+		Ctx         context.Context
 		HarnessPath string
 		HostPath    string
 	}{
+		Ctx:         ctx,
 		HarnessPath: harnessPath,
 		HostPath:    hostPath,
 	}
 	mock.lockLookupSocketGrant.Lock()
 	mock.calls.LookupSocketGrant = append(mock.calls.LookupSocketGrant, callInfo)
 	mock.lockLookupSocketGrant.Unlock()
-	return mock.LookupSocketGrantFunc(harnessPath, hostPath)
+	return mock.LookupSocketGrantFunc(ctx, harnessPath, hostPath)
 }
 
 // LookupSocketGrantCalls gets all the calls that were made to LookupSocketGrant.
@@ -290,10 +322,12 @@ func (mock *SocketGrantStoreMock) LookupSocketGrant(harnessPath string, hostPath
 //
 //	len(mockedSocketGrantStore.LookupSocketGrantCalls())
 func (mock *SocketGrantStoreMock) LookupSocketGrantCalls() []struct {
+	Ctx         context.Context
 	HarnessPath string
 	HostPath    string
 } {
 	var calls []struct {
+		Ctx         context.Context
 		HarnessPath string
 		HostPath    string
 	}
@@ -304,21 +338,23 @@ func (mock *SocketGrantStoreMock) LookupSocketGrantCalls() []struct {
 }
 
 // PruneHarnessSockets calls PruneHarnessSocketsFunc.
-func (mock *SocketGrantStoreMock) PruneHarnessSockets(harnessPath string, declaredHostPaths []string) error {
+func (mock *SocketGrantStoreMock) PruneHarnessSockets(ctx context.Context, harnessPath string, declaredHostPaths []string) error {
 	if mock.PruneHarnessSocketsFunc == nil {
 		panic("SocketGrantStoreMock.PruneHarnessSocketsFunc: method is nil but SocketGrantStore.PruneHarnessSockets was just called")
 	}
 	callInfo := struct {
+		Ctx               context.Context
 		HarnessPath       string
 		DeclaredHostPaths []string
 	}{
+		Ctx:               ctx,
 		HarnessPath:       harnessPath,
 		DeclaredHostPaths: declaredHostPaths,
 	}
 	mock.lockPruneHarnessSockets.Lock()
 	mock.calls.PruneHarnessSockets = append(mock.calls.PruneHarnessSockets, callInfo)
 	mock.lockPruneHarnessSockets.Unlock()
-	return mock.PruneHarnessSocketsFunc(harnessPath, declaredHostPaths)
+	return mock.PruneHarnessSocketsFunc(ctx, harnessPath, declaredHostPaths)
 }
 
 // PruneHarnessSocketsCalls gets all the calls that were made to PruneHarnessSockets.
@@ -326,10 +362,12 @@ func (mock *SocketGrantStoreMock) PruneHarnessSockets(harnessPath string, declar
 //
 //	len(mockedSocketGrantStore.PruneHarnessSocketsCalls())
 func (mock *SocketGrantStoreMock) PruneHarnessSocketsCalls() []struct {
+	Ctx               context.Context
 	HarnessPath       string
 	DeclaredHostPaths []string
 } {
 	var calls []struct {
+		Ctx               context.Context
 		HarnessPath       string
 		DeclaredHostPaths []string
 	}
@@ -340,16 +378,19 @@ func (mock *SocketGrantStoreMock) PruneHarnessSocketsCalls() []struct {
 }
 
 // RevokeAllSockets calls RevokeAllSocketsFunc.
-func (mock *SocketGrantStoreMock) RevokeAllSockets() error {
+func (mock *SocketGrantStoreMock) RevokeAllSockets(ctx context.Context) (int64, error) {
 	if mock.RevokeAllSocketsFunc == nil {
 		panic("SocketGrantStoreMock.RevokeAllSocketsFunc: method is nil but SocketGrantStore.RevokeAllSockets was just called")
 	}
 	callInfo := struct {
-	}{}
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
 	mock.lockRevokeAllSockets.Lock()
 	mock.calls.RevokeAllSockets = append(mock.calls.RevokeAllSockets, callInfo)
 	mock.lockRevokeAllSockets.Unlock()
-	return mock.RevokeAllSocketsFunc()
+	return mock.RevokeAllSocketsFunc(ctx)
 }
 
 // RevokeAllSocketsCalls gets all the calls that were made to RevokeAllSockets.
@@ -357,8 +398,10 @@ func (mock *SocketGrantStoreMock) RevokeAllSockets() error {
 //
 //	len(mockedSocketGrantStore.RevokeAllSocketsCalls())
 func (mock *SocketGrantStoreMock) RevokeAllSocketsCalls() []struct {
+	Ctx context.Context
 } {
 	var calls []struct {
+		Ctx context.Context
 	}
 	mock.lockRevokeAllSockets.RLock()
 	calls = mock.calls.RevokeAllSockets
@@ -367,19 +410,21 @@ func (mock *SocketGrantStoreMock) RevokeAllSocketsCalls() []struct {
 }
 
 // RevokeHarnessSockets calls RevokeHarnessSocketsFunc.
-func (mock *SocketGrantStoreMock) RevokeHarnessSockets(harnessPath string) error {
+func (mock *SocketGrantStoreMock) RevokeHarnessSockets(ctx context.Context, harnessPath string) (int64, error) {
 	if mock.RevokeHarnessSocketsFunc == nil {
 		panic("SocketGrantStoreMock.RevokeHarnessSocketsFunc: method is nil but SocketGrantStore.RevokeHarnessSockets was just called")
 	}
 	callInfo := struct {
+		Ctx         context.Context
 		HarnessPath string
 	}{
+		Ctx:         ctx,
 		HarnessPath: harnessPath,
 	}
 	mock.lockRevokeHarnessSockets.Lock()
 	mock.calls.RevokeHarnessSockets = append(mock.calls.RevokeHarnessSockets, callInfo)
 	mock.lockRevokeHarnessSockets.Unlock()
-	return mock.RevokeHarnessSocketsFunc(harnessPath)
+	return mock.RevokeHarnessSocketsFunc(ctx, harnessPath)
 }
 
 // RevokeHarnessSocketsCalls gets all the calls that were made to RevokeHarnessSockets.
@@ -387,9 +432,11 @@ func (mock *SocketGrantStoreMock) RevokeHarnessSockets(harnessPath string) error
 //
 //	len(mockedSocketGrantStore.RevokeHarnessSocketsCalls())
 func (mock *SocketGrantStoreMock) RevokeHarnessSocketsCalls() []struct {
+	Ctx         context.Context
 	HarnessPath string
 } {
 	var calls []struct {
+		Ctx         context.Context
 		HarnessPath string
 	}
 	mock.lockRevokeHarnessSockets.RLock()
@@ -399,19 +446,21 @@ func (mock *SocketGrantStoreMock) RevokeHarnessSocketsCalls() []struct {
 }
 
 // RevokeSocket calls RevokeSocketFunc.
-func (mock *SocketGrantStoreMock) RevokeSocket(id int64) error {
+func (mock *SocketGrantStoreMock) RevokeSocket(ctx context.Context, id int64) (int64, error) {
 	if mock.RevokeSocketFunc == nil {
 		panic("SocketGrantStoreMock.RevokeSocketFunc: method is nil but SocketGrantStore.RevokeSocket was just called")
 	}
 	callInfo := struct {
-		ID int64
+		Ctx context.Context
+		ID  int64
 	}{
-		ID: id,
+		Ctx: ctx,
+		ID:  id,
 	}
 	mock.lockRevokeSocket.Lock()
 	mock.calls.RevokeSocket = append(mock.calls.RevokeSocket, callInfo)
 	mock.lockRevokeSocket.Unlock()
-	return mock.RevokeSocketFunc(id)
+	return mock.RevokeSocketFunc(ctx, id)
 }
 
 // RevokeSocketCalls gets all the calls that were made to RevokeSocket.
@@ -419,10 +468,12 @@ func (mock *SocketGrantStoreMock) RevokeSocket(id int64) error {
 //
 //	len(mockedSocketGrantStore.RevokeSocketCalls())
 func (mock *SocketGrantStoreMock) RevokeSocketCalls() []struct {
-	ID int64
+	Ctx context.Context
+	ID  int64
 } {
 	var calls []struct {
-		ID int64
+		Ctx context.Context
+		ID  int64
 	}
 	mock.lockRevokeSocket.RLock()
 	calls = mock.calls.RevokeSocket

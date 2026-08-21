@@ -2,6 +2,7 @@ package sockets_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,6 +90,7 @@ func (f *commandFixture) execute(t *testing.T, args ...string) error {
 		t.Fatalf("unknown test command %q", args[0])
 	}
 	command.SetArgs(args[1:])
+	command.SetContext(t.Context())
 	command.SetIn(f.in)
 	command.SetOut(f.out)
 	command.SetErr(f.errOut)
@@ -119,10 +121,13 @@ func TestListCommand(t *testing.T) {
 		grant(2, "other", "/harness/other", "/run/other.sock", db.GrantDeny, "Connect to Other."),
 	}
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return grants, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return grants, nil }
 	fixture := newCommandFixture(store, nil)
 
 	require.NoError(t, fixture.execute(t, "list"))
+	calls := store.ListSocketGrantsCalls()
+	require.Len(t, calls, 1)
+	assert.Same(t, t.Context(), calls[0].Ctx)
 
 	output := fixture.out.String()
 	assert.Contains(t, output, "ID")
@@ -140,7 +145,7 @@ func TestListCommandJSON(t *testing.T) {
 		grant(1, "acme", "/harness/acme", "/run/acme.sock", db.GrantAllow, "Connect to Acme."),
 	}
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return grants, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return grants, nil }
 	fixture := newCommandFixture(store, nil)
 
 	require.NoError(t, fixture.execute(t, "list", "--json"))
@@ -156,7 +161,7 @@ func TestListCommandJSON(t *testing.T) {
 func TestInfoCommand(t *testing.T) {
 	row := grant(7, "acme", "/harness/acme", "/run/acme.sock", db.GrantDeny, "Connect to Acme.")
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return []db.SocketGrant{row}, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return []db.SocketGrant{row}, nil }
 	fixture := newCommandFixture(store, nil)
 
 	require.NoError(t, fixture.execute(t, "info", "7"))
@@ -175,7 +180,7 @@ func TestInfoCommand(t *testing.T) {
 func TestInfoCommandJSON(t *testing.T) {
 	row := grant(7, "acme", "/harness/acme", "/run/acme.sock", db.GrantDeny, "Connect to Acme.")
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return []db.SocketGrant{row}, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return []db.SocketGrant{row}, nil }
 	fixture := newCommandFixture(store, nil)
 
 	require.NoError(t, fixture.execute(t, "info", "7", "--json"))
@@ -191,9 +196,9 @@ func TestInfoCommandJSON(t *testing.T) {
 func TestRevokeCommandByID(t *testing.T) {
 	var revokedID int64
 	store := newSocketGrantStoreMock()
-	store.RevokeSocketFunc = func(id int64) error {
+	store.RevokeSocketFunc = func(_ context.Context, id int64) (int64, error) {
 		revokedID = id
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, nil)
 
@@ -201,6 +206,18 @@ func TestRevokeCommandByID(t *testing.T) {
 
 	assert.Equal(t, int64(42), revokedID)
 	assert.Contains(t, fixture.out.String(), "Running containers keep their socket bridges until they stop or restart.")
+}
+
+func TestRevokeCommandByIDRejectsMissingGrant(t *testing.T) {
+	store := newSocketGrantStoreMock()
+	store.RevokeSocketFunc = func(context.Context, int64) (int64, error) {
+		return 0, nil
+	}
+	fixture := newCommandFixture(store, nil)
+
+	err := fixture.execute(t, "revoke", "42")
+
+	require.EqualError(t, err, "no grant 42")
 }
 
 func TestRevokeCommandByHarness(t *testing.T) {
@@ -211,10 +228,10 @@ func TestRevokeCommandByHarness(t *testing.T) {
 	}
 	var revoked []string
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
-	store.RevokeHarnessSocketsFunc = func(principal string) error {
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return rows, nil }
+	store.RevokeHarnessSocketsFunc = func(_ context.Context, principal string) (int64, error) {
 		revoked = append(revoked, principal)
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, nil)
 
@@ -223,12 +240,24 @@ func TestRevokeCommandByHarness(t *testing.T) {
 	assert.ElementsMatch(t, []string{"/harness/acme-a", "/harness/acme-b"}, revoked)
 }
 
+func TestRevokeCommandByHarnessRejectsMissingHarness(t *testing.T) {
+	store := newSocketGrantStoreMock()
+	store.ListSocketGrantsFunc = func(context.Context) ([]db.SocketGrant, error) {
+		return nil, nil
+	}
+	fixture := newCommandFixture(store, nil)
+
+	err := fixture.execute(t, "revoke", "--harness", "missing")
+
+	require.EqualError(t, err, `no grants for harness "missing"`)
+}
+
 func TestRevokeCommandAllConfirms(t *testing.T) {
 	called := false
 	store := newSocketGrantStoreMock()
-	store.RevokeAllSocketsFunc = func() error {
+	store.RevokeAllSocketsFunc = func(_ context.Context) (int64, error) {
 		called = true
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, nil)
 	fixture.ios.SetStdinTTY(true)
@@ -259,15 +288,15 @@ func TestPruneCommandResolvedAndUnresolvedHarnesses(t *testing.T) {
 	var prunedPaths []string
 	var revokedPrincipal string
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
-	store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return rows, nil }
+	store.PruneHarnessSocketsFunc = func(_ context.Context, principal string, paths []string) error {
 		prunedPrincipal = principal
 		prunedPaths = append([]string(nil), paths...)
 		return nil
 	}
-	store.RevokeHarnessSocketsFunc = func(principal string) error {
+	store.RevokeHarnessSocketsFunc = func(_ context.Context, principal string) (int64, error) {
 		revokedPrincipal = principal
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, cfg)
 
@@ -292,15 +321,15 @@ func TestPruneCommandKeepsHarnessWithUnsetSocketDeclaration(t *testing.T) {
 	var prunedPaths []string
 	var revokedPrincipal string
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
-	store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return rows, nil }
+	store.PruneHarnessSocketsFunc = func(_ context.Context, principal string, paths []string) error {
 		prunedPrincipal = principal
 		prunedPaths = append([]string(nil), paths...)
 		return nil
 	}
-	store.RevokeHarnessSocketsFunc = func(principal string) error {
+	store.RevokeHarnessSocketsFunc = func(_ context.Context, principal string) (int64, error) {
 		revokedPrincipal = principal
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, cfg)
 
@@ -314,9 +343,9 @@ func TestPruneCommandKeepsHarnessWithUnsetSocketDeclaration(t *testing.T) {
 func TestPruneCommandAll(t *testing.T) {
 	called := false
 	store := newSocketGrantStoreMock()
-	store.RevokeAllSocketsFunc = func() error {
+	store.RevokeAllSocketsFunc = func(_ context.Context) (int64, error) {
 		called = true
-		return nil
+		return 1, nil
 	}
 	fixture := newCommandFixture(store, nil)
 
@@ -331,10 +360,12 @@ func TestGrantIDCompletions(t *testing.T) {
 		grant(2, "other", "/harness/other", "/run/other.sock", db.GrantDeny, "Other purpose."),
 	}
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return rows, nil }
 	fixture := newCommandFixture(store, nil)
 
-	completions, directive := sockets.GrantIDCompletionsForTest(fixture.socketGrants)(nil, []string{"2"}, "")
+	command := new(cobra.Command)
+	command.SetContext(t.Context())
+	completions, directive := sockets.GrantIDCompletionsForTest(fixture.socketGrants)(command, []string{"2"}, "")
 
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 	assert.Equal(t, []cobra.Completion{
@@ -344,12 +375,14 @@ func TestGrantIDCompletions(t *testing.T) {
 
 func TestGrantIDCompletionsDegradeOnStoreError(t *testing.T) {
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) {
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) {
 		return nil, errors.New("database unavailable")
 	}
 	fixture := newCommandFixture(store, nil)
 
-	completions, directive := sockets.GrantIDCompletionsForTest(fixture.socketGrants)(nil, nil, "")
+	command := new(cobra.Command)
+	command.SetContext(t.Context())
+	completions, directive := sockets.GrantIDCompletionsForTest(fixture.socketGrants)(command, nil, "")
 
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 	assert.Empty(t, completions)
@@ -362,10 +395,12 @@ func TestHarnessFlagCompletions(t *testing.T) {
 		grant(3, "other", "/harness/other", "/run/other.sock", db.GrantAllow, "Other."),
 	}
 	store := newSocketGrantStoreMock()
-	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
+	store.ListSocketGrantsFunc = func(_ context.Context) ([]db.SocketGrant, error) { return rows, nil }
 	fixture := newCommandFixture(store, nil)
 
-	completions, directive := sockets.HarnessCompletionsForTest(fixture.socketGrants)(nil, nil, "")
+	command := new(cobra.Command)
+	command.SetContext(t.Context())
+	completions, directive := sockets.HarnessCompletionsForTest(fixture.socketGrants)(command, nil, "")
 
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 	assert.Equal(t, []cobra.Completion{"acme", "other"}, completions)

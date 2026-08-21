@@ -23,10 +23,10 @@ The Factory has one process-wide database noun:
 DB func() (*db.DB, error)
 ```
 
-`NewCmdSockets` composes a `socketGrantStoreFunc` over `f.DB()` and
-`db.NewSocketGrantStore`. Each Options struct keeps this store-interface
-closure. Tests inject `db/mocks.SocketGrantStoreMock`; they do not construct the
-production Factory.
+Each command uses `cmdutil.SocketGrantStore(f)` to compose a
+`socketGrantStoreFunc` over `f.DB()` and `f.Logger()`. Each Options struct keeps
+this store-interface closure. Tests inject `db/mocks.SocketGrantStoreMock`;
+they do not construct the production Factory.
 
 Do not add `SocketGrants` or another table-specific noun to the Factory.
 
@@ -37,7 +37,8 @@ and quiet output. Human output uses `tui.Table` or `tui.RenderDetails`.
 
 Revocation and pruning tell the user that a running bridge stays active until
 the container stops or restarts. `--all` requires confirmation unless `--yes`
-is set. A non-interactive call must use `--yes`.
+is set. A non-interactive call must use `--yes`. A revoke by ID or harness name
+returns an error when no stored grant matches.
 
 ## Testing
 

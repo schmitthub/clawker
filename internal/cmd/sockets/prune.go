@@ -29,7 +29,7 @@ func newCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 	opts := &PruneOptions{
 		IOStreams:    f.IOStreams,
 		Config:       f.Config,
-		SocketGrants: socketGrants(f),
+		SocketGrants: cmdutil.SocketGrantStore(f),
 		Prompter:     f.Prompter,
 		All:          false,
 		Yes:          false,
@@ -58,7 +58,7 @@ resolved manifest no longer declares. With --all, remove every socket grant.`,
 	return cmd
 }
 
-func pruneRun(_ context.Context, opts *PruneOptions) error {
+func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	confirmed, confirmErr := confirmSocketPrune(opts)
 	if confirmErr != nil {
 		return confirmErr
@@ -74,7 +74,7 @@ func pruneRun(_ context.Context, opts *PruneOptions) error {
 		return fmt.Errorf("prune socket grants: open database: %w", storeErr)
 	}
 	if opts.All {
-		if revokeErr := store.RevokeAllSockets(); revokeErr != nil {
+		if _, revokeErr := store.RevokeAllSockets(ctx); revokeErr != nil {
 			return fmt.Errorf("prune all socket grants: %w", revokeErr)
 		}
 		return printPruneResult(opts)
@@ -83,17 +83,22 @@ func pruneRun(_ context.Context, opts *PruneOptions) error {
 	if configErr != nil {
 		return fmt.Errorf("prune socket grants: load config: %w", configErr)
 	}
-	grants, listErr := store.ListSocketGrants()
+	grants, listErr := store.ListSocketGrants(ctx)
 	if listErr != nil {
 		return fmt.Errorf("prune socket grants: list grants: %w", listErr)
 	}
-	if pruneErr := pruneHarnessGroups(cfg, store, grants); pruneErr != nil {
+	if pruneErr := pruneHarnessGroups(ctx, cfg, store, grants); pruneErr != nil {
 		return pruneErr
 	}
 	return printPruneResult(opts)
 }
 
-func pruneHarnessGroups(cfg config.Config, store db.SocketGrantStore, grants []db.SocketGrant) error {
+func pruneHarnessGroups(
+	ctx context.Context,
+	cfg config.Config,
+	store db.SocketGrantStore,
+	grants []db.SocketGrant,
+) error {
 	groups := groupGrantsByPrincipal(grants)
 	principals := make([]string, 0, len(groups))
 	for principal := range groups {
@@ -102,17 +107,22 @@ func pruneHarnessGroups(cfg config.Config, store db.SocketGrantStore, grants []d
 	sort.Strings(principals)
 	for _, principal := range principals {
 		rows := groups[principal]
-		if pruneErr := pruneHarnessGroup(cfg, store, principal, rows[0].HarnessName); pruneErr != nil {
+		if pruneErr := pruneHarnessGroup(ctx, cfg, store, principal, rows[0].HarnessName); pruneErr != nil {
 			return pruneErr
 		}
 	}
 	return nil
 }
 
-func pruneHarnessGroup(cfg config.Config, store db.SocketGrantStore, principal, harnessName string) error {
+func pruneHarnessGroup(
+	ctx context.Context,
+	cfg config.Config,
+	store db.SocketGrantStore,
+	principal, harnessName string,
+) error {
 	harness, loadErr := bundler.LoadHarness(cfg, harnessName)
 	if loadErr != nil {
-		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+		if _, revokeErr := store.RevokeHarnessSockets(ctx, principal); revokeErr != nil {
 			return fmt.Errorf("prune unresolved harness %q: %w", harnessName, revokeErr)
 		}
 		return nil
@@ -122,13 +132,13 @@ func pruneHarnessGroup(cfg config.Config, store db.SocketGrantStore, principal, 
 		return fmt.Errorf("prune harness %q: resolve principal: %w", harnessName, resolveErr)
 	}
 	if currentPrincipal != principal {
-		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+		if _, revokeErr := store.RevokeHarnessSockets(ctx, principal); revokeErr != nil {
 			return fmt.Errorf("prune replaced harness %q: %w", harnessName, revokeErr)
 		}
 		return nil
 	}
 	declared := resolveDeclaredSocketPaths(harness.Manifest.Sockets)
-	if pruneErr := store.PruneHarnessSockets(principal, declared); pruneErr != nil {
+	if pruneErr := store.PruneHarnessSockets(ctx, principal, declared); pruneErr != nil {
 		return fmt.Errorf("prune harness %q grants: %w", harnessName, pruneErr)
 	}
 	return nil

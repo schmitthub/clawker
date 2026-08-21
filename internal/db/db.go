@@ -4,15 +4,23 @@ package db
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// migrationsFS contains the Goose SQL migration files.
+//
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // DB is the CLI database connection.
 type DB struct {
@@ -39,57 +47,72 @@ func Open(path string, log *logger.Logger) (*DB, error) {
 	}
 	connection.SetMaxOpenConns(1)
 	database := &DB{sql: connection, log: log}
-	migrateErr := database.migrate(context.Background())
+	migrateErr := applyMigrations(context.Background(), database.sql, database.log)
 	if migrateErr != nil {
-		if closeErr := connection.Close(); closeErr != nil {
-			return nil, errors.Join(
-				fmt.Errorf("db: migrate schema: %w", migrateErr),
-				fmt.Errorf("db: close after migration failure: %w", closeErr),
-			)
-		}
-		return nil, fmt.Errorf("db: migrate schema: %w", migrateErr)
+		return nil, closeAfterOpenFailure(connection, fmt.Errorf("db: migrate schema: %w", migrateErr))
+	}
+	if permissionErr := tightenSQLiteFiles(path); permissionErr != nil {
+		return nil, closeAfterOpenFailure(connection, permissionErr)
 	}
 	return database, nil
 }
 
-func (d *DB) migrate(ctx context.Context) error {
-	var version int
-	readErr := d.sql.QueryRowContext(ctx, readSchemaVersionSQL).Scan(&version)
-	if readErr != nil {
-		return fmt.Errorf("read schema version: %w", readErr)
-	}
-	switch version {
-	case 0:
-		return d.migrateFromZero(ctx)
-	case schemaVersion:
-		return nil
-	default:
-		return fmt.Errorf("unsupported schema version %d", version)
-	}
-}
-
-func (d *DB) migrateFromZero(ctx context.Context) error {
-	transaction, beginErr := d.sql.BeginTx(ctx, nil)
-	if beginErr != nil {
-		return fmt.Errorf("begin schema migration: %w", beginErr)
-	}
-	if _, createErr := transaction.ExecContext(ctx, createGrantsTableSQL); createErr != nil {
-		return rollbackMigration(transaction, fmt.Errorf("create grants table: %w", createErr))
-	}
-	if _, versionErr := transaction.ExecContext(ctx, setSchemaVersionSQL); versionErr != nil {
-		return rollbackMigration(transaction, fmt.Errorf("set schema version: %w", versionErr))
-	}
-	if commitErr := transaction.Commit(); commitErr != nil {
-		return fmt.Errorf("commit schema migration: %w", commitErr)
+func tightenSQLiteFiles(path string) error {
+	for _, suffix := range []string{"", sqliteWALSuffix, sqliteSHMSuffix} {
+		if chmodErr := os.Chmod(path+suffix, sqliteFileMode); chmodErr != nil {
+			if suffix != "" && errors.Is(chmodErr, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("db: tighten SQLite file %s: %w", path+suffix, chmodErr)
+		}
 	}
 	return nil
 }
 
-func rollbackMigration(transaction *sql.Tx, migrationErr error) error {
-	if rollbackErr := transaction.Rollback(); rollbackErr != nil {
-		return errors.Join(migrationErr, fmt.Errorf("roll back migration: %w", rollbackErr))
+func closeAfterOpenFailure(connection *sql.DB, openErr error) error {
+	if closeErr := connection.Close(); closeErr != nil {
+		return errors.Join(openErr, fmt.Errorf("db: close after open failure: %w", closeErr))
 	}
-	return migrationErr
+	return openErr
+}
+
+func applyMigrations(ctx context.Context, connection *sql.DB, log *logger.Logger) error {
+	subFS, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("create migration file system: %w", err)
+	}
+	provider, err := goose.NewProvider(
+		goose.DialectSQLite3,
+		connection,
+		subFS,
+		goose.WithLogger(&gooseLoggerAdapter{log: log}),
+	)
+	if err != nil {
+		return fmt.Errorf("create Goose provider: %w", err)
+	}
+	results, upErr := provider.Up(ctx)
+	for _, result := range results {
+		log.Info().
+			Int64("version", result.Source.Version).
+			Str("file", result.Source.Path).
+			Msg("db: migration applied")
+	}
+	if upErr != nil {
+		return fmt.Errorf("apply Goose migrations: %w", upErr)
+	}
+	return nil
+}
+
+type gooseLoggerAdapter struct {
+	log *logger.Logger
+}
+
+func (g *gooseLoggerAdapter) Printf(format string, values ...any) {
+	g.log.Info().Msgf("goose: "+format, values...)
+}
+
+func (g *gooseLoggerAdapter) Fatalf(format string, values ...any) {
+	g.log.Error().Msgf("goose: "+format, values...)
 }
 
 // Close closes the CLI database connection.

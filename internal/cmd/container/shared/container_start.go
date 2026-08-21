@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/workspace"
 )
@@ -40,6 +41,7 @@ type CommandOpts struct {
 	AdminClient   func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge  func() socketbridge.SocketBridgeManager
 	SocketGrants  func() (db.SocketGrantStore, error)
+	Prompter      func() *prompter.Prompter
 	Logger        func() (*logger.Logger, error)
 	ApproveGrants bool
 	Harness       RuntimeHarness
@@ -190,6 +192,7 @@ func bootstrapPreparedServices(
 	}
 
 	bridgedSockets, authorizationErr := authorizeSocketBridges(
+		ctx,
 		container,
 		harness,
 		cmdOpts,

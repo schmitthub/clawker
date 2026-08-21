@@ -14,13 +14,13 @@ import (
 type socketGrantStoreFunc func() (db.SocketGrantStore, error)
 
 func grantIDCompletions(socketGrants socketGrantStoreFunc) cobra.CompletionFunc {
-	return func(_ *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, args []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		store, err := socketGrants()
 		if err != nil {
 			cobra.CompDebugln("clawker sockets completion: open grant store: "+err.Error(), false)
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		grants, err := store.ListSocketGrants()
+		grants, err := store.ListSocketGrants(cmd.Context())
 		if err != nil {
 			cobra.CompDebugln("clawker sockets completion: list grants: "+err.Error(), false)
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -48,13 +48,13 @@ func grantIDCompletions(socketGrants socketGrantStoreFunc) cobra.CompletionFunc 
 }
 
 func harnessCompletions(socketGrants socketGrantStoreFunc) cobra.CompletionFunc {
-	return func(_ *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		store, err := socketGrants()
 		if err != nil {
 			cobra.CompDebugln("clawker sockets completion: open grant store: "+err.Error(), false)
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		grants, err := store.ListSocketGrants()
+		grants, err := store.ListSocketGrants(cmd.Context())
 		if err != nil {
 			cobra.CompDebugln("clawker sockets completion: list grants: "+err.Error(), false)
 			return nil, cobra.ShellCompDirectiveNoFileComp

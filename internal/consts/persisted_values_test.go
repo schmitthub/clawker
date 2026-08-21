@@ -21,6 +21,7 @@ func TestPersistedValueTripwires(t *testing.T) {
 		"ContainerCP (CN pin baked into existing agent images)": {ContainerCP, "clawker-controlplane"},
 		"RegistryFile (existing project registries on disk)":    {RegistryFile, "registry.yaml"},
 		"ControlPlaneDBFile (existing agent trust tables)":      {ControlPlaneDBFile, "controlplane.db"},
+		"ClawkerCLIDBFile (CLI tables)":                         {ClawkerCLIDBFile, "clawker-cli.db"},
 		"EnvConfigDir (set in user shell profiles)":             {EnvConfigDir, "CLAWKER_CONFIG_DIR"},
 		"EnvDataDir (set in user shell profiles)":               {EnvDataDir, "CLAWKER_DATA_DIR"},
 		"EnvStateDir (set in user shell profiles)":              {EnvStateDir, "CLAWKER_STATE_DIR"},

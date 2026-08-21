@@ -32,7 +32,7 @@ func newCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 	opts := &ListOptions{
 		IOStreams:    f.IOStreams,
 		TUI:          f.TUI,
-		SocketGrants: socketGrants(f),
+		SocketGrants: cmdutil.SocketGrantStore(f),
 		Format:       nil,
 	}
 	cmd := &cobra.Command{ //nolint:exhaustruct_v5 // Cobra command fields use their documented zero-value defaults.
@@ -56,12 +56,12 @@ func newCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 	return cmd
 }
 
-func listRun(_ context.Context, opts *ListOptions) error {
+func listRun(ctx context.Context, opts *ListOptions) error {
 	store, err := opts.SocketGrants()
 	if err != nil {
 		return fmt.Errorf("list socket grants: open database: %w", err)
 	}
-	grants, err := store.ListSocketGrants()
+	grants, err := store.ListSocketGrants(ctx)
 	if err != nil {
 		return fmt.Errorf("list socket grants: %w", err)
 	}

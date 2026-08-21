@@ -368,7 +368,9 @@ func TestNewCmdRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			expectedPrompter := prompter.NewPrompter(nil)
+			f := new(cmdutil.Factory)
+			f.Prompter = func() *prompter.Prompter { return expectedPrompter }
 
 			var gotOpts *RunOptions
 			cmd := NewCmdRun(f, func(_ context.Context, opts *RunOptions) error {
@@ -407,6 +409,7 @@ func TestNewCmdRun(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
+			require.Same(t, expectedPrompter, gotOpts.Prompter())
 
 			require.Equal(t, tt.wantAgent, gotOpts.ContainerCreateOptions.Agent)
 			require.Equal(t, tt.wantName, gotOpts.ContainerCreateOptions.Name)

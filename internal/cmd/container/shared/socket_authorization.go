@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -34,6 +35,7 @@ type socketCandidate struct {
 }
 
 func authorizeSocketBridges(
+	ctx context.Context,
 	container string,
 	harness RuntimeHarness,
 	cmdOpts CommandOpts,
@@ -73,10 +75,10 @@ func authorizeSocketBridges(
 	if storeErr != nil {
 		return nil, storeErr
 	}
-	if pruneErr := store.PruneHarnessSockets(principal, candidateHostPaths(candidates)); pruneErr != nil {
+	if pruneErr := store.PruneHarnessSockets(ctx, principal, candidateHostPaths(candidates)); pruneErr != nil {
 		return nil, fmt.Errorf("authorize socket bridges: prune harness grants: %w", pruneErr)
 	}
-	return authorizeSocketCandidates(harness.Name, principal, candidates, cmdOpts, store, log)
+	return authorizeSocketCandidates(ctx, harness.Name, principal, candidates, cmdOpts, store, log)
 }
 
 //nolint:ireturn // Authorization uses the store seam.
@@ -105,6 +107,7 @@ func candidateHostPaths(candidates []socketCandidate) []string {
 }
 
 func authorizeSocketCandidates(
+	ctx context.Context,
 	harnessName,
 	principal string,
 	candidates []socketCandidate,
@@ -115,6 +118,7 @@ func authorizeSocketCandidates(
 	bridges := make([]socketbridge.BridgedSocket, 0, len(candidates))
 	for _, candidate := range candidates {
 		bridge, active, authorizeErr := authorizeSocketCandidate(
+			ctx,
 			harnessName,
 			principal,
 			candidate,
@@ -203,6 +207,7 @@ func bannedSocketError(path string) error {
 }
 
 func authorizeSocketCandidate(
+	ctx context.Context,
 	harnessName string,
 	principal string,
 	candidate socketCandidate,
@@ -210,25 +215,32 @@ func authorizeSocketCandidate(
 	store db.SocketGrantStore,
 	log *logger.Logger,
 ) (socketbridge.BridgedSocket, bool, error) {
-	grant, lookupErr := store.LookupSocketGrant(principal, candidate.hostPath)
-	if lookupErr != nil {
+	grant, lookupErr := store.LookupSocketGrant(ctx, principal, candidate.hostPath)
+	if lookupErr != nil && !errors.Is(lookupErr, db.ErrGrantNotFound) {
 		return emptyBridgedSocket(), false, fmt.Errorf(
 			"lookup socket grant for %s: %w",
 			candidate.hostPath,
 			lookupErr,
 		)
 	}
-	if grant != nil {
-		return authorizeStoredSocketGrant(harnessName, principal, candidate, grant, cmdOpts, store, log)
+	if lookupErr == nil && grant == nil {
+		return emptyBridgedSocket(), false, fmt.Errorf(
+			"lookup socket grant for %s returned no grant",
+			candidate.hostPath,
+		)
+	}
+	if lookupErr == nil {
+		return authorizeStoredSocketGrant(ctx, harnessName, principal, candidate, grant, cmdOpts, store, log)
 	}
 
 	if cmdOpts.ApproveGrants {
-		return approveSocketCandidate(harnessName, principal, candidate, cmdOpts, store)
+		return approveSocketCandidate(ctx, harnessName, principal, candidate, cmdOpts, store)
 	}
-	return authorizePromptedSocket(harnessName, principal, candidate, nil, cmdOpts, store, log)
+	return authorizePromptedSocket(ctx, harnessName, principal, candidate, nil, cmdOpts, store, log)
 }
 
 func authorizeStoredSocketGrant(
+	ctx context.Context,
 	harnessName,
 	principal string,
 	candidate socketCandidate,
@@ -242,7 +254,7 @@ func authorizeStoredSocketGrant(
 		if listenerIdentityMatches(grant.Identity, candidate.identity) {
 			return candidate.bridge(), true, nil
 		}
-		return authorizePromptedSocket(harnessName, principal, candidate, grant, cmdOpts, store, log)
+		return authorizePromptedSocket(ctx, harnessName, principal, candidate, grant, cmdOpts, store, log)
 	case db.GrantDeny:
 		if candidate.declaration.Optional {
 			logStoredSocketDenial(log, harnessName, candidate, grant.ID)
@@ -269,6 +281,7 @@ func logStoredSocketDenial(log *logger.Logger, harnessName string, candidate soc
 }
 
 func approveSocketCandidate(
+	ctx context.Context,
 	harnessName,
 	principal string,
 	candidate socketCandidate,
@@ -276,6 +289,7 @@ func approveSocketCandidate(
 	store db.SocketGrantStore,
 ) (socketbridge.BridgedSocket, bool, error) {
 	grantErr := store.GrantSocket(
+		ctx,
 		principal,
 		harnessName,
 		candidate.hostPath,
@@ -296,6 +310,7 @@ func approveSocketCandidate(
 }
 
 func authorizePromptedSocket(
+	ctx context.Context,
 	harnessName string,
 	principal string,
 	candidate socketCandidate,
@@ -314,13 +329,13 @@ func authorizePromptedSocket(
 	}
 	switch answer {
 	case socketAnswerAlways:
-		return approveSocketCandidate(harnessName, principal, candidate, cmdOpts, store)
+		return approveSocketCandidate(ctx, harnessName, principal, candidate, cmdOpts, store)
 	case socketAnswerYes:
 		return candidate.bridge(), true, nil
 	case socketAnswerNo:
 		return declineSocketCandidate(harnessName, candidate, cmdOpts, log)
 	case socketAnswerNever:
-		return denySocketCandidate(harnessName, principal, candidate, previous, store)
+		return denySocketCandidate(ctx, harnessName, principal, candidate, previous, store)
 	default:
 		return emptyBridgedSocket(), false, fmt.Errorf("unknown socket authorization answer %q", answer)
 	}
@@ -374,6 +389,7 @@ func declineSocketCandidate(
 }
 
 func denySocketCandidate(
+	ctx context.Context,
 	harnessName,
 	principal string,
 	candidate socketCandidate,
@@ -381,6 +397,7 @@ func denySocketCandidate(
 	store db.SocketGrantStore,
 ) (socketbridge.BridgedSocket, bool, error) {
 	denyErr := store.DenySocket(
+		ctx,
 		principal,
 		harnessName,
 		candidate.hostPath,
@@ -400,7 +417,7 @@ func denySocketCandidate(
 	if previous != nil {
 		return emptyBridgedSocket(), false, storedDenyError(candidate.hostPath, previous.ID)
 	}
-	stored, lookupErr := store.LookupSocketGrant(principal, candidate.hostPath)
+	stored, lookupErr := store.LookupSocketGrant(ctx, principal, candidate.hostPath)
 	if lookupErr != nil {
 		return emptyBridgedSocket(), false, fmt.Errorf(
 			"read stored socket denial for %s: %w",
@@ -464,7 +481,10 @@ func promptForSocketGrant(
 	); err != nil {
 		return "", fmt.Errorf("write socket authorization warning: %w", err)
 	}
-	prompt := prompter.NewPrompter(ios)
+	prompt, providerErr := socketGrantPrompter(cmdOpts)
+	if providerErr != nil {
+		return "", providerErr
+	}
 	answer, err := prompt.StringUntilValid(prompter.PromptConfig{
 		Message:  "Allow this socket bridge? [a]lways / [y]es / [n]o / ne[v]er",
 		Default:  "",
@@ -480,6 +500,17 @@ func promptForSocketGrant(
 		return "", fmt.Errorf("read socket authorization answer: %w", err)
 	}
 	return normalizeSocketAnswer(answer), nil
+}
+
+func socketGrantPrompter(cmdOpts CommandOpts) (*prompter.Prompter, error) {
+	if cmdOpts.Prompter == nil {
+		return nil, errors.New("read socket authorization answer: prompter provider is nil")
+	}
+	prompt := cmdOpts.Prompter()
+	if prompt == nil {
+		return nil, errors.New("read socket authorization answer: prompter is nil")
+	}
+	return prompt, nil
 }
 
 func normalizeSocketAnswer(answer string) string {

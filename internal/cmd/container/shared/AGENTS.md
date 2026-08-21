@@ -163,12 +163,14 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 | `ControlPlane` | `func(ctx) (cpmanager.Manager, error)` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
-| `Harness` | `RuntimeHarness` | Harness name, provenance, expanded socket declarations, egress floor, and label state loaded by the command |
+| `SocketGrants` | `func() (db.SocketGrantStore, error)` | Socket grant store provider |
+| `Prompter` | `func() *prompter.Prompter` | Interactive prompt provider |
+| `Harness` | `RuntimeHarness` | Harness name, provenance, socket declarations, egress floor, and label state loaded by the command |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
 | `AgentName` | `string` | Short agent name (set on new-container starts; empty on restart) |
 | `Project` | `string` | Project slug for composite identity |
 
-Nil providers safely skipped (debug logged). Required: `Config`, `IOStreams`, and a loaded `RuntimeHarness`. Command run functions call `LoadContainerHarness` once per existing container and create a `RuntimeHarness` literal from the returned `bundler.Bundle`. The `run` command reuses the bundle returned by `CreateContainer`. Pre-start authorization and firewall composition do not read the harness again.
+Nil providers safely skipped (debug logged). Required: `Config`, `IOStreams`, and a loaded `RuntimeHarness`. Socket approval also requires `Prompter`; command constructors copy it from the Factory noun. Command run functions call `LoadContainerHarness` once per existing container and create a `RuntimeHarness` literal from the returned `bundler.Bundle`. The `run` command reuses the bundle returned by `CreateContainer`. Pre-start authorization and firewall composition do not read the harness again.
 
 **Functions**:
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + ID-mapped view re-establishment (`ensureIDMappedViewsAtStart` — containers stamped with `consts.LabelIDMapRoots` get their workspace views re-proven before Docker resolves bind sources; see "ID-mapped workspace views") + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.

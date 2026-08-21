@@ -97,7 +97,7 @@ func dbFunc(f *cmdutil.Factory) func() (*db.DB, error) {
 	return func() (*db.DB, error) {
 		once.Do(func() {
 			var path string
-			path, err = consts.SocketGrantsDBPath()
+			path, err = consts.ClawkerCLIDBPath()
 			if err != nil {
 				err = fmt.Errorf("CLI database: get path: %w", err)
 				return

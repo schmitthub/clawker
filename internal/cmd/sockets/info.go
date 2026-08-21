@@ -43,7 +43,7 @@ func newCmdInfo(f *cmdutil.Factory, runF func(context.Context, *InfoOptions) err
 	opts := &InfoOptions{
 		IOStreams:    f.IOStreams,
 		TUI:          f.TUI,
-		SocketGrants: socketGrants(f),
+		SocketGrants: cmdutil.SocketGrantStore(f),
 		Format:       nil,
 		ID:           0,
 	}
@@ -73,12 +73,12 @@ func newCmdInfo(f *cmdutil.Factory, runF func(context.Context, *InfoOptions) err
 	return cmd
 }
 
-func infoRun(_ context.Context, opts *InfoOptions) error {
+func infoRun(ctx context.Context, opts *InfoOptions) error {
 	store, err := opts.SocketGrants()
 	if err != nil {
 		return fmt.Errorf("get socket grant %d: open database: %w", opts.ID, err)
 	}
-	grants, err := store.ListSocketGrants()
+	grants, err := store.ListSocketGrants(ctx)
 	if err != nil {
 		return fmt.Errorf("get socket grant %d: %w", opts.ID, err)
 	}

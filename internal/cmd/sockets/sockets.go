@@ -2,12 +2,9 @@
 package sockets
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/db"
 )
 
 // NewCmdSockets creates the socket grant management command group.
@@ -27,14 +24,4 @@ container start; this command does not add grants.`,
 		newCmdPrune(f, nil),
 	)
 	return cmd
-}
-
-func socketGrants(f *cmdutil.Factory) socketGrantStoreFunc {
-	return func() (db.SocketGrantStore, error) {
-		database, err := f.DB()
-		if err != nil {
-			return nil, fmt.Errorf("open CLI database: %w", err)
-		}
-		return db.NewSocketGrantStore(database), nil
-	}
 }

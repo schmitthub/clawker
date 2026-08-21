@@ -29,7 +29,7 @@ type RevokeOptions struct {
 func newCmdRevoke(f *cmdutil.Factory, runF func(context.Context, *RevokeOptions) error) *cobra.Command {
 	opts := &RevokeOptions{
 		IOStreams:    f.IOStreams,
-		SocketGrants: socketGrants(f),
+		SocketGrants: cmdutil.SocketGrantStore(f),
 		Prompter:     f.Prompter,
 		ID:           0,
 		Harness:      "",
@@ -98,37 +98,51 @@ func validateRevokeSelectors(args []string, opts *RevokeOptions) error {
 	return nil
 }
 
-func revokeRun(_ context.Context, opts *RevokeOptions) error {
+func revokeRun(ctx context.Context, opts *RevokeOptions) error {
 	store, storeErr := opts.SocketGrants()
 	if storeErr != nil {
 		return fmt.Errorf("revoke socket grants: open database: %w", storeErr)
 	}
 	if opts.ID != 0 {
-		if revokeErr := store.RevokeSocket(opts.ID); revokeErr != nil {
+		rows, revokeErr := store.RevokeSocket(ctx, opts.ID)
+		if revokeErr != nil {
 			return fmt.Errorf("revoke socket grant %d: %w", opts.ID, revokeErr)
+		}
+		if rows == 0 {
+			return fmt.Errorf("no grant %d", opts.ID)
 		}
 		return printRevokeResult(opts)
 	}
 	if opts.Harness != "" {
-		return revokeHarnessGrants(opts, store)
+		return revokeHarnessGrants(ctx, opts, store)
 	}
-	return revokeAllGrants(opts, store)
+	return revokeAllGrants(ctx, opts, store)
 }
 
-func revokeHarnessGrants(opts *RevokeOptions, store db.SocketGrantStore) error {
-	grants, listErr := store.ListSocketGrants()
+func revokeHarnessGrants(ctx context.Context, opts *RevokeOptions, store db.SocketGrantStore) error {
+	grants, listErr := store.ListSocketGrants(ctx)
 	if listErr != nil {
 		return fmt.Errorf("list grants for harness %q: %w", opts.Harness, listErr)
 	}
-	for _, principal := range distinctHarnessPrincipals(grants, opts.Harness) {
-		if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
+	principals := distinctHarnessPrincipals(grants, opts.Harness)
+	if len(principals) == 0 {
+		return fmt.Errorf("no grants for harness %q", opts.Harness)
+	}
+	var revoked int64
+	for _, principal := range principals {
+		rows, revokeErr := store.RevokeHarnessSockets(ctx, principal)
+		if revokeErr != nil {
 			return fmt.Errorf("revoke socket grants for harness %q: %w", opts.Harness, revokeErr)
 		}
+		revoked += rows
+	}
+	if revoked == 0 {
+		return fmt.Errorf("no grants for harness %q", opts.Harness)
 	}
 	return printRevokeResult(opts)
 }
 
-func revokeAllGrants(opts *RevokeOptions, store db.SocketGrantStore) error {
+func revokeAllGrants(ctx context.Context, opts *RevokeOptions, store db.SocketGrantStore) error {
 	confirmed, confirmErr := confirmAllRevoke(opts)
 	if confirmErr != nil {
 		return confirmErr
@@ -139,7 +153,7 @@ func revokeAllGrants(opts *RevokeOptions, store db.SocketGrantStore) error {
 		}
 		return nil
 	}
-	if revokeErr := store.RevokeAllSockets(); revokeErr != nil {
+	if _, revokeErr := store.RevokeAllSockets(ctx); revokeErr != nil {
 		return fmt.Errorf("revoke all socket grants: %w", revokeErr)
 	}
 	return printRevokeResult(opts)

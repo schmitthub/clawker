@@ -1,18 +1,21 @@
 package shared
 
 import (
+	"context"
+
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 // AuthorizeSocketBridgesForTest exposes socket authorization to external tests.
 func AuthorizeSocketBridgesForTest(
+	ctx context.Context,
 	container string,
 	harness RuntimeHarness,
 	cmdOpts CommandOpts,
 	log *logger.Logger,
 ) ([]socketbridge.BridgedSocket, error) {
-	return authorizeSocketBridges(container, harness, cmdOpts, log)
+	return authorizeSocketBridges(ctx, container, harness, cmdOpts, log)
 }
 
 // FormatListenerIdentityForTest exposes listener display formatting.

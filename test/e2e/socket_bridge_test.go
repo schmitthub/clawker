@@ -127,7 +127,7 @@ func TestSocketCreateDefersApproval(t *testing.T) {
 	pidPath, err := consts.BridgePIDFilePath(containerName)
 	require.NoError(t, err)
 	assert.NoFileExists(t, pidPath)
-	assert.NoFileExists(t, filepath.Join(fixture.setup.Dirs.State, consts.SocketGrantsDBFile))
+	assert.NoFileExists(t, filepath.Join(fixture.setup.Dirs.State, consts.ClawkerCLIDBFile))
 
 	start := fixture.startContainer("create-agent")
 	require.Error(t, start.Err)
@@ -291,7 +291,7 @@ func TestSocketLooseShadowNeedsGrantButFloorDoesNotUseDB(t *testing.T) {
 		)
 		require.NoError(t, fixture.createContainer("floor-agent").Err)
 		require.NoError(t, os.RemoveAll(fixture.harnessDir))
-		dbPath := filepath.Join(fixture.setup.Dirs.State, consts.SocketGrantsDBFile)
+		dbPath := filepath.Join(fixture.setup.Dirs.State, consts.ClawkerCLIDBFile)
 		assert.NoFileExists(t, dbPath)
 
 		start := fixture.startContainer("floor-agent")
@@ -370,7 +370,7 @@ func TestSocketBannedResolvedPathFailsBeforePrompt(t *testing.T) {
 		socketTestHarnessTemplate,
 	)
 	require.NoError(t, fixture.createContainer("banned-agent").Err)
-	dbPath := filepath.Join(fixture.setup.Dirs.State, consts.SocketGrantsDBFile)
+	dbPath := filepath.Join(fixture.setup.Dirs.State, consts.ClawkerCLIDBFile)
 	fixture.h.QueuePromptInput("always\n")
 
 	start := fixture.startContainer("banned-agent")

@@ -313,9 +313,8 @@ const (
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
 	CLIStateFile = "update-state.yaml"
-	// SocketGrantsDBFile is the CLI-owned socket grant database in the state
-	// directory.
-	SocketGrantsDBFile = "socket-grants.db"
+	// ClawkerCLIDBFile is the CLI-owned database in the state directory.
+	ClawkerCLIDBFile = "clawker-cli.db"
 )
 
 // SysFSBPFPath is the kernel's canonical BPF filesystem mount point. It is
@@ -901,6 +900,22 @@ func ensureDir(dir string) (string, error) {
 	return dir, nil
 }
 
+const privateDirectoryMode os.FileMode = 0o700
+
+func ensurePrivateDir(dir string) (string, error) {
+	return ensureDirWithMode(dir, privateDirectoryMode)
+}
+
+func ensureDirWithMode(dir string, mode os.FileMode) (string, error) {
+	if err := os.MkdirAll(dir, mode); err != nil {
+		return "", fmt.Errorf("creating private dir %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		return "", fmt.Errorf("tightening private dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
 // absConfigFilePath returns the absolute path <ConfigDir()>/<fileName>.
 // The config directory is NOT created by this helper — callers that need
 // the directory to exist should write through SettingsFilePath/
@@ -1333,14 +1348,14 @@ func ReadyFilePath() (string, error) {
 	return filepath.Join(dir, ReadyFile), nil
 }
 
-// SocketGrantsDBPath ensures the state directory and returns the socket grant
-// database path.
-func SocketGrantsDBPath() (string, error) {
-	dir, err := ensureDir(StateDir())
+// ClawkerCLIDBPath ensures the state directory and returns the CLI database
+// path.
+func ClawkerCLIDBPath() (string, error) {
+	dir, err := ensurePrivateDir(StateDir())
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, SocketGrantsDBFile), nil
+	return filepath.Join(dir, ClawkerCLIDBFile), nil
 }
 
 // AuditLogPath ensures <StateDir>/audit and returns the audit log file path.
