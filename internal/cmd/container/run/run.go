@@ -3,6 +3,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -281,6 +282,14 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	opts.AgentName = o.result.AgentName
 	opts.Project = projectName
+	if o.result.Harness == nil {
+		//nolint:contextcheck,wrapcheck // reap is cleanup after cancellation and returns the composed start error
+		return shared.ReapFailedStart(
+			client,
+			o.result.ContainerID,
+			errors.New("created container has no loaded harness"),
+		)
+	}
 
 	// Bootstrap host services (CP ensure, host proxy, firewall init/rules)
 	// under a spinner BEFORE attach. Doing it here — in cooked mode, before
@@ -300,8 +309,15 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		SocketGrants:  opts.SocketGrants,
 		Logger:        opts.Logger,
 		ApproveGrants: opts.ApproveGrants,
-		AgentName:     opts.AgentName,
-		Project:       opts.Project,
+		Harness: shared.RuntimeHarness{
+			Name:              o.result.Harness.Name,
+			Provenance:        o.result.Harness.Provenance,
+			Sockets:           o.result.Harness.Manifest.Sockets,
+			Egress:            o.result.Harness.Manifest.Egress,
+			HasContainerLabel: true,
+		},
+		AgentName: opts.AgentName,
+		Project:   opts.Project,
 	}
 	var bridgedSockets []socketbridge.BridgedSocket
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {

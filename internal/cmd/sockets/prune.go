@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -101,17 +100,16 @@ func pruneHarnessGroups(cfg config.Config, store db.SocketGrantStore, grants []d
 		principals = append(principals, principal)
 	}
 	sort.Strings(principals)
-	resolver := bundle.NewResolver(cfg)
 	for _, principal := range principals {
 		rows := groups[principal]
-		component, err := resolver.Resolve(bundle.ComponentHarness, rows[0].HarnessName)
+		harness, err := bundler.LoadHarness(cfg, rows[0].HarnessName)
 		if err != nil {
 			if revokeErr := store.RevokeHarnessSockets(principal); revokeErr != nil {
 				return fmt.Errorf("prune unresolved harness %q: %w", rows[0].HarnessName, revokeErr)
 			}
 			continue
 		}
-		currentPrincipal, err := cmdutil.ResolveHostPath(component.Provenance.Dir)
+		currentPrincipal, err := cmdutil.ResolveHostPath(harness.Provenance.Dir)
 		if err != nil {
 			return fmt.Errorf("prune harness %q: resolve principal: %w", rows[0].HarnessName, err)
 		}
@@ -120,10 +118,6 @@ func pruneHarnessGroups(cfg config.Config, store db.SocketGrantStore, grants []d
 				return fmt.Errorf("prune replaced harness %q: %w", rows[0].HarnessName, revokeErr)
 			}
 			continue
-		}
-		harness, err := bundler.LoadBundle(rows[0].HarnessName, component.FS)
-		if err != nil {
-			return fmt.Errorf("prune harness %q: load manifest: %w", rows[0].HarnessName, err)
 		}
 		declared := resolveDeclaredSocketPaths(harness.Manifest.Sockets)
 		if err := store.PruneHarnessSockets(principal, declared); err != nil {
@@ -160,7 +154,9 @@ func confirmSocketPrune(opts *PruneOptions) (bool, error) {
 	if !opts.IOStreams.CanPrompt() {
 		return false, cmdutil.FlagErrorf("--yes is required to prune grants in a non-interactive session")
 	}
-	message := opts.IOStreams.ColorScheme().WarningIcon() + " Remove socket grants that current harness declarations do not use?"
+	message := opts.IOStreams.ColorScheme().
+		WarningIcon() +
+		" Remove socket grants that current harness declarations do not use?"
 	if opts.All {
 		message = opts.IOStreams.ColorScheme().WarningIcon() + " Remove all stored socket grants?"
 	}

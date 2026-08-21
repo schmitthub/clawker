@@ -3,6 +3,7 @@ package shared
 import (
 	"bytes"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,21 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/db"
 	dbmocks "github.com/schmitthub/clawker/internal/db/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 type socketAuthorizationFixture struct {
-	cfg         config.Config
 	opts        CommandOpts
-	deps        socketAuthorizationDeps
+	harness     RuntimeHarness
 	store       *dbmocks.SocketGrantStoreMock
 	ios         *iostreams.IOStreams
 	in          *bytes.Buffer
@@ -40,11 +39,19 @@ type socketAuthorizationFixture struct {
 
 func newSocketAuthorizationFixture(t *testing.T, tier bundle.Tier) *socketAuthorizationFixture {
 	t.Helper()
-	principal := filepath.Join(t.TempDir(), "harness")
+	env := testenv.New(t)
+	principal := filepath.Join(env.Dirs.Base, "harness")
 	require.NoError(t, os.MkdirAll(principal, 0o755))
-	hostPath := filepath.Join(t.TempDir(), "service.sock")
-	require.NoError(t, os.WriteFile(hostPath, nil, 0o600))
-	identity := socketbridge.ListenerIdentity{UID: 1001, GID: 1002, Owner: "host-user", Group: "host-group"}
+	hostPath := filepath.Join(env.Dirs.Base, "service.sock")
+	listener, err := net.Listen("unix", hostPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			require.NoError(t, closeErr)
+		}
+	})
+	identity, err := socketbridge.ReadListenerIdentity(hostPath)
+	require.NoError(t, err)
 	declaration := config.HarnessSocket{
 		Source:   hostPath,
 		Target:   "/home/clawker/service.sock",
@@ -58,24 +65,23 @@ func newSocketAuthorizationFixture(t *testing.T, tier bundle.Tier) *socketAuthor
 	store := &dbmocks.SocketGrantStoreMock{}
 	ios, in, out, errOut := iostreams.Test()
 	fixture := &socketAuthorizationFixture{
-		cfg: configmocks.NewBlankConfig(),
 		opts: CommandOpts{ //nolint:exhaustruct // the authorization helper uses only these command dependencies
 			IOStreams: ios,
 			SocketGrants: func() (db.SocketGrantStore, error) {
 				return store, nil
 			},
 		},
-		deps: socketAuthorizationDeps{
-			resolveHarness: func(config.Config, string) (resolvedSocketHarness, error) {
-				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{Tier: tier, Dir: principal, Bundle: bundle.BundleID{}, Shadows: nil},
-					Sockets:    []config.HarnessSocket{declaration},
-				}, nil
+		harness: RuntimeHarness{
+			Name: "acme",
+			Provenance: bundle.Provenance{
+				Tier:    tier,
+				Dir:     principal,
+				Bundle:  bundle.BundleID{Namespace: "", Name: ""},
+				Shadows: nil,
 			},
-			resolveHostPath: cmdutil.ResolveHostPath,
-			readListenerIdentity: func(string) (socketbridge.ListenerIdentity, error) {
-				return identity, nil
-			},
+			Sockets:           []config.HarnessSocket{declaration},
+			Egress:            nil,
+			HasContainerLabel: true,
 		},
 		store: store, ios: ios, in: in, out: out, errOut: errOut,
 		principal: principal, hostPath: hostPath, declaration: declaration, identity: identity,
@@ -88,14 +94,13 @@ func (f *socketAuthorizationFixture) authorize(
 	hasHarnessLabel bool,
 ) ([]socketbridge.BridgedSocket, error) {
 	t.Helper()
+	f.harness.HasContainerLabel = hasHarnessLabel
+	f.harness.Sockets = []config.HarnessSocket{f.declaration}
 	return authorizeSocketBridges(
 		"clawker.project.agent",
-		"acme",
-		hasHarnessLabel,
-		f.cfg,
+		f.harness,
 		f.opts,
 		logger.Nop(),
-		f.deps,
 	)
 }
 
@@ -125,17 +130,6 @@ func TestAuthorizeSocketBridgesApproveFlagPersistsRequiredAndOptional(t *testing
 		t.Run(map[bool]string{false: "required", true: "optional"}[optional], func(t *testing.T) {
 			fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 			fixture.declaration.Optional = optional
-			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{
-						Tier:    bundle.TierLooseProject,
-						Dir:     fixture.principal,
-						Bundle:  bundle.BundleID{},
-						Shadows: nil,
-					},
-					Sockets: []config.HarnessSocket{fixture.declaration},
-				}, nil
-			}
 			fixture.opts.ApproveGrants = true
 			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) { return nil, nil }
 			var prunedPrincipal string
@@ -230,17 +224,6 @@ func TestAuthorizeSocketBridgesStoredDeny(t *testing.T) {
 		t.Run(map[bool]string{false: "required", true: "optional"}[optional], func(t *testing.T) {
 			fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 			fixture.declaration.Optional = optional
-			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{
-						Tier:    bundle.TierLooseProject,
-						Dir:     fixture.principal,
-						Bundle:  bundle.BundleID{},
-						Shadows: nil,
-					},
-					Sockets: []config.HarnessSocket{fixture.declaration},
-				}, nil
-			}
 			fixture.opts.ApproveGrants = true
 			fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
 			fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) {
@@ -289,17 +272,6 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 			fixture.declaration.Optional = tt.optional
-			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{
-						Tier:    bundle.TierLooseProject,
-						Dir:     fixture.principal,
-						Bundle:  bundle.BundleID{},
-						Shadows: nil,
-					},
-					Sockets: []config.HarnessSocket{fixture.declaration},
-				}, nil
-			}
 			fixture.ios.SetStdinTTY(true)
 			fixture.ios.SetStdoutTTY(true)
 			fixture.in.WriteString(tt.answer)
@@ -348,7 +320,7 @@ func TestAuthorizeSocketBridgesPromptAnswers(t *testing.T) {
 			}
 			assert.Contains(t, fixture.errOut.String(), fixture.declaration.Target)
 			assert.Contains(t, fixture.errOut.String(), "Purpose: "+fixture.declaration.Purpose)
-			assert.Contains(t, fixture.errOut.String(), "host-user:host-group (uid 1001, gid 1002)")
+			assert.Contains(t, fixture.errOut.String(), formatListenerIdentity(fixture.identity))
 		})
 	}
 }
@@ -385,101 +357,22 @@ func TestAuthorizeSocketBridgesRequiresExplicitHarnessLabel(t *testing.T) {
 	assert.False(t, storeOpened)
 }
 
-func TestAuthorizeSocketBridgesBannedPathFailsBeforeProbe(t *testing.T) {
-	for _, tier := range []bundle.Tier{
-		bundle.TierFloor,
-		bundle.TierLooseProject,
-		bundle.TierLooseUser,
-		bundle.TierInstalled,
-		bundle.TierInPlace,
-	} {
-		t.Run(tier.Label(), func(t *testing.T) {
-			fixture := newSocketAuthorizationFixture(t, tier)
-			fixture.declaration.Optional = true
-			fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-				return resolvedSocketHarness{
-					Provenance: bundle.Provenance{
-						Tier:    tier,
-						Dir:     fixture.principal,
-						Bundle:  bundle.BundleID{},
-						Shadows: nil,
-					},
-					Sockets: []config.HarnessSocket{fixture.declaration},
-				}, nil
-			}
-			fixture.deps.resolveHostPath = func(string) (string, error) { return consts.DockerSocketPath, nil }
-			probed := false
-			fixture.deps.readListenerIdentity = func(string) (socketbridge.ListenerIdentity, error) {
-				probed = true
-				return fixture.identity, nil
-			}
+func TestBannedSocketPathResolvesAliases(t *testing.T) {
+	env := testenv.New(t)
+	realPath := filepath.Join(env.Dirs.Base, "daemon.sock")
+	aliasPath := filepath.Join(env.Dirs.Base, "daemon-alias.sock")
+	require.NoError(t, os.WriteFile(realPath, nil, 0o600))
+	require.NoError(t, os.Symlink(realPath, aliasPath))
 
-			bridges, err := fixture.authorize(t, true)
+	banned, found := bannedSocketPathFrom(realPath, []string{aliasPath})
 
-			assert.Empty(t, bridges)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, consts.DockerSocketPath)
-			assert.ErrorContains(t, err, "security.docker_socket")
-			assert.False(t, probed)
-		})
-	}
-}
-
-func TestAuthorizeSocketBridgesResolvedBannedPathFailsBeforeProbe(t *testing.T) {
-	const (
-		aliasPath    = "/tmp/docker-alias.sock"
-		resolvedPath = "/host/docker-desktop/docker.sock"
-	)
-	fixture := newSocketAuthorizationFixture(t, bundle.TierFloor)
-	fixture.declaration.Source = aliasPath
-	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{
-				Tier:    bundle.TierFloor,
-				Dir:     fixture.principal,
-				Bundle:  bundle.BundleID{},
-				Shadows: nil,
-			},
-			Sockets: []config.HarnessSocket{fixture.declaration},
-		}, nil
-	}
-	fixture.deps.resolveHostPath = func(expression string) (string, error) {
-		switch expression {
-		case aliasPath, consts.DockerSocketPath:
-			return resolvedPath, nil
-		default:
-			return cmdutil.ResolveHostPath(expression)
-		}
-	}
-	probed := false
-	fixture.deps.readListenerIdentity = func(string) (socketbridge.ListenerIdentity, error) {
-		probed = true
-		return fixture.identity, nil
-	}
-
-	bridges, err := fixture.authorize(t, true)
-
-	assert.Empty(t, bridges)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, consts.DockerSocketPath)
-	assert.ErrorContains(t, err, "security.docker_socket")
-	assert.False(t, probed)
+	assert.True(t, found)
+	assert.Equal(t, aliasPath, banned)
 }
 
 func TestAuthorizeSocketBridgesOptionalUnapprovedNoninteractivePrintsNotice(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
-	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{
-				Tier:    bundle.TierLooseProject,
-				Dir:     fixture.principal,
-				Bundle:  bundle.BundleID{},
-				Shadows: nil,
-			},
-			Sockets: []config.HarnessSocket{fixture.declaration},
-		}, nil
-	}
 	fixture.store.PruneHarnessSocketsFunc = func(string, []string) error { return nil }
 	fixture.store.LookupSocketGrantFunc = func(string, string) (*db.SocketGrant, error) { return nil, nil }
 
@@ -494,20 +387,9 @@ func TestAuthorizeSocketBridgesOptionalUnapprovedNoninteractivePrintsNotice(t *t
 func TestAuthorizeSocketBridgesOptionalProbeFailurePrintsNotice(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
-	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{
-				Tier:    bundle.TierLooseProject,
-				Dir:     fixture.principal,
-				Bundle:  bundle.BundleID{},
-				Shadows: nil,
-			},
-			Sockets: []config.HarnessSocket{fixture.declaration},
-		}, nil
-	}
-	fixture.deps.readListenerIdentity = func(string) (socketbridge.ListenerIdentity, error) {
-		return socketbridge.ListenerIdentity{}, errors.New("listener unavailable")
-	}
+	regularPath := filepath.Join(fixture.principal, "regular-file")
+	require.NoError(t, os.WriteFile(regularPath, nil, 0o600))
+	fixture.declaration.Source = regularPath
 	fixture.store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
 		assert.Equal(t, fixture.principal, principal)
 		assert.Empty(t, paths)
@@ -524,23 +406,7 @@ func TestAuthorizeSocketBridgesOptionalProbeFailurePrintsNotice(t *testing.T) {
 func TestAuthorizeSocketBridgesOptionalResolutionFailurePrintsNotice(t *testing.T) {
 	fixture := newSocketAuthorizationFixture(t, bundle.TierLooseProject)
 	fixture.declaration.Optional = true
-	fixture.deps.resolveHarness = func(config.Config, string) (resolvedSocketHarness, error) {
-		return resolvedSocketHarness{
-			Provenance: bundle.Provenance{
-				Tier:    bundle.TierLooseProject,
-				Dir:     fixture.principal,
-				Bundle:  bundle.BundleID{},
-				Shadows: nil,
-			},
-			Sockets: []config.HarnessSocket{fixture.declaration},
-		}, nil
-	}
-	fixture.deps.resolveHostPath = func(value string) (string, error) {
-		if value == fixture.declaration.Source {
-			return "", errors.New("socket is missing")
-		}
-		return cmdutil.ResolveHostPath(value)
-	}
+	fixture.declaration.Source = filepath.Join(fixture.principal, "missing.sock")
 	fixture.store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
 		assert.Equal(t, fixture.principal, principal)
 		assert.Empty(t, paths)

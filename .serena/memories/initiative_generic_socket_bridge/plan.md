@@ -90,6 +90,11 @@ redesign, do not expand scope.
 - No `container.owner`, direction, or access-mode fields exist; the harness
   declares nothing about the host listener (decision 24). Do not add
   provider-specific fields.
+- `internal/bundler.LoadHarness` is the canonical runtime reader. After raw
+  manifest validation, it applies the existing `config.ExpandHostPath`
+  semantics to each socket source and returns those absolute values in the
+  typed manifest. `LoadBundle` keeps raw source values for static validation
+  and build use.
 
 **Tests (isolated):** extend `internal/bundler/bundle_test.go` table style —
 valid manifest with sockets (including optional + container block); missing
@@ -102,6 +107,9 @@ Run: `go test ./internal/bundler/... ./internal/config/...`
 
 - The harness manifest shape is in `internal/config/harness_schema.go`; `config.Manifest` remains the single owner of socket declaration fields.
 - Socket validation runs in `bundler.LoadBundle` with the other front-door checks. The banned-path list uses the Docker socket path constant as its first item.
+- Runtime harness loads use the existing `config.ExpandHostPath` function for
+  socket sources. Command code receives expanded source values in the typed
+  manifest and does not implement a second expansion path.
 
 ---
 
@@ -216,15 +224,16 @@ Run: `go test ./internal/db/...`
 
 **A. `internal/cmdutil/paths.go`** (+ `paths_test.go`):
 ```go
-// ResolveHostPath expands $VAR/${VAR} from the host process environment and
-// a leading ~, then resolves symlinks to an absolute path. The path must
-// exist. No other expansion syntax is supported.
-func ResolveHostPath(expr string) (string, error)
+// ResolveHostPath resolves an expanded absolute host path to its real
+// filesystem target. The path must exist.
+func ResolveHostPath(path string) (string, error)
 ```
-- Expansion: `os.ExpandEnv` + leading-`~` → `os.UserHomeDir()`. Host process
-  env ONLY (security requirement).
-- Resolution: `filepath.EvalSymlinks` after expansion → absolute realpath.
-  Missing path = error naming the path.
+- Expansion belongs to the canonical `bundler.LoadHarness` reader through
+  `config.ExpandHostPath`. This includes `$VAR`, `${VAR}`,
+  `${VAR:-fallback}`, and leading `~` semantics.
+- `ResolveHostPath` rejects an empty or non-absolute value, then uses
+  `filepath.EvalSymlinks` to return the real path. Missing path = error naming
+  the path.
 
 **B. `internal/socketbridge/peercred_linux.go` / `peercred_darwin.go`**
 (+ test):
@@ -249,15 +258,23 @@ Trust tier and principal are NOT part of these utils — the command layer
 does both inline (task 5): trust = `prov.Tier == bundle.TierFloor`
 (decision 19); principal = `ResolveHostPath(prov.Dir)`.
 
-**Tests (isolated):** env expansion; tilde; symlinked path resolves to
-realpath; missing path errors with the path in the message; identity probe
-against an in-test listener returns the test uid/gid; probe of a dead
-socket errors.
+**Tests (isolated):** canonical harness loading expands an environment value
+and `${MISSING:-~/.missing}` fallback into absolute typed values; a symlinked
+absolute path resolves to realpath; an unexpanded expression and a missing
+path fail with the input in the message; identity probe against an in-test
+listener returns the test uid/gid; probe of a dead socket errors.
 Run: `go test ./internal/cmdutil/... ./internal/socketbridge/...`
 
 ### Learnings (task 3)
 
-- `ResolveHostPath` rejects an empty environment expansion before absolute-path resolution, so a missing variable cannot resolve to the current directory. Other errors include the source expression and the path that failed.
+- `bundler.LoadHarness` applies the existing configuration path semantics.
+  `ResolveHostPath` only accepts the expanded absolute value and resolves its
+  real filesystem target. This prevents authorization code from owning a
+  second configuration expansion implementation.
+- `config.ExpandHostPath` rejects a complete expansion that is empty. This
+  prevents an unset source such as `$MISSING` from becoming the current
+  directory. A missing variable with a remaining absolute path still uses the
+  existing configuration semantics.
 - The shared listener probe owns connection and name-resolution handling. Linux reads `SO_PEERCRED`; Darwin reads `LOCAL_PEERCRED` and uses the first returned group as the peer group.
 - The Darwin socketbridge package compiles for arm64 with the platform implementation.
 
@@ -350,31 +367,39 @@ Run: `go test ./internal/cmd/sockets/...`
 
 **Wiring:**
 - Add to `CommandOpts`: `SocketGrants func() (db.SocketGrantStore, error)` and
-  `ApproveGrants bool` (the flag value). All construction sites of
+  `ApproveGrants bool` (the flag value), plus a `RuntimeHarness` value that
+  contains the selected typed harness fields. All construction sites of
   `CommandOpts` (run/start/restart commands under `internal/cmd/container/`)
-  build the closure over the `f.DB()` Factory noun
+  build the store closure over the `f.DB()` Factory noun
   (`db.NewSocketGrantStore` over the handle — same shape as task 4); find
   them with serena references on `CommandOpts`.
+- Command run functions are the composition roots. `start` and `restart` use
+  `shared.LoadContainerHarness`, which reads the container label and calls the
+  canonical `bundler.LoadHarness` reader once. `run` reuses the bundle already
+  returned by container creation. Each command constructs `RuntimeHarness`
+  from the loaded bundle's name, provenance, sockets, and egress values.
 - Shared flag: new `internal/cmdutil/flags.go` with
   `AddApproveGrantsFlag(cmd *cobra.Command, p *bool)` registering
   `--approve-grants` (bool, default false, help: approve this start's
   declared host socket requests without prompting). Wire into `run`, `start`,
   `restart` command definitions.
 
-**Insertion point:** in `BootstrapServicesPreStart`, immediately after
-`assertHarnessResolvable(cfg, harnessName)` and BEFORE the firewall block
-(host access must be settled before any start work continues; not gated on
-`cfg.FirewallEnabled()` — CP ≠ firewall).
+**Insertion point:** in `BootstrapServicesPreStart`, after the command-supplied
+runtime harness check and BEFORE the firewall block (host access must be
+settled before any start work continues; not gated on
+`cfg.FirewallEnabled()` — CP ≠ firewall). This function and socket
+authorization do not read harness configuration.
 
 **Logic (exact order):**
-1. Resolve the harness component via `bundle.NewResolver(cfg)` to get
-   `Provenance` + manifest. The existing `containerHarnessName` fallback to
-   the configured default (its `bundler.ResolveHarnessName(cfg, "")`
-   branch) must NOT authorize sockets: if the container has no harness
-   label AND the resolved manifest declares sockets, fail closed with an
-   error naming the container and the missing label.
+1. Use the command-supplied `RuntimeHarness` values. The existing
+   `containerHarnessName` fallback to the configured default (its
+   `bundler.ResolveHarnessName(cfg, "")` branch) must NOT authorize sockets:
+   if the container has no harness label AND the loaded manifest declares
+   sockets, fail closed with an error naming the container and the missing
+   label.
 2. No declared sockets → return (zero cost for every existing harness).
-3. Resolve every `decl.Source` with `cmdutil.ResolveHostPath`. A resolution
+3. Resolve every already-expanded `decl.Source` with
+   `cmdutil.ResolveHostPath`. A resolution
    error: required decl → fail closed; optional decl → skip that socket
    with a one-line ErrOut notice + log entry and continue. Check every
    resolved path against both the literal and resolved real path of each
@@ -436,9 +461,9 @@ Run: `go test ./internal/cmd/sockets/...`
 pre-start/ContainerStart (PRD "Current code facts"); no restart-specific
 logic. Verify by running the existing shared tests.
 
-**Tests (isolated):** unit tests in `container_start_test.go` style with
-configmocks + db mocks + fake resolver + stubbed identity probe: builtin
-skips store; third-party no row + flag → granted; no row noninteractive no
+**Tests (isolated):** unit tests use typed `RuntimeHarness` fixtures, real
+Unix listeners, real symbolic links, the standard test environment, and db
+mocks: builtin skips store; third-party no row + flag → granted; no row noninteractive no
 flag → fail closed with both remedies in the error; stored allow +
 matching identity → pair collected, no prompt; stored allow + changed
 identity → changed-identity prompt; stored deny + required → fail closed
@@ -459,6 +484,19 @@ Run: `go test ./internal/cmd/container/... ./internal/cmdutil/...`
 - Built-in harnesses use their trusted tier and do not open the grant store. Third-party harnesses use the resolved harness directory as the principal, prune only that principal's declared paths, and compare listener identity by numeric UID and GID.
 - The shared prompt uses one buffered reader for repeated input. This keeps piped answers available when an empty or invalid answer causes another prompt.
 - Run, start, and restart share the approval flag and compose the socket-grant store over the Factory DB closure. Pre-start returns the active socket set for task 6 without mutable command state.
+- Run reuses the bundle returned by container creation. Start and restart load
+  the container's harness once with the canonical reader. Each command creates
+  the `RuntimeHarness` literal, and lower start and authorization functions do
+  not read or expand harness configuration.
+- The command-level start test uses a real loose harness file with
+  `${CLAWKER_TEST_SOCKET_ROOT:-~/.missing}/some.sock`, real Unix listeners,
+  symbolic-link source paths, the command constructor, and the real SQLite
+  grant store. It proves that output, the grant row, and the bridge input all
+  use the resolved real path. An environment change makes the old grant stale
+  and requires approval for the new real path.
+- `attachAndStart` and the multi-container start helper each take one options
+  value with `context.Context`. This removes the positional parameter group
+  without changing start order.
 - Runtime banned-path checks resolve the banned entries too. This keeps the
   Docker socket banned when a host, such as Docker Desktop, exposes the fixed
   path as a symbolic link to its user socket.
@@ -698,6 +736,11 @@ required, host only).
   Docker journeys do not duplicate those two cases.
 - Test listener paths use a short `/tmp/clawker-socket-*` directory because
   macOS rejects Unix socket names that exceed its fixed address length.
+- A command-level test also uses the normal test environment, a real loose
+  harness file, the start command constructor, real Unix sockets and symbolic
+  links, and the real grant database. This covers canonical config expansion,
+  realpath authorization, stale-grant removal, output, and bridge input in one
+  production-shaped path.
 - The real image runs clawkerd as root. Docker exec with `--user` omits the
   agent user's supplementary groups. The socket server therefore starts with
   root only for log setup, restores the configured agent user's full group
@@ -746,6 +789,9 @@ Run: `make test` clean; docs build via `npx mintlify dev` spot check.
   decisions, identity drift, revocation timing, and the Docker socket boundary.
   The harness author guide documents the full `sockets:` shape, including
   `container.group` and `container.mode`.
+- The harness author and host socket guides state that the canonical reader
+  expands source expressions and that prompts, grants, and bridges use the
+  resolved real path.
 - A harness Dockerfile must create each declared group and add `CLAWKER_USER`
   to it. `root_before_entrypoint` runs under zsh, so `USERNAME` is not the
   correct build value for this operation.
@@ -754,7 +800,7 @@ Run: `make test` clean; docs build via `npx mintlify dev` spot check.
   over the one Factory `DB` noun.
 - No existing clawker-support known issue describes this feature or a fixed
   socket-bridge fault, so the plugin submodule needs no update.
-- `make test` passed 6,633 unit tests with 11 environment-dependent skips. The
+- `make test` passed 6,628 unit tests with 11 environment-dependent skips. The
   user ran the Mintlify preview on the host and confirmed the new docs look
   correct; Mintlify is a host-side preview gate, not a container-side command.
 

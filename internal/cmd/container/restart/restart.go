@@ -118,6 +118,10 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	if err != nil {
 		return err
 	}
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
+	}
 
 	// Resolve container names
 	containers := opts.Containers
@@ -146,9 +150,9 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
-		if err := restartContainer(ctx, client, name, cfg, opts); err != nil {
-			errs = append(errs, err)
-			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
+		if restartErr := restartContainer(ctx, client, name, cfg, log, opts); restartErr != nil {
+			errs = append(errs, restartErr)
+			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, restartErr)
 		} else {
 			fmt.Fprintln(ios.Out, name)
 		}
@@ -165,6 +169,7 @@ func restartContainer(
 	client *docker.Client,
 	name string,
 	cfg config.Config,
+	log *logger.Logger,
 	opts *RestartOptions,
 ) error {
 	// Find container by name
@@ -174,6 +179,10 @@ func restartContainer(
 	}
 	if c == nil {
 		return fmt.Errorf("container %q not found", name)
+	}
+	harness, hasLabel, err := shared.LoadContainerHarness(ctx, client, cfg, c.ID, log)
+	if err != nil {
+		return fmt.Errorf("loading runtime harness for %s: %w", name, err)
 	}
 
 	// Restart carries no agent identity — AgentName/Project stay empty.
@@ -188,8 +197,15 @@ func restartContainer(
 		SocketGrants:  opts.SocketGrants,
 		Logger:        opts.Logger,
 		ApproveGrants: opts.ApproveGrants,
-		AgentName:     "",
-		Project:       "",
+		Harness: shared.RuntimeHarness{
+			Name:              harness.Name,
+			Provenance:        harness.Provenance,
+			Sockets:           harness.Manifest.Sockets,
+			Egress:            harness.Manifest.Egress,
+			HasContainerLabel: hasLabel,
+		},
+		AgentName: "",
+		Project:   "",
 	}
 
 	// If signal specified, kill with that signal first, then start

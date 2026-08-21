@@ -491,7 +491,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with closure/value fields — no methods. 3 eager (set directly), rest lazy (closures):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.Service`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
+**Lazy**: `Config`, `Client`, `Logger`, `CLIState`, `DB`, `ProjectRegistry`, `ProjectManager`, `GitManager`, `HostProxy`, `SocketBridge`, `Prompter`, `AdminClient`, `ControlPlane`, `HttpClient`, `BundleManager`, and `Session`. `DB` is the only database noun. Commands create table-specific stores over it in their `Options` closures.
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 

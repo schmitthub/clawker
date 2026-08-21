@@ -305,10 +305,15 @@ func TestPruneCommandDropsUnresolvedSocketDeclarations(t *testing.T) {
 		grant(1, "active", harnessDir, "/run/old.sock", db.GrantAllow, "Old."),
 	}
 	var prunedPaths []string
+	var revokedPrincipal string
 	store := &dbmocks.SocketGrantStoreMock{
 		ListSocketGrantsFunc: func() ([]db.SocketGrant, error) { return rows, nil },
 		PruneHarnessSocketsFunc: func(_ string, paths []string) error {
 			prunedPaths = append([]string(nil), paths...)
+			return nil
+		},
+		RevokeHarnessSocketsFunc: func(principal string) error {
+			revokedPrincipal = principal
 			return nil
 		},
 	}
@@ -317,6 +322,7 @@ func TestPruneCommandDropsUnresolvedSocketDeclarations(t *testing.T) {
 	require.NoError(t, fixture.execute(t, "prune", "--yes"))
 
 	assert.Empty(t, prunedPaths)
+	assert.Equal(t, harnessDir, revokedPrincipal)
 }
 
 func TestPruneCommandAll(t *testing.T) {
@@ -410,7 +416,10 @@ sockets:
     purpose: Connect to the service.
 `, source)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "harness.yaml"), []byte(manifest), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile.harness.tmpl"), []byte(`{{define "cmd"}}CMD ["x"]{{end}}`), 0o600))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(dir, "Dockerfile.harness.tmpl"), []byte(`{{define "cmd"}}CMD ["x"]{{end}}`), 0o600),
+	)
 	realDir, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err)
 	return realDir

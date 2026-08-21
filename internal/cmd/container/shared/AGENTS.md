@@ -163,11 +163,12 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 | `ControlPlane` | `func(ctx) (cpmanager.Manager, error)` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
+| `Harness` | `RuntimeHarness` | Harness name, provenance, expanded socket declarations, egress floor, and label state loaded by the command |
 | `Logger` | `func() (*logger.Logger, error)` | Logger provider |
 | `AgentName` | `string` | Short agent name (set on new-container starts; empty on restart) |
 | `Project` | `string` | Project slug for composite identity |
 
-Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams` (the struct field, not a provider) — `BootstrapServicesPreStart` refuses a nil IOStreams up front, because a nil is always a wiring bug (headless runs carry a non-TTY IOStreams; prompt-suitability is `CanPrompt`'s call inside `AssistSOS`) and would silently downgrade a control plane SOS to a plain error instead of prompting.
+Nil providers safely skipped (debug logged). Required: `Config`, `IOStreams`, and a loaded `RuntimeHarness`. Command run functions call `LoadContainerHarness` once per existing container and create a `RuntimeHarness` literal from the returned `bundler.Bundle`. The `run` command reuses the bundle returned by `CreateContainer`. Pre-start authorization and firewall composition do not read the harness again.
 
 **Functions**:
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + ID-mapped view re-establishment (`ensureIDMappedViewsAtStart` — containers stamped with `consts.LabelIDMapRoots` get their workspace views re-proven before Docker resolves bind sources; see "ID-mapped workspace views") + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
@@ -180,9 +181,9 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 | Type | Purpose |
 |------|---------|
 | `ContainerCreateOptions` | All container CLI flags |
-| `CommandOpts` | DI container with lazy closures + AgentName/Project |
+| `CommandOpts` | DI container with lazy closures + RuntimeHarness + AgentName/Project |
 | `CreateContainerOptions` | Inputs: Client, Config, ProjectName, Options, Flags, Version, ProjectManager, ProjectRegistry, HostProxy, Log, IOStreams (**required**), Is256Color, IsTrueColor |
-| `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
+| `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning, and the loaded Harness |
 | `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
 | `InitConfigOpts` | Project/agent/harness names (harness name keys the harness-scoped volume identities), ContainerWorkDir, Harness+Staging+Volumes+FreshVolumes, CopyToVolumeFn, Log |

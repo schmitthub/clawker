@@ -42,6 +42,7 @@ type CommandOpts struct {
 	SocketGrants  func() (db.SocketGrantStore, error)
 	Logger        func() (*logger.Logger, error)
 	ApproveGrants bool
+	Harness       RuntimeHarness
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
 	// NOT the AgentFullName "clawker.project.agent" form — the
@@ -64,6 +65,17 @@ type CommandOpts struct {
 	// new-container start path so MintAgentCert composes the right
 	// AgentFullName URI SAN.
 	Project string
+}
+
+// RuntimeHarness contains the harness values that a command loaded for one
+// container. Start plumbing consumes these values and does not read the
+// harness configuration again.
+type RuntimeHarness struct {
+	Name              string
+	Provenance        bundle.Provenance
+	Sockets           []config.HarnessSocket
+	Egress            []config.EgressRule
+	HasContainerLabel bool
 }
 
 // NeedsSocketBridge returns true if the project's security config enables GPG
@@ -199,32 +211,16 @@ func BootstrapServicesPreStart(
 		return nil, fmt.Errorf("bootstrapping services: %w", err)
 	}
 
-	// The container's harness label (stamped at create from the image) is
-	// the runtime identity — egress floor and pre_run compose against it,
-	// not against whatever the configured default happens to be today.
-	harnessName, hasHarnessLabel, err := containerHarnessName(ctx, client, cfg, container, log)
-	if err != nil {
-		return nil, fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
-	}
-
-	// A container must never start with a weaker egress floor than it was built
-	// for: if its harness label no longer resolves (a removed/uninstalled
-	// bundle, a deleted loose dir), refuse the start with the label and the
-	// remedy. This is checked unconditionally, before the firewall gate below,
-	// because the harness egress floor is load-bearing whether or not the
-	// project firewall is enabled.
-	if resolveErr := assertHarnessResolvable(cfg, harnessName); resolveErr != nil {
-		return nil, resolveErr
+	harness := cmdOpts.Harness
+	if harness.Name == "" {
+		return nil, errors.New("bootstrapping services: runtime harness is not loaded")
 	}
 
 	bridgedSockets, err := authorizeSocketBridges(
 		container,
-		harnessName,
-		hasHarnessLabel,
-		cfg,
+		harness,
 		cmdOpts,
 		log,
-		defaultSocketAuthorizationDeps(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrapping services: %w", err)
@@ -246,7 +242,7 @@ func BootstrapServicesPreStart(
 	// true. Per-container FirewallEnable runs post-start because the
 	// cgroup only exists after docker start creates the init process.
 	if cfg.FirewallEnabled() {
-		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harnessName); fwErr != nil {
+		if fwErr := bringUpFirewall(ctx, cmdOpts, cfg, harness.Egress); fwErr != nil {
 			return nil, fwErr
 		}
 	}
@@ -261,7 +257,7 @@ func BootstrapServicesPreStart(
 	// removal are both handled with no staleness. CP runs it (pre-run
 	// step) right before the CMD. Not firewall-gated; a copy failure aborts
 	// the start.
-	preRun := cfg.PreRunFor(harnessName)
+	preRun := cfg.PreRunFor(harness.Name)
 	if err := InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     container,
 		Script:          preRun,
@@ -287,7 +283,7 @@ func bringUpFirewall(
 	ctx context.Context,
 	cmdOpts CommandOpts,
 	cfg config.Config,
-	harnessName string,
+	harnessEgress []config.EgressRule,
 ) error {
 	if cmdOpts.AdminClient == nil {
 		return errors.New("bootstrapping services: firewall is enabled but no admin client provided")
@@ -302,31 +298,11 @@ func bringUpFirewall(
 		return fmt.Errorf("bootstrapping services: firewall init: %w", initErr)
 	}
 
-	egressRules, egressErr := bundler.EgressRules(cfg, harnessName)
-	if egressErr != nil {
-		return fmt.Errorf("bootstrapping services: composing egress rules: %w", egressErr)
-	}
+	egressRules := bundler.ComposeEgressRules(cfg, harnessEgress)
 	if _, addErr := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
 		Rules: adminv1.EgressRulesToProto(egressRules),
 	}); addErr != nil {
 		return fmt.Errorf("bootstrapping services: adding firewall rules: %w", addErr)
-	}
-	return nil
-}
-
-// assertHarnessResolvable refuses to start a container whose harness label no
-// longer resolves across the three tiers (floor, loose, installed/in-place
-// bundle). A bare floor harness always resolves; a qualified bundle harness that
-// was removed or a loose dir that was deleted fails here with the label and the
-// remedy, so a container never runs against an egress floor it was not built
-// for.
-func assertHarnessResolvable(cfg config.Config, harnessName string) error {
-	if _, err := bundle.NewResolver(cfg).Resolve(bundle.ComponentHarness, harnessName); err != nil {
-		return fmt.Errorf(
-			"container's harness %q no longer resolves (%w); it may name a bundle that was removed or"+
-				" is not installed — reinstall it with `clawker bundle install` or rebuild the image with"+
-				" `clawker build`",
-			harnessName, err)
 	}
 	return nil
 }
@@ -375,6 +351,33 @@ func containerHarnessName(
 		Str("reason", reason).
 		Msg("falling back to the configured default harness")
 	return name, false, nil
+}
+
+// LoadContainerHarness reads the container identity and loads its harness once
+// with the canonical harness reader. Command run functions call this helper and
+// pass selected values in a RuntimeHarness literal.
+func LoadContainerHarness(
+	ctx context.Context,
+	client *docker.Client,
+	cfg config.Config,
+	container string,
+	log *logger.Logger,
+) (*bundler.Bundle, bool, error) {
+	harnessName, hasHarnessLabel, err := containerHarnessName(ctx, client, cfg, container, log)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve container harness: %w", err)
+	}
+	harness, err := bundler.LoadHarness(cfg, harnessName)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"container's harness %q no longer loads (%w); it may name a bundle that was removed or"+
+				" is not installed — reinstall it with `clawker bundle install` or rebuild the image with"+
+				" `clawker build`",
+			harnessName,
+			err,
+		)
+	}
+	return harness, hasHarnessLabel, nil
 }
 
 func BootstrapServicesPostStart(

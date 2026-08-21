@@ -12,30 +12,6 @@ import (
 )
 
 func TestResolveHostPath(t *testing.T) {
-	t.Run("expands host environment", func(t *testing.T) {
-		root := t.TempDir()
-		t.Setenv("CLAWKER_TEST_SOCKET_ROOT", root)
-		path := filepath.Join(root, "service.sock")
-		require.NoError(t, os.WriteFile(path, nil, 0o600))
-
-		resolved, err := cmdutil.ResolveHostPath("${CLAWKER_TEST_SOCKET_ROOT}/service.sock")
-
-		require.NoError(t, err)
-		assert.Equal(t, path, resolved)
-	})
-
-	t.Run("expands leading tilde", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		path := filepath.Join(home, "service.sock")
-		require.NoError(t, os.WriteFile(path, nil, 0o600))
-
-		resolved, err := cmdutil.ResolveHostPath("~/service.sock")
-
-		require.NoError(t, err)
-		assert.Equal(t, path, resolved)
-	})
-
 	t.Run("resolves symlinks", func(t *testing.T) {
 		root := t.TempDir()
 		realPath := filepath.Join(root, "real.sock")
@@ -58,12 +34,10 @@ func TestResolveHostPath(t *testing.T) {
 		assert.ErrorContains(t, err, missing)
 	})
 
-	t.Run("empty environment expansion is not the current directory", func(t *testing.T) {
-		t.Setenv("CLAWKER_TEST_MISSING_SOCKET", "")
-
+	t.Run("rejects an unexpanded expression", func(t *testing.T) {
 		_, err := cmdutil.ResolveHostPath("$CLAWKER_TEST_MISSING_SOCKET")
 
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "$CLAWKER_TEST_MISSING_SOCKET")
+		assert.ErrorContains(t, err, "absolute")
 	})
 }

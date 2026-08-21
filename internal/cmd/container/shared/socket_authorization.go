@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/bundle"
-	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -28,64 +27,25 @@ const (
 	eventStoredSocketDenied    = "stored_socket_bridge_denied"
 )
 
-type resolvedSocketHarness struct {
-	Provenance bundle.Provenance
-	Sockets    []config.HarnessSocket
-}
-
-type socketAuthorizationDeps struct {
-	resolveHarness       func(config.Config, string) (resolvedSocketHarness, error)
-	resolveHostPath      func(string) (string, error)
-	readListenerIdentity func(string) (socketbridge.ListenerIdentity, error)
-}
-
 type socketCandidate struct {
 	declaration config.HarnessSocket
 	hostPath    string
 	identity    socketbridge.ListenerIdentity
 }
 
-func defaultSocketAuthorizationDeps() socketAuthorizationDeps {
-	return socketAuthorizationDeps{
-		resolveHarness: func(cfg config.Config, name string) (resolvedSocketHarness, error) {
-			component, err := bundle.NewResolver(cfg).Resolve(bundle.ComponentHarness, name)
-			if err != nil {
-				return resolvedSocketHarness{}, fmt.Errorf("resolve harness %q: %w", name, err)
-			}
-			harness, err := bundler.LoadBundle(name, component.FS)
-			if err != nil {
-				return resolvedSocketHarness{}, fmt.Errorf("load harness %q: %w", name, err)
-			}
-			return resolvedSocketHarness{
-				Provenance: component.Provenance,
-				Sockets:    harness.Manifest.Sockets,
-			}, nil
-		},
-		resolveHostPath:      cmdutil.ResolveHostPath,
-		readListenerIdentity: socketbridge.ReadListenerIdentity,
-	}
-}
-
 func authorizeSocketBridges(
 	container string,
-	harnessName string,
-	hasHarnessLabel bool,
-	cfg config.Config,
+	harness RuntimeHarness,
 	cmdOpts CommandOpts,
 	log *logger.Logger,
-	deps socketAuthorizationDeps,
 ) ([]socketbridge.BridgedSocket, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
-	resolved, err := deps.resolveHarness(cfg, harnessName)
-	if err != nil {
-		return nil, fmt.Errorf("authorize socket bridges: %w", err)
-	}
-	if len(resolved.Sockets) == 0 {
+	if len(harness.Sockets) == 0 {
 		return nil, nil
 	}
-	if !hasHarnessLabel {
+	if !harness.HasContainerLabel {
 		return nil, fmt.Errorf(
 			"container %s cannot request host sockets without the %s label; rebuild the container",
 			container,
@@ -93,17 +53,17 @@ func authorizeSocketBridges(
 		)
 	}
 
-	candidates, err := resolveSocketCandidates(harnessName, resolved.Sockets, cmdOpts, log, deps)
+	candidates, err := resolveSocketCandidates(harness.Name, harness.Sockets, cmdOpts, log)
 	if err != nil {
 		return nil, err
 	}
-	if resolved.Provenance.Tier == bundle.TierFloor {
+	if harness.Provenance.Tier == bundle.TierFloor {
 		return candidateBridges(candidates), nil
 	}
 
-	principal, err := deps.resolveHostPath(resolved.Provenance.Dir)
+	principal, err := cmdutil.ResolveHostPath(harness.Provenance.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("authorize socket bridges for harness %q: resolve principal: %w", harnessName, err)
+		return nil, fmt.Errorf("authorize socket bridges for harness %q: resolve principal: %w", harness.Name, err)
 	}
 	if cmdOpts.SocketGrants == nil {
 		return nil, errors.New("authorize socket bridges: socket grant store provider is nil")
@@ -126,7 +86,7 @@ func authorizeSocketBridges(
 	bridges := make([]socketbridge.BridgedSocket, 0, len(candidates))
 	for _, candidate := range candidates {
 		bridge, active, authorizeErr := authorizeSocketCandidate(
-			harnessName,
+			harness.Name,
 			principal,
 			candidate,
 			cmdOpts,
@@ -148,11 +108,10 @@ func resolveSocketCandidates(
 	declarations []config.HarnessSocket,
 	cmdOpts CommandOpts,
 	log *logger.Logger,
-	deps socketAuthorizationDeps,
 ) ([]socketCandidate, error) {
 	candidates := make([]socketCandidate, 0, len(declarations))
 	for _, declaration := range declarations {
-		hostPath, err := deps.resolveHostPath(declaration.Source)
+		hostPath, err := cmdutil.ResolveHostPath(declaration.Source)
 		if err != nil {
 			if declaration.Optional {
 				if noticeErr := reportOptionalSocketSkip(
@@ -174,7 +133,7 @@ func resolveSocketCandidates(
 				err,
 			)
 		}
-		bannedPath, banned := bannedSocketPath(hostPath, deps.resolveHostPath)
+		bannedPath, banned := bannedSocketPath(hostPath)
 		if banned {
 			if bannedPath == consts.DockerSocketPath {
 				return nil, fmt.Errorf(
@@ -185,7 +144,7 @@ func resolveSocketCandidates(
 			}
 			return nil, fmt.Errorf("host socket %s is banned", bannedPath)
 		}
-		identity, err := deps.readListenerIdentity(hostPath)
+		identity, err := socketbridge.ReadListenerIdentity(hostPath)
 		if err != nil {
 			if declaration.Optional {
 				if noticeErr := reportOptionalSocketSkip(
@@ -543,13 +502,16 @@ func formatListenerIdentity(identity socketbridge.ListenerIdentity) string {
 
 func bannedSocketPath(
 	path string,
-	resolveHostPath func(string) (string, error),
 ) (string, bool) {
-	for _, banned := range consts.BannedSocketPaths {
+	return bannedSocketPathFrom(path, consts.BannedSocketPaths)
+}
+
+func bannedSocketPathFrom(path string, bannedPaths []string) (string, bool) {
+	for _, banned := range bannedPaths {
 		if path == banned {
 			return banned, true
 		}
-		resolved, err := resolveHostPath(banned)
+		resolved, err := cmdutil.ResolveHostPath(banned)
 		if err != nil {
 			// A banned path that is absent on this host cannot alias path.
 			continue

@@ -21,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -58,6 +59,21 @@ func noopCPManager() func(context.Context) (cpmanager.Manager, error) {
 func testIOStreams() *iostreams.IOStreams {
 	tio, _, _, _ := iostreams.Test() //nolint:dogsled // only the streams handle matters here
 	return tio
+}
+
+func floorRuntimeHarness() RuntimeHarness {
+	return RuntimeHarness{
+		Name: "claude",
+		Provenance: bundle.Provenance{
+			Tier:    bundle.TierFloor,
+			Dir:     "",
+			Bundle:  bundle.BundleID{Namespace: "", Name: ""},
+			Shadows: nil,
+		},
+		Sockets:           nil,
+		Egress:            nil,
+		HasContainerLabel: true,
+	}
 }
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
@@ -144,6 +160,7 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 		ControlPlane: noopCPManager(),
 		Client:       okClientProvider(t),
+		Harness:      floorRuntimeHarness(),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)
@@ -165,6 +182,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+			Harness:      floorRuntimeHarness(),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -181,6 +199,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+			Harness:      floorRuntimeHarness(),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -197,6 +216,7 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+			Harness:      floorRuntimeHarness(),
 		})
 		if err == nil || !strings.Contains(err.Error(), "injecting sockets-wait script") {
 			t.Fatalf("expected sockets-wait injection error, got %v", err)
@@ -614,6 +634,7 @@ func TestContainerStart_StartFailureReapsAutoRemove(t *testing.T) {
 		Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
 		Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
 		ControlPlane: noopCPManager(),
+		Harness:      floorRuntimeHarness(),
 	}, docker.ContainerStartOptions{ContainerID: "ctr"})
 
 	if err == nil || !strings.Contains(err.Error(), "start boom") {
@@ -650,22 +671,34 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 // against a real Hydra; that path lives in test/e2e and the manual
 // UAT flow.)
 
-// assertHarnessResolvable enforces the stale-harness-label gate at container
-// start: a qualified harness label resolves only while its bundle's source is
-// declared — a cached bundle whose `bundles:` entry was deleted must refuse the
-// start (the container would otherwise run against an egress floor weaker than
-// it was built for). A bare floor harness always resolves.
-func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
+// LoadContainerHarness enforces the stale-harness-label gate with the same
+// canonical reader that command run functions use.
+func TestLoadContainerHarness_DeclarationGated(t *testing.T) {
 	testenv.New(t)
 	const url = "https://example.com/acme/tools.git"
-	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url,
-		map[string]string{"harnesses/claude/harness.yaml": "version:\n  resolver: none\nstacks: []\n"})
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url, map[string]string{
+		"harnesses/claude/harness.yaml":            "version:\n  resolver: none\nstacks: []\n",
+		"harnesses/claude/Dockerfile.harness.tmpl": `{{define "cmd"}}CMD ["true"]{{end}}`,
+	})
+	load := func(cfg config.Config, harnessName string) error {
+		fake := mocks.NewFakeClient(cfg)
+		fake.SetupContainerInspect("ctr", container.Summary{ //nolint:exhaustruct // the loader reads only labels
+			ID:    "ctr",
+			Names: []string{"/ctr"},
+			Labels: map[string]string{
+				cfg.LabelManaged():  cfg.ManagedLabelValue(),
+				consts.LabelHarness: harnessName,
+			},
+		})
+		_, _, err := LoadContainerHarness(context.Background(), fake.Client, cfg, "ctr", logger.Nop())
+		return err
+	}
 
 	undeclared := configmocks.NewBlankConfig()
-	resolveErr := assertHarnessResolvable(undeclared, "acme.tools.claude")
+	resolveErr := load(undeclared, "acme.tools.claude")
 	require.Error(t, resolveErr)
 	require.ErrorIs(t, resolveErr, bundle.ErrNotCached)
-	assert.Contains(t, resolveErr.Error(), "no longer resolves")
+	assert.Contains(t, resolveErr.Error(), "no longer loads")
 	assert.Contains(t, resolveErr.Error(), "clawker bundle install")
 
 	declared := configmocks.NewBlankConfig()
@@ -677,8 +710,8 @@ func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
 			},
 		}
 	}
-	require.NoError(t, assertHarnessResolvable(declared, "acme.tools.claude"))
+	require.NoError(t, load(declared, "acme.tools.claude"))
 
-	require.NoError(t, assertHarnessResolvable(undeclared, "claude"),
+	require.NoError(t, load(undeclared, "claude"),
 		"a bare floor harness resolves regardless of bundle declarations")
 }

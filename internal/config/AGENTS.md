@@ -38,7 +38,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | `harness_schema.go` | Harness `harness.yaml` manifest shape (`Manifest`, `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`, `ManagedPromptSpec`) + closed-vocabulary consts (resolvers, seed-apply tokens, JSON-rewrite kinds, managed-prompt owners `PromptOwnerRoot`/`PromptOwnerUser`). Parsed here; loaded/validated/rendered by `internal/bundler` |
 | `stack_schema.go` | Stack `stack.yaml` manifest shape (`StackManifest` — the metadata half; fragments are loaded by `internal/bundler`) |
 | `monitoring_schema.go` | Monitoring unit `monitoring.yaml` manifest shape (`MonitoringUnitManifest`, `MonitoringLogLane`, `MonitoringUnitMetrics`, `MetricRename`) + retention vocab (`MonitoringRetentionDefault`/`Custom`). Loaded/validated by `internal/bundler`; consumed by `internal/monitor` generation |
-| `path_semantics.go` | Manifest path helpers: `ExpandHostPath` (`~`/`$VAR`/`${VAR:-fallback}` expansion), `NormalizeContainerPath`, `HasGlobMeta` |
+| `path_semantics.go` | Manifest path helpers: `ExpandHostPath` (`~`/`$VAR`/`${VAR:-fallback}` expansion to an absolute path, with an error when the complete expansion is empty), `NormalizeContainerPath`, `HasGlobMeta` |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |

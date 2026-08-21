@@ -5,9 +5,11 @@ icon: "plug"
 keywords: ["Unix socket", "host socket", "socket bridge", "harness access", "socket grant"]
 ---
 
-A harness can request access to a Unix socket on your host. Clawker shows the
-exact host path, the container path, the purpose, and the host listener identity
-before it starts a bridge. Access is for the specified harness and socket only.
+A harness can request access to a Unix socket on your host. Clawker expands the
+configured source and resolves symbolic links before it checks the grant.
+Clawker shows this real host path, the container path, the purpose, and the host
+listener identity before it starts a bridge. Access is for the specified
+harness and socket only.
 
 Built-in harnesses are trusted clawker components. A third-party harness must
 have your approval before it can use a declared host socket.

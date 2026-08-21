@@ -3,35 +3,21 @@ package cmdutil
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 )
 
-// ResolveHostPath expands host process environment variables and a leading
-// tilde, and then returns the absolute real path. The path must exist.
-func ResolveHostPath(expression string) (string, error) {
-	if expression == "" {
-		return "", errors.New("resolve host path: expression is required")
+// ResolveHostPath returns the real filesystem target of an expanded absolute
+// host path. The path must exist.
+func ResolveHostPath(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("resolve host path: path is required")
 	}
-	expanded := os.ExpandEnv(expression)
-	if expanded == "" {
-		return "", fmt.Errorf("resolve host path %q: expansion is empty", expression)
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("resolve host path %q: path must be absolute", path)
 	}
-	if expanded == "~" || strings.HasPrefix(expanded, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve host path %q: get user home: %w", expression, err)
-		}
-		expanded = filepath.Join(home, strings.TrimPrefix(expanded, "~/"))
-	}
-	absolute, err := filepath.Abs(expanded)
+	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", fmt.Errorf("resolve host path %q: make %q absolute: %w", expression, expanded, err)
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return "", fmt.Errorf("resolve host path %q: evaluate %q: %w", expression, absolute, err)
+		return "", fmt.Errorf("resolve host path %q: evaluate path: %w", path, err)
 	}
 	return resolved, nil
 }
