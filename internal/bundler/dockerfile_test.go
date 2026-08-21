@@ -520,8 +520,7 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 
 // The managed prompt — clawker's harness-agnostic agent-context briefing — is
 // baked at BUILD time to the location the harness manifest declares
-// (managed_prompt), with root:root 0644 defaults. A harness that declares no
-// managed_prompt (codex) gets no copy at all: absent = unsupported.
+// (managed_prompt), with root:root 0644 defaults.
 func TestGenerateHarness_ManagedPrompt(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 
@@ -536,8 +535,38 @@ func TestGenerateHarness_ManagedPrompt(t *testing.T) {
 	gen.Harness = "codex"
 	dockerfile, err = gen.GenerateHarness()
 	require.NoError(t, err)
-	assert.NotContains(t, string(dockerfile), "clawker-agent-prompt.md",
-		"a harness without managed_prompt stages no prompt copy")
+	assert.Contains(t, string(dockerfile),
+		"COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/codex/clawker-agent-prompt.md",
+		"codex floor manifest declares the managed prompt dest")
+}
+
+func TestGenerateHarness_CodexSystemConfig(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	gen.Harness = "codex"
+
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	assert.Contains(t, content,
+		"COPY --chown=root:root --chmod=0644 assets/codex-config.toml /etc/codex/config.toml",
+		"the codex harness must install its status-line default in the system config layer")
+	promptCopy := "COPY --chown=root:root --chmod=0644 clawker-agent-prompt.md /etc/codex/clawker-agent-prompt.md"
+	assert.Equal(t, 2, strings.Count(content, promptCopy),
+		"the root fragment must make the prompt available before the generic managed-prompt copy")
+	assert.Contains(t, content, "printf 'developer_instructions = '",
+		"the codex system config must declare additional developer instructions")
+	assert.Contains(t, content, "jq -Rs . /etc/codex/clawker-agent-prompt.md",
+		"the codex harness must encode the complete managed prompt as one TOML string")
+	assert.Contains(t, content, "cat /etc/codex/config.toml",
+		"the codex harness must retain the static system config after the developer instructions")
+	assert.NotContains(t, content, "model_instructions_file",
+		"the managed prompt must add to Codex instructions instead of replacing built-in instructions")
+	assert.NotContains(t, content, "/home/${USERNAME}/.codex/config.toml",
+		"the codex harness must not change the container user's config file")
+	assert.Contains(t, content, `CMD ["codex"]`,
+		"the codex harness must start the codex binary without a wrapper")
 }
 
 // TestBuildContext_CollapsedChmod pins the single-chmod-batching invariant:

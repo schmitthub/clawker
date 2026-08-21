@@ -43,6 +43,13 @@ re-justification against the new model) keep:
 - Harness template block names FINALIZED (user-ratified 2026-07-14): `root_after_stacks` (block_1+2 merged — they were adjacent), `user_after_stacks`, `user_after_shell_switch`, `root_before_entrypoint`, `cmd`. Naming convention: permission-scope prefix + flanking-event anchor, descriptive never prescriptive.
 - opencode/pi bundles (research memo ready) — after the new model lands.
 
+## 2026-08-17: Codex system defaults
+
+- The built-in Codex harness declares the shared agent prompt at `/etc/codex/clawker-agent-prompt.md` with the existing `managed_prompt` manifest field.
+- Its `root_before_entrypoint` block uses the base-image `jq` package to encode the complete prompt as the top-level `developer_instructions` string in `/etc/codex/config.toml`. This adds to Codex built-in instructions. It does not use `model_instructions_file`.
+- The same system file supplies a container-only `tui.status_line` default. Codex user, profile, and trusted project config layers have higher precedence and can replace either value.
+- The implementation does not change the shared seed system, the control plane, clawkerd, or the Codex user and project config files.
+
 ## 2026-07-15: bundle validate deep-loads components (9c8bfd3d, restructured 27a6bd91)
 
 **27a6bd91 (supersedes the cmd-layer shape below, user: "divergent validation = sloppy"):** component validation is a required `bundle.Manager` dependency — `NewManager(cfg, validate, opts...)`; production validator = new composing package `internal/bundle/componentcheck.Validate` (exists because the consumption loaders' packages import internal/bundle). BOTH `Manager.Validate` and the install prefetch (`fetchIntoCache`, pre-commit) run it: broken bundle now fails install before caching. `Report` carries `ComponentErrs` (the short-lived `Report.Bundle` field is gone). Repo-wide forbidigo bans `panic` — no nil-guard in constructor, doc contract only.
