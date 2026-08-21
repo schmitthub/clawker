@@ -176,6 +176,25 @@ sockets:
 	assert.Equal(t, filepath.Join(home, ".missing", "some.sock"), b.Manifest.Sockets[0].Source)
 }
 
+func TestLoadHarness_DefersUnsetSocketSource(t *testing.T) {
+	cfg, root := looseHarnessEnv(t)
+	const missingSocket = "CLAWKER_TEST_MISSING_SOCKET"
+	t.Setenv(missingSocket, os.Getenv(missingSocket))
+	require.NoError(t, os.Unsetenv(missingSocket))
+	writeLooseHarness(t, root, "mytool", `version: { resolver: none }
+sockets:
+  - source: $CLAWKER_TEST_MISSING_SOCKET
+    target: /tmp/optional.sock
+    purpose: Exercise an optional missing socket.
+    optional: true
+`)
+
+	b, err := bundler.LoadHarness(cfg, "mytool")
+	require.NoError(t, err)
+	require.Len(t, b.Manifest.Sockets, 1)
+	assert.Equal(t, "$CLAWKER_TEST_MISSING_SOCKET", b.Manifest.Sockets[0].Source)
+}
+
 // A harness convention dir with no harness.yaml resolves (the dir exists) but
 // fails to load — a loud, named error, never a silent skip.
 func TestLoadHarness_LooseDirWithoutManifest(t *testing.T) {

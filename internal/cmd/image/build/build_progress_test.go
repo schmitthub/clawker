@@ -3,14 +3,19 @@ package build
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -280,4 +285,80 @@ monitoring:
 		"BuildKit builder runs twice: shared base image, then harness image")
 	assert.NotEmpty(t, capture.Opts.Tags, "build should pass tags")
 	assert.NotEmpty(t, capture.Opts.ContextDir, "build should pass context dir")
+}
+
+func TestBuildCommandAllowsUnsetSocketSource(t *testing.T) {
+	env := testenv.New(t)
+	t.Setenv("DOCKER_BUILDKIT", "1")
+	const missingSocket = "CLAWKER_TEST_MISSING_SOCKET"
+	t.Setenv(missingSocket, os.Getenv(missingSocket))
+	require.NoError(t, os.Unsetenv(missingSocket))
+
+	projectRoot := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
+	t.Chdir(projectRoot)
+	const harnessName = "unsetsocket"
+	harnessDir := filepath.Join(projectRoot, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), harnessName)
+	require.NoError(t, os.MkdirAll(harnessDir, 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(harnessDir, bundler.HarnessManifestFile), []byte(`version: { resolver: none }
+sockets:
+  - source: $CLAWKER_TEST_MISSING_SOCKET
+    target: /tmp/optional.sock
+    purpose: Exercise an optional missing socket.
+    optional: true
+`), 0o600),
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(harnessDir, bundler.HarnessTemplateFile), []byte(`{{define "cmd"}}
+CMD ["sleep", "infinity"]
+{{end}}
+`), 0o600))
+
+	testCfg := configmocks.NewFromString(`
+version: "1"
+name: test-project
+build: { harness: unsetsocket }
+workspace: { default_mode: "bind" }
+security: {}
+`, `
+monitoring:
+  otel_collector_port: 4318
+  otel_grpc_port: 4317
+  telemetry:
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+`)
+	testCfg.ProjectRootFunc = func() string { return projectRoot }
+	fake := mocks.NewFakeClient(testCfg)
+	capture := fake.SetupBuildKit()
+
+	tio, in, out, errOut := iostreams.Test()
+	f := new(cmdutil.Factory)
+	f.IOStreams = tio
+	f.TUI = tui.NewTUI(tio)
+	f.Client = func(_ context.Context) (*docker.Client, error) {
+		return fake.Client, nil
+	}
+	f.Config = func() (config.Config, error) {
+		return testCfg, nil
+	}
+	f.Logger = func() (*logger.Logger, error) { return logger.Nop(), nil }
+	f.ProjectRegistry = func() (project.Registry, error) {
+		return env.Registry(t), nil
+	}
+	f.HttpClient = func() (*http.Client, error) {
+		return stubHTTPClient("2.99.99-test")
+	}
+
+	cmd := NewCmdBuild(f, nil)
+	cmd.SetArgs([]string{"--quiet"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute(), "stderr: %s", errOut.String())
+	assert.Equal(t, 2, capture.CallCount)
 }

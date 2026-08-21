@@ -111,22 +111,19 @@ func LoadHarness(cfg config.Config, name string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	if expandErr := expandHarnessSocketSources(b); expandErr != nil {
-		return nil, expandErr
-	}
+	expandHarnessSocketSources(b)
 	return b, nil
 }
 
-func expandHarnessSocketSources(harness *Bundle) error {
+func expandHarnessSocketSources(harness *Bundle) {
 	for index := range harness.Manifest.Sockets {
 		source := harness.Manifest.Sockets[index].Source
 		expanded, err := config.ExpandHostPath(source)
 		if err != nil {
-			return fmt.Errorf("harness %q: sockets[%d].source %q: %w", harness.Name, index, source, err)
+			continue
 		}
 		harness.Manifest.Sockets[index].Source = expanded
 	}
-	return nil
 }
 
 // loadHarnessResolved resolves name to a harness Component through the resolver

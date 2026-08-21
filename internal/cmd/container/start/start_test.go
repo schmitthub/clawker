@@ -320,6 +320,9 @@ func TestStartRun_SocketSourceUsesConfigPathSemantics(t *testing.T) {
 	})
 	t.Setenv("HOME", home)
 	t.Setenv("CLAWKER_TEST_SOCKET_ROOT", "")
+	const missingSocket = "CLAWKER_TEST_MISSING_SOCKET"
+	t.Setenv(missingSocket, os.Getenv(missingSocket))
+	require.NoError(t, os.Unsetenv(missingSocket))
 
 	projectRoot := filepath.Join(env.Dirs.Base, "project")
 	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
@@ -337,6 +340,10 @@ sockets:
   - source: ${CLAWKER_TEST_SOCKET_ROOT:-~/.missing}/some.sock
     target: /tmp/some.sock
     purpose: Exercise host path semantics.
+  - source: $CLAWKER_TEST_MISSING_SOCKET
+    target: /tmp/optional.sock
+    purpose: Exercise an optional missing socket.
+    optional: true
 `), 0o600),
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(harnessDir, bundler.HarnessTemplateFile), []byte(`{{define "cmd"}}
@@ -391,6 +398,7 @@ CMD ["sleep", "infinity"]
 
 	require.NoError(t, cmd.Execute(), "stderr: %s", errOut.String())
 	assert.Contains(t, out.String(), fallbackPath)
+	assert.Contains(t, errOut.String(), "was skipped")
 	require.Len(t, bridge.EnsureBridgeCalls(), 1)
 	require.Len(t, bridge.EnsureBridgeCalls()[0].Opts.Sockets, 1)
 	assert.Equal(t, fallbackPath, bridge.EnsureBridgeCalls()[0].Opts.Sockets[0].HostPath)

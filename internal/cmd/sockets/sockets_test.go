@@ -278,7 +278,7 @@ func TestPruneCommandResolvedAndUnresolvedHarnesses(t *testing.T) {
 	assert.Equal(t, filepath.Join(root, "missing"), revokedPrincipal)
 }
 
-func TestPruneCommandDropsUnresolvedSocketDeclarations(t *testing.T) {
+func TestPruneCommandKeepsHarnessWithUnsetSocketDeclaration(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(consts.EnvConfigDir, t.TempDir())
 	t.Setenv("MISSING_SOCKET", "")
@@ -288,11 +288,13 @@ func TestPruneCommandDropsUnresolvedSocketDeclarations(t *testing.T) {
 	rows := []db.SocketGrant{
 		grant(1, "active", harnessDir, "/run/old.sock", db.GrantAllow, "Old."),
 	}
+	var prunedPrincipal string
 	var prunedPaths []string
 	var revokedPrincipal string
 	store := newSocketGrantStoreMock()
 	store.ListSocketGrantsFunc = func() ([]db.SocketGrant, error) { return rows, nil }
-	store.PruneHarnessSocketsFunc = func(_ string, paths []string) error {
+	store.PruneHarnessSocketsFunc = func(principal string, paths []string) error {
+		prunedPrincipal = principal
 		prunedPaths = append([]string(nil), paths...)
 		return nil
 	}
@@ -304,8 +306,9 @@ func TestPruneCommandDropsUnresolvedSocketDeclarations(t *testing.T) {
 
 	require.NoError(t, fixture.execute(t, "prune", "--yes"))
 
+	assert.Equal(t, harnessDir, prunedPrincipal)
 	assert.Empty(t, prunedPaths)
-	assert.Equal(t, harnessDir, revokedPrincipal)
+	assert.Empty(t, revokedPrincipal)
 }
 
 func TestPruneCommandAll(t *testing.T) {
