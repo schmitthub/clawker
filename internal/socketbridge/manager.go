@@ -113,31 +113,88 @@ func (m *Manager) EnsureBridge(opts EnsureBridgeOpts) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	containerID := opts.ContainerID
+	pidFile, socketsFile, err := m.bridgeStatePaths(containerID)
+	if err != nil {
+		return err
+	}
 
-	// Check if we already track a running bridge
 	if bp, ok := m.bridges[containerID]; ok {
-		if isProcessAlive(bp.pid) {
-			m.log.Debug().Str("container", ShortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
+		if m.reuseBridgeIfCurrent(containerID, bp, socketsFile, opts.Sockets) {
 			return nil
 		}
-		// Process died — clean up stale entry
-		m.cleanupBridgeLocked(containerID, bp)
 	}
 
-	// Check PID file from a previous CLI invocation
+	if pid := readPIDFile(pidFile); pid > 0 {
+		bp := &bridgeProcess{pid: pid, pidFile: pidFile}
+		if m.reuseBridgeIfCurrent(containerID, bp, socketsFile, opts.Sockets) {
+			return nil
+		}
+	}
+
+	return m.startBridge(opts, pidFile, socketsFile)
+}
+
+func (m *Manager) bridgeStatePaths(containerID string) (string, string, error) {
 	pidFile, err := m.cfg.BridgePIDFilePath(containerID)
 	if err != nil {
-		return fmt.Errorf("failed to get bridge PID file path: %w", err)
+		return "", "", fmt.Errorf("failed to get bridge PID file path: %w", err)
+	}
+	bridgesDir, err := m.cfg.BridgesSubdir()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get bridges directory: %w", err)
+	}
+	return pidFile, filepath.Join(bridgesDir, containerID+bridgedSocketsFileSuffix), nil
+}
+
+func (m *Manager) reuseBridgeIfCurrent(
+	containerID string,
+	bp *bridgeProcess,
+	socketsFile string,
+	desired []BridgedSocket,
+) bool {
+	if !isProcessAlive(bp.pid) {
+		m.cleanupBridgeLocked(containerID, bp)
+		return false
+	}
+	if !bridgeRegistrationsMatch(socketsFile, desired) {
+		m.log.Debug().
+			Str("container", ShortID(containerID)).
+			Int("pid", bp.pid).
+			Msg("socket registrations changed; restarting bridge")
+		m.cleanupBridgeLocked(containerID, bp)
+		return false
 	}
 
-	if pid := readPIDFile(pidFile); pid > 0 && isProcessAlive(pid) {
-		m.log.Debug().Str("container", ShortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
-		m.bridges[containerID] = &bridgeProcess{pid: pid, pidFile: pidFile}
-		return nil
+	m.log.Debug().Str("container", ShortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
+	m.bridges[containerID] = bp
+	return true
+}
+
+func bridgeRegistrationsMatch(path string, desired []BridgedSocket) bool {
+	registered, err := ReadBridgedSocketsFile(path)
+	if err != nil {
+		return false
+	}
+	return bridgedSocketSetsEqual(registered, desired)
+}
+
+func bridgedSocketSetsEqual(left, right []BridgedSocket) bool {
+	if len(left) != len(right) {
+		return false
 	}
 
-	// Spawn a new bridge daemon
-	return m.startBridge(opts, pidFile)
+	remaining := make(map[bridgedSocketJSON]int, len(left))
+	for _, socket := range left {
+		remaining[socket.jsonValue()]++
+	}
+	for _, socket := range right {
+		key := socket.jsonValue()
+		remaining[key]--
+		if remaining[key] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // StopBridge stops the bridge daemon for the given container.
@@ -281,19 +338,13 @@ func bridgeExecutable() (string, error) {
 }
 
 // startBridge spawns a detached "clawker bridge serve" subprocess.
-func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile string) error {
+func (m *Manager) startBridge(opts EnsureBridgeOpts, pidFile, socketsFile string) error {
 	containerID := opts.ContainerID
 	exe, executableErr := bridgeExecutable()
 	if executableErr != nil {
 		return fmt.Errorf("failed to get executable path: %w", executableErr)
 	}
 
-	// BridgesSubdir() ensures the directory exists via MkdirAll.
-	bridgesDir, directoryErr := m.cfg.BridgesSubdir()
-	if directoryErr != nil {
-		return fmt.Errorf("failed to get bridges directory: %w", directoryErr)
-	}
-	socketsFile := filepath.Join(bridgesDir, containerID+bridgedSocketsFileSuffix)
 	writeErr := WriteBridgedSocketsFile(socketsFile, opts.Sockets)
 	if writeErr != nil {
 		return fmt.Errorf("failed to write bridge registrations: %w", writeErr)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,6 +180,8 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 	// Pre-track a bridge with a short container ID and the current PID
 	shortContainerID := "short"
 	pidFile := filepath.Join(pidsDir, shortContainerID+".pid")
+	socketsFile := filepath.Join(pidsDir, shortContainerID+".sockets.json")
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, nil))
 	m.SetBridgeForTest(shortContainerID, os.Getpid(), pidFile)
 
 	// This should NOT panic from containerID[:12] slicing
@@ -196,6 +200,15 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 
 	containerID := "test-container-12345"
 	pidFile := filepath.Join(pidsDir, containerID+".pid")
+	socketsFile := filepath.Join(pidsDir, containerID+".sockets.json")
+	sockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
+	}}
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, sockets))
 
 	// Pre-track a bridge with current PID (alive)
 	m.SetBridgeForTest(containerID, os.Getpid(), pidFile)
@@ -204,13 +217,7 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{
 		ContainerID: containerID,
 		GPGEnabled:  true,
-		Sockets: []socketbridge.BridgedSocket{{
-			HostPath: "/host/service.sock",
-			Target:   "/run/service.sock",
-			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
-			Group:    "",
-			Mode:     "",
-		}},
+		Sockets:     sockets,
 	})
 	assert.NoError(t, err)
 
@@ -218,6 +225,108 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	pid, ok := m.BridgePIDForTest(containerID)
 	assert.True(t, ok)
 	assert.Equal(t, os.Getpid(), pid)
+}
+
+func TestManagerEnsureBridge_RespawnsAdoptedBridgeOnSocketDrift(t *testing.T) {
+	m, bridgesDir := sockebridgemocks.NewTestManager(t)
+	containerID := "test-container-12345"
+	pidFile := filepath.Join(bridgesDir, containerID+".pid")
+	socketsFile := filepath.Join(bridgesDir, containerID+".sockets.json")
+
+	oldProcess := exec.Command("sleep", "30")
+	require.NoError(t, oldProcess.Start())
+	t.Cleanup(func() {
+		if socketbridge.IsProcessAliveForTest(oldProcess.Process.Pid) {
+			_ = oldProcess.Process.Kill() // Cleanup permits an already-exited process.
+		}
+	})
+	require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(oldProcess.Process.Pid)), 0o600))
+
+	staleSockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "owner", Group: "primary"},
+		Group:    "workers",
+		Mode:     "0600",
+	}}
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, staleSockets))
+
+	desiredSockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "owner", Group: "primary"},
+		Group:    "workers",
+		Mode:     "0660",
+	}}
+	t.Setenv(consts.EnvExecutable, writeFakeBridgeExecutable(t))
+	t.Cleanup(func() {
+		require.NoError(t, m.StopBridge(containerID))
+	})
+
+	require.NoError(t, m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  false,
+		Sockets:     desiredSockets,
+	}))
+	waitForProcessExit(t, oldProcess, time.Second)
+
+	newPID := socketbridge.ReadPIDFileForTest(pidFile)
+	assert.Positive(t, newPID)
+	assert.NotEqual(t, oldProcess.Process.Pid, newPID)
+	registrations, err := socketbridge.ReadBridgedSocketsFile(socketsFile)
+	require.NoError(t, err)
+	require.Len(t, registrations, 1)
+	assert.Equal(t, desiredSockets[0].HostPath, registrations[0].HostPath)
+	assert.Equal(t, desiredSockets[0].Target, registrations[0].Target)
+	assert.Equal(t, desiredSockets[0].Identity.UID, registrations[0].Identity.UID)
+	assert.Equal(t, desiredSockets[0].Identity.GID, registrations[0].Identity.GID)
+	assert.Equal(t, desiredSockets[0].Group, registrations[0].Group)
+	assert.Equal(t, desiredSockets[0].Mode, registrations[0].Mode)
+
+	require.NoError(t, m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  false,
+		Sockets:     desiredSockets,
+	}))
+	assert.Equal(t, newPID, socketbridge.ReadPIDFileForTest(pidFile))
+}
+
+func waitForProcessExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
+	t.Helper()
+
+	wait := make(chan error, 1)
+	go func() {
+		wait <- cmd.Wait()
+	}()
+	select {
+	case err := <-wait:
+		require.Error(t, err)
+	case <-time.After(timeout):
+		require.FailNow(t, "process did not exit")
+	}
+}
+
+func writeFakeBridgeExecutable(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "bridge")
+	script := `#!/bin/sh
+pid_file=""
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = "--pid-file" ]; then
+		shift
+		pid_file="$1"
+	fi
+	shift
+done
+printf '%s\n' "$$" > "$pid_file"
+trap 'rm -f "$pid_file"; exit 0' TERM INT
+while true; do
+	sleep 1
+done
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o700))
+	return path
 }
 
 func TestBridgeExecutable(t *testing.T) {

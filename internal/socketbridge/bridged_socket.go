@@ -26,18 +26,22 @@ type bridgedSocketJSON struct {
 
 // MarshalJSON writes the flat daemon registration shape.
 func (s BridgedSocket) MarshalJSON() ([]byte, error) {
-	data, err := json.Marshal(bridgedSocketJSON{
+	data, err := json.Marshal(s.jsonValue())
+	if err != nil {
+		return nil, fmt.Errorf("marshal bridged socket: %w", err)
+	}
+	return data, nil
+}
+
+func (s BridgedSocket) jsonValue() bridgedSocketJSON {
+	return bridgedSocketJSON{
 		HostPath: s.HostPath,
 		Target:   s.Target,
 		UID:      s.Identity.UID,
 		GID:      s.Identity.GID,
 		Group:    s.Group,
 		Mode:     s.Mode,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal bridged socket: %w", err)
 	}
-	return data, nil
 }
 
 // UnmarshalJSON reads the flat daemon registration shape.
