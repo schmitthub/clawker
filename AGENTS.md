@@ -105,14 +105,14 @@ GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios
 go test ./test/e2e/... -v -timeout 10m
 go test ./test/whail/... -v -timeout 5m
 
-# Pre-commit hooks
+# Git hooks (prek)
 bash scripts/install-hooks.sh          # Install (once after clone)
-make pre-commit                        # Run all hooks
+make pre-commit                        # Run all hooks (prek run --all-files)
 ```
 
 ### `make clawker` — only when embeds are missing
 
-`make clawker` builds the `//go:embed` binaries the pre-commit go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
+`make clawker` builds the `//go:embed` binaries the prek go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
 
 ```bash
 ls clawkerd/embed/assets/clawkerd \

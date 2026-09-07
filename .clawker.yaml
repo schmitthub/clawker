@@ -93,7 +93,7 @@ build:
           rm -f "${YQ_FILE}"
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - uv tool install pre-commit --with pre-commit-uv
+      - uv tool install prek
       - go install golang.org/x/tools/gopls@latest
       - go install gotest.tools/gotestsum@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
@@ -228,6 +228,7 @@ security:
       - .earthly.dev
       - .dagger.io
       - skaffold.dev
+      - prek.j178.dev
     rules:
       - action: allow
         dst: github.com
