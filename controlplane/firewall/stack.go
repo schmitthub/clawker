@@ -33,7 +33,7 @@ import (
 
 // Stack lifecycle + image constants.
 const (
-	envoyImage      = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
+	envoyImage      = "envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
 	corednsImageTag = "clawker-coredns:latest"
 
 	envoyContainerName   = consts.ContainerEnvoy
