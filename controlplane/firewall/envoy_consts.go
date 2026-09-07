@@ -54,8 +54,9 @@ const (
 	sdsSNIMapperExtensionName = "envoy.tls.certificate_mappers.sni"
 
 	// envoyOtelTLSCertFile / envoyOtelTLSKeyFile / envoyOtelTLSCAFile are the
-	// infra-lane mTLS client material bind-mounted into the Envoy container.
-	// Shared by the OTel ALS cluster and the SDS cluster.
+	// telemetry mTLS client material mounted in the Envoy container.
+	// Only the OTel ALS cluster uses this material. The SDS cluster uses
+	// its dedicated envoySDSTLS*File client identity below.
 	envoyOtelTLSCertFile = "/etc/envoy/otel-tls/client.pem"
 	envoyOtelTLSKeyFile  = "/etc/envoy/otel-tls/client.key"
 	envoyOtelTLSCAFile   = "/etc/envoy/otel-tls/ca.pem"

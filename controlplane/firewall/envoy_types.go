@@ -43,9 +43,11 @@ type ALSConfig struct {
 // SDSConfig configures the on-demand certificate SDS lane for wildcard MITM
 // chains. Enabled=true points the wildcard chains' downstream certificate
 // selector at the CP SDS server (per-SNI minted leaves, every label depth);
-// Enabled=false keeps the static [apex, *.apex] file cert — the degraded mode
-// when the infra mTLS material is unavailable (the SDS dial reuses the same
-// /etc/envoy/otel-tls client material as the ALS lane).
+// The connection uses the dedicated consts.EnvoySDSClientName leaf in
+// envoySDSTLS*File. The server requires that SAN and rejects the telemetry leaf.
+// Enabled=false keeps the static [apex, *.apex] certificate when the SDS
+// material is unavailable. Stack.sdsConfig checks sdsCertsReady independently
+// of infraCertsReady.
 type SDSConfig struct {
 	Enabled bool
 	Address string // CP host Envoy dials (container DNS name)

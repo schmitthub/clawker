@@ -278,7 +278,7 @@ func TestGenerateEnvoyConfig(t *testing.T) {
 		name  string    // golden: testdata/envoy/<name>.envoy.golden
 		rules string    // real egress-rules YAML, loaded via NewRulesStoreFromString
 		als   ALSConfig // generation-side access-log config (not part of the rules sample)
-		sds   SDSConfig // generation-side on-demand certificate lane (rides the same infra mTLS gate as als)
+		sds   SDSConfig // Stack.sdsConfig uses sdsCertsReady, independent of Stack.alsConfig.
 		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
 		// containing this substring (the "control" for a fail-closed case) and skips
 		// the golden compare — no config is produced.
@@ -291,20 +291,18 @@ func TestGenerateEnvoyConfig(t *testing.T) {
 			rules: comprehensiveRules,
 		},
 		{
-			// Same rules as `comprehensive` with als.MTLS on: the OTel cluster
-			// (otel_collector_als) + open_telemetry access-log sink appear on EVERY
-			// listener type (http HCM, https HCM, tcp/ssh/udp tcp_proxy). The diff vs
-			// `comprehensive` is exactly the OTel additions — a full-matrix on/off
-			// differential for the access-log gate across the whole feature set.
+			// The comprehensive rules with als.MTLS enabled add
+			// otelCollectorALSClusterName and the OpenTelemetry access-log
+			// sink to every listener type.
 			name:  "comprehensive_mtls",
 			rules: comprehensiveRules,
 			als:   ALSConfig{Port: 4319, MTLS: true},
-			// sds rides the same infraCertsReady gate as als.MTLS in production
-			// (Stack.alsConfig / Stack.sdsConfig), so the mtls row is where the
-			// wildcard chains switch to the on-demand certificate selector and
-			// the sds_cluster appears. The diff vs `comprehensive` stays purely
-			// additive except the wildcard chains' transport sockets, which swap
-			// static file certs for the selector.
+			// Stack.sdsConfig uses sdsCertsReady independently of the
+			// infraCertsReady check in Stack.alsConfig. This test enables both
+			// so one golden file checks the selector and sdsClusterName with
+			// the OTel additions. Compared with comprehensive, only the
+			// wildcard transport sockets change; all other differences are
+			// additions. The selector replaces the static certificate files.
 			sds: SDSConfig{Enabled: true, Address: "clawker-controlplane", Port: 7445},
 		},
 		{
