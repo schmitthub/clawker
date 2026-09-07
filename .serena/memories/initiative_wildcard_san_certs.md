@@ -22,18 +22,18 @@ Branch: `fix/wildcard-san-certs`. Plan: `/home/clawker/.claude/plans/500-envoy-n
 ## Status
 - [x] Task 2 (#518 max_session_keys) — DONE, commit 81420fd6 (multiHost bool through upstreamReencryptSocket/decorateReencrypt; DFP + origdst true, exact false; 8 golden hunks; envoy.md verified-fact added)
 - [x] Task 1 (Envoy bump 1.37.1→1.39.1) — DONE, commit 026f7283 (OCI index digest eb2c01c1…, amd64+arm64 verified via registry API; registry-1.docker.io + auth.docker.io firewall-allowed)
-- [x] Task 3 (#500 SDS on-demand mint) — COMMITTED as `8fabc880`: GenerateSNICert + validateSNIHostname (certs.go); SDSServer delta-xDS (sds_server.go — fail-closed removed_resources, longest-zone admit, CA-serial cache); downstreamOnDemandMITMSocket selector variant on wildcard chains (envoy_tls.go); sds_cluster STRICT_DNS→clawker-controlplane:7445 mTLS via /etc/envoy/otel-tls (envoy_config.go); SDSConfig gated on infraCertsReady (stack.go sdsConfig); startSDSServer listener in internal/controlplane/cmd.go (CP server leaf + infra-intermediate ClientCAs, degrade event=sds_unavailable, runs pre-firewall-gate); ControlPlaneSettings.SDSPort default 7445 (+consts.DefaultCPSDSPort, parity test); comprehensive_mtls golden carries selector (2 wildcard chains) + sds_cluster; validateBootstrap blank imports added. QUIC: selector REJECTED by Envoy for QUIC (verified v1.39.1 config_test.cc) — QUIC keeps static certs, h3 multi-label falls back to TCP.
+- [x] Task 3 (#500 SDS on-demand mint) — COMMITTED as `4868ee48`: GenerateSNICert + validateSNIHostname (certs.go); SDSServer delta-xDS (sds_server.go — fail-closed removed_resources, longest-zone admit, CA-serial cache); downstreamOnDemandMITMSocket selector variant on wildcard chains (envoy_tls.go); sds_cluster STRICT_DNS→clawker-controlplane:7445 mTLS via /etc/envoy/otel-tls (envoy_config.go); SDSConfig gated on infraCertsReady (stack.go sdsConfig); startSDSServer listener in internal/controlplane/cmd.go (CP server leaf + infra-intermediate ClientCAs, degrade event=sds_unavailable, runs pre-firewall-gate); ControlPlaneSettings.SDSPort default 7445 (+consts.DefaultCPSDSPort, parity test); comprehensive_mtls golden carries selector (2 wildcard chains) + sds_cluster; validateBootstrap blank imports added. QUIC: selector REJECTED by Envoy for QUIC (verified v1.39.1 config_test.cc) — QUIC keeps static certs, h3 multi-label falls back to TCP.
 - [x] golangci v2.12.2→v2.13.2 (prek rev + CI lint.yml) — staticcheck vs Go 1.27 stdlib buildir panic, commit 58186513
 - [x] gen-docs regenerated (configuration.mdx + settings.schema.json in diff)
 - [x] Task 3 lint fixes — complete. Extracted `matchesWildcardTLSZone`, `validateGenerationInputs`, `applyPermutations`, `buildInfraGRPCCluster`, and `sdsTLSConfig`; listener uses `ListenConfig.Listen(ctx, ...)`; unused parameter and named return removed. Shared Envoy keys are constants. Fixed v2.13.2 zero-field checks, formatting, and test helper lint. Generated golden files are unchanged from the resumed Task 3 state.
-- [x] Commit Task 3 — `8fabc880`, with the branch's existing co-author and session trailers.
-- [x] Push Task 3 — `8fabc880` and Envoy image commit `026f7283` are on `origin/fix/wildcard-san-certs`.
+- [x] Commit Task 3 — `4868ee48`.
+- [x] Push Task 3 — `4868ee48` and Envoy image commit `026f7283` are on `origin/fix/wildcard-san-certs`.
 - [ ] Live UAT (firewall-uat.md): user rebuilds CLI + restarts CP stack on HOST (new embedded clawkercp + Envoy 1.39.1); then in-container probes — #518: alternate two different-cert subdomains under one wildcard, zero 503; #500: curl 3-label host under wildcard rule verifies without -k, openssl s_client shows leaf SAN=exact SNI; check event=sds_secret_minted in CP logs (docker logs clawker-controlplane).
 
 ## Resume milestones (2026-09-07)
 - Initial verification passed before code changes: `GOTOOLCHAIN=go1.26.6 go build ./...` and `GOTOOLCHAIN=go1.26.6 go test ./controlplane/... ./internal/...` (exit 0). This includes the last `sds_server.go` edits. All six embed binaries are present.
 - Remaining work: host-run UAT. Code, checks, commit, and push are complete. The plugin known-issues file has no entry for #500 or #518.
-- Use the existing branch trailers for Task 3: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` and `Claude-Session: https://claude.ai/code/session_01HtEbkKPQLaqvnfgAbJUnib`.
+- Commit attribution: do not copy Claude co-author trailers or Claude session links into Codex commits. The old trailer instruction was incorrect and is superseded by the user's correction. Add no replacement attribution for these commits.
 
 - Final code checks passed: `GOTOOLCHAIN=go1.26.6 go build ./...`, `go test ./controlplane/... ./internal/...`, and `golangci-lint run --config .golangci.yml ./...` with the same toolchain (0 issues). Lint uses `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/Users/andrew/Code/clawker` so its existing merge-base filter can read this mounted repository. `.golangci.yml` is unchanged. Golden SHA256 checks passed.
 - README, design, architecture, package references, and Mintlify firewall docs describe the final certificate behavior and QUIC limit. The user requested UAT commands in the final reply only; no separate UAT document. Live UAT remains pending.
@@ -56,5 +56,16 @@ Branch: `fix/wildcard-san-certs`. Plan: `/home/clawker/.claude/plans/500-envoy-n
 - User requested an E2E test with `.suno.com` in the test project config. Added `TestFirewall_WildcardSANCerts` in the existing firewall suite: all seven Suno hosts from #518, including `studio-api.prod.suno.com`; fresh CP with the test CA, then eight rounds in one agent and Envoy process; TLS verification enabled, no retries or redirects; HTTP 2xx-4xx plus the Envoy upstream-service-time header required. A local firewall 403 cannot pass.
 - E2E compile-only check passed with Go 1.27.1: `go test -c -o /tmp/clawker-e2e-go1271.test ./test/e2e`. Full golangci-lint passed with the test included (0 issues). Live execution needs the host because this harness stops CP at setup and cleanup. Host runtime acceptance remains pending.
 
-- E2E committed as `8bfb3a7d` (`test(firewall): check Suno wildcard TLS`), with the existing session trailers. All applicable hooks passed, including full lint, Semgrep, govulncheck, and unit tests.
+- E2E committed as `8bfb3a7d` (`test(firewall): check Suno wildcard TLS`). All applicable hooks passed, including full lint, Semgrep, govulncheck, and unit tests.
 - Push succeeded: `origin/fix/wildcard-san-certs` advanced from `9abce4665` to `8bfb3a7dc`, including Go commit `423dddf1`. Code and checks are complete. Remaining: on the host, rebuild with Go 1.27.1, run only `TestFirewall_WildcardSANCerts` in `./test/e2e`, then restore CP with the rebuilt CLI. Require all 56 requests to pass. No separate UAT file exists; `.golangci.yml` is unchanged; no `go test ./...` command ran.
+
+## Commit attribution correction (2026-09-07)
+- Removed the incorrect Claude co-author and session trailers from all five commits made in this Codex session. Preserved each commit's file tree, author, dates, and remaining message; signed each replacement commit. No source or test change occurred.
+- Corrected history was pushed with an explicit lease on the previous remote tip `11dfec6c70416424136f3e69ec42494b0742cd0e`. Remote tip after that push: `fe3d7ae9`. A local recovery ref retains the original history: `refs/backup/wildcard-san-before-trailer-fix-20260907`.
+- Earlier milestone hashes above record the original commits. Current branch commits:
+  - Task 3: `4868ee48` (was `8fabc880`).
+  - Task 3 ledger: `b3dca6b1` (was `9abce466`).
+  - Go 1.27.1: `fb55901f` (was `423dddf1`).
+  - Suno E2E: `e5765968` (was `8bfb3a7d`).
+  - Go and E2E ledger: `fe3d7ae9` (was `11dfec6c`).
+- Existing build, unit-test, lint, and E2E compilation results remain applicable. Live host E2E is still pending.
