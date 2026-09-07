@@ -152,6 +152,13 @@ var (
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
+// HostFirewallSDSCertsDir is the host-FS twin of consts.SDSClientsDir —
+// bind source for the Envoy sibling's dedicated SDS client identity.
+// Same pure-string-composition contract as the Host* block above.
+//
+//nolint:gochecknoglobals // composed host path, package-var dependency ordering
+var HostFirewallSDSCertsDir = filepath.Join(HostFirewallDataSubdir, SDSClientsDirName)
+
 // HostBPFFSSource returns the host path the CP container's BPF filesystem
 // was bind-mounted from, read from EnvHostBPFFSSource. firewall.Stack uses
 // it as the CoreDNS sibling's bind source so both containers reach the same

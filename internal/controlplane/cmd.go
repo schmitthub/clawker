@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/controlplane/server"
 	"github.com/schmitthub/clawker/controlplane/subprocess"
 	"github.com/schmitthub/clawker/internal/config"
@@ -645,7 +647,35 @@ func sdsTLSConfig(serverCertPath, serverKeyPath string) (*tls.Config, error) {
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clientCAs,
 		MinVersion:   tls.VersionTLS12,
+		// Chain validation alone admits ANY infra-intermediate-signed
+		// leaf — including the telemetry lane's envoy-otel-client.
+		// The SDS server hands out CA-signed MITM certificates, so it
+		// additionally pins the dedicated SDS identity: only the
+		// consts.EnvoySDSClientName leaf (controlplane/sdscerts) may
+		// fetch minted secrets. VerifyConnection (not
+		// VerifyPeerCertificate) so the pin also runs on resumed
+		// sessions (gosec G123).
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			return requireSDSClientSAN(cs.VerifiedChains)
+		},
 	}, nil
+}
+
+// requireSDSClientSAN is the SDS listener's per-connection identity pin,
+// run from tls.Config.VerifyConnection after standard chain verification
+// (ClientAuth: RequireAndVerifyClientCert), so verifiedChains carries
+// only chains anchored in the infra intermediate; this narrows further
+// to the dedicated SDS leaf identity.
+func requireSDSClientSAN(verifiedChains [][]*x509.Certificate) error {
+	for _, chain := range verifiedChains {
+		if len(chain) > 0 && slices.Contains(chain[0].DNSNames, consts.EnvoySDSClientName) {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"client leaf lacks the %s SAN — only the dedicated SDS identity may fetch minted MITM certificates",
+		consts.EnvoySDSClientName,
+	)
 }
 
 // startSDSServer brings up the firewall on-demand certificate SDS listener
@@ -812,6 +842,7 @@ func buildEnforcement(
 	cfg config.Config,
 	log *logger.Logger,
 	otelCerts fwhandler.OtelCertProvisioner,
+	sdsCerts fwhandler.SDSCertProvisioner,
 ) (
 	dockerCli *docker.Client,
 	containerResolver fwhandler.ContainerResolver,
@@ -855,7 +886,7 @@ func buildEnforcement(
 	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
 		return dockerCli, containerResolver, rulesStore, nil, nil, nil, cleanup, err
 	}
-	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, identityAlloc.IdentityFor)
+	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor)
 
 	// Construction only: the manager exists but loads nothing here. BPF
 	// pins are created by the ebpfLoadFlow startup step, after the admin
@@ -1445,11 +1476,29 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// buildEnforcement — no BPF state is created here; ebpfLoadFlow below is
 	// the step that loads). enforcementCleanup closes the eBPF manager
 	// (error joined into retErr) then the Docker client, on every return arm.
+	// Dedicated Envoy→CP SDS client identity (separate lane from the
+	// telemetry certs above — see controlplane/sdscerts). Construction
+	// failure degrades: the stack leaves sdsCertsReady false, wildcard
+	// MITM chains keep static certs, CP stays up.
+	// Success-arm-only interface boxing (see the sdscerts.NewCPProvisioner
+	// LANDMINE note): a typed-nil *Service boxed into the interface would
+	// pass the stack's nil-guard and panic on dispatch.
+	var sdsCerts fwhandler.SDSCertProvisioner
+	if sdsSvc, sdsCertsErr := sdscerts.NewCPProvisioner(); sdsCertsErr != nil {
+		log.Error().Err(sdsCertsErr).
+			Str("event", "sds_certs_unavailable").
+			Str("component", "sdscerts").
+			Msg("SDS client identity provisioner unavailable — on-demand per-SNI MITM minting disabled; wildcard chains keep static certs")
+	} else {
+		sdsCerts = sdsSvc
+	}
+
 	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
 		cfg,
 		log,
 		otelCerts,
+		sdsCerts,
 	)
 	// Register cleanup before the error check: buildEnforcement returns a
 	// non-nil cleanup even on a mid-construction failure (e.g. cgroup-driver

@@ -60,6 +60,14 @@ const (
 	envoyOtelTLSKeyFile  = "/etc/envoy/otel-tls/client.key"
 	envoyOtelTLSCAFile   = "/etc/envoy/otel-tls/ca.pem"
 
+	// envoySDSTLS*File hold the dedicated client identity for the
+	// on-demand certificate SDS dial (consts.EnvoySDSClientName). The
+	// CP's SDS server pins that SAN, so the otel-tls leaf above cannot
+	// authenticate there — keep the lanes' material separate.
+	envoySDSTLSCertFile = "/etc/envoy/sds-tls/client.pem"
+	envoySDSTLSKeyFile  = "/etc/envoy/sds-tls/client.key"
+	envoySDSTLSCAFile   = "/etc/envoy/sds-tls/ca.pem"
+
 	// otelCollectorALSClusterName is the cluster the OpenTelemetry access-log
 	// sink dials (only emitted when ALSConfig.MTLS is true).
 	otelCollectorALSClusterName = "otel_collector_als"

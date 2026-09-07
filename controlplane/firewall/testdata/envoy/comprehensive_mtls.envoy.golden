@@ -209,16 +209,16 @@ static_resources:
                 common_tls_context:
                     tls_certificates:
                         - certificate_chain:
-                            filename: /etc/envoy/otel-tls/client.pem
+                            filename: /etc/envoy/sds-tls/client.pem
                           private_key:
-                            filename: /etc/envoy/otel-tls/client.key
+                            filename: /etc/envoy/sds-tls/client.key
                     validation_context:
                         match_typed_subject_alt_names:
                             - matcher:
                                 exact: clawker-controlplane
                               san_type: DNS
                         trusted_ca:
-                            filename: /etc/envoy/otel-tls/ca.pem
+                            filename: /etc/envoy/sds-tls/ca.pem
                 sni: clawker-controlplane
           type: STRICT_DNS
           typed_extension_protocol_options:

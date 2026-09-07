@@ -552,7 +552,8 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // CLI-root-chained leaf (a future infra service) can't impersonate the collector
 // for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
-	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port)
+	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port,
+		infraClientTLS{cert: envoyOtelTLSCertFile, key: envoyOtelTLSKeyFile, ca: envoyOtelTLSCAFile})
 }
 
 // installSDSCluster emits the cluster the on-demand certificate selector
@@ -584,16 +585,26 @@ func anyWildcardTLSAllowRule(rules []config.EgressRule) bool {
 
 // buildSDSCluster returns the SDS cluster definition. STRICT_DNS resolves the
 // CP's clawker-network DNS name; h2 because xDS runs on gRPC. The upstream
-// TLS context reuses the infra-lane client material the ALS cluster uses
-// (leaf signed by the infra intermediate), and validates the CP server cert
+// TLS context presents the lane's DEDICATED client identity from
+// /etc/envoy/sds-tls (consts.EnvoySDSClientName leaf, signed by the infra
+// intermediate — the CP's SDS server pins that exact SAN and refuses the
+// telemetry lane's leaf), and validates the CP server cert
 // (CLI-root-signed, SAN = the CP container name) against the mounted root CA.
 func buildSDSCluster(sds SDSConfig) map[string]any {
-	return buildInfraGRPCCluster(sdsClusterName, sds.Address, sds.Port)
+	return buildInfraGRPCCluster(sdsClusterName, sds.Address, sds.Port,
+		infraClientTLS{cert: envoySDSTLSCertFile, key: envoySDSTLSKeyFile, ca: envoySDSTLSCAFile})
+}
+
+// infraClientTLS names the in-container file paths of one lane's mTLS
+// client material. Each infra cluster passes its own lane — cert lanes
+// are per-feature identities, never shared across services.
+type infraClientTLS struct {
+	cert, key, ca string
 }
 
 // buildInfraGRPCCluster uses HTTP/2 and mTLS for a trusted infrastructure service.
 // The service address supplies both the SNI and the required server SAN.
-func buildInfraGRPCCluster(name, address string, port int) map[string]any {
+func buildInfraGRPCCluster(name, address string, port int, tlsFiles infraClientTLS) map[string]any {
 	return map[string]any{
 		"name":            name,
 		"type":            "STRICT_DNS",
@@ -633,12 +644,12 @@ func buildInfraGRPCCluster(name, address string, port int) map[string]any {
 				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
-							keyCertificateChain: map[string]any{keyFilename: envoyOtelTLSCertFile},
-							keyPrivateKey:       map[string]any{keyFilename: envoyOtelTLSKeyFile},
+							keyCertificateChain: map[string]any{keyFilename: tlsFiles.cert},
+							keyPrivateKey:       map[string]any{keyFilename: tlsFiles.key},
 						},
 					},
 					keyValidationContext: map[string]any{
-						keyTrustedCA: map[string]any{keyFilename: envoyOtelTLSCAFile},
+						keyTrustedCA: map[string]any{keyFilename: tlsFiles.ca},
 						"match_typed_subject_alt_names": []any{
 							map[string]any{
 								"san_type": "DNS",
