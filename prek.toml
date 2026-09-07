@@ -41,6 +41,8 @@ rev = "27774aaf853a4fd21f1dd5e69439459dc1b26e68" # frozen: v2.13.2
 
 [[repos.hooks]]
 id = "golangci-lint-full"
+# Keep equal to go.mod; prek runs this hook with GOTOOLCHAIN=local.
+language_version = "1.27.1"
 entry = "golangci-lint run"
 args = ["--config", ".golangci.yml"]
 priority = "scan"

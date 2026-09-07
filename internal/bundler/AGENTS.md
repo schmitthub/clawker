@@ -166,7 +166,7 @@ type DockerfileContext struct {
 }
 ```
 
-`GoBuilderImage` is the Go stack image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
+`GoBuilderImage` is the Go image for builder stages. `DefaultGoBuilderImage` pins its patch version and multi-architecture OCI digest. Keep this version, the Go stages in `Dockerfile.controlplane`, and the adversarial server builder equal to the version in `go.mod`.
 
 ### Harness Bundles (`harness.go`)
 

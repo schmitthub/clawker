@@ -1,6 +1,6 @@
 module github.com/schmitthub/clawker
 
-go 1.26.6
+go 1.27.1
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
