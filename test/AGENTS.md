@@ -119,6 +119,7 @@ down. Highlights (not exhaustive — see the file):
 | `TestFirewall_AddRemove` / `_ConfigRules` / `_Prune` | Dynamic rule management; config-rule sync; store reset (config floor survives `prune`, `--all` empties, non-interactive gate, CP-down fail-fast) |
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` / `_TLSPathRules*` | HTTP and TLS MITM path rule enforcement |
+| `TestFirewall_WildcardSANCerts` | `.suno.com` admits seven Suno hosts, including a deep hostname; 56 requests verify TLS, reach upstream, and return no 503 or other 5xx response |
 | `TestFirewall_SSHTCPMapping` / `_HTTPDomainDetection` / `_ICMPBlocked` | Non-TLS protocol routing and blocking |
 | `TestFirewall_Identity*` | Route identities stable across rule churn and CP restart |
 | `TestFirewall_HostProxyReachable` / `_IntraNetworkBypass` / `_FirewallDisabled` | Host-proxy carve-out; intra-net bypass; disabled-firewall behavior (CP still boots — CP ≠ firewall) |
