@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -267,7 +269,10 @@ func openSDSStream(t *testing.T, server *grpc.Server, clientTLS *tls.Config) {
 	store, err := firewall.NewRulesStoreFromString("rules: []")
 	require.NoError(t, err)
 	certDir := t.TempDir()
-	ca, err := firewall.NewCAStore(func() (string, error) { return certDir, nil })
+	ca, err := firewall.NewCAStore(
+		func() (string, error) { return certDir, nil },
+		sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()},
+	)
 	require.NoError(t, err)
 	sds, err := firewall.NewSDSServer(firewall.SDSServerDeps{
 		Store: store,

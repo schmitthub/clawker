@@ -14,13 +14,13 @@ import (
 
 func newTestCAStore(t *testing.T, certDirFn func() (string, error)) *firewall.CAStore {
 	t.Helper()
-	store, err := firewall.NewCAStore(certDirFn)
+	store, err := firewall.NewCAStore(certDirFn, currentUserOwner())
 	require.NoError(t, err)
 	return store
 }
 
 func TestNewCAStore_RejectsNilCertDirFn(t *testing.T) {
-	store, err := firewall.NewCAStore(nil)
+	store, err := firewall.NewCAStore(nil, currentUserOwner())
 	require.ErrorIs(t, err, firewall.ErrNilCACertDirFn)
 	assert.Nil(t, store)
 }

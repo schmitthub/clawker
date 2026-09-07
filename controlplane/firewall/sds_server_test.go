@@ -45,7 +45,7 @@ func startSDSTestServer(t *testing.T) *grpc.ClientConn {
 	require.NoError(t, err)
 
 	certDir := t.TempDir()
-	ca, err := firewall.NewCAStore(func() (string, error) { return certDir, nil })
+	ca, err := firewall.NewCAStore(func() (string, error) { return certDir, nil }, currentUserOwner())
 	require.NoError(t, err)
 	srv, err := firewall.NewSDSServer(firewall.SDSServerDeps{
 		Store: store,

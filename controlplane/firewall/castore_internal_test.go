@@ -1,18 +1,20 @@
 package firewall
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 func newTestCAStore(t *testing.T, certDirFn func() (string, error)) *CAStore {
 	t.Helper()
-	store, err := NewCAStore(certDirFn)
+	store, err := NewCAStore(certDirFn, sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()})
 	require.NoError(t, err)
 	return store
 }
