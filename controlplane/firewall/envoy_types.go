@@ -513,6 +513,11 @@ func (c *EnvoyConfig) SetUnmatchedDeny(listener string, chain map[string]any) er
 // marshals it to YAML.
 func (c *EnvoyConfig) Bytes() ([]byte, error) {
 	root := map[string]any{
+		// SDS requires both fields before it can request certificates.
+		"node": map[string]any{
+			"id":      envoyContainerName,
+			"cluster": envoyContainerName,
+		},
 		"static_resources": map[string]any{
 			"listeners": c.listenerList(),
 			"clusters":  c.clusterList(),

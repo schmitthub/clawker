@@ -159,6 +159,7 @@ security:
   docker_socket: false
   firewall:
     add_domains:
+      - .clawker.dev
       - docs.openclaw.ai
       - registry-1.docker.io
       - vuln.go.dev

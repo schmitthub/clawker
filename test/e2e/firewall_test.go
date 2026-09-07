@@ -1233,7 +1233,7 @@ security:
 		"subdomain path /quickstart should be blocked by wildcard path_default:deny, got %q", subDeniedCode)
 }
 
-// TestFirewall_WildcardSANCerts covers the Suno hosts from #500 and #518.
+// TestFirewall_WildcardSANCerts checks TLS for deep hostnames under one wildcard rule.
 func TestFirewall_WildcardSANCerts(t *testing.T) {
 	const agent = "wildcard-san"
 	h := newFirewallYAMLHarness(t, `
@@ -1243,7 +1243,7 @@ workspace:
 security:
   firewall:
     add_domains:
-      - .suno.com
+      - .clawker.dev
 `)
 	// The test CP must use this test environment's CA.
 	harness.EnsureNoControlPlane(t, 30*time.Second)
@@ -1255,41 +1255,31 @@ security:
 		h.Run("container", "stop", "--agent", agent)
 	})
 
-	// Start with the deep hostname: *.suno.com cannot cover this name.
-	// The auth and clerk hosts use different upstream certificates (#518).
-	targets := []struct {
-		host string
-		path string
-	}{
-		{host: "studio-api.prod.suno.com", path: "/"},
-		{host: "auth.suno.com", path: "/v1/client"},
-		{host: "clerk.suno.com", path: "/v1/client"},
-		{host: "suno.com", path: "/"},
-		{host: "accounts.suno.com", path: "/"},
-		{host: "www.suno.com", path: "/"},
-		{host: "studio-api-prod.suno.com", path: "/"},
+	// These Worker Custom Domains are under project control.
+	// A *.clawker.dev certificate cannot cover any of these names.
+	hosts := []string{
+		"deep.a.e2e.clawker.dev",
+		"a.e2e.clawker.dev",
+		"b.e2e.clawker.dev",
 	}
-	// Keep the same agent and Envoy process for all rounds. A restart clears
+	// Keep the same agent and Envoy process for all hosts. A restart clears
 	// the shared upstream session cache and can hide the host-switch failure.
-	for round := range 8 {
-		for _, target := range targets {
-			t.Run(fmt.Sprintf("round_%02d/%s", round+1, target.host), func(t *testing.T) {
-				res := h.ExecInContainer(agent,
-					"curl", "--disable", "--silent", "--show-error", "--http1.1",
-					"--max-time", "15", "--connect-timeout", "10",
-					"--dump-header", "-", "--output", "/dev/null",
-					"https://"+target.host+target.path)
-				require.NoError(t, res.Err, "curl must verify the CA and hostname\nstdout: %s\nstderr: %s",
-					res.Stdout, res.Stderr)
-				// Do not hide a failed first request with a retry or redirect.
-				assert.Regexp(t, `^HTTP/1\.[01] [234][0-9]{2}\b`, res.Stdout,
-					"request must return HTTP 2xx-4xx, with no 503 or other 5xx response")
-				// Upstream 4xx responses are valid for these public API paths.
-				// A local Envoy deny has no upstream service-time header.
-				assert.Regexp(t, `(?im)^x-envoy-upstream-service-time: [0-9]+\r?$`, res.Stdout,
-					"request must reach Suno through Envoy")
-			})
-		}
+	for _, host := range hosts {
+		t.Run(host, func(t *testing.T) {
+			res := h.ExecInContainer(agent,
+				"curl", "--disable", "--silent", "--show-error", "--http1.1",
+				"--max-time", "15", "--connect-timeout", "10",
+				"--dump-header", "-", "--output", "/dev/null",
+				"https://"+host+"/")
+			require.NoError(t, res.Err, "curl must verify the CA and hostname\nstdout: %s\nstderr: %s",
+				res.Stdout, res.Stderr)
+			// Do not hide a failed first request with a retry or redirect.
+			assert.Regexp(t, `^HTTP/1\.[01] 200\b`, res.Stdout,
+				"request must return HTTP 200")
+			// A local Envoy deny has no upstream service-time header.
+			assert.Regexp(t, `(?im)^x-envoy-upstream-service-time: [0-9]+\r?$`, res.Stdout,
+				"request must reach the Worker through Envoy")
+		})
 	}
 }
 

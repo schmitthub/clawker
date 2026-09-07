@@ -3,6 +3,9 @@ admin:
         socket_address:
             address: 127.0.0.1
             port_value: 9901
+node:
+    cluster: clawker-envoy
+    id: clawker-envoy
 static_resources:
     clusters:
         - connect_timeout: 10s
