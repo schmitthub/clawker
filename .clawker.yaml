@@ -33,7 +33,7 @@ build:
     root_run:
       - npm install -g wscat
       - |-
-        GH_VERSION=2.94.0 && \
+        GH_VERSION=2.100.0 && \
           ARCH=$(dpkg --print-architecture) && \
           GH_FILE="gh_${GH_VERSION}_linux_${ARCH}.tar.gz" && \
           CHECKSUMS_FILE="gh_${GH_VERSION}_checksums.txt" && \
