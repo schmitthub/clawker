@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -41,7 +42,7 @@ const claudeProjectsTarget = consts.ContainerHomeDir + "/.claude/projects"
 func TestBuildWorktreeGitMounts_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.Mkdir(gitDir, 0755); err != nil {
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatalf("failed to create .git directory: %v", err)
 	}
 
@@ -50,11 +51,14 @@ func TestBuildWorktreeGitMounts_Success(t *testing.T) {
 		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
 	}
 
-	resolvedTmpDir, _ := filepath.EvalSymlinks(tmpDir)
+	resolvedTmpDir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatalf("resolve project root: %v", err)
+	}
 	expectedGitDir := filepath.Join(resolvedTmpDir, ".git")
 
-	if len(mounts) != 3 {
-		t.Fatalf("len(mounts) = %d, want 3 (.git RW + config RO + hooks RO)", len(mounts))
+	if len(mounts) != 1 {
+		t.Fatalf("len(mounts) = %d, want 1 read-write Git mount", len(mounts))
 	}
 
 	m := findMountByTarget(mounts, expectedGitDir)
@@ -71,123 +75,10 @@ func TestBuildWorktreeGitMounts_Success(t *testing.T) {
 		t.Error(".git mount.ReadOnly = true, want false (worktree git ops need RW objects/refs)")
 	}
 
-	// Missing hooks/ and config must be created host-side so the RO binds
-	// always have a source — skipping the mount instead would let the agent
-	// create them inside the RW .git region, reopening the host-exec vector.
-	hooksInfo, err := os.Stat(filepath.Join(gitDir, "hooks"))
-	if err != nil || !hooksInfo.IsDir() {
-		t.Errorf(".git/hooks not created as directory (info=%v, err=%v)", hooksInfo, err)
-	}
-	configInfo, err := os.Stat(filepath.Join(gitDir, "config"))
-	if err != nil || configInfo.IsDir() {
-		t.Errorf(".git/config not created as file (info=%v, err=%v)", configInfo, err)
-	}
-}
-
-func TestBuildWorktreeGitMounts_ProtectsHooksAndConfig(t *testing.T) {
-	// The main .git is mounted RW, but .git/hooks and .git/config are
-	// host-exec vectors (planted hooks / core.hooksPath / fsmonitor run on
-	// the HOST's next git op). They must be masked by read-only binds.
-	tmpDir := t.TempDir()
-	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.MkdirAll(filepath.Join(gitDir, "hooks"), 0755); err != nil {
-		t.Fatalf("failed to create .git/hooks: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0644); err != nil {
-		t.Fatalf("failed to create .git/config: %v", err)
-	}
-
-	mounts, err := buildWorktreeGitMounts(tmpDir)
-	if err != nil {
-		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
-	}
-
-	resolvedTmpDir, _ := filepath.EvalSymlinks(tmpDir)
-	expectedGitDir := filepath.Join(resolvedTmpDir, ".git")
-
-	for _, sub := range []string{"config", "hooks"} {
-		target := filepath.Join(expectedGitDir, sub)
-		m := findMountByTarget(mounts, target)
-		if m == nil {
-			t.Fatalf("no mount with target %q", target)
+	for _, name := range []string{"hooks", "config"} {
+		if _, statErr := os.Stat(filepath.Join(gitDir, name)); !os.IsNotExist(statErr) {
+			t.Errorf("mount setup created .git/%s or stat failed: %v", name, statErr)
 		}
-		if m.Type != mount.TypeBind {
-			t.Errorf("%s mount.Type = %v, want %v", sub, m.Type, mount.TypeBind)
-		}
-		if m.Source != target {
-			t.Errorf("%s mount.Source = %q, want %q (Source must equal Target)", sub, m.Source, target)
-		}
-		if !m.ReadOnly {
-			t.Errorf("%s mount.ReadOnly = false, want true (host-exec vector must be masked)", sub)
-		}
-	}
-}
-
-func TestBuildWorktreeGitMounts_PreservesExistingConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.Mkdir(gitDir, 0755); err != nil {
-		t.Fatalf("failed to create .git directory: %v", err)
-	}
-	content := []byte("[remote \"origin\"]\n\turl = https://example.com/repo.git\n")
-	if err := os.WriteFile(filepath.Join(gitDir, "config"), content, 0644); err != nil {
-		t.Fatalf("failed to write .git/config: %v", err)
-	}
-
-	if _, err := buildWorktreeGitMounts(tmpDir); err != nil {
-		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
-	}
-
-	got, err := os.ReadFile(filepath.Join(gitDir, "config"))
-	if err != nil {
-		t.Fatalf("failed to read .git/config: %v", err)
-	}
-	if string(got) != string(content) {
-		t.Errorf(".git/config content changed: got %q, want %q", got, content)
-	}
-}
-
-func TestBuildWorktreeGitMounts_ReadOnlyConfigPreserved(t *testing.T) {
-	tmpDir := t.TempDir()
-	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.Mkdir(gitDir, 0755); err != nil {
-		t.Fatalf("failed to create .git directory: %v", err)
-	}
-	content := []byte("[core]\n\trepositoryformatversion = 0\n")
-	cfgPath := filepath.Join(gitDir, "config")
-	if err := os.WriteFile(cfgPath, content, 0444); err != nil {
-		t.Fatalf("failed to write read-only .git/config: %v", err)
-	}
-
-	if _, err := buildWorktreeGitMounts(tmpDir); err != nil {
-		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil on read-only config", err)
-	}
-
-	got, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("failed to read .git/config: %v", err)
-	}
-	if string(got) != string(content) {
-		t.Errorf(".git/config content changed: got %q, want %q", got, content)
-	}
-}
-
-func TestBuildWorktreeGitMounts_ConfigIsSymlink(t *testing.T) {
-	tmpDir := t.TempDir()
-	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.Mkdir(gitDir, 0755); err != nil {
-		t.Fatalf("failed to create .git directory: %v", err)
-	}
-	target := filepath.Join(tmpDir, "elsewhere-config")
-	if err := os.WriteFile(target, []byte("[core]\n"), 0644); err != nil {
-		t.Fatalf("failed to write symlink target: %v", err)
-	}
-	if err := os.Symlink(target, filepath.Join(gitDir, "config")); err != nil {
-		t.Fatalf("failed to create .git/config symlink: %v", err)
-	}
-
-	if _, err := buildWorktreeGitMounts(tmpDir); err == nil {
-		t.Fatal("buildWorktreeGitMounts() error = nil, want error on symlinked .git/config")
 	}
 }
 

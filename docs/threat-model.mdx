@@ -206,11 +206,10 @@ The `noexec` hardening pattern targets unattended ephemeral production container
 
 **How clawker mitigates it:**
 
-- **Worktree containers mask hooks read-only.** When you run an agent on a git worktree (`--worktree`), clawker mounts the main repository's `.git/hooks` and `.git/config` read-only into the container, so the agent cannot plant or alter a hook the host would later execute. This is the recommended mode for unattended sessions — see [worktree caveats](/worktrees#worktree-caveats).
 - **Snapshot mode never reaches the host.** In `workspace.snapshot` mode the repository is a disposable copy inside a Docker volume; anything the agent writes to `.git/hooks` stays in the container and is discarded with it.
 
 <Warning>
-**Current gap:** A standard bind mount of a repository in `workspace.bind` mode (not a worktree) leaves that repository's own `.git/hooks` writable by the agent. A hook planted there will run the next time you invoke git on the host in that directory. Until the planned policy controls below ship, prefer **worktree** or **snapshot** mode for unattended or high-risk sessions, and review `.git/hooks` before running git on the host against a repo an agent has touched.
+**Current gap:** Bind mode and worktree containers leave the shared repository's `.git/hooks` writable by the agent. A hook planted there will run the next time you invoke git on the host in that directory. Until the planned policy controls below ship, prefer **snapshot** mode for unattended or high-risk sessions, and review `.git/hooks` before running git on the host against a repo an agent has touched.
 </Warning>
 
 ## Planned Hardening
@@ -224,7 +223,6 @@ Clawker's shipped controls are network- and isolation-based: they constrain wher
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Data exfiltration (ICMP tunneling) | eBPF sock_create blocks SOCK_RAW | On | [Firewall](/firewall) |
 | Host filesystem damage | Container isolation + workspace mount scoping | On | [Container Internals](/container-internals) |
-| Git hook host code execution | Read-only `.git/hooks` + `.git/config` masks | Worktree mode | [Worktrees](/worktrees#worktree-caveats) |
 
 ## Shared Responsibility
 

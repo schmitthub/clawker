@@ -255,7 +255,6 @@ If `OTEL_*` variables are set, this container is reporting metrics and logs to a
 | `gh auth` hangs | Host proxy not reachable | Check `CLAWKER_HOST_PROXY` is set; user may need to restart host proxy |
 | Workspace changes not visible on host | Container is in `snapshot` mode | Changes only exist in the container; user chose ephemeral isolation |
 | Package install fails (network) | Package repo domain not whitelisted | User needs to `clawker firewall add` the repo domain |
-| In a worktree container, `git push -u` prints `error: could not write config file ...: Device or resource busy` then `set up to track`, but the branch has no upstream afterward | **Worktree only** — host `.git/config` is mounted read-only as a security measure; the push succeeds (exit 0) but the tracking write is blocked and silently dropped (the `set up to track` line is misleading) | Not a failure — the branch pushed; don't retry. Tell the user tracking wasn't saved; they can run `git push -u origin <branch>` on the host. See https://docs.clawker.dev/worktrees#worktree-caveats |
 
 ## Resources
 

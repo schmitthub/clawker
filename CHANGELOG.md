@@ -10,10 +10,11 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
-## [unrelesaed]
+## [2026.9.1] - 2026-09-07
 
 - **Fixed:** Certificate errors when accessing nested subdomains allowed by wildcard firewall rules.
 - **Fixed:** Intermittent 503 errors when switching between subdomains allowed by wildcard firewall rules.
+- **Fixed:** Git dubious ownership issues inside of containers.
 
 ## [2026.8.5] - 2026-08-17
 

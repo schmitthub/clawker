@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/consts"
@@ -63,6 +64,7 @@ type RuntimeEnvOpts struct {
 // The result is sorted by key for deterministic ordering.
 func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	m := make(map[string]string)
+	var gitConfig [][2]string
 
 	// Clawker identity (consumed by the statusline AND by clawkerd
 	// as `req.AgentName` at Connect — same value, single source).
@@ -164,9 +166,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			// regardless of what the host's gitconfig (global or local) specifies.
 			// Env-based config overrides all file-based git config levels including
 			// local .git/config, which is bind-mounted from the host in bind mode.
-			m["GIT_CONFIG_COUNT"] = "1"
-			m["GIT_CONFIG_KEY_0"] = "gpg.program"
-			m["GIT_CONFIG_VALUE_0"] = "/usr/bin/gpg"
+			gitConfig = append(gitConfig, [2]string{gitGPGProgramKey, gitGPGProgramPath})
 		}
 		if opts.SSHForwardingEnabled {
 			sshAgentSock := consts.ContainerHomeDir + "/.ssh/agent.sock"
@@ -182,6 +182,21 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			return nil, fmt.Errorf("failed to marshal remote sockets: %w", err)
 		}
 		m[consts.EnvRemoteSockets] = string(socketsBytes)
+	}
+
+	// VirtioFS can report a different owner for the mounted workspace, so
+	// Git must trust it explicitly. The wildcard also covers submodules and
+	// nested repositories; the exact-path form does not, and the subtree
+	// form (path/*) needs Git 2.46. Git's ownership check guards a user
+	// from repositories owned by another user; in the container the only
+	// other user is root, so the wildcard does not widen the agent's reach.
+	gitConfig = append(gitConfig, [2]string{gitSafeDirectoryKey, gitSafeDirectoryAll})
+	if len(gitConfig) > 0 {
+		m[gitConfigCountEnv] = strconv.Itoa(len(gitConfig))
+		for i, entry := range gitConfig {
+			m[fmt.Sprintf(gitConfigKeyEnv, i)] = entry[0]
+			m[fmt.Sprintf(gitConfigValueEnv, i)] = entry[1]
+		}
 	}
 
 	// Worktree containers: disable Go VCS stamping. Go's VCS discovery only

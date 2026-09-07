@@ -16,11 +16,6 @@ separate checkout of the repository at a specific branch.
 
 Worktrees are created automatically when using 'clawker run --worktree `<branch>`'.
 
-Worktree containers mask the main repo's .git/hooks and .git/config read-only
-(security measure for unattended sessions): 'git config --local' and 'git remote add'
-fail, and 'git push -u' still pushes the branch but can't persist upstream tracking
-(easy-to-miss warning, exit 0). See https://docs.clawker.dev/worktrees#worktree-caveats
-
 ### Examples
 
 ```
