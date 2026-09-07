@@ -184,11 +184,13 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvRemoteSockets] = string(socketsBytes)
 	}
 
-	// The workspace is mounted at its host path. VirtioFS can report a
-	// different owner, so Git must trust this shared workspace explicitly.
-	if opts.WorkspaceSource != "" {
-		gitConfig = append(gitConfig, [2]string{gitSafeDirectoryKey, opts.WorkspaceSource})
-	}
+	// VirtioFS can report a different owner for the mounted workspace, so
+	// Git must trust it explicitly. The wildcard also covers submodules and
+	// nested repositories; the exact-path form does not, and the subtree
+	// form (path/*) needs Git 2.46. Git's ownership check guards a user
+	// from repositories owned by another user; in the container the only
+	// other user is root, so the wildcard does not widen the agent's reach.
+	gitConfig = append(gitConfig, [2]string{gitSafeDirectoryKey, gitSafeDirectoryAll})
 	if len(gitConfig) > 0 {
 		m[gitConfigCountEnv] = strconv.Itoa(len(gitConfig))
 		for i, entry := range gitConfig {

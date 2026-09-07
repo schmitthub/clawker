@@ -121,7 +121,7 @@ chain.
 
 `RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars. Precedence: base → terminal → agent env → instruction env. Sorted by key. `Worktree: true` (linked-worktree workspace) adds `GOFLAGS=-buildvcs=false` — Go cannot stamp linked worktrees (its VCS walk skips the `.git` file and lands on the mounted main `.git`); user env overrides.
 
-Git trusts `WorkspaceSource`, which is also the workspace mount target, through command-scope configuration in the container environment. This prevents dubious ownership errors when VirtioFS reports a different owner. The same configuration retains the GPG program override when GPG forwarding is enabled.
+Git trusts every repository in the container (`safe.directory=*`) through command-scope configuration in the container environment. This prevents dubious ownership errors when VirtioFS reports a different owner for the workspace mount, and it covers submodules and nested repositories, which an exact-path entry does not. The same configuration retains the GPG program override when GPG forwarding is enabled. Git's ownership check protects a user from repositories owned by a different user; the container has no other unprivileged user, so the wildcard does not widen what the agent can do.
 
 ## Volume Utilities (`volume.go`)
 

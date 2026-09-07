@@ -27,8 +27,10 @@ func TestRuntimeEnvGitOwnership(t *testing.T) {
 		"GIT_COMMITTER_EMAIL=test@example.com",
 	}
 	repo := filepath.Join(root, "shared workspace")
-	other := filepath.Join(root, "other")
-	for _, dir := range []string{repo, other} {
+	// A nested repository stands in for a submodule checkout: its root is
+	// not the workspace path, so only the wildcard entry can cover it.
+	nested := filepath.Join(repo, "nested")
+	for _, dir := range []string{repo, nested} {
 		cmd := exec.CommandContext(t.Context(), git, "init", dir)
 		cmd.Env = baseEnv
 		output, initErr := cmd.CombinedOutput()
@@ -69,8 +71,14 @@ func TestRuntimeEnvGitOwnership(t *testing.T) {
 			output, statusErr := cmd.CombinedOutput()
 			require.NoError(t, statusErr, "%s", output)
 
-			cmd = exec.CommandContext(t.Context(), git, "-C", other, "status", "--porcelain")
+			cmd = exec.CommandContext(t.Context(), git, "-C", nested, "status", "--porcelain")
 			cmd.Env = cmdEnv
+			output, statusErr = cmd.CombinedOutput()
+			require.NoError(t, statusErr, "nested repository: %s", output)
+
+			// Without the container environment Git still rejects the repository.
+			cmd = exec.CommandContext(t.Context(), git, "-C", tc.path, "status", "--porcelain")
+			cmd.Env = slices.Concat(baseEnv, []string{"GIT_TEST_ASSUME_DIFFERENT_OWNER=1"})
 			output, statusErr = cmd.CombinedOutput()
 			require.Error(t, statusErr)
 			require.Contains(t, string(output), "dubious ownership")
