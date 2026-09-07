@@ -146,23 +146,28 @@ func writeAtomic(path string, data []byte) error {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			// Remove temporary key material after any failure, including rename.
+			_ = os.Remove(tmpName) // Cleanup cannot replace the original file error.
+		}
+	}()
 	if _, writeErr := tmp.Write(data); writeErr != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName) // best-effort cleanup; the write error is the failure that matters
+		_ = tmp.Close() // Cleanup cannot replace the write error.
 		return fmt.Errorf("write temp file: %w", writeErr)
 	}
 	if closeErr := tmp.Close(); closeErr != nil {
-		_ = os.Remove(tmpName) // best-effort cleanup; the close error is the failure that matters
 		return fmt.Errorf("close temp file: %w", closeErr)
 	}
 	// 0o644: the non-root bind-mounted Envoy reader (UID 101) must read
 	// these; the 0o755 dir + file world-read pair is the lane's contract.
 	if chmodErr := os.Chmod(tmpName, 0o644); chmodErr != nil { //nolint:gosec // G302: non-root Envoy reads
-		_ = os.Remove(tmpName) // best-effort cleanup; the chmod error is the failure that matters
 		return fmt.Errorf("chmod temp file: %w", chmodErr)
 	}
 	if renameErr := os.Rename(tmpName, path); renameErr != nil {
 		return fmt.Errorf("rename temp file: %w", renameErr)
 	}
+	committed = true
 	return nil
 }
