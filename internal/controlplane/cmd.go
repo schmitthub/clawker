@@ -14,13 +14,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	secretservice "github.com/envoyproxy/go-control-plane/envoy/service/secret/v3"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
@@ -32,6 +36,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/controlplane/server"
 	"github.com/schmitthub/clawker/controlplane/subprocess"
 	"github.com/schmitthub/clawker/internal/config"
@@ -403,6 +408,9 @@ func Main() StatusCode {
 
 const (
 	defaultShutdownWait = 5 * time.Second
+	// sdsStopTimeout bounds shutdown while Envoy holds delta SDS streams
+	// open, so a startup error can return and the CP can restart.
+	sdsStopTimeout = defaultShutdownWait
 	// cpDrainTimeout bounds the full teardown sequence (firewall stack
 	// stop + eBPF flush + queue drain). Must be below the Docker SIGTERM
 	// grace period (cpStopTimeout in manager/bootstrap.go = 30s) so we
@@ -621,6 +629,193 @@ func startHealthz(
 	return healthServer
 }
 
+// sdsTLSConfig requires client certificates signed by the infrastructure CA.
+func sdsTLSConfig(serverCertPath, serverKeyPath string) (*tls.Config, error) {
+	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load SDS server certificate: %w", err)
+	}
+	intermediatePEM, err := os.ReadFile(consts.CPInfraCACertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read SDS client CA: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(intermediatePEM) {
+		return nil, fmt.Errorf("no certificate parsed from %s", consts.CPInfraCACertPath)
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		MinVersion:   tls.VersionTLS12,
+		// Chain validation alone admits ANY infra-intermediate-signed
+		// leaf — including the telemetry lane's envoy-otel-client.
+		// The SDS server hands out CA-signed MITM certificates, so it
+		// additionally pins the dedicated SDS identity: only the
+		// consts.EnvoySDSClientName leaf (controlplane/sdscerts) may
+		// fetch minted secrets. VerifyConnection (not
+		// VerifyPeerCertificate) so the pin also runs on resumed
+		// sessions (gosec G123).
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			return requireSDSClientSAN(cs.VerifiedChains)
+		},
+
+		Rand:                                nil, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		Time:                                nil,
+		NameToCertificate:                   nil, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		GetCertificate:                      nil,
+		GetClientCertificate:                nil,
+		GetConfigForClient:                  nil,
+		VerifyPeerCertificate:               nil,
+		RootCAs:                             nil,
+		NextProtos:                          nil,
+		ServerName:                          "",
+		InsecureSkipVerify:                  false,
+		CipherSuites:                        nil,
+		PreferServerCipherSuites:            true, //nolint:staticcheck // exhaustruct requires this deprecated field; Go ignores its value.
+		SessionTicketsDisabled:              false,
+		SessionTicketKey:                    [32]byte{}, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		ClientSessionCache:                  nil,
+		UnwrapSession:                       nil,
+		WrapSession:                         nil,
+		MaxVersion:                          0,
+		CurvePreferences:                    nil,
+		DynamicRecordSizingDisabled:         false,
+		Renegotiation:                       tls.RenegotiateNever,
+		KeyLogWriter:                        nil,
+		EncryptedClientHelloConfigList:      nil,
+		EncryptedClientHelloRejectionVerify: nil,
+		GetEncryptedClientHelloKeys:         nil,
+		EncryptedClientHelloKeys:            nil,
+	}, nil
+}
+
+// requireSDSClientSAN is the SDS listener's per-connection identity pin,
+// run from tls.Config.VerifyConnection after standard chain verification
+// (ClientAuth: RequireAndVerifyClientCert), so verifiedChains carries
+// only chains anchored in the infra intermediate; this narrows further
+// to the dedicated SDS leaf identity.
+func requireSDSClientSAN(verifiedChains [][]*x509.Certificate) error {
+	for _, chain := range verifiedChains {
+		if len(chain) > 0 && slices.Contains(chain[0].DNSNames, consts.EnvoySDSClientName) {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"client leaf lacks the %s SAN — only the dedicated SDS identity may fetch minted MITM certificates",
+		consts.EnvoySDSClientName,
+	)
+}
+
+// startSDSServer brings up the firewall on-demand certificate SDS listener
+// (Envoy ↔ CP, clawker network only, never host-published). Envoy's wildcard
+// MITM chains fetch per-SNI minted leaves from it during the TLS handshake.
+// mTLS: the CP presents its CLI-root-signed server leaf (Envoy validates it
+// against the mounted root CA with an exact-SAN match on the CP container
+// name), and the client anchor is the infra intermediate CA — the same
+// agent-spoofing boundary the trusted OTLP lane uses, so only leaves minted
+// by the CP-side infracerts issuer (envoy, coredns) can connect.
+//
+// Degrades, never gates startup: on any failure the CP stays up with
+// event=sds_unavailable and a nil stop func — wildcard multi-label handshakes
+// then fail closed (Envoy gets no secret) while every other surface keeps
+// working.
+func startSDSServer(
+	ctx context.Context,
+	cfg config.Config,
+	log *logger.Logger,
+	rulesStore fwhandler.EgressRulesStore,
+	caStore *fwhandler.CAStore,
+	serverCertPath, serverKeyPath string,
+) func() {
+	degrade := func(err error, step string) {
+		log.Error().Err(err).
+			Str("event", "sds_unavailable").
+			Str("component", "firewall.sds").
+			Str("step", step).
+			Msg("SDS server unavailable — wildcard MITM chains cannot mint per-SNI leaves; their handshakes fail closed, everything else stays up")
+	}
+
+	sdsSrv, err := fwhandler.NewSDSServer(fwhandler.SDSServerDeps{
+		Store: rulesStore,
+		CA:    caStore,
+		Log:   log,
+	})
+	if err != nil {
+		degrade(err, "construct")
+		return nil
+	}
+
+	tlsCfg, err := sdsTLSConfig(serverCertPath, serverKeyPath)
+	if err != nil {
+		degrade(err, "tls_config")
+		return nil
+	}
+
+	sdsPort := cfg.ControlPlaneSettings().SDSPort
+	var lc net.ListenConfig
+	lis, err := lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", sdsPort))
+	if err != nil {
+		degrade(err, "listen")
+		return nil
+	}
+
+	grpcSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
+	secretservice.RegisterSecretDiscoveryServiceServer(grpcSrv, sdsSrv)
+	go func() {
+		// A serve-goroutine panic must not unwind PID 1 — contain and degrade.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "sds_serve_panic").
+					Str("component", "firewall.sds").
+					Msg("SDS serve goroutine panicked; SDS lane down, CP stays up")
+			}
+		}()
+		if serveErr := grpcSrv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+			degrade(serveErr, "serve")
+		}
+	}()
+	log.Info().Int("port", sdsPort).
+		Str("component", "firewall.sds").
+		Msg("SDS server serving on-demand MITM certificates")
+	return func() { stopSDSServer(grpcSrv, log) }
+}
+
+func stopSDSServer(grpcSrv *grpc.Server, log *logger.Logger) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "sds_stop_panic").
+					Str("component", "firewall.sds").
+					Msg("SDS graceful stop failed; forcing SDS shutdown")
+				grpcSrv.Stop()
+			}
+		}()
+		grpcSrv.GracefulStop()
+	}()
+
+	timer := time.NewTimer(sdsStopTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		log.Warn().
+			Str("event", "sds_graceful_stop_timeout").
+			Str("component", "firewall.sds").
+			Dur("timeout", sdsStopTimeout).
+			Msg("SDS streams remain open; forcing SDS shutdown")
+		grpcSrv.Stop()
+		<-done
+	}
+}
+
 // firewallBringupGate is the settings-driven firewall bringup startup
 // GATE. When firewall.enable (settings.yaml) is set, the stack must be up
 // whenever CP is — not only on a CLI FirewallInit — so the same queued
@@ -710,10 +905,12 @@ func buildEnforcement(
 	cfg config.Config,
 	log *logger.Logger,
 	otelCerts fwhandler.OtelCertProvisioner,
+	sdsCerts fwhandler.SDSCertProvisioner,
 ) (
 	dockerCli *docker.Client,
 	containerResolver fwhandler.ContainerResolver,
 	rulesStore fwhandler.EgressRulesStore,
+	caStore *fwhandler.CAStore,
 	stack *fwhandler.Stack,
 	ebpfMgr *ebpf.Manager,
 	identityAlloc *fwhandler.IdentityAllocator,
@@ -727,7 +924,7 @@ func buildEnforcement(
 	// docker context) names the wrong side of the mount in here.
 	dockerCli, err = docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}
 	cleanup = func() error { dockerCli.Close(); return nil }
 
@@ -736,7 +933,7 @@ func buildEnforcement(
 	// hierarchy discovery (cached parent) for rootless daemons.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return dockerCli, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+		return dockerCli, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
@@ -746,14 +943,25 @@ func buildEnforcement(
 	// event=otelcerts_unavailable in bootLogging.
 	rulesStore, err = fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return dockerCli, containerResolver, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+		return dockerCli, containerResolver, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+	}
+	caStore, err = fwhandler.NewCAStore(consts.FirewallCertSubdir)
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, cleanup, fmt.Errorf("CA store: %w", err)
 	}
 	// Sticky route-identity allocator (pre-SetReady startup gate on corruption).
 	//nolint:contextcheck // the identity table lives in internal/storage, whose lock/write API carries no context
 	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
-		return dockerCli, containerResolver, rulesStore, nil, nil, nil, cleanup, err
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, nil, cleanup, err
 	}
-	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, identityAlloc.IdentityFor)
+	stack, err = fwhandler.NewStack(
+		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
+	)
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, cleanup, fmt.Errorf(
+			"firewall stack: %w", err,
+		)
+	}
 
 	// Construction only: the manager exists but loads nothing here. BPF
 	// pins are created by the ebpfLoadFlow startup step, after the admin
@@ -762,7 +970,7 @@ func buildEnforcement(
 	// now and covers every arm.
 	ebpfMgr = ebpf.NewManager(log)
 	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
-	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+	return dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, cleanup, nil
 }
 
 // bpffsHandoffSocketPath places the handoff socket in the firewall data
@@ -912,6 +1120,7 @@ type grpcStackDeps struct {
 	ebpfMgr           *ebpf.Manager
 	stack             *fwhandler.Stack
 	rulesStore        fwhandler.EgressRulesStore
+	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
@@ -953,6 +1162,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		EBPF:          d.ebpfMgr,
 		Stack:         d.stack,
 		Store:         d.rulesStore,
+		CA:            d.caStore,
 		Cfg:           d.cfg,
 		Resolver:      d.containerResolver,
 		Log:           d.log,
@@ -1343,11 +1553,29 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// buildEnforcement — no BPF state is created here; ebpfLoadFlow below is
 	// the step that loads). enforcementCleanup closes the eBPF manager
 	// (error joined into retErr) then the Docker client, on every return arm.
-	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
+	// Dedicated Envoy→CP SDS client identity (separate lane from the
+	// telemetry certs above — see controlplane/sdscerts). Construction
+	// failure degrades: the stack leaves sdsCertsReady false, wildcard
+	// MITM chains keep static certs, CP stays up.
+	// Success-arm-only interface boxing (see the sdscerts.NewCPProvisioner
+	// LANDMINE note): a typed-nil *Service boxed into the interface would
+	// pass the stack's nil-guard and panic on dispatch.
+	var sdsCerts fwhandler.SDSCertProvisioner
+	if sdsSvc, sdsCertsErr := sdscerts.NewCPProvisioner(); sdsCertsErr != nil {
+		log.Error().Err(sdsCertsErr).
+			Str("event", "sds_certs_unavailable").
+			Str("component", "sdscerts").
+			Msg("SDS client identity provisioner unavailable — on-demand per-SNI MITM minting disabled; wildcard chains keep static certs")
+	} else {
+		sdsCerts = sdsSvc
+	}
+
+	dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
 		cfg,
 		log,
 		otelCerts,
+		sdsCerts,
 	)
 	// Register cleanup before the error check: buildEnforcement returns a
 	// non-nil cleanup even on a mid-construction failure (e.g. cgroup-driver
@@ -1393,6 +1621,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ebpfMgr:           ebpfMgr,
 		stack:             stack,
 		rulesStore:        rulesStore,
+		caStore:           caStore,
 		identityAlloc:     identityAlloc,
 		containerResolver: containerResolver,
 		agentReg:          agentReg,
@@ -1451,6 +1680,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// filesystem.
 	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
 		return err
+	}
+
+	// firewall on-demand certificate SDS listener — serves BEFORE the
+	// firewall bringup gate so Envoy can fetch per-SNI secrets from its
+	// first boot. Degrades (event=sds_unavailable), never gates startup;
+	// stopSDS is nil on a degraded start.
+	stopSDS := startSDSServer(signalCtx, cfg, log, rulesStore, caStore, serverCertPath, serverKeyPath)
+	if stopSDS != nil {
+		defer stopSDS()
 	}
 
 	// settings-driven firewall bringup — startup GATE, pre-SetReady

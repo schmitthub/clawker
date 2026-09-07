@@ -335,7 +335,7 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 // the path is regex-marked (see pathSpecifier) — optionally narrowed to a set of
 // HTTP methods, to the upstream cluster.
 func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[string]any {
-	route := map[string]any{"cluster": cluster, "timeout": "0s"}
+	route := map[string]any{keyCluster: cluster, "timeout": "0s"}
 	// ws/wss enrichment: a per-route upgrade_configs entry enables the WebSocket
 	// upgrade on THIS allow route (RFC 6455 over h1.1, RFC 8441 Extended CONNECT
 	// over h2/h3 with HCM allow_connect). Per-route (not HCM-wide) so path-scoped

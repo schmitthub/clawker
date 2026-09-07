@@ -111,6 +111,8 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before the harness launches, letting you set up MCPs, etc.
 - **Envoy + custom CoreDNS + eBPF network firewall** enabled by default — Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network, while eBPF cgroup programs (loaded and attached from outside agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Provides DNS-level deny-by-default (unlisted domains return NXDOMAIN), per-domain TCP routing via a real-time BPF DNS cache, and TLS inspection with per-domain MITM certificates for path-level filtering. Agent containers themselves get **no Linux capabilities** — all enforcement happens kernel-side, outside the container's privilege scope. Each harness bundle ships its own egress floor (the claude harness allows the Anthropic API + OAuth domains, codex the OpenAI ones); project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status` (or `clawker firewall refresh` to live-apply project config egress edits), temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
+
+  Wildcard HTTPS/WSS rules use a certificate for each requested hostname, including names with multiple subdomain labels. CA rotation cannot expose a partially replaced CA pair to certificate requests. HTTP/3 keeps static certificates; clients need TCP fallback for deeper names.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
@@ -148,7 +150,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 ```
 
-**Build from source** (requires Go 1.26+):
+**Build from source** (requires Go 1.27.1+):
 ```bash
 git clone https://github.com/schmitthub/clawker.git
 cd clawker && make clawker
@@ -470,6 +472,10 @@ See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is
 ## Contributing
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and PR process.
+
+Keep CP entrypoint helper tests in `internal/controlplane/cmd_helpers_test.go`. Keep SDS service tests with the code in `controlplane/firewall/`.
+
+Lint suppression directives require explicit approval from the project owner.
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 

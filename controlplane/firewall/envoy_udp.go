@@ -98,8 +98,8 @@ func udpProxyTerminalLayer(ctx *genCtx) error {
 					"action": map[string]any{
 						"name": "route",
 						keyTypedConfig: map[string]any{
-							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
-							"cluster": ctx.upstreamCluster,
+							"@type":    "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
+							keyCluster: ctx.upstreamCluster,
 						},
 					},
 				},
@@ -129,8 +129,8 @@ func udpDenyTerminalLayer(ctx *genCtx) error {
 					"action": map[string]any{
 						"name": "route",
 						keyTypedConfig: map[string]any{
-							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
-							"cluster": denyClusterName,
+							"@type":    "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
+							keyCluster: denyClusterName,
 						},
 					},
 				},
@@ -160,11 +160,11 @@ func quicDownstreamSocket(domain string) map[string]any {
 		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport",
 			"downstream_tls_context": map[string]any{
-				"common_tls_context": map[string]any{
+				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
-							"certificate_chain": map[string]any{"filename": fmt.Sprintf(envoyCertFileFmt, domain)},
-							"private_key":       map[string]any{"filename": fmt.Sprintf(envoyKeyFileFmt, domain)},
+							keyCertificateChain: map[string]any{keyFilename: fmt.Sprintf(envoyCertFileFmt, domain)},
+							keyPrivateKey:       map[string]any{keyFilename: fmt.Sprintf(envoyKeyFileFmt, domain)},
 						},
 					},
 				},

@@ -76,10 +76,12 @@ func newFirewallYAMLHarness(t *testing.T, projectYAML string, requiredServices .
 }
 
 // fwSetup runs the common firewall e2e preamble on an already-constructed
-// harness: isolated FS, project config write, register, build.
+// harness: isolated FS, CP removal, project config write, register, build.
 func fwSetup(t *testing.T, h *harness.Harness, projectYAML string) {
 	t.Helper()
 	setup := h.NewIsolatedFS(nil)
+	// The test CP must use this test environment's CA.
+	harness.EnsureNoControlPlane(t, 30*time.Second)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, projectYAML)
 
@@ -1231,6 +1233,54 @@ security:
 	subDeniedCode := strings.TrimSpace(subDenied.Stdout)
 	assert.Equal(t, "403", subDeniedCode,
 		"subdomain path /quickstart should be blocked by wildcard path_default:deny, got %q", subDeniedCode)
+}
+
+// TestFirewall_WildcardSANCerts checks TLS for deep hostnames under one wildcard rule.
+func TestFirewall_WildcardSANCerts(t *testing.T) {
+	const agent = "wildcard-san"
+	h := newFirewallYAMLHarness(t, `
+build:
+workspace:
+  default_mode: "snapshot"
+security:
+  firewall:
+    add_domains:
+      - .clawker.dev
+`)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", agent, "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", agent)
+	})
+
+	// These Worker Custom Domains are under project control.
+	// A *.clawker.dev certificate cannot cover any of these names.
+	hosts := []string{
+		"deep.a.e2e.clawker.dev",
+		"a.e2e.clawker.dev",
+		"b.e2e.clawker.dev",
+	}
+	// Keep the same agent and Envoy process for all hosts. A restart clears
+	// the shared upstream session cache and can hide the host-switch failure.
+	for _, host := range hosts {
+		t.Run(host, func(t *testing.T) {
+			res := h.ExecInContainer(agent,
+				"curl", "--disable", "--silent", "--show-error", "--http1.1",
+				"--max-time", "15", "--connect-timeout", "10",
+				"--dump-header", "-", "--output", "/dev/null",
+				"https://"+host+"/")
+			require.NoError(t, res.Err, "curl must verify the CA and hostname\nstdout: %s\nstderr: %s",
+				res.Stdout, res.Stderr)
+			// Do not hide a failed first request with a retry or redirect.
+			assert.Regexp(t, `^HTTP/1\.[01] 200\b`, res.Stdout,
+				"request must return HTTP 200")
+			// A local Envoy deny has no upstream service-time header.
+			assert.Regexp(t, `(?im)^x-envoy-upstream-service-time: [0-9]+\r?$`, res.Stdout,
+				"request must reach the Worker through Envoy")
+		})
+	}
 }
 
 // resolveInContainer resolves domain via the managed CoreDNS from inside a

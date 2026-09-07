@@ -43,6 +43,32 @@ const (
 	sshDefaultPort  = 22  // ssh
 	defaultHTTPPort = 80  // plaintext http
 
+	// sdsClusterName is the cluster the on-demand certificate selector fetches
+	// per-SNI MITM secrets from (the CP SDS server, mTLS over the infra lane).
+	sdsClusterName = "sds_cluster"
+
+	// sdsSelectorExtensionName / sdsSNIMapperExtensionName are the Envoy
+	// extension names for the on-demand downstream certificate selector and
+	// its SNI-keyed secret-name mapper.
+	sdsSelectorExtensionName  = "envoy.tls.certificate_selectors.on_demand_secret"
+	sdsSNIMapperExtensionName = "envoy.tls.certificate_mappers.sni"
+
+	// envoyOtelTLSCertFile / envoyOtelTLSKeyFile / envoyOtelTLSCAFile are the
+	// telemetry mTLS client material mounted in the Envoy container.
+	// Only the OTel ALS cluster uses this material. The SDS cluster uses
+	// its dedicated envoySDSTLS*File client identity below.
+	envoyOtelTLSCertFile = "/etc/envoy/otel-tls/client.pem"
+	envoyOtelTLSKeyFile  = "/etc/envoy/otel-tls/client.key"
+	envoyOtelTLSCAFile   = "/etc/envoy/otel-tls/ca.pem"
+
+	// envoySDSTLS*File hold the dedicated client identity for the
+	// on-demand certificate SDS dial (consts.EnvoySDSClientName). The
+	// CP's SDS server pins that SAN, so the otel-tls leaf above cannot
+	// authenticate there — keep the lanes' material separate.
+	envoySDSTLSCertFile = "/etc/envoy/sds-tls/client.pem"
+	envoySDSTLSKeyFile  = "/etc/envoy/sds-tls/client.key"
+	envoySDSTLSCAFile   = "/etc/envoy/sds-tls/ca.pem"
+
 	// otelCollectorALSClusterName is the cluster the OpenTelemetry access-log
 	// sink dials (only emitted when ALSConfig.MTLS is true).
 	otelCollectorALSClusterName = "otel_collector_als"
@@ -118,4 +144,34 @@ const (
 	// concrete typed message. It appears on every filter, listener filter,
 	// transport socket, and per-filter override the generator emits.
 	keyTypedConfig = "typed_config"
+
+	// Recurring Envoy config keys the generator emits across many nodes.
+	keyFilename          = "filename"
+	keyCluster           = "cluster"
+	keyClusterName       = "cluster_name"
+	keyTransportSocket   = "transport_socket"
+	keyALPNProtocols     = "alpn_protocols"
+	keyValidationContext = "validation_context"
+
+	// upstreamTLSContextType is the @type URL of the upstream TLS context every
+	// reencrypt / infra-dial transport socket carries.
+	upstreamTLSContextType = "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext"
+
+	// keyCommonTLSContext is the shared TLS-context key inside every
+	// Downstream/UpstreamTlsContext the generator emits.
+	keyCommonTLSContext = "common_tls_context"
+
+	// tlsTransportSocketName is the Envoy TLS transport-socket extension name
+	// used by every TLS transport socket the generator emits.
+	tlsTransportSocketName = "envoy.transport_sockets.tls"
+)
+
+// Shared TLS protocol values and certificate field names.
+const (
+	alpnHTTP11          = "http/1.1"
+	keyCertificateChain = "certificate_chain"
+	keyPrivateKey       = "private_key"
+	keySocketAddress    = "socket_address"
+	keyPortValue        = "port_value"
+	keyTrustedCA        = "trusted_ca"
 )

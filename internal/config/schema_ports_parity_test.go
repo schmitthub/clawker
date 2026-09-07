@@ -27,6 +27,7 @@ func TestControlPlanePortDefaultsMatchConsts(t *testing.T) {
 		"KratosPublicPort":  consts.DefaultKratosPublicPort,
 		"KratosAdminPort":   consts.DefaultKratosAdminPort,
 		"AgentPort":         consts.DefaultCPAgentPort,
+		"SDSPort":           consts.DefaultCPSDSPort,
 	}
 
 	typ := reflect.TypeFor[ControlPlaneSettings]()

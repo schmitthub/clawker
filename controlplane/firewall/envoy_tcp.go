@@ -95,7 +95,7 @@ func tcpProxyTerminalLayer(l7Proto string) layer {
 			keyTypedConfig: map[string]any{
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": ctx.upstreamCluster,
-				"cluster":     ctx.upstreamCluster,
+				keyCluster:    ctx.upstreamCluster,
 				"access_log":  buildTCPAccessLog("tcp", l7Proto, host, consts.VerdictAllowed, ctx.als),
 			},
 		})
@@ -121,7 +121,7 @@ func tcpDenyTerminalLayer(l7Proto string) layer {
 			keyTypedConfig: map[string]any{
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": denyClusterName,
-				"cluster":     denyClusterName,
+				keyCluster:    denyClusterName,
 				"access_log":  buildTCPAccessLog("tcp", l7Proto, host, consts.VerdictDenied, ctx.als),
 			},
 		})

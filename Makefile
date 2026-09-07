@@ -81,8 +81,8 @@ help:
 	@echo "  docs-check          Check CLI docs are up to date (CI)"
 	@echo ""
 	@echo "Pre-commit targets:"
-	@echo "  pre-commit-install  Install pre-commit hooks (run once after clone)"
-	@echo "  pre-commit          Run all pre-commit hooks against all files"
+	@echo "  pre-commit-install  Install prek git hooks (run once after clone)"
+	@echo "  pre-commit          Run all prek hooks against all files"
 	@echo ""
 	@echo "Proto targets:"
 	@echo "  proto               Regenerate Go code from .proto files (requires proto-tools)"
@@ -263,7 +263,7 @@ BPF_APT_DEPS := \
     clang=1:18.0-59~exp2 \
     llvm=1:18.0-59~exp2 \
     libbpf-dev=1:1.3.0-2build2 \
-    linux-libc-dev=6.8.0-138.138
+    linux-libc-dev=6.8.0-139.139
 
 # Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
 # and root — versions pinned above only resolve against Noble's apt repos.
@@ -816,13 +816,13 @@ docs-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-
 # Pre-commit Targets
 # ============================================================================
 
-# Install pre-commit hooks (run once after clone)
+# Install prek git hooks (run once after clone)
 pre-commit-install:
 	@bash scripts/install-hooks.sh
 
-# Run all pre-commit hooks against all files
+# Run all prek hooks against all files
 pre-commit:
-	@pre-commit run --all-files
+	@prek run --all-files
 
 # Print current storage golden values for manual review.
 # Interactive confirmation prevents accidental execution in CI.

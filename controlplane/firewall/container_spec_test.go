@@ -1,11 +1,13 @@
 package firewall
 
 import (
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -65,7 +67,8 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 	// builder resolves to a matching data dir for isFirewallData.
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	// isFirewallData returns true for any mount source rooted under
@@ -133,7 +136,11 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{}, nil)
+	s, err := NewStack(
+		nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{}, nil, nil,
+		newTestCAStore(t, consts.FirewallCertSubdir),
+	)
+	require.NoError(t, err)
 	// Container specs gate mTLS bind-mounts on infraCertsReady so a
 	// partial mint can't wire missing cert paths into CoreDNS startup
 	// (which would hard-fail). The cert mint flow is exercised by
@@ -158,6 +165,45 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 			"/etc/clawker/auth/coredns",
 		)
 		assertNoBindTarget(t, spec.mounts, "/etc/clawker/auth/tls/ca.pem")
+	})
+}
+
+// TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady pins the
+// spec contract of the dedicated SDS client identity mount: present only
+// when sdsCertsReady (the lane's own gate — NOT infraCertsReady), sourced
+// from the sds-clients host dir, and absent otherwise so a mint failure
+// degrades to static wildcard certs instead of stalling handshakes on
+// missing files.
+func TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	overrideHostPathsForTest(t, consts.DataDir())
+
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
+	netInfo := &NetworkInfo{
+		NetworkID: "net-test",
+		EnvoyIP:   "172.20.0.2",
+		CoreDNSIP: "172.20.0.3",
+		Gateway:   netip.Addr{},
+		Subnet:    netip.Prefix{},
+		CIDR:      "",
+	}
+
+	t.Run("not ready — no mount", func(t *testing.T) {
+		assertNoBindTarget(t, s.envoyContainerSpec(netInfo).mounts, "/etc/envoy/sds-tls")
+	})
+
+	t.Run("ready — dedicated dir, independent of telemetry lane", func(t *testing.T) {
+		s.sdsCertsReady = true
+		defer func() { s.sdsCertsReady = false }()
+		spec := s.envoyContainerSpec(netInfo)
+		assertHasBindMount(t, spec.mounts,
+			filepath.Join(consts.HostFirewallSDSCertsDir(), "envoy"),
+			"/etc/envoy/sds-tls",
+		)
+		// infraCertsReady is false here: the otel-tls mount must not
+		// appear just because the SDS lane is up, and vice versa.
+		assertNoBindTarget(t, spec.mounts, "/etc/envoy/otel-tls")
 	})
 }
 

@@ -40,6 +40,20 @@ type ALSConfig struct {
 	MTLS bool
 }
 
+// SDSConfig configures the on-demand certificate SDS lane for wildcard MITM
+// chains. Enabled=true points the wildcard chains' downstream certificate
+// selector at the CP SDS server (per-SNI minted leaves, every label depth);
+// The connection uses the dedicated consts.EnvoySDSClientName leaf in
+// envoySDSTLS*File. The server requires that SAN and rejects the telemetry leaf.
+// Enabled=false keeps the static [apex, *.apex] certificate when the SDS
+// material is unavailable. Stack.sdsConfig checks sdsCertsReady independently
+// of infraCertsReady.
+type SDSConfig struct {
+	Enabled bool
+	Address string // CP host Envoy dials (container DNS name)
+	Port    int
+}
+
 // EnvoyPorts holds the port layout for the Envoy proxy.
 type EnvoyPorts struct {
 	EgressPort  int // Main shared egress listener port.
@@ -216,6 +230,7 @@ type genCtx struct {
 	rule  config.EgressRule
 	ports EnvoyPorts
 	als   ALSConfig
+	sds   SDSConfig
 
 	// shared output (the EnvoyConfig the context "contains")
 	cfg *EnvoyConfig
@@ -347,7 +362,7 @@ func (c *EnvoyConfig) EnsureListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"address": address, "port_value": port},
+				keySocketAddress: map[string]any{"address": address, keyPortValue: port},
 			},
 		},
 		chainBySig: map[string]int{},
@@ -366,7 +381,7 @@ func (c *EnvoyConfig) EnsureQUICListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
+				keySocketAddress: map[string]any{"protocol": "UDP", "address": address, keyPortValue: port},
 			},
 			"udp_listener_config": map[string]any{
 				"quic_options":             map[string]any{},
@@ -390,7 +405,7 @@ func (c *EnvoyConfig) EnsureRawUDPListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
+				keySocketAddress: map[string]any{"protocol": "UDP", "address": address, keyPortValue: port},
 			},
 		},
 		chainBySig: map[string]int{},
@@ -500,6 +515,11 @@ func (c *EnvoyConfig) SetUnmatchedDeny(listener string, chain map[string]any) er
 // marshals it to YAML.
 func (c *EnvoyConfig) Bytes() ([]byte, error) {
 	root := map[string]any{
+		// SDS requires both fields before it can request certificates.
+		"node": map[string]any{
+			"id":       envoyContainerName,
+			keyCluster: envoyContainerName,
+		},
 		"static_resources": map[string]any{
 			"listeners": c.listenerList(),
 			"clusters":  c.clusterList(),

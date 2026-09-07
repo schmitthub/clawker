@@ -6,6 +6,12 @@ import (
 	"strconv"
 )
 
+// EnvoyUID and EnvoyGID identify the Envoy process and its SDS file access.
+const (
+	EnvoyUID = 65532
+	EnvoyGID = 65532
+)
+
 // Env vars the CLI host-side bootstrap MUST set on the CP container so the
 // CP can compute host-FS bind mount sources when it creates sibling
 // containers (Envoy, CoreDNS, etc.) via Docker-outside-of-Docker. All four
@@ -151,6 +157,11 @@ var (
 	HostControlPlaneSubdir = filepath.Join(HostDataDir, controlPlaneDir)
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
+
+// HostFirewallSDSCertsDir returns the host path for the Envoy SDS client material.
+func HostFirewallSDSCertsDir() string {
+	return filepath.Join(HostFirewallDataSubdir, SDSClientsDirName)
+}
 
 // HostBPFFSSource returns the host path the CP container's BPF filesystem
 // was bind-mounted from, read from EnvHostBPFFSSource. firewall.Stack uses

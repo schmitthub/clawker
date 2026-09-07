@@ -33,7 +33,7 @@ import (
 
 // Stack lifecycle + image constants.
 const (
-	envoyImage      = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
+	envoyImage      = "envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
 	corednsImageTag = "clawker-coredns:latest"
 
 	envoyContainerName   = consts.ContainerEnvoy
@@ -55,6 +55,11 @@ const (
 	// CoreDNS holding CLAWKER_COREDNS_OTEL_ENDPOINT against missing certs.
 	labelInfraCertsReady = "dev.clawker.firewall.infra_certs_ready"
 
+	// labelSDSCertsReady is the SDS lane's twin of labelInfraCertsReady:
+	// the sds-tls bind-mount is create-time state, so a sdsCertsReady
+	// flip must recreate the Envoy container, not just restart it.
+	labelSDSCertsReady = "dev.clawker.firewall.sds_certs_ready"
+
 	// labelOtelInfraPort encodes the create-time monitoring.otel_infra_port
 	// value. CoreDNS receives the port via CLAWKER_COREDNS_OTEL_ENDPOINT
 	// env at ContainerCreate; Docker preserves env across ContainerRestart,
@@ -62,6 +67,11 @@ const (
 	// exporting to the stale port. Including the port in drift labels
 	// forces a recreate (not just a restart) when it changes.
 	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
+
+	// labelSDSPort records ControlPlaneSettings.SDSPort. Envoy reads
+	// sdsClusterName at startup. A port change must replace a surviving
+	// container so it connects to the current SDS listener.
+	labelSDSPort = "dev.clawker.firewall.sds_port"
 
 	// labelStackBuildSHA stamps the CP's embedded-binary hash
 	// (consts.CPBinarySHA, injected by host bootstrap at CP create) on
@@ -92,7 +102,9 @@ type Stack struct {
 	cfg       config.Config
 	log       *logger.Logger
 	store     EgressRulesStore
+	ca        *CAStore
 	otelCerts OtelCertProvisioner
+	sdsCerts  SDSCertProvisioner
 	// idFor answers dst→identity for Corefile generation (dnsbpf
 	// directives). Never nil — NewStack substitutes a fail-closed stub.
 	idFor IdentityResolver
@@ -111,6 +123,14 @@ type Stack struct {
 	// Stack methods are serialized by the controlplane ActionQueue; no
 	// mutex is required.
 	infraCertsReady bool
+	// sdsCertsReady is the SDS lane's own gate, set by ensureConfigs
+	// after a successful ensureSDSClientCerts call. Deliberately
+	// independent of infraCertsReady: the on-demand MITM cert lane
+	// must not silently follow the telemetry lane's provisioning
+	// fate in either direction. Gates the sds-tls bind-mount and
+	// sdsConfig (which gates the selector + sds_cluster in the
+	// generated envoy.yaml).
+	sdsCertsReady bool
 }
 
 // OtelCertProvisioner is the firewall-package view of the trusted-lane
@@ -141,18 +161,45 @@ type OtelCertProvisioner interface {
 	EnsureClient(svc string) (certPath, keyPath, caPath string, err error)
 }
 
-// NewStack returns an initialized Stack. log may be nil (a Nop logger is
-// substituted); the other dependencies are required — nil docker or cfg
-// produces a nil Stack that panics at first use, which is preferable to
-// silent no-ops. otelCerts may be nil — see OtelCertProvisioner.
+// SDSCertProvisioner is the firewall-package view of the dedicated
+// Envoy→CP SDS client identity provider. The concrete implementation
+// lives in `./controlplane/sdscerts` (CP-level, outside the firewall
+// package — same layering as OtelCertProvisioner). Deliberately NOT
+// the telemetry provisioner: the SDS lane hands out CA-signed MITM
+// certificates, so it carries its own leaf identity
+// (consts.EnvoySDSClientName, pinned by the CP server), its own
+// material directory, and its own readiness gate.
+//
+// May be nil — Stack tolerates a missing provisioner by leaving
+// sdsCertsReady false: the sds-tls bind-mount is skipped, sdsConfig
+// returns Enabled=false, and wildcard MITM chains keep their static
+// [apex, *.apex] file certs (multi-label subdomains then fail
+// client-side hostname verification exactly as before the SDS lane
+// existed). The CP-side degraded path logs event=sds_certs_unavailable.
+type SDSCertProvisioner interface {
+	// EnsureEnvoyClient mints + writes the Envoy SDS client material
+	// under the provisioner's destination directory, atomically.
+	// Re-runs overwrite in place. Returned paths are CP-container-FS
+	// absolute paths — Stack discards them and derives the sibling
+	// Mount.Source from consts.HostFirewallSDSCertsDir.
+	EnsureEnvoyClient() (certPath, keyPath, caPath string, err error)
+}
+
+// NewStack constructs a Stack with the shared CAStore. log may be nil.
+// otelCerts and sdsCerts may be nil; each has a separate readiness check.
 func NewStack(
 	dc *docker.Client,
 	cfg config.Config,
 	log *logger.Logger,
 	store EgressRulesStore,
 	otelCerts OtelCertProvisioner,
+	sdsCerts SDSCertProvisioner,
 	idFor IdentityResolver,
-) *Stack {
+	ca *CAStore,
+) (*Stack, error) {
+	if ca == nil {
+		return nil, ErrNilCAStore
+	}
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -166,10 +213,11 @@ func NewStack(
 			Msg("no identity resolver wired; Corefile dnsbpf directives will be omitted (fail closed)")
 	}
 	return &Stack{
-		docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts, idFor: idFor,
+		docker: dc, cfg: cfg, log: log, store: store, ca: ca, otelCerts: otelCerts, sdsCerts: sdsCerts, idFor: idFor,
 		idForUnset:      idForUnset,
 		infraCertsReady: false,
-	}
+		sdsCertsReady:   false,
+	}, nil
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -465,7 +513,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
 	}
 
-	caCert, caKey, err := EnsureCA(certDir)
+	caCert, caKey, err := s.ca.Ensure()
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
@@ -538,7 +586,37 @@ func (s *Stack) ensureConfigs() (string, error) {
 		s.infraCertsReady = true
 	}
 
-	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig())
+	s.sdsCertsReady = false
+	if s.sdsCerts == nil {
+		// Intentionally-cold state: CP-side provisioner construction
+		// failed at startup (already logged as event=sds_certs_unavailable
+		// with the cause) or was never wired. Info for the same
+		// discoverability reason as the telemetry lane above — the
+		// operator chasing multi-label wildcard TLS failures needs a
+		// signal that on-demand minting is off by construction, and
+		// this line names the lane, unlike the otel-vocabulary one.
+		s.log.Info().
+			Str("event", "sds_client_certs_skipped").
+			Str("component", "firewall.stack").
+			Str("reason", "no_provisioner").
+			Msg("sdscerts provisioner not wired — on-demand per-SNI MITM minting disabled; wildcard chains keep static [apex, *.apex] certs")
+	} else if sdsErr := s.ensureSDSClientCerts(); sdsErr != nil {
+		// Degraded path: wildcard chains keep the static certs
+		// (multi-label subdomains fail client-side hostname
+		// verification, the pre-SDS behavior). Gating the bind-mount
+		// on sdsCertsReady — not on sdsCerts != nil — prevents
+		// mounting a partially-populated dir after a mint failure,
+		// which would stall every wildcard handshake at the selector
+		// instead of failing predictably on the static cert.
+		s.log.Warn().Err(sdsErr).
+			Str("event", "sds_client_certs_unavailable").
+			Str("component", "firewall.stack").
+			Msg("SDS client cert minting failed — on-demand per-SNI MITM minting disabled; wildcard chains keep static [apex, *.apex] certs")
+	} else {
+		s.sdsCertsReady = true
+	}
+
+	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig(), s.sdsConfig())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -615,6 +693,20 @@ func (s *Stack) ensureInfraClientCerts() error {
 	return nil
 }
 
+// ensureSDSClientCerts provisions the dedicated Envoy→CP SDS client
+// identity. Same dispatch shape as ensureInfraClientCerts; the mint +
+// atomic-write + pair-check work lives in `./controlplane/sdscerts`.
+// No-op when s.sdsCerts is nil.
+func (s *Stack) ensureSDSClientCerts() error {
+	if s.sdsCerts == nil {
+		return nil
+	}
+	if _, _, _, err := s.sdsCerts.EnsureEnvoyClient(); err != nil {
+		return fmt.Errorf("provision envoy SDS client material: %w", err)
+	}
+	return nil
+}
+
 // alsConfig returns the Envoy access logger upstream config. When
 // ensureInfraClientCerts has populated the cert material (which
 // implies a wired infra issuer — infraCertsReady is only set true
@@ -639,6 +731,26 @@ func (s *Stack) alsConfig() ALSConfig {
 	return ALSConfig{Port: int(s.cfg.MonitoringConfig().OtelInfraPort), MTLS: true}
 }
 
+// sdsConfig returns the on-demand certificate SDS lane config, gated on
+// the lane's own material: the Envoy-side SDS dial authenticates with the
+// dedicated /etc/envoy/sds-tls client leaf (consts.EnvoySDSClientName —
+// pinned by the CP server), which only exists when ensureSDSClientCerts
+// succeeded. Deliberately NOT gated on infraCertsReady — the telemetry
+// lane's provisioning fate must not decide whether MITM certs mint.
+// Degraded mode (Enabled=false) keeps the static [apex, *.apex] wildcard
+// certs — multi-label subdomains then fail client-side hostname
+// verification exactly as before the SDS lane existed.
+func (s *Stack) sdsConfig() SDSConfig {
+	if !s.sdsCertsReady {
+		return SDSConfig{Enabled: false, Address: "", Port: 0}
+	}
+	return SDSConfig{
+		Enabled: true,
+		Address: consts.ContainerCP,
+		Port:    s.cfg.ControlPlaneSettings().SDSPort,
+	}
+}
+
 func (s *Stack) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
 		EgressPort:  s.cfg.EnvoyEgressPort(),
@@ -654,6 +766,7 @@ func (s *Stack) envoyPorts() EnvoyPorts {
 // ensureContainer. Kept internal to Stack.
 type containerSpec struct {
 	image        string
+	user         string
 	staticIP     string
 	networkID    string
 	cmd          []string
@@ -717,8 +830,29 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 			ReadOnly: true,
 		})
 	}
+	// Dedicated client identity for the on-demand certificate SDS dial
+	// (consts.EnvoySDSClientName — pinned by the CP server; the otel-tls
+	// leaf above is refused there by design). Gated on the SDS lane's
+	// own readiness flag; same drift-on-Reload mechanics via
+	// labelSDSCertsReady.
+	if s.sdsCertsReady {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallSDSCertsDir(), "envoy"),
+			Target:   "/etc/envoy/sds-tls",
+			ReadOnly: true,
+
+			Consistency:    "",
+			BindOptions:    nil,
+			VolumeOptions:  nil,
+			ImageOptions:   nil,
+			TmpfsOptions:   nil,
+			ClusterOptions: nil,
+		})
+	}
 	return containerSpec{
 		image:     envoyImage,
+		user:      strconv.Itoa(consts.EnvoyUID) + ":" + strconv.Itoa(consts.EnvoyGID),
 		staticIP:  netInfo.EnvoyIP,
 		networkID: netInfo.NetworkID,
 		mounts:    mounts,
@@ -792,6 +926,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	}
 	return containerSpec{
 		image:     corednsImageTag,
+		user:      "",
 		staticIP:  netInfo.CoreDNSIP,
 		networkID: netInfo.NetworkID,
 		cmd:       []string{"-conf", "/etc/coredns/Corefile"},
@@ -818,7 +953,9 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 func (s *Stack) driftLabels() map[string]string {
 	return map[string]string{
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
+		labelSDSCertsReady:   strconv.FormatBool(s.sdsCertsReady),
 		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.MonitoringConfig().OtelInfraPort)),
+		labelSDSPort:         strconv.Itoa(s.cfg.ControlPlaneSettings().SDSPort),
 		labelStackBuildSHA:   consts.CPBinarySHA,
 		labelBPFFSSource:     consts.HostBPFFSSource(),
 	}
@@ -887,6 +1024,8 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
 			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
 			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
+			Str("desired_sds_port", spec.labels[labelSDSPort]).
+			Str("running_sds_port", summary.Labels[labelSDSPort]).
 			Str("desired_stack_build_sha", spec.labels[labelStackBuildSHA]).
 			Str("running_stack_build_sha", summary.Labels[labelStackBuildSHA]).
 			Msg("recreating firewall container — desired spec diverges from running container")
@@ -906,6 +1045,7 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		},
 	}
 	containerCfg := &container.Config{Image: spec.image, Cmd: spec.cmd, Env: spec.env}
+	containerCfg.User = spec.user
 	hostCfg := &container.HostConfig{
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		Mounts:        spec.mounts,

@@ -11,8 +11,8 @@
 // (permanent false DENY). Without a session id the gate fails closed.
 //
 // Session init tracking: checks for /tmp/.claude_serena_init_<session_id>.
-// A companion PostToolUse hook on mcp__serena__check_onboarding_performed
-// creates this marker after Serena init completes.
+// A companion PostToolUse hook on mcp__serena__initial_instructions creates
+// this marker after Serena init completes.
 import { existsSync } from "node:fs";
 
 const chunks = [];
@@ -42,8 +42,7 @@ Try Serena for ANY file type (Go, Markdown, YAML, Bash, etc). Only fall back to 
   : `STOP. Serena has NOT been initialized this session. Before doing ANYTHING else, run the Serena init sequence:
 
 1. mcp__serena__initial_instructions
-2. mcp__serena__check_onboarding_performed
-3. mcp__serena__list_memories
+2. mcp__serena__list_memories
 
 Do NOT proceed with Read/Edit until Serena init is complete.`;
 

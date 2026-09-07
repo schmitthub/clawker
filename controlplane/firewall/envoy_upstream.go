@@ -32,16 +32,16 @@ func pinnedCluster(name, host string, port int) map[string]any {
 		"name":            name,
 		"connect_timeout": "10s",
 		"load_assignment": map[string]any{
-			"cluster_name": name,
+			keyClusterName: name,
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{
 						map[string]any{
 							"endpoint": map[string]any{
 								"address": map[string]any{
-									"socket_address": map[string]any{
+									keySocketAddress: map[string]any{
 										"address":    host,
-										"port_value": port,
+										keyPortValue: port,
 									},
 								},
 							},
@@ -149,7 +149,7 @@ func tlsExactClusterName(host string, port int) string {
 // the generic pin (IP pinned to the rule's host) + the uniform reencrypt posture.
 func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify, http11Only bool) map[string]any {
 	c := pinnedCluster(tlsExactClusterName(host, port), host, port)
-	decorateReencrypt(c, insecureSkipTLSVerify, http11Only)
+	decorateReencrypt(c, insecureSkipTLSVerify, http11Only, false)
 	return c
 }
 
@@ -158,8 +158,8 @@ func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify, http11Only
 // LOGICAL_DNS form (buildTLSDNSCluster) and the ORIGINAL_DST form
 // (httpsOriginalDstUpstreamLayer), since the reencrypt decoration is identical
 // regardless of how the upstream host is resolved.
-func decorateReencrypt(c map[string]any, insecureSkipTLSVerify, http11Only bool) {
-	c["transport_socket"] = upstreamReencryptSocket(insecureSkipTLSVerify, http11Only)
+func decorateReencrypt(c map[string]any, insecureSkipTLSVerify, http11Only, multiHost bool) {
+	c["transport_socket"] = upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, multiHost)
 	c["typed_extension_protocol_options"] = upstreamHTTPProtocolOptions(http11Only)
 }
 
@@ -274,7 +274,7 @@ func httpsOriginalDstUpstreamLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
 	name := tlsOriginalDstName(host, httpsPort(ctx.rule))
 	c := originalDstCluster(name)
-	decorateReencrypt(c, ctx.rule.InsecureSkipTLSVerify, ctx.websocket)
+	decorateReencrypt(c, ctx.rule.InsecureSkipTLSVerify, ctx.websocket, true)
 	ctx.clusters = append(ctx.clusters, c)
 	ctx.upstreamCluster = name
 	ctx.upstreamFollowsHost = false
@@ -345,7 +345,7 @@ func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) m
 				"dns_cache_config": dfpDNSCacheConfig(httpsDFPCacheName),
 			},
 		},
-		"transport_socket":                 upstreamReencryptSocket(insecureSkipTLSVerify, http11Only),
+		keyTransportSocket:                 upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, true),
 		"typed_extension_protocol_options": upstreamHTTPProtocolOptions(http11Only),
 	}
 }
@@ -356,9 +356,9 @@ func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) m
 // upstream: ALPN h2/http1.1, the curated ECDH curve list, and the SYSTEM CA
 // bundle (the real server's real cert — NOT the MITM CA). SNI + SAN validation
 // are driven by upstreamHTTPProtocolOptions, so no static sni here.
-func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only bool) map[string]any {
+func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, multiHost bool) map[string]any {
 	validationContext := map[string]any{
-		"trusted_ca": map[string]any{"filename": upstreamTrustedCAFile},
+		keyTrustedCA: map[string]any{keyFilename: upstreamTrustedCAFile},
 	}
 	// Axis 4 (orthogonal to dst type): per-rule opt-in to accept an untrusted /
 	// self-signed upstream cert. ACCEPT_UNTRUSTED (enum 1) skips chain-of-trust
@@ -372,22 +372,33 @@ func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only bool) map[string]
 	// (explicit_http_config), so it advertises only http/1.1 — offering h2 here
 	// would let the upstream negotiate a codec Envoy won't use. Non-ws reencrypt
 	// offers both (auto_config picks per ALPN).
-	alpn := []string{"h2", "http/1.1"}
+	alpn := []string{"h2", alpnHTTP11}
 	if http11Only {
-		alpn = []string{"http/1.1"}
+		alpn = []string{alpnHTTP11}
+	}
+	tlsContext := map[string]any{
+		"@type": upstreamTLSContextType,
+		keyCommonTLSContext: map[string]any{
+			keyALPNProtocols: alpn,
+			"tls_params": map[string]any{
+				"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+			},
+			keyValidationContext: validationContext,
+		},
+	}
+	// A TLS context shared by more than one upstream host must not resume
+	// sessions across hosts: Envoy's client session cache is per context, not
+	// per SNI, so a TLS 1.3 ticket minted for host A gets offered to host B.
+	// The resumed session carries A's certificate, which fails
+	// auto_san_validation against B's name (issue #518). max_session_keys 0
+	// disables client-side resumption for the shared cluster; single-host
+	// clusters keep the default (resumption is always same-host there).
+	if multiHost {
+		tlsContext["max_session_keys"] = 0
 	}
 	return map[string]any{
-		"name": "envoy.transport_sockets.tls",
-		keyTypedConfig: map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-			"common_tls_context": map[string]any{
-				"alpn_protocols": alpn,
-				"tls_params": map[string]any{
-					"ecdh_curves": []string{"X25519", "P-256", "P-384"},
-				},
-				"validation_context": validationContext,
-			},
-		},
+		"name":         tlsTransportSocketName,
+		keyTypedConfig: tlsContext,
 	}
 }
 

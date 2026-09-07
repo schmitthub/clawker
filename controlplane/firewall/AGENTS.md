@@ -12,8 +12,8 @@ internal/controlplane/adminServer  (embeds *firewall.Handler)
     │
     ▼
 firewall.Handler (13 RPCs)
-    │  pre-Submit work is PURE only (validate, proto convert);
-    │  every store write and stack op runs inside a queued
+    │  pre-Submit validation; CA rotation holds the CAStore lock;
+    │  rule-store writes and stack operations run inside a queued
     │  closure — Submit → wait on reply channel
     ▼
 ActionQueue (single-goroutine FIFO worker; queue.go)
@@ -27,7 +27,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
     ├── ebpf.Manager  → pinned BPF maps + attached programs
     ├── EgressRulesStore → egress-rules.yaml (gofrs/flock, atomic rename)
     ├── Resolver      → Docker-backed (cid, cgroupPath, exists, err)
-    ├── Certs (lazy)  → on-disk CA + per-domain certs
+    ├── CAStore       → shared CA owner; rotation also runs before Submit
     └── EnrolledTopic → EBPFContainerEnrolled (drives netlogger LabelCache hydration)
 ```
 
@@ -40,14 +40,16 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | File | Purpose |
 |------|---------|
 | `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management. Rule mutation itself lives on `EgressRulesStore` (`rules_store.go`); the Handler calls it and owns only the logging + RPC mapping around it. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
-| `stack.go` | `Stack` — Envoy + CoreDNS container lifecycle via DooD; image build helpers (`drainPullStream`, `ensureEnvoyImage`, `ensureCorednsImage`); health probing; `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Sibling drift gate: `driftLabels()` stamps three labels on both containers — `infra_certs_ready` (mTLS bind/env shape), `otel_infra_port` (create-time OTLP port), and `stack_build_sha` (the CP's embedded-binary hash via `consts.CPBinarySHA`, injected by host bootstrap as container env). `ensureContainer`/`reloadContainer` compare them against the running container and recreate on any mismatch (`event=firewall_container_spec_drift`). The build SHA covers every compiled-in staleness vector — pinned Envoy image const, embedded CoreDNS binary, config templates, containerSpec shape — so a CLI upgrade that replaces the CP also replaces the siblings instead of adopting stale ones. |
+| `stack.go` | `Stack` — Envoy + CoreDNS container lifecycle via DooD; image build helpers (`drainPullStream`, `ensureEnvoyImage`, `ensureCorednsImage`); health probing; `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Sibling drift gate: `driftLabels()` stamps six labels on both containers — `labelInfraCertsReady` (telemetry certificate readiness), `labelSDSCertsReady` (SDS certificate readiness), `labelOtelInfraPort` (OTLP port), `labelSDSPort` (`ControlPlaneSettings.SDSPort`, read by Envoy at startup), `labelStackBuildSHA` (`consts.CPBinarySHA`), and `labelBPFFSSource` (`consts.HostBPFFSSource`). `ensureContainer`/`reloadContainer` compare them against the running container and recreate on any mismatch (`event=firewall_container_spec_drift`). The build SHA covers every compiled-in staleness vector — pinned Envoy image const, embedded CoreDNS binary, config templates, containerSpec shape — so a CLI upgrade that replaces the CP also replaces the siblings instead of adopting stale ones. |
 | `status.go` | `Status` struct returned by `Stack.Status` (per-container up state, IPs, rule count) |
 | `cgroup.go` | `DetectCgroupDriver(ctx, *docker.Client)`, `EBPFCgroupPath(driver, cid)` (conventional rootful layout — fast path only), `cgroupPathResolver` (discovery fallback: walks the hierarchy for the container's own cgroup dir, caches the per-daemon parent — how rootless layouts resolve), `ResolveContainerID(ctx, *docker.Client, ref)`, `IsCanonicalContainerID` |
 | `drift.go` | `resolveBypassCgroupID(entry, resolver, log)` — shared INV-B2-016 drift resolver used by direct Enable (`resolveForEnable`) and the bypass dead-man timer |
 | `envoy_config.go` | Envoy YAML generation; per-domain filter chains; LOGICAL_DNS clusters; TCP/SSH listeners; access log builder (stdout JSON for `docker logs` triage, plus native `envoy.access_loggers.open_telemetry` OTLP/gRPC sink when mTLS material is wired). Rule routing by `proto:` (`https` → TLS-MITM HCM, `http` → plaintext HCM, `ssh`/`tcp`/other → opaque TCP listener). Per access-log record: OTel semconv fields for network/server/client/tls (`network.transport`, `network.protocol.name`, `network.protocol.version`, `tls.established`, `tls.protocol.version`, `tls.cipher`, `server.address` — SNI for TLS-MITM HCM + TCP/SSH; Host header override on plaintext HCM where SNI is unavailable, `client.address`, `network.peer.address`, `network.peer.port`) + clawker firewall verdict (`action`: `allowed`/`denied`) — TCP-level filter chains hardcode `action` (uniform verdict), HTTP HCMs substitute via `%METADATA(ROUTE:clawker:action)%` from per-route `clawkerActionMetadata()`. A path rule's `Path` becomes the route's `RouteMatch` path specifier (`envoy_http.go::pathSpecifier`): a literal path → open-ended `prefix`; a `~`-prefixed path → `safe_regex` (RE2, full-string match — `~` stripped, `google_re2` engine field omitted) so authors can anchor exactly and use alternation, closing the open-prefix bypass (`/repos/x` prefix also admitting `/repos/x-evil`). `ValidateRule` (`rules_store.go`) guards both forms before they reach generation — literal must start `/` and contain only RFC 3986 path characters (`literalPathChars`; rejects a regex written without the `~` marker), regex must compile (Go `regexp` is RE2, exact compile-compat) and anchor at the path root — failing the whole rule-update on any invalid path. A path rule's `Methods` add a `:method` `RouteMatch.headers` matcher (`exact` for one method, `safe_regex` alternation for many — `envoy_http.go::methodHeaderMatch`) narrowing that route to the listed HTTP verbs; non-matching verbs fall through to later routes / `path_default`. HTTP-family only — `methods`/`path_rules` on opaque protos (tcp/ssh/udp) are ignored at generation, surfaced as a `NormalizeAndDedup` warning (`pathRuleEnforcementWarning`). Every HCM merges in `httpConnectionManagerHardening()` (normalize_path / merge_slashes / path_with_escaped_slashes_action / headers_with_underscores_action / max_concurrent_streams) — load-bearing for path-rule enforcement against URL-encoded traversal. No timeouts or per-connection buffer caps: LLM workloads run for minutes with multi-MB bodies, Envoy defaults are correct. Centralized `firewallBlockedBody` constant for `direct_response: 403` bodies (non-fingerprinting). The `otel_collector_als` cluster dials the CP-only `otlp/infra` receiver on `OtelInfraPort` with an upstream TLS transport_socket (leaf+intermediate bind-mounted at `/etc/envoy/otel-tls/`, CLI root CA at `ca.pem` for server-cert verification). When `als.MTLS=false` the OTel sink AND cluster are both omitted at the sender (gated in `buildHTTPAccessLog` / `buildTCPAccessLog` / `buildClusters`) — Envoy keeps only the stdout JSON sink for triage. Infra services must never cross into the untrusted `otel-collector:4317` lane reserved for agent containers. `normalizeDomain` lives here — used by certs, coredns_config, rules_store, and by the IdentityAllocator's dst normalization |
 | Per-svc OTel mTLS material | Provided by `*otelcerts.Service` — see `internal/controlplane/otelcerts/CLAUDE.md`. `Stack` holds an `OtelCertProvisioner` reference and dispatches one `EnsureClient` call per sibling (envoy, coredns) inside `ensureConfigs` so `Reload` rotates with the config refresh. No-op when the provisioner is nil — stdout-only degraded mode: Envoy emits no OTel access logs (sink + cluster dropped); CoreDNS otel plugin installs noopEmitter. Atomic write, pair-check, and 0o755/0o644 perms are owned by the provisioner. Note: netlogger's mTLS material is NOT provisioned by `firewall.Stack` — `cmd/clawkercp/main.go` mints its per-handshake leaf directly via `otelcerts.Service.LoadTLSConfig("netlogger")` and hands the resulting `*tls.Config` to `controlplane.NewOtelLoggerProvider`. |
 | `coredns_config.go` | Corefile generation; wildcard rules → subtree-forward zones; exact-only rules → forward apex + NXDOMAIN-subdomain template (`fallthrough`); deny rules → dedicated NXDOMAIN zones (win via longest-zone match); `dnsbpf` plugin directive; catch-all NXDOMAIN |
-| `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
+| `castore.go` | `CAStore` is the shared MITM CA owner for `Handler`, `Stack`, and `SDSServer`. `Load` holds a read lock and never generates a CA. `Ensure` and `Rotate` hold a write lock. `NewCAStore` rejects a nil directory function with `ErrNilCACertDirFn`. |
+| `certs.go` | `LoadCA` reads an existing CA pair and returns `ErrNoCA` if either file is absent. `EnsureCA` creates absent pairs and repairs pairs that do not match. CA and domain PEM writes use temporary files and rename; the key is written before the certificate. `GenerateDomainCert` and `GenerateSNICert` sign static and per-SNI leaves. |
+| `sds_server.go` | `SDSServer` + `SDSServerDeps` + `NewSDSServer` — the Envoy secret-discovery service (delta xDS) behind the on-demand downstream certificate selector on wildcard https/wss MITM chains. Envoy pauses the handshake at ClientHello, requests a secret named by the SNI, and resumes with the returned per-SNI leaf minted against the firewall CA — so a wildcard rule covers hosts at EVERY label depth (an RFC 6125 wildcard matches one label; the static `[apex, *.apex]` pair cannot cover `a.b.zone` — issue #500). Fail closed: a name not admitted by a stored wildcard https/wss allow rule (longest matching zone wins) is answered with a resource removal, which fails the handshake. The server reads the shared `CAStore` with `Load`. Its mint cache is keyed by SNI and invalidated by CA serial. Listener wiring lives in `internal/controlplane/cmd.go::startSDSServer` (mTLS: CP server leaf ↔ infra-intermediate-anchored client certs, narrowed by a `VerifyConnection` SAN pin to the DEDICATED `consts.EnvoySDSClientName` leaf provisioned by `controlplane/sdscerts` — the telemetry lane's `envoy-otel-client` leaf is refused; clawker-net only, port `ControlPlaneSettings.SDSPort`, degrade `event=sds_unavailable`). Envoy dials with the `/etc/envoy/sds-tls` material, gated on the stack's `sdsCertsReady` flag (independent of the telemetry lane's `infraCertsReady`). |
 | `rules_store.go` | `EgressRulesFile` schema + the **`EgressRulesStore` interface** and its unexported impl (embeds `*storage.Store[EgressRulesFile]`) + the constructor pair `NewRulesStore(cfg)` (file-backed) / `NewRulesStoreFromString(yaml)` (in-memory seam), both returning the interface + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Every rule read/write in the package goes through the interface — no consumer holds a `storage.Store`. Rule composition lives in `internal/bundler` (`bundler.EgressRules`) — firewall doesn't compose harness or project rules. `RoutesFromRules(rules, ports, idFor IdentityResolver) ([]ebpf.Route, []string)` is the pure projection behind `EgressRulesStore.Routes`; a resolver miss drops the route (fail closed) and is reported in the missed-dst return — `Handler.routesFromStore` logs partial misses as `event=identity_resolver_miss`. |
 | `identity.go` | `IdentityAllocator` — sticky persisted route identities (typed `ebpf.RouteIdentity`, a named u32; cilium pattern). The **`RouteIdentityStore` interface** (`Entries`/`Cursor`/`SetTable`) and its unexported impl (embeds `*storage.Store[IdentityTableFile]`), the constructor pair `NewIdentityStore(cfg)` / `NewIdentityStoreFromString(yaml)` returning that interface, + `NewIdentityAllocator(store RouteIdentityStore)` (`ErrNilIdentityStore` on nil); `SyncDsts` (set-diff acquire/release), `IdentityFor`/`DomainFor`/`Snapshot`; allocatable band starts at `MinIdentity=256` (0 = none, 1–255 reserved), round-robin next-free so released IDs aren't reused prematurely; table persisted to `route-identities.yaml` in `FirewallDataSubdir`. `indexIdentityEntries` is the one table validator, run by both `NewIdentityAllocator` (load) and `SetTable` (write). Live dsts are never renumbered. `IdentityResolver` is the read-side func type consumed by `RoutesFromRules`/`GenerateCorefile`. |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
@@ -92,7 +94,7 @@ type HandlerDeps struct {
     Log           *logger.Logger      // optional — defaults to Nop
     Queue         *ActionQueue        // required — every RPC submits through it
     EnrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled] // optional — nil-tolerant; FirewallEnable skips publish when nil
-    CertDirFn     func() (string, error) // optional — certs path for RotateCA
+    CA            *CAStore           // shared with Stack and SDSServer; required by FirewallRotateCA
     ListAgents    func(ctx context.Context) ([]string, error) // optional — nil skips agent re-enrollment on FirewallInit
     Identity      *IdentityAllocator  // optional — nil degrades fail-closed (no routes/dnsbpf directives; event=identity_allocator_unset)
 }
@@ -116,12 +118,27 @@ default arm, so a kind added later cannot inherit a coalescing semantic by
 omission — the linter makes the author state it. Inheriting the wrong one
 silently drops a submitter's work.
 
+### `CAStore`
+
+`buildEnforcement` constructs one store with `consts.FirewallCertSubdir` and
+passes it to the handler, stack, and SDS server. SDS calls `Load`; it cannot
+create a second CA during rotation. `FirewallRotateCA` calls `Rotate` before
+queue submission, under the same store lock used by `Stack.ensureConfigs`
+for `Ensure`. Returned certificates and keys are independent of later rotations.
+
+```go
+func NewCAStore(certDirFn func() (string, error)) (*CAStore, error)
+func (s *CAStore) Load() (*x509.Certificate, *ecdsa.PrivateKey, error)
+func (s *CAStore) Ensure() (*x509.Certificate, *ecdsa.PrivateKey, error)
+func (s *CAStore) Rotate(rules []config.EgressRule) error
+```
+
 ### `Stack`
 
 ```go
-type Stack struct { /* docker.Client, config.Config, logger, EgressRulesStore */ }
+type Stack struct { /* docker.Client, config.Config, logger, EgressRulesStore, CAStore */ }
 
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store EgressRulesStore, otelCerts OtelCertProvisioner, idFor IdentityResolver) *Stack  // nil idFor = fail-closed stub (no dnsbpf directives; event=identity_resolver_unset)
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store EgressRulesStore, otelCerts OtelCertProvisioner, sdsCerts SDSCertProvisioner, idFor IdentityResolver, ca *CAStore) (*Stack, error)  // ErrNilCAStore on nil ca; nil otelCerts/sdsCerts = per-lane degraded mode; nil idFor = fail-closed stub (no dnsbpf directives; event=identity_resolver_unset)
 func (s *Stack) EnsureRunning(ctx) error
 func (s *Stack) Stop(ctx) error
 func (s *Stack) Reload(ctx) error

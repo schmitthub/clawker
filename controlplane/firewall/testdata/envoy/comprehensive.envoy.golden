@@ -3,6 +3,9 @@ admin:
         socket_address:
             address: 127.0.0.1
             port_value: 9901
+node:
+    cluster: clawker-envoy
+    id: clawker-envoy
 static_resources:
     clusters:
         - connect_timeout: 1s
@@ -143,6 +146,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
                 '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
@@ -518,6 +522,7 @@ static_resources:
                         trust_chain_verification: ACCEPT_UNTRUSTED
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -546,6 +551,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -716,6 +722,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
                 '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions

@@ -10,6 +10,11 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [unrelesaed]
+
+- **Fixed:** Certificate errors when accessing nested subdomains allowed by wildcard firewall rules.
+- **Fixed:** Intermittent 503 errors when switching between subdomains allowed by wildcard firewall rules.
+
 ## [2026.8.5] - 2026-08-17
 
 - **Added:** Shell tab-completion suggests registered project names — when completing `clawker project info` and `clawker project remove` arguments and the `--project` flag value on `clawker ps`.

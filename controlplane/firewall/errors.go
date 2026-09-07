@@ -27,6 +27,8 @@ var (
 	ErrNilResolver      = errors.New("firewall: NewHandler requires a non-nil ContainerResolver")
 	ErrNilQueue         = errors.New("firewall: NewHandler requires a non-nil ActionQueue")
 	ErrNilIdentityStore = errors.New("firewall: NewIdentityAllocator requires a non-nil RouteIdentityStore")
+	ErrNilCACertDirFn   = errors.New("firewall: NewCAStore requires a non-nil certificate directory function")
+	ErrNilCAStore       = errors.New("firewall: CAStore is required")
 )
 
 // Sentinels surfaced through the Handler and queue. Each has a companion

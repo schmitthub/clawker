@@ -36,7 +36,8 @@ func overrideCPBinarySHAForTest(t *testing.T, sha string) {
 func TestStack_driftLabels_StampsStackBuildSHA(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	overrideCPBinarySHAForTest(t, "sha-v1")
 	assert.Equal(t, "sha-v1", s.driftLabels()[labelStackBuildSHA])
@@ -50,7 +51,8 @@ func newDriftFixture(t *testing.T) (*dockermocks.FakeClient, *Stack, container.S
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := dockermocks.NewFakeClient(cfg)
-	s := NewStack(fake.Client, cfg, logger.Nop(), nil, nil, nil)
+	s, err := NewStack(fake.Client, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	labels := s.driftLabels()
 	labels[cfg.LabelManaged()] = cfg.ManagedLabelValue()
@@ -68,28 +70,42 @@ func newDriftFixture(t *testing.T) (*dockermocks.FakeClient, *Stack, container.S
 	return fake, s, running
 }
 
-// TestStack_ensureContainer_RecreatesOnStackBuildSHADrift exercises the
-// stale-binary path: a running sibling stamped with an older build SHA
-// must be stopped, removed, and recreated even though infra_certs_ready
-// and otel_infra_port still match. (The legacy no-label-at-all variant
-// has its own test below.)
-func TestStack_ensureContainer_RecreatesOnStackBuildSHADrift(t *testing.T) {
-	overrideCPBinarySHAForTest(t, "sha-new")
-	fake, s, running := newDriftFixture(t)
-	running.Labels[labelStackBuildSHA] = "sha-old"
-	fake.SetupContainerList(running)
+// A change to labelStackBuildSHA or labelSDSPort must replace the
+// container even when all other labels match.
+func TestStack_ensureContainer_RecreatesOnDrift(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		label string
+		old   string
+	}{
+		{name: "stack build SHA", label: labelStackBuildSHA, old: "sha-old"},
+		{name: "SDS port", label: labelSDSPort, old: "1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			overrideCPBinarySHAForTest(t, "sha-new")
+			fake, s, running := newDriftFixture(t)
+			running.Labels[tt.label] = tt.old
+			fake.SetupContainerList(running)
 
-	spec := containerSpec{
-		image:     "img:test",
-		staticIP:  "172.20.0.2",
-		networkID: "net-test",
-		labels:    s.driftLabels(),
+			spec := containerSpec{
+				image:        "img:test",
+				user:         "",
+				cmd:          nil,
+				env:          nil,
+				mounts:       nil,
+				portBindings: nil,
+				capAdd:       nil,
+				staticIP:     "172.20.0.2",
+				networkID:    "net-test",
+				labels:       s.driftLabels(),
+			}
+			require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
+
+			assert.Contains(t, fake.FakeAPI.Calls, "ContainerStop", "stale sibling must be stopped")
+			assert.Contains(t, fake.FakeAPI.Calls, "ContainerRemove", "stale sibling must be removed")
+			assert.Contains(t, fake.FakeAPI.Calls, "ContainerCreate", "sibling must be recreated from the new spec")
+		})
 	}
-	require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
-
-	assert.Contains(t, fake.FakeAPI.Calls, "ContainerStop", "stale sibling must be stopped")
-	assert.Contains(t, fake.FakeAPI.Calls, "ContainerRemove", "stale sibling must be removed")
-	assert.Contains(t, fake.FakeAPI.Calls, "ContainerCreate", "sibling must be recreated from the new spec")
 }
 
 // TestStack_ensureContainer_AdoptsOnMatchingStackBuildSHA pins the
@@ -102,6 +118,7 @@ func TestStack_ensureContainer_AdoptsOnMatchingStackBuildSHA(t *testing.T) {
 
 	spec := containerSpec{
 		image:     "img:test",
+		user:      "",
 		staticIP:  "172.20.0.2",
 		networkID: "net-test",
 		labels:    s.driftLabels(),
@@ -128,6 +145,7 @@ func TestStack_ensureContainer_RecreatesOnMissingStackBuildSHALabel(t *testing.T
 
 	spec := containerSpec{
 		image:     "img:test",
+		user:      "",
 		staticIP:  "172.20.0.2",
 		networkID: "net-test",
 		labels:    s.driftLabels(),
@@ -150,7 +168,8 @@ func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
 	overrideCPBinarySHAForTest(t, "sha-wired")
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	want := s.driftLabels()

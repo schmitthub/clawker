@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -279,6 +280,54 @@ func TestGenerateDomainCert_WildcardSANs(t *testing.T) {
 	// SANs should include both apex and wildcard.
 	assert.Contains(t, cert.DNSNames, "datadoghq.com")
 	assert.Contains(t, cert.DNSNames, "*.datadoghq.com")
+}
+
+func TestGenerateSNICert_MultiLabelHostVerifies(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	// Host with multiple labels below the wildcard zone: the static [apex, *.apex] SAN pair
+	// cannot cover it (RFC 6125 wildcards match one label), so the per-SNI
+	// leaf must carry the exact name. One label below the zone would pass against the
+	// wildcard pair and hide the regression (issue #500).
+	certPEM, keyPEM, err := firewall.GenerateSNICert(caCert, caKey, "studio-api.prod.suno.com")
+	require.NoError(t, err)
+	require.NotEmpty(t, keyPEM)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, "studio-api.prod.suno.com", cert.Subject.CommonName)
+	require.NoError(t, cert.VerifyHostname("studio-api.prod.suno.com"))
+	require.Error(t, cert.VerifyHostname("other.prod.suno.com"), "per-SNI leaf must cover only the requested name")
+
+	// Chain must verify against the firewall CA.
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:                     roots,
+		DNSName:                   "",
+		Intermediates:             nil,
+		CurrentTime:               time.Time{},
+		KeyUsages:                 nil,
+		MaxConstraintComparisions: 0,
+		CertificatePolicies:       nil,
+	})
+	require.NoError(t, err)
+}
+
+func TestGenerateSNICert_RejectsInvalidName(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	for _, bad := range []string{"", "*.suno.com", ".suno.com", "10.0.0.5", "bad host.com"} {
+		_, _, err = firewall.GenerateSNICert(caCert, caKey, bad)
+		require.Error(t, err, "SNI %q must be rejected", bad)
+	}
 }
 
 func TestGenerateDomainCert_ExactDomainNoWildcardSAN(t *testing.T) {

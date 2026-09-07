@@ -1,0 +1,147 @@
+# prek hooks — mirrors CI quality gates locally.
+# Install: bash scripts/install-hooks.sh
+# Run all: prek run --all-files
+# Run one: prek run gitleaks --all-files
+#
+# Scheduling: lower priority runs first; hooks sharing a priority run
+# concurrently (capped by PREK_CONCURRENT_HOOKS). go-mod-tidy mutates
+# go.mod/go.sum, so it runs alone in the "fix" tier before every scan
+# that reads module state (govulncheck, licenses, tests, lint).
+# licenses-check regenerates NOTICE in place on drift, so it gets its
+# own tier between the two: after tidy (it reads module state), before
+# the concurrent read-only scans (they must not race a NOTICE rewrite).
+# The unit-test hook builds embedded binaries, so it must also finish
+# before the read-only scans load those binaries.
+
+[priorities]
+fix = 0
+licenses = 5
+build = 7
+scan = 10
+
+# ── Security ──────────────────────────────────────────────────────────────
+
+[[repos]]
+repo = "https://github.com/gitleaks/gitleaks"
+rev = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e" # frozen: v8.30.1
+
+[[repos.hooks]]
+id = "gitleaks"
+args = ["--baseline-path", "gitleaks-report.json"]
+priority = "scan"
+
+# ── Tidy (mutates go.mod/go.sum — must precede the scan tier) ─────────────
+
+[[repos]]
+repo = "https://github.com/tekwizely/pre-commit-golang"
+rev = "f298c082154b2cb239fac06a4f452368e66e66dd" # frozen: v1.0.0-rc.4
+
+[[repos.hooks]]
+id = "go-mod-tidy"
+priority = "fix"
+
+# ── Lint ──────────────────────────────────────────────────────────────────
+
+[[repos]]
+repo = "https://github.com/golangci/golangci-lint"
+rev = "27774aaf853a4fd21f1dd5e69439459dc1b26e68" # frozen: v2.13.2
+
+[[repos.hooks]]
+id = "golangci-lint-full"
+# Use the installed linter and Go toolchain.
+language = "system"
+entry = "golangci-lint run"
+args = ["--config", ".golangci.yml"]
+priority = "scan"
+
+# ── Local ─────────────────────────────────────────────────────────────────
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "semgrep"
+name = "Semgrep SAST"
+# Expected version: 1.156.0 (must match CI image tag in security.yml)
+entry = "semgrep scan --config p/golang --config p/security-audit --error"
+language = "system"
+types = ["go"]
+pass_filenames = false
+priority = "scan"
+
+[[repos.hooks]]
+id = "semgrep-actions"
+name = "Semgrep GitHub Actions"
+# Scans workflow YAML: p/github-actions catches the pull_request_target
+# checkout (pwn-request); .semgrep/ adds the pull_request_target cache
+# (poisoning) rule. Separate hook so workflow edits are gated even when
+# no Go file changes. CI mirror: security.yml.
+entry = "semgrep scan --config p/github-actions --config .semgrep/ --error"
+language = "system"
+files = '^\.github/workflows/.*\.ya?ml$'
+pass_filenames = false
+priority = "scan"
+
+[[repos.hooks]]
+id = "govulncheck"
+name = "govulncheck SCA"
+# Use the installed toolchain for local checks; CI selects its own toolchain.
+entry = "scripts/govulncheck.sh"
+language = "system"
+always_run = true
+pass_filenames = false
+priority = "scan"
+
+[[repos.hooks]]
+id = "go-test"
+name = "Unit tests"
+entry = "make test"
+language = "system"
+types = ["go"]
+pass_filenames = false
+priority = "build"
+
+[[repos.hooks]]
+id = "docs-check"
+name = "Generated docs freshness"
+entry = "make docs-check"
+language = "system"
+files = '^(cmd/|internal/cmd/|internal/docs/|internal/config/schema\.go)'
+pass_filenames = false
+priority = "scan"
+
+[[repos.hooks]]
+id = "licenses-check"
+name = "NOTICE freshness"
+entry = "make licenses-check"
+language = "system"
+# NOTICE derives from module deps AND in-repo LICENSE files
+# (vendored code), so trigger on either changing.
+files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$'
+pass_filenames = false
+# Mutates NOTICE on drift — must not share the concurrent scan tier.
+priority = "licenses"
+
+[[repos.hooks]]
+id = "claude-freshness"
+name = "Claude doc freshness (advisory)"
+shell = "bash"
+entry = "bash scripts/check-claude-freshness.sh --strict --non-interactive --no-color | head -50 || true"
+language = "system"
+files = '\.go$'
+pass_filenames = false
+verbose = true
+priority = "scan"
+
+[[repos.hooks]]
+id = "plugin-drift"
+name = "Plugin Dockerfile template drift check"
+shell = "bash"
+entry = """
+diff internal/bundler/assets/Dockerfile.base.tmpl clawker-plugin/skills/clawker-support/reference/Dockerfile.base.tmpl && \
+  diff internal/bundler/assets/Dockerfile.harness-image.tmpl clawker-plugin/skills/clawker-support/reference/Dockerfile.harness-image.tmpl
+"""
+language = "system"
+files = '(internal/bundler/assets/Dockerfile\.(base|harness-image)\.tmpl|^clawker-plugin$)'
+pass_filenames = false
+priority = "scan"

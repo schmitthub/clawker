@@ -110,7 +110,10 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker. Shared
 preamble lives in `newFirewallHarness` / `newFirewallYAMLHarness(t, projectYAML,
 services...)` (real wiring + services invariant + isolated FS + register +
 build); pass `fwNoServices` for tests that deliberately end with the stack
-down. Highlights (not exhaustive — see the file):
+down. `fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
+filesystem. Each test must start a CP that uses its own CA; an existing CP
+can have a matching binary but certificates from another environment.
+Highlights (not exhaustive — see the file):
 
 | Test | Verifies |
 |------|----------|
@@ -119,6 +122,7 @@ down. Highlights (not exhaustive — see the file):
 | `TestFirewall_AddRemove` / `_ConfigRules` / `_Prune` | Dynamic rule management; config-rule sync; store reset (config floor survives `prune`, `--all` empties, non-interactive gate, CP-down fail-fast) |
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` / `_TLSPathRules*` | HTTP and TLS MITM path rule enforcement |
+| `TestFirewall_WildcardSANCerts` | `.clawker.dev` admits three project-owned Worker Custom Domains with deep hostnames; one request per host verifies TLS, reaches upstream, and returns HTTP 200 |
 | `TestFirewall_SSHTCPMapping` / `_HTTPDomainDetection` / `_ICMPBlocked` | Non-TLS protocol routing and blocking |
 | `TestFirewall_Identity*` | Route identities stable across rule churn and CP restart |
 | `TestFirewall_HostProxyReachable` / `_IntraNetworkBypass` / `_FirewallDisabled` | Host-proxy carve-out; intra-net bypass; disabled-firewall behavior (CP still boots — CP ≠ firewall) |

@@ -33,7 +33,7 @@ build:
     root_run:
       - npm install -g wscat
       - |-
-        GH_VERSION=2.94.0 && \
+        GH_VERSION=2.100.0 && \
           ARCH=$(dpkg --print-architecture) && \
           GH_FILE="gh_${GH_VERSION}_linux_${ARCH}.tar.gz" && \
           CHECKSUMS_FILE="gh_${GH_VERSION}_checksums.txt" && \
@@ -93,14 +93,14 @@ build:
           rm -f "${YQ_FILE}"
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
-      - uv tool install pre-commit --with pre-commit-uv
+      - uv tool install prek
       - go install golang.org/x/tools/gopls@latest
       - go install gotest.tools/gotestsum@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - go install golang.org/x/vuln/cmd/govulncheck@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install honnef.co/go/tools/cmd/staticcheck@latest
-      - go install golang.org/dl/go1.26.6@latest && go1.26.6 download
+      - go install golang.org/dl/go1.27.1@v0.0.0-20260901195035-4393e4265563 && go1.27.1 download
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -159,6 +159,7 @@ security:
   docker_socket: false
   firewall:
     add_domains:
+      - .clawker.dev
       - docs.openclaw.ai
       - registry-1.docker.io
       - vuln.go.dev
@@ -228,6 +229,7 @@ security:
       - .earthly.dev
       - .dagger.io
       - skaffold.dev
+      - prek.j178.dev
     rules:
       - action: allow
         dst: github.com

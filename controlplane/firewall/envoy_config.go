@@ -17,30 +17,13 @@ import (
 
 // GenerateEnvoyConfig is the firewall's sole Envoy-config entrypoint, consumed
 // by Stack.Reload. Signature is stable.
-func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSConfig) ([]byte, []string, error) {
-	if err := ports.Validate(); err != nil {
-		return nil, nil, err
-	}
-	// Fail closed BEFORE generating anything: a host:port maps to exactly one
-	// network stack (the proto token determines the whole stack), and the eBPF
-	// route_map is keyed (host, port) with no proto — so two protos on one
-	// host:port would silently race (last write wins) rather than both apply.
-	if err := checkProtoCollisions(rules); err != nil {
-		return nil, nil, err
-	}
-	// Fail closed on an all-single allow/deny clash on one (dst, opaque proto)
-	// port — a contradictory config with no range to carve (see the function doc).
-	if err := checkOpaquePortActionConflicts(rules); err != nil {
-		return nil, nil, err
-	}
-	// Fail closed when the dedicated-listener layout (opaque tcp/ssh/udp +
-	// port_range fan-out) would overflow its port bands — see the function doc.
-	if err := validateDedicatedLayout(rules, ports); err != nil {
-		return nil, nil, err
-	}
-	// Fail closed on (proto, dst-type) combos Envoy can't express self-securely
-	// (raw udp to a CIDR range — see the function doc).
-	if err := validateProtoDstSupport(rules); err != nil {
+func GenerateEnvoyConfig(
+	rules []config.EgressRule,
+	ports EnvoyPorts,
+	als ALSConfig,
+	sds SDSConfig,
+) ([]byte, []string, error) {
+	if err := validateGenerationInputs(rules, ports); err != nil {
 		return nil, nil, err
 	}
 
@@ -48,25 +31,17 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	cfg.SetAdmin(envoyAdmin())
 
 	perms, warnings := derive(rules, ports)
-	for _, p := range perms {
-		if !cfg.ClaimPermutation(p.key) {
-			continue
-		}
-		ctx := &genCtx{rule: p.rule, ports: ports, als: als, cfg: cfg}
-		for _, fn := range p.layers { // chain the cherry-picked methods, threading ctx
-			if err := fn(ctx); err != nil {
-				return nil, warnings, err
-			}
-		}
-		if err := ctx.commit(); err != nil {
-			return nil, warnings, err
-		}
+	if err := applyPermutations(cfg, perms, ports, als, sds); err != nil {
+		return nil, warnings, err
 	}
 
 	if err := installEgressDenyFloor(cfg, als); err != nil {
 		return nil, warnings, err
 	}
 	if err := installOtelALSCluster(cfg, als); err != nil {
+		return nil, warnings, err
+	}
+	if err := installSDSCluster(cfg, sds, rules); err != nil {
 		return nil, warnings, err
 	}
 	if err := installHealthListener(cfg, ports); err != nil {
@@ -92,6 +67,75 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 		return nil, warnings, fmt.Errorf("generated envoy config failed bootstrap validation: %w", err)
 	}
 	return out, warnings, nil
+}
+
+// validateGenerationInputs rejects rules that cannot produce a safe listener layout.
+func validateGenerationInputs(rules []config.EgressRule, ports EnvoyPorts) error {
+	if err := ports.Validate(); err != nil {
+		return err
+	}
+	// Fail closed BEFORE generating anything: a host:port maps to exactly one
+	// network stack (the proto token determines the whole stack), and the eBPF
+	// route_map is keyed (host, port) with no proto — so two protos on one
+	// host:port would silently race (last write wins) rather than both apply.
+	if err := checkProtoCollisions(rules); err != nil {
+		return err
+	}
+	// Fail closed on an all-single allow/deny clash on one (dst, opaque proto)
+	// port — a contradictory config with no range to carve (see the function doc).
+	if err := checkOpaquePortActionConflicts(rules); err != nil {
+		return err
+	}
+	// Fail closed when the dedicated-listener layout (opaque tcp/ssh/udp +
+	// port_range fan-out) would overflow its port bands — see the function doc.
+	if err := validateDedicatedLayout(rules, ports); err != nil {
+		return err
+	}
+	// Fail closed on (proto, dst-type) combos Envoy can't express self-securely
+	// (raw udp to a CIDR range — see the function doc).
+	if err := validateProtoDstSupport(rules); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func applyPermutations(cfg *EnvoyConfig, perms []permutation, ports EnvoyPorts, als ALSConfig, sds SDSConfig) error {
+	for _, p := range perms {
+		if !cfg.ClaimPermutation(p.key) {
+			continue
+		}
+		ctx := &genCtx{
+			rule:                p.rule,
+			ports:               ports,
+			als:                 als,
+			sds:                 sds,
+			cfg:                 cfg,
+			listener:            "",
+			match:               nil,
+			socket:              nil,
+			filters:             nil,
+			clusters:            nil,
+			port:                0,
+			bareHostPort:        0,
+			hcmCodec:            "",
+			advertiseH3:         false,
+			tlsTerminated:       false,
+			upstreamCluster:     "",
+			upstreamFollowsHost: false,
+			httpFilters:         nil,
+			websocket:           false,
+		}
+		for _, fn := range p.layers { // chain the cherry-picked methods, threading ctx
+			if err := fn(ctx); err != nil {
+				return err
+			}
+		}
+		if err := ctx.commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // permutation is a "permchain": a rule paired with the ordered list of layer
@@ -476,7 +520,7 @@ func denyDefaultFilterChain(als ALSConfig) map[string]any {
 				keyTypedConfig: map[string]any{
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
-					"cluster":     denyClusterName,
+					keyCluster:    denyClusterName,
 					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", consts.VerdictDenied, als),
 				},
 			},
@@ -492,7 +536,7 @@ func buildDenyCluster() map[string]any {
 		"connect_timeout": "1s",
 		"type":            "STATIC",
 		"load_assignment": map[string]any{
-			"cluster_name": denyClusterName,
+			keyClusterName: denyClusterName,
 			"endpoints":    []any{},
 		},
 	}
@@ -527,21 +571,74 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // CLI-root-chained leaf (a future infra service) can't impersonate the collector
 // for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
+	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port,
+		infraClientTLS{cert: envoyOtelTLSCertFile, key: envoyOtelTLSKeyFile, ca: envoyOtelTLSCAFile})
+}
+
+// installSDSCluster emits the cluster the on-demand certificate selector
+// fetches per-SNI MITM secrets from. Emitted only when the SDS lane is
+// enabled AND at least one wildcard https/wss allow rule exists — those are
+// exactly the chains that carry the selector (downstreamMITMSocket); exact,
+// IP, and CIDR chains keep static file certs.
+func installSDSCluster(cfg *EnvoyConfig, sds SDSConfig, rules []config.EgressRule) error {
+	if !sds.Enabled || !anyWildcardTLSAllowRule(rules) {
+		return nil
+	}
+	return cfg.AddCluster(buildSDSCluster(sds))
+}
+
+// anyWildcardTLSAllowRule reports whether any rule is a wildcard https/wss
+// allow — the condition under which wildcard MITM chains exist and the
+// on-demand selector needs its SDS cluster.
+func anyWildcardTLSAllowRule(rules []config.EgressRule) bool {
+	for _, r := range rules {
+		if isDenyAction(r.Action) || !isWildcardDomain(r.Dst) {
+			continue
+		}
+		if proto := strings.ToLower(r.Proto); proto == "https" || proto == "wss" {
+			return true
+		}
+	}
+	return false
+}
+
+// buildSDSCluster returns the SDS cluster definition. STRICT_DNS resolves the
+// CP's clawker-network DNS name; h2 because xDS runs on gRPC. The upstream
+// TLS context presents the lane's DEDICATED client identity from
+// /etc/envoy/sds-tls (consts.EnvoySDSClientName leaf, signed by the infra
+// intermediate — the CP's SDS server pins that exact SAN and refuses the
+// telemetry lane's leaf), and validates the CP server cert
+// (CLI-root-signed, SAN = the CP container name) against the mounted root CA.
+func buildSDSCluster(sds SDSConfig) map[string]any {
+	return buildInfraGRPCCluster(sdsClusterName, sds.Address, sds.Port,
+		infraClientTLS{cert: envoySDSTLSCertFile, key: envoySDSTLSKeyFile, ca: envoySDSTLSCAFile})
+}
+
+// infraClientTLS names the in-container file paths of one lane's mTLS
+// client material. Each infra cluster passes its own lane — cert lanes
+// are per-feature identities, never shared across services.
+type infraClientTLS struct {
+	cert, key, ca string
+}
+
+// buildInfraGRPCCluster uses HTTP/2 and mTLS for a trusted infrastructure service.
+// The service address supplies both the SNI and the required server SAN.
+func buildInfraGRPCCluster(name, address string, port int, tlsFiles infraClientTLS) map[string]any {
 	return map[string]any{
-		"name":            otelCollectorALSClusterName,
+		"name":            name,
 		"type":            "STRICT_DNS",
 		"connect_timeout": "1s",
 		"load_assignment": map[string]any{
-			"cluster_name": otelCollectorALSClusterName,
+			keyClusterName: name,
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{
 						map[string]any{
 							"endpoint": map[string]any{
 								"address": map[string]any{
-									"socket_address": map[string]any{
-										"address":    consts.MonitoringServiceOtelCollector,
-										"port_value": als.Port,
+									keySocketAddress: map[string]any{
+										"address":    address,
+										keyPortValue: port,
 									},
 								},
 							},
@@ -558,31 +655,25 @@ func buildOtelALSCluster(als ALSConfig) map[string]any {
 				},
 			},
 		},
-		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
+		keyTransportSocket: map[string]any{
+			"name": tlsTransportSocketName,
 			keyTypedConfig: map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-				"sni":   consts.MonitoringServiceOtelCollector,
-				"common_tls_context": map[string]any{
+				"@type": upstreamTLSContextType,
+				"sni":   address,
+				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
-							"certificate_chain": map[string]any{
-								"filename": "/etc/envoy/otel-tls/client.pem",
-							},
-							"private_key": map[string]any{
-								"filename": "/etc/envoy/otel-tls/client.key",
-							},
+							keyCertificateChain: map[string]any{keyFilename: tlsFiles.cert},
+							keyPrivateKey:       map[string]any{keyFilename: tlsFiles.key},
 						},
 					},
-					"validation_context": map[string]any{
-						"trusted_ca": map[string]any{
-							"filename": "/etc/envoy/otel-tls/ca.pem",
-						},
+					keyValidationContext: map[string]any{
+						keyTrustedCA: map[string]any{keyFilename: tlsFiles.ca},
 						"match_typed_subject_alt_names": []any{
 							map[string]any{
 								"san_type": "DNS",
 								"matcher": map[string]any{
-									"exact": consts.MonitoringServiceOtelCollector,
+									"exact": address,
 								},
 							},
 						},
@@ -616,9 +707,9 @@ func buildHealthListener(port int) map[string]any {
 	return map[string]any{
 		"name": healthListenerName,
 		"address": map[string]any{
-			"socket_address": map[string]any{
+			keySocketAddress: map[string]any{
 				"address":    defaultBindAddress,
-				"port_value": port,
+				keyPortValue: port,
 			},
 		},
 		"filter_chains": []any{
@@ -977,9 +1068,9 @@ func originKey(r config.EgressRule) string {
 func envoyAdmin() map[string]any {
 	return map[string]any{
 		"address": map[string]any{
-			"socket_address": map[string]any{
+			keySocketAddress: map[string]any{
 				"address":    consts.Localhost,
-				"port_value": envoyAdminPort,
+				keyPortValue: envoyAdminPort,
 			},
 		},
 	}

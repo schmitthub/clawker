@@ -3,6 +3,9 @@ admin:
         socket_address:
             address: 127.0.0.1
             port_value: 9901
+node:
+    cluster: clawker-envoy
+    id: clawker-envoy
 static_resources:
     clusters:
         - connect_timeout: 1s
@@ -143,6 +146,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
                 '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
@@ -181,6 +185,41 @@ static_resources:
                         trusted_ca:
                             filename: /etc/envoy/otel-tls/ca.pem
                 sni: otel-collector
+          type: STRICT_DNS
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http2_protocol_options: {}
+        - connect_timeout: 1s
+          load_assignment:
+            cluster_name: sds_cluster
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: clawker-controlplane
+                                port_value: 7445
+          name: sds_cluster
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+                '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+                common_tls_context:
+                    tls_certificates:
+                        - certificate_chain:
+                            filename: /etc/envoy/sds-tls/client.pem
+                          private_key:
+                            filename: /etc/envoy/sds-tls/client.key
+                    validation_context:
+                        match_typed_subject_alt_names:
+                            - matcher:
+                                exact: clawker-controlplane
+                              san_type: DNS
+                        trusted_ca:
+                            filename: /etc/envoy/sds-tls/ca.pem
+                sni: clawker-controlplane
           type: STRICT_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -553,6 +592,7 @@ static_resources:
                         trust_chain_verification: ACCEPT_UNTRUSTED
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -581,6 +621,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -751,6 +792,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
+                max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
                 '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
@@ -1919,11 +1961,28 @@ static_resources:
                         alpn_protocols:
                             - h2
                             - http/1.1
-                        tls_certificates:
-                            - certificate_chain:
-                                filename: /etc/envoy/certs/mintlify.com-cert.pem
-                              private_key:
-                                filename: /etc/envoy/certs/mintlify.com-key.pem
+                        custom_tls_certificate_selector:
+                            name: envoy.tls.certificate_selectors.on_demand_secret
+                            typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_selectors.on_demand_secret.v3.Config
+                                certificate_mapper:
+                                    name: envoy.tls.certificate_mappers.sni
+                                    typed_config:
+                                        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_mappers.sni.v3.SNI
+                                        default_value: mintlify.com
+                                config_source:
+                                    api_config_source:
+                                        api_type: DELTA_GRPC
+                                        grpc_services:
+                                            - envoy_grpc:
+                                                cluster_name: sds_cluster
+                                              timeout: 5s
+                                        transport_api_version: V3
+                                    resource_api_version: V3
+                                prefetch_secret_names:
+                                    - mintlify.com
+                    disable_stateful_session_resumption: true
+                    disable_stateless_session_resumption: true
             - filter_chain_match:
                 server_names:
                     - api.github.com
@@ -3687,11 +3746,28 @@ static_resources:
                         alpn_protocols:
                             - h2
                             - http/1.1
-                        tls_certificates:
-                            - certificate_chain:
-                                filename: /etc/envoy/certs/stream.example.com-cert.pem
-                              private_key:
-                                filename: /etc/envoy/certs/stream.example.com-key.pem
+                        custom_tls_certificate_selector:
+                            name: envoy.tls.certificate_selectors.on_demand_secret
+                            typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_selectors.on_demand_secret.v3.Config
+                                certificate_mapper:
+                                    name: envoy.tls.certificate_mappers.sni
+                                    typed_config:
+                                        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_mappers.sni.v3.SNI
+                                        default_value: stream.example.com
+                                config_source:
+                                    api_config_source:
+                                        api_type: DELTA_GRPC
+                                        grpc_services:
+                                            - envoy_grpc:
+                                                cluster_name: sds_cluster
+                                              timeout: 5s
+                                        transport_api_version: V3
+                                    resource_api_version: V3
+                                prefetch_secret_names:
+                                    - stream.example.com
+                    disable_stateful_session_resumption: true
+                    disable_stateless_session_resumption: true
             - filter_chain_match:
                 server_names:
                     - secure.example.com

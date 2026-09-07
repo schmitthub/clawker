@@ -339,16 +339,23 @@ const (
 	// EnsureRunning; sibling Envoy/CoreDNS containers bind-mount from
 	// the equivalent host path (HostFirewallOtelCertsDir).
 	OtelClientsDirName = "otel-clients"
-	authDir            = "auth"
-	buildDir           = "build"
-	bundlesDir         = "bundles"
-	worktreesDir       = "worktrees"
-	logsDir            = "logs"
-	pidsDir            = "pids"
-	shareDir           = ".clawker-share"
-	socketsDir         = "sockets"
-	auditDir           = "audit"
-	controlPlaneDir    = "controlplane"
+	// SDSClientsDirName holds the dedicated mTLS client identity Envoy
+	// presents to the CP's on-demand certificate SDS server:
+	// sds-clients/envoy/{client.pem,client.key,ca.pem}. Deliberately
+	// separate from OtelClientsDirName — the SDS lane must not borrow
+	// the telemetry lane's material, provisioning path, or readiness
+	// gate (see controlplane/sdscerts).
+	SDSClientsDirName = "sds-clients"
+	authDir           = "auth"
+	buildDir          = "build"
+	bundlesDir        = "bundles"
+	worktreesDir      = "worktrees"
+	logsDir           = "logs"
+	pidsDir           = "pids"
+	shareDir          = ".clawker-share"
+	socketsDir        = "sockets"
+	auditDir          = "audit"
+	controlPlaneDir   = "controlplane"
 )
 
 // ClaudeDir is the Claude Code configuration directory name, both as
@@ -478,6 +485,15 @@ const (
 	Localhost          = "127.0.0.1"
 	DockerHostInternal = "host.docker.internal"
 )
+
+// EnvoySDSClientName is the CN + DNS SAN of the dedicated client leaf
+// Envoy presents to the CP's on-demand certificate SDS server. The
+// server pins this exact SAN (RequireAndVerifyClientCert + per-SAN
+// check), so telemetry-lane leaves ("envoy-otel-client", ...) signed
+// by the same infra intermediate are refused — SDS-minted MITM certs
+// are only handed to the SDS identity. Minted by controlplane/sdscerts;
+// pinned in internal/controlplane sdsTLSConfig.
+const EnvoySDSClientName = "envoy-sds-client"
 
 // Container names.
 const (
@@ -617,6 +633,12 @@ const (
 	// listener (mTLS, clawker network only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
+
+	// DefaultCPSDSPort is the in-container gRPC port for the SDS server
+	// Envoy fetches on-demand MITM certificates from (mTLS, clawker
+	// network only, never host-published). Matches the
+	// ControlPlaneSettings.SDSPort struct-tag default.
+	DefaultCPSDSPort = 7445
 	// DefaultClawkerdPort is the in-container gRPC port for the
 	// clawkerd listener (mTLS, clawker network only). CP dials this
 	// port to dispatch commands; the listener pins peer CN to
@@ -1038,6 +1060,19 @@ func OtelClientsDir() (string, error) {
 		return "", err
 	}
 	return subdirPathUnder(OtelClientsDirName, fwDir)
+}
+
+// SDSClientsDir ensures and returns the directory under
+// FirewallDataSubdir where the sdscerts.Service writes the mTLS client
+// identity Envoy uses to dial the CP's on-demand certificate SDS
+// server. CP is the sole writer; the Envoy sibling bind-mounts the
+// envoy/ subpath RO.
+func SDSClientsDir() (string, error) {
+	fwDir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return subdirPathUnder(SDSClientsDirName, fwDir)
 }
 
 // FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.

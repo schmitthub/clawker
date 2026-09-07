@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install-hooks.sh — Install pre-commit hooks for all CI quality gates.
+# install-hooks.sh — Install prek git hooks for all CI quality gates.
 #
 # Usage: bash scripts/install-hooks.sh
 #
@@ -12,14 +12,14 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
     exit 1
 }
 
-# ── Check pre-commit is installed ────────────────────────────────────────────
-if ! command -v pre-commit >/dev/null 2>&1; then
-    echo "Error: pre-commit is not installed." >&2
+# ── Check prek is installed ──────────────────────────────────────────────────
+if ! command -v prek >/dev/null 2>&1; then
+    echo "Error: prek is not installed." >&2
     echo "" >&2
     echo "Install with one of:" >&2
-    echo "  brew install pre-commit" >&2
-    echo "  pip install pre-commit" >&2
-    echo "  pipx install pre-commit" >&2
+    echo "  uv tool install prek" >&2
+    echo "  brew install prek" >&2
+    echo "  cargo install --locked prek" >&2
     exit 1
 fi
 
@@ -27,7 +27,7 @@ fi
 MISSING=()
 command -v gitleaks    >/dev/null 2>&1 || MISSING+=("gitleaks    — brew install gitleaks")
 command -v semgrep     >/dev/null 2>&1 || MISSING+=("semgrep     — pip install semgrep")
-command -v govulncheck >/dev/null 2>&1 || MISSING+=("govulncheck — go install golang.org/x/vuln/cmd/govulncheck@v1.1.4")
+command -v govulncheck >/dev/null 2>&1 || MISSING+=("govulncheck — go install golang.org/x/vuln/cmd/govulncheck@v1.7.0")
 command -v golangci-lint >/dev/null 2>&1 || MISSING+=("golangci-lint — brew install golangci-lint")
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
@@ -40,13 +40,14 @@ fi
 
 # ── Install hooks ────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"
-pre-commit install
+# --force replaces any hook script left behind by another manager (pre-commit).
+prek install --force
 
 echo ""
-echo "Pre-commit hooks installed. They will run automatically on 'git commit'."
+echo "prek hooks installed. They will run automatically on 'git commit'."
 echo ""
 echo "Useful commands:"
-echo "  pre-commit run --all-files          Run all hooks against entire repo"
-echo "  pre-commit run gitleaks --all-files  Run a single hook"
-echo "  make pre-commit                      Alias for run --all-files"
-echo "  git commit --no-verify               Skip hooks (emergency only)"
+echo "  prek run --all-files            Run all hooks against entire repo"
+echo "  prek run gitleaks --all-files   Run a single hook"
+echo "  make pre-commit                 Alias for run --all-files"
+echo "  git commit --no-verify          Skip hooks (emergency only)"
