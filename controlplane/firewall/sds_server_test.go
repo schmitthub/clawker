@@ -37,11 +37,8 @@ rules:
     action: deny
 `
 
-// startSDSTestServer serves a firewall.SDSServer over bufconn and returns a
-// connected SDS client stream factory.
-//
-//nolint:ireturn // The generated gRPC client constructor returns this interface.
-func startSDSTestServer(t *testing.T) secretservice.SecretDiscoveryServiceClient {
+// startSDSTestServer starts the SDS service and returns its client connection.
+func startSDSTestServer(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 
 	store, err := firewall.NewRulesStoreFromString(sdsTestRules)
@@ -85,24 +82,31 @@ func startSDSTestServer(t *testing.T) secretservice.SecretDiscoveryServiceClient
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
 
-	return secretservice.NewSecretDiscoveryServiceClient(conn)
+	return conn
 }
 
 func requestSecret(
 	t *testing.T,
-	client secretservice.SecretDiscoveryServiceClient,
+	conn *grpc.ClientConn,
 	name string,
 ) *corev3.DeltaDiscoveryResponse {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	stream, err := client.DeltaSecrets(ctx)
+	stream, err := secretservice.NewSecretDiscoveryServiceClient(conn).DeltaSecrets(ctx)
 	require.NoError(t, err)
-	//nolint:exhaustruct,exhaustruct_v5 // sparse fixture — subscribe-only delta request
 	require.NoError(t, stream.Send(&corev3.DeltaDiscoveryRequest{
 		TypeUrl:                firewall.SDSSecretTypeURL,
 		ResourceNamesSubscribe: []string{name},
+
+		Node:                        nil,
+		ResourceNamesUnsubscribe:    nil,
+		ResourceLocatorsSubscribe:   nil,
+		ResourceLocatorsUnsubscribe: nil,
+		InitialResourceVersions:     nil,
+		ResponseNonce:               "",
+		ErrorDetail:                 nil,
 	}))
 	resp, err := stream.Recv()
 	require.NoError(t, err)

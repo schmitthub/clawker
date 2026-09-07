@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -306,8 +307,15 @@ func TestGenerateSNICert_MultiLabelHostVerifies(t *testing.T) {
 	// Chain must verify against the firewall CA.
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
-	//nolint:exhaustruct,exhaustruct_v5 // Only the root CA is needed for this chain check.
-	_, err = cert.Verify(x509.VerifyOptions{Roots: roots})
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:                     roots,
+		DNSName:                   "",
+		Intermediates:             nil,
+		CurrentTime:               time.Time{},
+		KeyUsages:                 nil,
+		MaxConstraintComparisions: 0,
+		CertificatePolicies:       nil,
+	})
 	require.NoError(t, err)
 }
 

@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -179,8 +180,14 @@ func TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady(t *testing.T)
 
 	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
 	require.NoError(t, err)
-	//nolint:exhaustruct,exhaustruct_v5 // spec fixture — topology fields the mounts don't read
-	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
+	netInfo := &NetworkInfo{
+		NetworkID: "net-test",
+		EnvoyIP:   "172.20.0.2",
+		CoreDNSIP: "172.20.0.3",
+		Gateway:   netip.Addr{},
+		Subnet:    netip.Prefix{},
+		CIDR:      "",
+	}
 
 	t.Run("not ready — no mount", func(t *testing.T) {
 		assertNoBindTarget(t, s.envoyContainerSpec(netInfo).mounts, "/etc/envoy/sds-tls")
@@ -191,7 +198,7 @@ func TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady(t *testing.T)
 		defer func() { s.sdsCertsReady = false }()
 		spec := s.envoyContainerSpec(netInfo)
 		assertHasBindMount(t, spec.mounts,
-			filepath.Join(consts.HostFirewallSDSCertsDir, "envoy"),
+			filepath.Join(consts.HostFirewallSDSCertsDir(), "envoy"),
 			"/etc/envoy/sds-tls",
 		)
 		// infraCertsReady is false here: the otel-tls mount must not

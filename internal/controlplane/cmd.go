@@ -644,7 +644,6 @@ func sdsTLSConfig(serverCertPath, serverKeyPath string) (*tls.Config, error) {
 		return nil, fmt.Errorf("no certificate parsed from %s", consts.CPInfraCACertPath)
 	}
 
-	//nolint:exhaustruct,exhaustruct_v5 // Other TLS options use secure library defaults.
 	return &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
@@ -661,6 +660,34 @@ func sdsTLSConfig(serverCertPath, serverKeyPath string) (*tls.Config, error) {
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			return requireSDSClientSAN(cs.VerifiedChains)
 		},
+
+		Rand:                                nil, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		Time:                                nil,
+		NameToCertificate:                   nil, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		GetCertificate:                      nil,
+		GetClientCertificate:                nil,
+		GetConfigForClient:                  nil,
+		VerifyPeerCertificate:               nil,
+		RootCAs:                             nil,
+		NextProtos:                          nil,
+		ServerName:                          "",
+		InsecureSkipVerify:                  false,
+		CipherSuites:                        nil,
+		PreferServerCipherSuites:            true, //nolint:staticcheck // exhaustruct requires this deprecated field; Go ignores its value.
+		SessionTicketsDisabled:              false,
+		SessionTicketKey:                    [32]byte{}, //nolint:staticcheck // exhaustruct requires this deprecated field; its zero value keeps the TLS default.
+		ClientSessionCache:                  nil,
+		UnwrapSession:                       nil,
+		WrapSession:                         nil,
+		MaxVersion:                          0,
+		CurvePreferences:                    nil,
+		DynamicRecordSizingDisabled:         false,
+		Renegotiation:                       tls.RenegotiateNever,
+		KeyLogWriter:                        nil,
+		EncryptedClientHelloConfigList:      nil,
+		EncryptedClientHelloRejectionVerify: nil,
+		GetEncryptedClientHelloKeys:         nil,
+		EncryptedClientHelloKeys:            nil,
 	}, nil
 }
 

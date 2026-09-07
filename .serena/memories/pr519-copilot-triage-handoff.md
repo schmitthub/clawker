@@ -124,7 +124,7 @@ Fix spec (user chose commit-flag defer over inline remove): `internal/storage/wr
 pattern — `committed := false; defer func() { if !committed { _ = os.Remove(tmpName) } }()`
 right after CreateTemp (with why-comment carrying the key-material rationale), drop the three
 inline removes (defer covers them), set `committed = true` after successful rename. Keep the
-existing chmod nolint + why-comments. User declined the companion no-residue failure test.
+why-comments. Follow-up on 2026-09-07: the user rejected every original PR-added lint suppression. SDS files now use mode 0600 with Envoy ownership; the directory uses mode 0750 with the Envoy group. The process and file UID/GID use the same constants. No gosec or exhaustruct suppression is approved. The user later approved only eight staticcheck directives on deprecated TLS fields. See `mem:lint-approval`. The user declined the companion no-residue test and later rejected file-mode assertions as proof of CP–Envoy access. The user will run E2E; do not run further Docker probes.
 
 ## Findings 7–9 — APPLY: three stale-comment rewrites (comment-only)
 

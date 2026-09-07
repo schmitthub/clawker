@@ -30,17 +30,86 @@ func testIssuer(t *testing.T, dir string) *infracerts.Issuer {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	tmpl := &x509.Certificate{ //nolint:exhaustruct,exhaustruct_v5 // minimal CA template
+	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		//nolint:exhaustruct,exhaustruct_v5 // CN-only subject
 		Subject: pkix.Name{
 			CommonName: "test infra intermediate",
+
+			Country:            nil,
+			Organization:       nil,
+			OrganizationalUnit: nil,
+			Locality:           nil,
+			Province:           nil,
+			StreetAddress:      nil,
+			PostalCode:         nil,
+			SerialNumber:       "",
+			Names:              nil,
+			ExtraNames:         nil,
 		},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(time.Hour),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
+
+		Raw:                     nil,
+		RawTBSCertificate:       nil,
+		RawSubjectPublicKeyInfo: nil,
+		RawSubject:              nil,
+		RawIssuer:               nil,
+		RawSignatureAlgorithm:   nil,
+		Signature:               nil,
+		SignatureAlgorithm:      x509.UnknownSignatureAlgorithm,
+		PublicKeyAlgorithm:      x509.UnknownPublicKeyAlgorithm,
+		PublicKey:               nil,
+		Version:                 0,
+		Issuer: pkix.Name{
+			Country:            nil,
+			Organization:       nil,
+			OrganizationalUnit: nil,
+			Locality:           nil,
+			Province:           nil,
+			StreetAddress:      nil,
+			PostalCode:         nil,
+			SerialNumber:       "",
+			CommonName:         "",
+			Names:              nil,
+			ExtraNames:         nil,
+		},
+		Extensions:                  nil,
+		ExtraExtensions:             nil,
+		UnhandledCriticalExtensions: nil,
+		ExtKeyUsage:                 nil,
+		UnknownExtKeyUsage:          nil,
+		MaxPathLen:                  0,
+		MaxPathLenZero:              false,
+		SubjectKeyId:                nil,
+		AuthorityKeyId:              nil,
+		OCSPServer:                  nil,
+		IssuingCertificateURL:       nil,
+		DNSNames:                    nil,
+		EmailAddresses:              nil,
+		IPAddresses:                 nil,
+		URIs:                        nil,
+		PermittedDNSDomainsCritical: false,
+		PermittedDNSDomains:         nil,
+		ExcludedDNSDomains:          nil,
+		PermittedIPRanges:           nil,
+		ExcludedIPRanges:            nil,
+		PermittedEmailAddresses:     nil,
+		ExcludedEmailAddresses:      nil,
+		PermittedURIDomains:         nil,
+		ExcludedURIDomains:          nil,
+		CRLDistributionPoints:       nil,
+		PolicyIdentifiers:           nil,
+		Policies:                    nil,
+		InhibitAnyPolicy:            0,
+		InhibitAnyPolicyZero:        false,
+		InhibitPolicyMapping:        0,
+		InhibitPolicyMappingZero:    false,
+		RequireExplicitPolicy:       0,
+		RequireExplicitPolicyZero:   false,
+		PolicyMappings:              nil,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	require.NoError(t, err)
@@ -48,13 +117,19 @@ func testIssuer(t *testing.T, dir string) *infracerts.Issuer {
 	certPath := filepath.Join(dir, "ca.pem")
 	keyPath := filepath.Join(dir, "ca.key")
 	certPEM := pem.EncodeToMemory(
-		&pem.Block{Type: "CERTIFICATE", Bytes: der}, //nolint:exhaustruct,exhaustruct_v5 // PEM block
+		&pem.Block{
+			Type: "CERTIFICATE", Bytes: der,
+			Headers: nil,
+		},
 	)
 	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	require.NoError(t, err)
 	keyPEM := pem.EncodeToMemory(
-		&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}, //nolint:exhaustruct,exhaustruct_v5 // PEM block
+		&pem.Block{
+			Type: "EC PRIVATE KEY", Bytes: keyDER,
+			Headers: nil,
+		},
 	)
 	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
 
@@ -72,7 +147,12 @@ func TestService_EnsureEnvoyClient_MintsDedicatedSDSIdentity(t *testing.T) {
 	issuer := testIssuer(t, dir)
 	rootCA := []byte("-----BEGIN CERTIFICATE-----\nfake-root-for-copy-check\n-----END CERTIFICATE-----\n")
 
-	svc, err := sdscerts.New(issuer, filepath.Join(dir, "sds-clients"), rootCA)
+	svc, err := sdscerts.New(
+		issuer,
+		filepath.Join(dir, "sds-clients"),
+		rootCA,
+		sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()},
+	)
 	require.NoError(t, err)
 
 	certPath, keyPath, caPath, err := svc.EnsureEnvoyClient()
@@ -103,7 +183,12 @@ func TestService_EnsureEnvoyClient_MintsDedicatedSDSIdentity(t *testing.T) {
 // reload path re-provisions on every ensureConfigs.
 func TestService_EnsureEnvoyClient_OverwritesInPlace(t *testing.T) {
 	dir := t.TempDir()
-	svc, err := sdscerts.New(testIssuer(t, dir), filepath.Join(dir, "sds-clients"), []byte("root"))
+	svc, err := sdscerts.New(
+		testIssuer(t, dir),
+		filepath.Join(dir, "sds-clients"),
+		[]byte("root"),
+		sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()},
+	)
 	require.NoError(t, err)
 
 	certPath, _, _, err := svc.EnsureEnvoyClient()
@@ -125,10 +210,10 @@ func TestNew_RejectsMissingDeps(t *testing.T) {
 	dir := t.TempDir()
 	issuer := testIssuer(t, dir)
 
-	_, err := sdscerts.New(nil, dir, []byte("root"))
+	_, err := sdscerts.New(nil, dir, []byte("root"), sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()})
 	require.Error(t, err)
-	_, err = sdscerts.New(issuer, "", []byte("root"))
+	_, err = sdscerts.New(issuer, "", []byte("root"), sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()})
 	require.Error(t, err)
-	_, err = sdscerts.New(issuer, dir, nil)
+	_, err = sdscerts.New(issuer, dir, nil, sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()})
 	require.Error(t, err)
 }

@@ -220,19 +220,7 @@ func GenerateSNICert(
 		return nil, nil, fmt.Errorf("generating serial: %w", err)
 	}
 
-	now := time.Now()
-	//nolint:exhaustruct,exhaustruct_v5 // certificate template — every omitted x509 field deliberately stays zero (same shape as GenerateDomainCert)
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			CommonName: sni,
-		}, //nolint:exhaustruct,exhaustruct_v5 // CN-only subject, matching the MITM domain leaves
-		NotBefore:   now,
-		NotAfter:    now.AddDate(domainCertValidYears, 0, 0),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{sni},
-	}
+	template := sniCertificateTemplate(sni, serial, time.Now())
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
 	if err != nil {
@@ -245,6 +233,81 @@ func GenerateSNICert(
 	}
 
 	return encodePEM(pemBlockCertificate, certDER), encodePEM(pemBlockECPrivateKey, keyDER), nil
+}
+
+// sniCertificateTemplate sets the certificate fields for one SNI hostname.
+func sniCertificateTemplate(sni string, serial *big.Int, now time.Time) *x509.Certificate {
+	return &x509.Certificate{
+		SerialNumber:                serial,
+		Subject:                     sniCertificateName(sni),
+		NotBefore:                   now,
+		NotAfter:                    now.AddDate(domainCertValidYears, 0, 0),
+		KeyUsage:                    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:                 []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:                    []string{sni},
+		Raw:                         nil,
+		RawTBSCertificate:           nil,
+		RawSubjectPublicKeyInfo:     nil,
+		RawSubject:                  nil,
+		RawIssuer:                   nil,
+		RawSignatureAlgorithm:       nil,
+		Signature:                   nil,
+		SignatureAlgorithm:          x509.UnknownSignatureAlgorithm,
+		PublicKeyAlgorithm:          x509.UnknownPublicKeyAlgorithm,
+		PublicKey:                   nil,
+		Version:                     0,
+		Issuer:                      sniCertificateName(""),
+		Extensions:                  nil,
+		ExtraExtensions:             nil,
+		UnhandledCriticalExtensions: nil,
+		UnknownExtKeyUsage:          nil,
+		BasicConstraintsValid:       false,
+		IsCA:                        false,
+		MaxPathLen:                  0,
+		MaxPathLenZero:              false,
+		SubjectKeyId:                nil,
+		AuthorityKeyId:              nil,
+		OCSPServer:                  nil,
+		IssuingCertificateURL:       nil,
+		EmailAddresses:              nil,
+		IPAddresses:                 nil,
+		URIs:                        nil,
+		PermittedDNSDomainsCritical: false,
+		PermittedDNSDomains:         nil,
+		ExcludedDNSDomains:          nil,
+		PermittedIPRanges:           nil,
+		ExcludedIPRanges:            nil,
+		PermittedEmailAddresses:     nil,
+		ExcludedEmailAddresses:      nil,
+		PermittedURIDomains:         nil,
+		ExcludedURIDomains:          nil,
+		CRLDistributionPoints:       nil,
+		PolicyIdentifiers:           nil,
+		Policies:                    nil,
+		InhibitAnyPolicy:            0,
+		InhibitAnyPolicyZero:        false,
+		InhibitPolicyMapping:        0,
+		InhibitPolicyMappingZero:    false,
+		RequireExplicitPolicy:       0,
+		RequireExplicitPolicyZero:   false,
+		PolicyMappings:              nil,
+	}
+}
+
+func sniCertificateName(commonName string) pkix.Name {
+	return pkix.Name{
+		Country:            nil,
+		Organization:       nil,
+		OrganizationalUnit: nil,
+		Locality:           nil,
+		Province:           nil,
+		StreetAddress:      nil,
+		PostalCode:         nil,
+		SerialNumber:       "",
+		CommonName:         commonName,
+		Names:              nil,
+		ExtraNames:         nil,
+	}
 }
 
 // validateSNIHostname accepts only an exact lowercase-normalizable FQDN: LDH

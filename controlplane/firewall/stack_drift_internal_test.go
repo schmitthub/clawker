@@ -89,6 +89,7 @@ func TestStack_ensureContainer_RecreatesOnDrift(t *testing.T) {
 
 			spec := containerSpec{
 				image:        "img:test",
+				user:         "",
 				cmd:          nil,
 				env:          nil,
 				mounts:       nil,
@@ -117,6 +118,7 @@ func TestStack_ensureContainer_AdoptsOnMatchingStackBuildSHA(t *testing.T) {
 
 	spec := containerSpec{
 		image:     "img:test",
+		user:      "",
 		staticIP:  "172.20.0.2",
 		networkID: "net-test",
 		labels:    s.driftLabels(),
@@ -143,6 +145,7 @@ func TestStack_ensureContainer_RecreatesOnMissingStackBuildSHALabel(t *testing.T
 
 	spec := containerSpec{
 		image:     "img:test",
+		user:      "",
 		staticIP:  "172.20.0.2",
 		networkID: "net-test",
 		labels:    s.driftLabels(),

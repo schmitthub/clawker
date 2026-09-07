@@ -468,6 +468,7 @@ The firewall uses a self-signed certificate authority for TLS inspection. All HT
 - An **ECDSA P256 CA** is auto-generated during `clawker build` and baked into agent container images via `update-ca-certificates`
 - Per-domain certificates are generated for **every** `https`/`wss` rule --- Envoy terminates TLS for all allowed TLS domains
 - Wildcard HTTPS/WSS rules obtain a certificate for the exact requested hostname from the control plane over mTLS. Names with multiple subdomain labels pass hostname verification with the installed firewall CA.
+- Envoy's SDS client key has owner-only file permissions and is mounted read-only. CP sets the file owner and permissions before each atomic replacement.
 - HTTP/3 uses static wildcard certificates. Clients need TCP fallback for names with more than one label below the wildcard zone. Exact-domain, IP, and CIDR rules retain static certificates.
 - Domains with `path_rules` get per-path routing; domains without get allow-all routing --- both go through TLS inspection
 - The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager

@@ -473,6 +473,10 @@ See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and PR process.
 
+Keep CP entrypoint helper tests in `internal/controlplane/cmd_helpers_test.go`. Keep SDS service tests with the code in `controlplane/firewall/`.
+
+Lint suppression directives require explicit approval from the project owner.
+
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 ## License

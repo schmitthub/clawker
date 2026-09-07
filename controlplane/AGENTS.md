@@ -232,6 +232,8 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Test coverage
 
+Tests for CP entrypoint helpers belong in `internal/controlplane/cmd_helpers_test.go`, including SDS listener shutdown and client SAN checks. Tests for the SDS service belong in `controlplane/firewall/`.
+
 | File | Invariants | What |
 |------|------------|------|
 | `controlplane/auth/authz_test.go` | INV-B1-011 | Token validation, scope enforcement, unmapped method denial, Hydra introspection mock |

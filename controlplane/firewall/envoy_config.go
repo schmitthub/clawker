@@ -105,8 +105,27 @@ func applyPermutations(cfg *EnvoyConfig, perms []permutation, ports EnvoyPorts, 
 		if !cfg.ClaimPermutation(p.key) {
 			continue
 		}
-		//nolint:exhaustruct,exhaustruct_v5 // Each layer fills its output fields during generation.
-		ctx := &genCtx{rule: p.rule, ports: ports, als: als, sds: sds, cfg: cfg}
+		ctx := &genCtx{
+			rule:                p.rule,
+			ports:               ports,
+			als:                 als,
+			sds:                 sds,
+			cfg:                 cfg,
+			listener:            "",
+			match:               nil,
+			socket:              nil,
+			filters:             nil,
+			clusters:            nil,
+			port:                0,
+			bareHostPort:        0,
+			hcmCodec:            "",
+			advertiseH3:         false,
+			tlsTerminated:       false,
+			upstreamCluster:     "",
+			upstreamFollowsHost: false,
+			httpFilters:         nil,
+			websocket:           false,
+		}
 		for _, fn := range p.layers { // chain the cherry-picked methods, threading ctx
 			if err := fn(ctx); err != nil {
 				return err

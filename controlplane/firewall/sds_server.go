@@ -158,8 +158,16 @@ func (s *SDSServer) DeltaSecrets(stream secretservice.SecretDiscoveryService_Del
 // (cached or freshly minted) secret; every other name is reported removed so
 // Envoy fails the paused handshake closed.
 func (s *SDSServer) deltaResponse(names []string) *discoveryv3.DeltaDiscoveryResponse {
-	//nolint:exhaustruct,exhaustruct_v5 // The loop fills the response resources.
-	resp := &discoveryv3.DeltaDiscoveryResponse{TypeUrl: SDSSecretTypeURL}
+	resp := &discoveryv3.DeltaDiscoveryResponse{
+		TypeUrl:              SDSSecretTypeURL,
+		SystemVersionInfo:    "",
+		Resources:            nil,
+		RemovedResources:     nil,
+		RemovedResourceNames: nil,
+		Nonce:                "",
+		ControlPlane:         nil,
+		ResourceErrors:       nil,
+	}
 	for _, name := range names {
 		entry, mintErr := s.secretFor(name)
 		if mintErr != nil {
@@ -171,11 +179,16 @@ func (s *SDSServer) deltaResponse(names []string) *discoveryv3.DeltaDiscoveryRes
 			resp.RemovedResources = append(resp.RemovedResources, name)
 			continue
 		}
-		//nolint:exhaustruct,exhaustruct_v5 // sparse wire message — name/version/resource is the whole delta payload
 		resp.Resources = append(resp.Resources, &discoveryv3.Resource{
 			Name:     name,
 			Version:  entry.version,
 			Resource: entry.resource,
+
+			ResourceName: nil,
+			Aliases:      nil,
+			Ttl:          nil,
+			CacheControl: nil,
+			Metadata:     nil,
 		})
 	}
 	return resp

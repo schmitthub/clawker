@@ -766,6 +766,7 @@ func (s *Stack) envoyPorts() EnvoyPorts {
 // ensureContainer. Kept internal to Stack.
 type containerSpec struct {
 	image        string
+	user         string
 	staticIP     string
 	networkID    string
 	cmd          []string
@@ -835,16 +836,23 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// own readiness flag; same drift-on-Reload mechanics via
 	// labelSDSCertsReady.
 	if s.sdsCertsReady {
-		//nolint:exhaustruct,exhaustruct_v5 // bind mount — only type/source/target/ro apply
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
-			Source:   filepath.Join(consts.HostFirewallSDSCertsDir, "envoy"),
+			Source:   filepath.Join(consts.HostFirewallSDSCertsDir(), "envoy"),
 			Target:   "/etc/envoy/sds-tls",
 			ReadOnly: true,
+
+			Consistency:    "",
+			BindOptions:    nil,
+			VolumeOptions:  nil,
+			ImageOptions:   nil,
+			TmpfsOptions:   nil,
+			ClusterOptions: nil,
 		})
 	}
 	return containerSpec{
 		image:     envoyImage,
+		user:      strconv.Itoa(consts.EnvoyUID) + ":" + strconv.Itoa(consts.EnvoyGID),
 		staticIP:  netInfo.EnvoyIP,
 		networkID: netInfo.NetworkID,
 		mounts:    mounts,
@@ -918,6 +926,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	}
 	return containerSpec{
 		image:     corednsImageTag,
+		user:      "",
 		staticIP:  netInfo.CoreDNSIP,
 		networkID: netInfo.NetworkID,
 		cmd:       []string{"-conf", "/etc/coredns/Corefile"},
@@ -1036,6 +1045,7 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		},
 	}
 	containerCfg := &container.Config{Image: spec.image, Cmd: spec.cmd, Env: spec.env}
+	containerCfg.User = spec.user
 	hostCfg := &container.HostConfig{
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		Mounts:        spec.mounts,

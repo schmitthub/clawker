@@ -35,17 +35,29 @@ const leafTTL = 365 * 24 * time.Hour
 // consts.HostFirewallSDSCertsDir + this same segment.
 const envoySubdir = "envoy"
 
+const (
+	clientDirectoryMode os.FileMode = 0o750
+	clientFileMode      os.FileMode = 0o600
+)
+
+// FileOwner identifies the process that reads the client certificate files.
+type FileOwner struct {
+	UID int
+	GID int
+}
+
 // Service mints and persists the Envoy→CP SDS client material.
 type Service struct {
 	issuer  *infracerts.Issuer
 	destDir string
 	rootCA  []byte
+	owner   FileOwner
 }
 
 // New returns a Service writing under destDir. rootCABytes is the CLI
 // root CA PEM Envoy uses to verify the CP's SDS server certificate; it
 // is copied verbatim as ca.pem next to the client pair.
-func New(issuer *infracerts.Issuer, destDir string, rootCABytes []byte) (*Service, error) {
+func New(issuer *infracerts.Issuer, destDir string, rootCABytes []byte, owner FileOwner) (*Service, error) {
 	if issuer == nil {
 		return nil, errors.New("sdscerts: issuer must not be nil")
 	}
@@ -55,7 +67,10 @@ func New(issuer *infracerts.Issuer, destDir string, rootCABytes []byte) (*Servic
 	if len(rootCABytes) == 0 {
 		return nil, errors.New("sdscerts: root CA bytes must not be empty")
 	}
-	return &Service{issuer: issuer, destDir: destDir, rootCA: rootCABytes}, nil
+	if owner.UID < 0 || owner.GID < 0 {
+		return nil, errors.New("sdscerts: file owner IDs must not be negative")
+	}
+	return &Service{issuer: issuer, destDir: destDir, rootCA: rootCABytes, owner: owner}, nil
 }
 
 // EnsureEnvoyClient mints a fresh consts.EnvoySDSClientName leaf and
@@ -69,19 +84,17 @@ func New(issuer *infracerts.Issuer, destDir string, rootCABytes []byte) (*Servic
 // parse-checked before any write commits so a mint failure leaves the
 // caller's ready-flag false instead of half-writing broken material.
 //
-// Permission shape matches the telemetry lane's for the same reason:
-// 0o755 on the dir and 0o644 on the files, because the Envoy distroless
-// image runs UID 101 and bind-mounts preserve host inode perms.
+// CP keeps ownership of the directory. The reader group can list and
+// traverse it. Each file belongs to the reader and permits owner access
+// only. Envoy mounts this directory read-only.
 //
 // Returned paths are CP-container-FS absolute paths — the firewall
 // stack discards them and derives the sibling Mount.Source from
 // consts.HostFirewallSDSCertsDir; they exist for tests.
 func (s *Service) EnsureEnvoyClient() (string, string, string, error) {
 	svcDir := filepath.Join(s.destDir, envoySubdir)
-	// 0o755: Envoy distroless runs UID 101 and bind-mounts preserve host
-	// inode perms — a tighter dir mode blocks traversal for the reader.
-	if err := os.MkdirAll(svcDir, 0o755); err != nil { //nolint:gosec // G301: non-root Envoy must traverse
-		return "", "", "", fmt.Errorf("sdscerts: create envoy dir: %w", err)
+	if err := prepareClientDirectory(svcDir, s.owner.GID); err != nil {
+		return "", "", "", fmt.Errorf("sdscerts: prepare envoy directory: %w", err)
 	}
 
 	chainPEM, keyPEM, err := s.issuer.MintClient(consts.EnvoySDSClientName, leafTTL)
@@ -103,11 +116,33 @@ func (s *Service) EnsureEnvoyClient() (string, string, string, error) {
 		{certPath, chainPEM},
 		{keyPath, keyPEM},
 	} {
-		if writeErr := writeAtomic(f.path, f.data); writeErr != nil {
+		if writeErr := writeAtomic(f.path, f.data, s.owner); writeErr != nil {
 			return "", "", "", fmt.Errorf("sdscerts: write %s: %w", filepath.Base(f.path), writeErr)
 		}
 	}
 	return certPath, keyPath, caPath, nil
+}
+
+func prepareClientDirectory(path string, readerGID int) error {
+	if err := os.MkdirAll(path, clientDirectoryMode); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	// Keep both updates on the same directory if its path changes.
+	dir, err := os.OpenRoot(path)
+	if err != nil {
+		return fmt.Errorf("open directory: %w", err)
+	}
+	defer func() {
+		_ = dir.Close() // This releases the handle; there are no buffered writes to flush.
+	}()
+	if groupErr := dir.Chown(".", -1, readerGID); groupErr != nil {
+		return fmt.Errorf("set directory group: %w", groupErr)
+	}
+	// MkdirAll leaves existing permissions unchanged. Restrict older directories too.
+	if modeErr := dir.Chmod(".", clientDirectoryMode); modeErr != nil {
+		return fmt.Errorf("set directory permissions: %w", modeErr)
+	}
+	return nil
 }
 
 // NewCPProvisioner builds the SDS client-cert provisioner from the CP's
@@ -135,12 +170,12 @@ func NewCPProvisioner() (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading CLI root CA at %s: %w", consts.CPCACertPath, err)
 	}
-	return New(issuer, destDir, rootCABytes)
+	return New(issuer, destDir, rootCABytes, FileOwner{UID: consts.EnvoyUID, GID: consts.EnvoyGID})
 }
 
 // writeAtomic writes data via a same-dir temp file + rename so readers
 // (the bind-mounted Envoy sibling) never observe a partial file.
-func writeAtomic(path string, data []byte) error {
+func writeAtomic(path string, data []byte, owner FileOwner) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
@@ -149,21 +184,23 @@ func writeAtomic(path string, data []byte) error {
 	committed := false
 	defer func() {
 		if !committed {
+			_ = tmp.Close() // Cleanup cannot replace the original error; the normal path checks Close below.
 			// Remove temporary key material after any failure, including rename.
 			_ = os.Remove(tmpName) // Cleanup cannot replace the original file error.
 		}
 	}()
 	if _, writeErr := tmp.Write(data); writeErr != nil {
-		_ = tmp.Close() // Cleanup cannot replace the write error.
 		return fmt.Errorf("write temp file: %w", writeErr)
+	}
+	if chmodErr := tmp.Chmod(clientFileMode); chmodErr != nil {
+		return fmt.Errorf("chmod temp file: %w", chmodErr)
+	}
+	// Set the reader identity before rename publishes the new file.
+	if chownErr := tmp.Chown(owner.UID, owner.GID); chownErr != nil {
+		return fmt.Errorf("chown temp file: %w", chownErr)
 	}
 	if closeErr := tmp.Close(); closeErr != nil {
 		return fmt.Errorf("close temp file: %w", closeErr)
-	}
-	// 0o644: the non-root bind-mounted Envoy reader (UID 101) must read
-	// these; the 0o755 dir + file world-read pair is the lane's contract.
-	if chmodErr := os.Chmod(tmpName, 0o644); chmodErr != nil { //nolint:gosec // G302: non-root Envoy reads
-		return fmt.Errorf("chmod temp file: %w", chmodErr)
 	}
 	if renameErr := os.Rename(tmpName, path); renameErr != nil {
 		return fmt.Errorf("rename temp file: %w", renameErr)
