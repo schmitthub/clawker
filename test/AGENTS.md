@@ -8,7 +8,6 @@ Test infrastructure for all non-unit tests. Uses directory separation instead of
 test/
 ├── e2e/            # End-to-end integration tests (Docker + real infra)
 │   └── harness/    # CLI test harness (harness.go, factory.go)
-├── git/            # Git behavior with the container environment (no Docker)
 └── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
 ```
 
