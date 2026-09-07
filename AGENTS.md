@@ -223,6 +223,9 @@ Every `CLAUDE.md` must be a relative symbolic link to the sibling `AGENTS.md`: `
 * `.claude/rules/` — Auto-loaded guidelines (code style, testing, package rules)
 * `.claude/docs/` — On-demand reference (architecture, design, key concepts)
 * `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
+* `.github/copilot-instructions.md` — Copilot code review priorities and comment style
+* `.github/instructions/` — Path-scoped Copilot instructions; each file mirrors the `paths:` front matter of a `.claude/rules/` file (empty for now)
+* `.github/skills/` — Copilot skills; `code-review/SKILL.md` is the review procedure
 
 ### Completion Gate
 
