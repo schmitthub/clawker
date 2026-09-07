@@ -17,7 +17,7 @@ Report each hit as its own comment (priority 1).
 
 Search the diff under `controlplane/`, `internal/controlplane/`,
 `cmd/clawkercp/`, and `clawkerd/` for `grpc.NewServer`, `net.Listen`,
-`ListenConfig.Listen`, `http.Server`, and `ListenAndServe`. For each hit:
+`net.ListenConfig`, `http.Server`, and `ListenAndServe`. For each hit:
 
 1. Confirm the gRPC server attaches the `controlplane/auth` interceptor in
    the chain order used by `controlplane/server/grpc_stack.go`.

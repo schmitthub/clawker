@@ -14,8 +14,11 @@ not copy the rule text.
 - `applyTo`: copy the globs from the `paths:` front matter of the rule file.
   Join several globs with a comma.
 - Body: one line that names the rule file to apply.
-- Add `excludeAgent: code-review` when the file is for the Copilot coding
-  agent only, or `excludeAgent: cloud-agent` when it is for code review only.
+- `excludeAgent`: optional. GitHub accepts `"code-review"` or
+  `"cloud-agent"`. With `excludeAgent: "code-review"`, only Copilot cloud
+  agent reads the file. With `excludeAgent: "cloud-agent"`, only Copilot code
+  review reads the file. Without the key, both read it. Source:
+  [Adding repository custom instructions for GitHub Copilot](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions).
 
 ## Template
 

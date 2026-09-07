@@ -30,7 +30,7 @@ own. In each comment:
 ## Priority 2: control plane servers and listeners
 
 Applies to new or changed calls to `grpc.NewServer`, `net.Listen`,
-`net.ListenConfig.Listen`, `http.Server`, and `ListenAndServe` in these paths:
+`net.ListenConfig`, `http.Server`, and `ListenAndServe` in these paths:
 
 - `controlplane/**`
 - `internal/controlplane/**`
@@ -133,8 +133,8 @@ table mirrors the `paths:` front matter in each rule file.
 | `docs/**` | `.claude/rules/mintlify-docs.md` |
 | `internal/monitor/**`, `cmd/coredns-clawker/plugins/otel/**`, `controlplane/firewall/ebpf/netlogger/**`, `internal/consts/monitoring.go` | `.claude/rules/monitoring.md` |
 | `internal/storage/**`, `internal/config/schema*`, `internal/config/defaults*` | `.claude/rules/storage-schema.md` |
-| `internal/state/**`, `internal/config/**`, `internal/project/**`, `internal/storage/**` | `.claude/rules/store-backed-package.md` |
-| `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*` | `.claude/rules/storeui.md` |
+| `internal/state/**`, `internal/config/**`, `internal/project/**`, `internal/storage/**`, `internal/storeui/**`, `controlplane/firewall/**` | `.claude/rules/store-backed-package.md` |
+| `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*`, `internal/tui/textareaeditor*` | `.claude/rules/storeui.md` |
 | `internal/tui/**` | `.claude/rules/tui.md` |
 
 `.claude/rules/code-style.md` and `.claude/rules/firewall-uat.md` apply to
