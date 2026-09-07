@@ -163,8 +163,8 @@ func quicDownstreamSocket(domain string) map[string]any {
 				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
-							"certificate_chain": map[string]any{"filename": fmt.Sprintf(envoyCertFileFmt, domain)},
-							"private_key":       map[string]any{"filename": fmt.Sprintf(envoyKeyFileFmt, domain)},
+							keyCertificateChain: map[string]any{keyFilename: fmt.Sprintf(envoyCertFileFmt, domain)},
+							keyPrivateKey:       map[string]any{keyFilename: fmt.Sprintf(envoyKeyFileFmt, domain)},
 						},
 					},
 				},

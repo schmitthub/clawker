@@ -40,6 +40,18 @@ type ALSConfig struct {
 	MTLS bool
 }
 
+// SDSConfig configures the on-demand certificate SDS lane for wildcard MITM
+// chains. Enabled=true points the wildcard chains' downstream certificate
+// selector at the CP SDS server (per-SNI minted leaves, every label depth);
+// Enabled=false keeps the static [apex, *.apex] file cert — the degraded mode
+// when the infra mTLS material is unavailable (the SDS dial reuses the same
+// /etc/envoy/otel-tls client material as the ALS lane).
+type SDSConfig struct {
+	Enabled bool
+	Address string // CP host Envoy dials (container DNS name)
+	Port    int
+}
+
 // EnvoyPorts holds the port layout for the Envoy proxy.
 type EnvoyPorts struct {
 	EgressPort  int // Main shared egress listener port.
@@ -216,6 +228,7 @@ type genCtx struct {
 	rule  config.EgressRule
 	ports EnvoyPorts
 	als   ALSConfig
+	sds   SDSConfig
 
 	// shared output (the EnvoyConfig the context "contains")
 	cfg *EnvoyConfig
@@ -347,7 +360,7 @@ func (c *EnvoyConfig) EnsureListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"address": address, "port_value": port},
+				keySocketAddress: map[string]any{"address": address, keyPortValue: port},
 			},
 		},
 		chainBySig: map[string]int{},
@@ -366,7 +379,7 @@ func (c *EnvoyConfig) EnsureQUICListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
+				keySocketAddress: map[string]any{"protocol": "UDP", "address": address, keyPortValue: port},
 			},
 			"udp_listener_config": map[string]any{
 				"quic_options":             map[string]any{},
@@ -390,7 +403,7 @@ func (c *EnvoyConfig) EnsureRawUDPListener(name, address string, port int) {
 		base: map[string]any{
 			"name": name,
 			"address": map[string]any{
-				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
+				keySocketAddress: map[string]any{"protocol": "UDP", "address": address, keyPortValue: port},
 			},
 		},
 		chainBySig: map[string]int{},

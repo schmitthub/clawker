@@ -52,7 +52,7 @@ func tlsSNIChainLayer(exactDomains map[string]bool) layer {
 		}
 		ctx.listener = egressListenerName
 		ctx.match = match
-		ctx.socket = downstreamMITMSocket(certBasename(ctx.rule.Dst))
+		ctx.socket = downstreamMITMSocket(ctx.rule, ctx.sds)
 		ctx.tlsTerminated = true
 		ctx.port = httpsPort(ctx.rule)
 		ctx.bareHostPort = defaultDestPort
@@ -84,17 +84,75 @@ func tlsInspectorListenerFilters() []any {
 
 // downstreamMITMSocket is the DownstreamTlsContext that terminates the agent's
 // TLS with the per-domain MITM cert. ALPN advertises h2 + http/1.1 downstream.
-func downstreamMITMSocket(domain string) map[string]any {
+func downstreamMITMSocket(rule config.EgressRule, sds SDSConfig) map[string]any {
+	if sds.Enabled && isWildcardDomain(rule.Dst) {
+		return downstreamOnDemandMITMSocket(normalizeDomain(rule.Dst))
+	}
+	domain := certBasename(rule.Dst)
 	return map[string]any{
 		"name": tlsTransportSocketName,
 		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
 			keyCommonTLSContext: map[string]any{
-				"alpn_protocols": []string{"h2", "http/1.1"},
+				keyALPNProtocols: []string{"h2", alpnHTTP11},
 				"tls_certificates": []any{
 					map[string]any{
-						"certificate_chain": map[string]any{"filename": fmt.Sprintf(envoyCertFileFmt, domain)},
-						"private_key":       map[string]any{"filename": fmt.Sprintf(envoyKeyFileFmt, domain)},
+						keyCertificateChain: map[string]any{keyFilename: fmt.Sprintf(envoyCertFileFmt, domain)},
+						keyPrivateKey:       map[string]any{keyFilename: fmt.Sprintf(envoyKeyFileFmt, domain)},
+					},
+				},
+			},
+		},
+	}
+}
+
+// downstreamOnDemandMITMSocket is the wildcard-chain variant: instead of the
+// static [apex, *.apex] file cert — which cannot cover a multi-label
+// subdomain, since an RFC 6125 wildcard matches exactly one label (issue
+// #500) — the chain carries the on-demand certificate selector. Envoy pauses
+// the handshake at the ClientHello, asks the CP SDS server for a secret named
+// by the SNI (the sni certificate mapper), and resumes with the per-SNI
+// minted leaf. The apex is the mapper default (SNI-less handshakes) and is
+// prefetched so the chain warms without a first-handshake stall.
+//
+// Session resumption is disabled on both paths: a resumed session skips
+// certificate selection, and the selector's whole point is per-handshake
+// selection. QUIC does NOT support the selector (Envoy rejects it for QUIC
+// listeners), so quicDownstreamSocket keeps the static file cert.
+func downstreamOnDemandMITMSocket(apex string) map[string]any {
+	return map[string]any{
+		"name": tlsTransportSocketName,
+		keyTypedConfig: map[string]any{
+			"@type":                                "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
+			"disable_stateless_session_resumption": true,
+			"disable_stateful_session_resumption":  true,
+			keyCommonTLSContext: map[string]any{
+				keyALPNProtocols: []string{"h2", alpnHTTP11},
+				"custom_tls_certificate_selector": map[string]any{
+					"name": sdsSelectorExtensionName,
+					keyTypedConfig: map[string]any{
+						"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_selectors.on_demand_secret.v3.Config",
+						"config_source": map[string]any{
+							"resource_api_version": "V3",
+							"api_config_source": map[string]any{
+								"api_type":              "DELTA_GRPC",
+								"transport_api_version": "V3",
+								"grpc_services": []any{
+									map[string]any{
+										"envoy_grpc": map[string]any{keyClusterName: sdsClusterName},
+										"timeout":    "5s",
+									},
+								},
+							},
+						},
+						"certificate_mapper": map[string]any{
+							"name": sdsSNIMapperExtensionName,
+							keyTypedConfig: map[string]any{
+								"@type":         "type.googleapis.com/envoy.extensions.transport_sockets.tls.cert_mappers.sni.v3.SNI",
+								"default_value": apex,
+							},
+						},
+						"prefetch_secret_names": []any{apex},
 					},
 				},
 			},

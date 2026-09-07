@@ -32,16 +32,16 @@ func pinnedCluster(name, host string, port int) map[string]any {
 		"name":            name,
 		"connect_timeout": "10s",
 		"load_assignment": map[string]any{
-			"cluster_name": name,
+			keyClusterName: name,
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{
 						map[string]any{
 							"endpoint": map[string]any{
 								"address": map[string]any{
-									"socket_address": map[string]any{
+									keySocketAddress: map[string]any{
 										"address":    host,
-										"port_value": port,
+										keyPortValue: port,
 									},
 								},
 							},
@@ -345,7 +345,7 @@ func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) m
 				"dns_cache_config": dfpDNSCacheConfig(httpsDFPCacheName),
 			},
 		},
-		"transport_socket":                 upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, true),
+		keyTransportSocket:                 upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, true),
 		"typed_extension_protocol_options": upstreamHTTPProtocolOptions(http11Only),
 	}
 }
@@ -358,7 +358,7 @@ func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) m
 // are driven by upstreamHTTPProtocolOptions, so no static sni here.
 func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, multiHost bool) map[string]any {
 	validationContext := map[string]any{
-		"trusted_ca": map[string]any{"filename": upstreamTrustedCAFile},
+		keyTrustedCA: map[string]any{keyFilename: upstreamTrustedCAFile},
 	}
 	// Axis 4 (orthogonal to dst type): per-rule opt-in to accept an untrusted /
 	// self-signed upstream cert. ACCEPT_UNTRUSTED (enum 1) skips chain-of-trust
@@ -372,18 +372,18 @@ func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only, multiHost bool) 
 	// (explicit_http_config), so it advertises only http/1.1 — offering h2 here
 	// would let the upstream negotiate a codec Envoy won't use. Non-ws reencrypt
 	// offers both (auto_config picks per ALPN).
-	alpn := []string{"h2", "http/1.1"}
+	alpn := []string{"h2", alpnHTTP11}
 	if http11Only {
-		alpn = []string{"http/1.1"}
+		alpn = []string{alpnHTTP11}
 	}
 	tlsContext := map[string]any{
-		"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+		"@type": upstreamTLSContextType,
 		keyCommonTLSContext: map[string]any{
-			"alpn_protocols": alpn,
+			keyALPNProtocols: alpn,
 			"tls_params": map[string]any{
 				"ecdh_curves": []string{"X25519", "P-256", "P-384"},
 			},
-			"validation_context": validationContext,
+			keyValidationContext: validationContext,
 		},
 	}
 	// A TLS context shared by more than one upstream host must not resume

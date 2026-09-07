@@ -617,6 +617,12 @@ const (
 	// listener (mTLS, clawker network only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
+
+	// DefaultCPSDSPort is the in-container gRPC port for the SDS server
+	// Envoy fetches on-demand MITM certificates from (mTLS, clawker
+	// network only, never host-published). Matches the
+	// ControlPlaneSettings.SDSPort struct-tag default.
+	DefaultCPSDSPort = 7445
 	// DefaultClawkerdPort is the in-container gRPC port for the
 	// clawkerd listener (mTLS, clawker network only). CP dials this
 	// port to dispatch commands; the listener pins peer CN to

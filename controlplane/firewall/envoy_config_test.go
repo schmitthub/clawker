@@ -278,6 +278,7 @@ func TestGenerateEnvoyConfig(t *testing.T) {
 		name  string    // golden: testdata/envoy/<name>.envoy.golden
 		rules string    // real egress-rules YAML, loaded via NewRulesStoreFromString
 		als   ALSConfig // generation-side access-log config (not part of the rules sample)
+		sds   SDSConfig // generation-side on-demand certificate lane (rides the same infra mTLS gate as als)
 		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
 		// containing this substring (the "control" for a fail-closed case) and skips
 		// the golden compare — no config is produced.
@@ -298,6 +299,13 @@ func TestGenerateEnvoyConfig(t *testing.T) {
 			name:  "comprehensive_mtls",
 			rules: comprehensiveRules,
 			als:   ALSConfig{Port: 4319, MTLS: true},
+			// sds rides the same infraCertsReady gate as als.MTLS in production
+			// (Stack.alsConfig / Stack.sdsConfig), so the mtls row is where the
+			// wildcard chains switch to the on-demand certificate selector and
+			// the sds_cluster appears. The diff vs `comprehensive` stays purely
+			// additive except the wildcard chains' transport sockets, which swap
+			// static file certs for the selector.
+			sds: SDSConfig{Enabled: true, Address: "clawker-controlplane", Port: 7445},
 		},
 		{
 			name: "http_exact_only", // exact-only → no DFP filter/cluster (the httpDFPActive=false shape)
@@ -438,7 +446,7 @@ rules:
 			rules, _, err := store.Rules()
 			require.NoError(t, err, "read rules from the seeded store")
 
-			out, _, err := GenerateEnvoyConfig(rules, testPorts(), tc.als)
+			out, _, err := GenerateEnvoyConfig(rules, testPorts(), tc.als, tc.sds)
 			if tc.wantErrContains != "" {
 				require.Error(t, err, "expected generation to fail closed")
 				assert.Contains(t, err.Error(), tc.wantErrContains)

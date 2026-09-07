@@ -20,7 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	secretservice "github.com/envoyproxy/go-control-plane/envoy/service/secret/v3"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
@@ -619,6 +622,105 @@ func startHealthz(
 		}
 	}()
 	return healthServer
+}
+
+// sdsTLSConfig requires client certificates signed by the infrastructure CA.
+func sdsTLSConfig(serverCertPath, serverKeyPath string) (*tls.Config, error) {
+	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load SDS server certificate: %w", err)
+	}
+	intermediatePEM, err := os.ReadFile(consts.CPInfraCACertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read SDS client CA: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(intermediatePEM) {
+		return nil, fmt.Errorf("no certificate parsed from %s", consts.CPInfraCACertPath)
+	}
+
+	//nolint:exhaustruct,exhaustruct_v5 // Other TLS options use secure library defaults.
+	return &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		MinVersion:   tls.VersionTLS12,
+	}, nil
+}
+
+// startSDSServer brings up the firewall on-demand certificate SDS listener
+// (Envoy ↔ CP, clawker network only, never host-published). Envoy's wildcard
+// MITM chains fetch per-SNI minted leaves from it during the TLS handshake.
+// mTLS: the CP presents its CLI-root-signed server leaf (Envoy validates it
+// against the mounted root CA with an exact-SAN match on the CP container
+// name), and the client anchor is the infra intermediate CA — the same
+// agent-spoofing boundary the trusted OTLP lane uses, so only leaves minted
+// by the CP-side infracerts issuer (envoy, coredns) can connect.
+//
+// Degrades, never gates startup: on any failure the CP stays up with
+// event=sds_unavailable and a nil stop func — wildcard multi-label handshakes
+// then fail closed (Envoy gets no secret) while every other surface keeps
+// working.
+func startSDSServer(
+	ctx context.Context,
+	cfg config.Config,
+	log *logger.Logger,
+	rulesStore fwhandler.EgressRulesStore,
+	serverCertPath, serverKeyPath string,
+) func() {
+	degrade := func(err error, step string) {
+		log.Error().Err(err).
+			Str("event", "sds_unavailable").
+			Str("component", "firewall.sds").
+			Str("step", step).
+			Msg("SDS server unavailable — wildcard MITM chains cannot mint per-SNI leaves; their handshakes fail closed, everything else stays up")
+	}
+
+	sdsSrv, err := fwhandler.NewSDSServer(fwhandler.SDSServerDeps{
+		Store:     rulesStore,
+		CertDirFn: consts.FirewallCertSubdir,
+		Log:       log,
+	})
+	if err != nil {
+		degrade(err, "construct")
+		return nil
+	}
+
+	tlsCfg, err := sdsTLSConfig(serverCertPath, serverKeyPath)
+	if err != nil {
+		degrade(err, "tls_config")
+		return nil
+	}
+
+	sdsPort := cfg.ControlPlaneSettings().SDSPort
+	var lc net.ListenConfig
+	lis, err := lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", sdsPort))
+	if err != nil {
+		degrade(err, "listen")
+		return nil
+	}
+
+	grpcSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
+	secretservice.RegisterSecretDiscoveryServiceServer(grpcSrv, sdsSrv)
+	go func() {
+		// A serve-goroutine panic must not unwind PID 1 — contain and degrade.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "sds_serve_panic").
+					Str("component", "firewall.sds").
+					Msg("SDS serve goroutine panicked; SDS lane down, CP stays up")
+			}
+		}()
+		if serveErr := grpcSrv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+			degrade(serveErr, "serve")
+		}
+	}()
+	log.Info().Int("port", sdsPort).
+		Str("component", "firewall.sds").
+		Msg("SDS server serving on-demand MITM certificates")
+	return grpcSrv.GracefulStop
 }
 
 // firewallBringupGate is the settings-driven firewall bringup startup
@@ -1451,6 +1553,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// filesystem.
 	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
 		return err
+	}
+
+	// firewall on-demand certificate SDS listener — serves BEFORE the
+	// firewall bringup gate so Envoy can fetch per-SNI secrets from its
+	// first boot. Degrades (event=sds_unavailable), never gates startup;
+	// stopSDS is nil on a degraded start.
+	stopSDS := startSDSServer(signalCtx, cfg, log, rulesStore, serverCertPath, serverKeyPath)
+	if stopSDS != nil {
+		defer stopSDS()
 	}
 
 	// settings-driven firewall bringup — startup GATE, pre-SetReady

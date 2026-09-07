@@ -538,7 +538,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 		s.infraCertsReady = true
 	}
 
-	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig())
+	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig(), s.sdsConfig())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -637,6 +637,23 @@ func (s *Stack) alsConfig() ALSConfig {
 		return ALSConfig{}
 	}
 	return ALSConfig{Port: int(s.cfg.MonitoringConfig().OtelInfraPort), MTLS: true}
+}
+
+// sdsConfig returns the on-demand certificate SDS lane config. It is gated
+// on the same infra mTLS material as alsConfig: the Envoy-side SDS dial
+// authenticates with the /etc/envoy/otel-tls client leaf, which only exists
+// when ensureInfraClientCerts succeeded. Degraded mode (Enabled=false) keeps
+// the static [apex, *.apex] wildcard certs — multi-label subdomains then fail
+// client-side hostname verification exactly as before the SDS lane existed.
+func (s *Stack) sdsConfig() SDSConfig {
+	if !s.infraCertsReady {
+		return SDSConfig{Enabled: false, Address: "", Port: 0}
+	}
+	return SDSConfig{
+		Enabled: true,
+		Address: consts.ContainerCP,
+		Port:    s.cfg.ControlPlaneSettings().SDSPort,
+	}
 }
 
 func (s *Stack) envoyPorts() EnvoyPorts {

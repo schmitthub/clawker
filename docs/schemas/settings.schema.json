@@ -59,6 +59,12 @@
           "description": "Oathkeeper HTTP auth proxy for future webui (HTTPS)",
           "title": "Oathkeeper Port",
           "type": "integer"
+        },
+        "sds_port": {
+          "default": 7445,
+          "description": "In-container gRPC port for Envoy on-demand certificate fetch (mTLS, clawker-net only)",
+          "title": "SDS Port",
+          "type": "integer"
         }
       },
       "type": "object"

@@ -566,6 +566,8 @@ control_plane:
   kratos_admin_port: <integer>  # default: 4434 | required: false
   # In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only)
   agent_port: <integer>  # default: 7444 | required: false
+  # In-container gRPC port for Envoy on-demand certificate fetch (mTLS, clawker-net only)
+  sds_port: <integer>  # default: 7445 | required: false
 docker:
   # Address of the Docker daemon, scheme included (e.g. unix:///run/user/1000/docker.sock or tcp://10.0.0.5:2376); the DOCKER_HOST env var takes precedence, and the active docker context is used when neither is set
   host: <string>  # default: n/a | required: false
@@ -666,6 +668,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `kratos_public_port` | integer | `4433` | Kratos identity public API (HTTPS, container-internal) |
 | `kratos_admin_port` | integer | `4434` | Kratos identity admin API (HTTPS, container-internal) |
 | `agent_port` | integer | `7444` | In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only) |
+| `sds_port` | integer | `7445` | In-container gRPC port for Envoy on-demand certificate fetch (mTLS, clawker-net only) |
 
 
 ### docker

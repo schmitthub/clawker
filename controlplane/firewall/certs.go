@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -169,6 +170,84 @@ func GenerateDomainCert(
 	keyPEM := encodePEM(pemBlockECPrivateKey, keyDER)
 
 	return certPEM, keyPEM, nil
+}
+
+// GenerateSNICert mints a P-256 leaf for one exact SNI hostname, signed by the
+// firewall CA. The SAN set is the single dNSName — this is the on-demand path
+// behind the Envoy SDS certificate selector, where the requested name can sit
+// at any label depth under a wildcard rule zone (RFC 6125 wildcards match one
+// label, so the static [apex, *.apex] pair cannot cover a.b.zone; the per-SNI
+// leaf can). Wildcards, IP literals, and empty names are rejected — the SNI
+// comes from the peer's ClientHello and must be an exact hostname.
+func GenerateSNICert(
+	caCert *x509.Certificate,
+	caKey *ecdsa.PrivateKey,
+	sni string,
+) ([]byte, []byte, error) {
+	if err := validateSNIHostname(sni); err != nil {
+		return nil, nil, err
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating sni key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating serial: %w", err)
+	}
+
+	now := time.Now()
+	//nolint:exhaustruct,exhaustruct_v5 // certificate template — every omitted x509 field deliberately stays zero (same shape as GenerateDomainCert)
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: sni,
+		}, //nolint:exhaustruct,exhaustruct_v5 // CN-only subject, matching the MITM domain leaves
+		NotBefore:   now,
+		NotAfter:    now.AddDate(domainCertValidYears, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{sni},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating sni certificate: %w", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshalling sni key: %w", err)
+	}
+
+	return encodePEM(pemBlockCertificate, certDER), encodePEM(pemBlockECPrivateKey, keyDER), nil
+}
+
+// validateSNIHostname accepts only an exact lowercase-normalizable FQDN: LDH
+// labels, at least two labels, no wildcard marker, no IP literal. Fail closed
+// on anything else — the value arrives from the peer's ClientHello.
+// sniHostnameRe matches an exact FQDN of at least two LDH labels; no label
+// starts or ends with a hyphen, no label exceeds 63 characters.
+var sniHostnameRe = regexp.MustCompile(
+	`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`,
+)
+
+// validateSNIHostname accepts only an exact FQDN: LDH labels (no leading or
+// trailing hyphen), at least two labels, no wildcard marker, no IP literal.
+// Fail closed on anything else — the value arrives from the peer's ClientHello.
+func validateSNIHostname(sni string) error {
+	if sni == "" || len(sni) > 253 {
+		return fmt.Errorf("invalid sni hostname %q", sni)
+	}
+	if net.ParseIP(sni) != nil {
+		return fmt.Errorf("invalid sni hostname %q: IP literal", sni)
+	}
+	if !sniHostnameRe.MatchString(sni) {
+		return fmt.Errorf("invalid sni hostname %q", sni)
+	}
+	return nil
 }
 
 // certBasename is the flat on-disk filename stem for a dst's MITM cert/key. It
