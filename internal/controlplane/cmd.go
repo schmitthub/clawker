@@ -408,6 +408,9 @@ func Main() StatusCode {
 
 const (
 	defaultShutdownWait = 5 * time.Second
+	// sdsStopTimeout bounds shutdown while Envoy holds delta SDS streams
+	// open, so a startup error can return and the CP can restart.
+	sdsStopTimeout = defaultShutdownWait
 	// cpDrainTimeout bounds the full teardown sequence (firewall stack
 	// stop + eBPF flush + queue drain). Must be below the Docker SIGTERM
 	// grace period (cpStopTimeout in manager/bootstrap.go = 30s) so we
@@ -750,7 +753,39 @@ func startSDSServer(
 	log.Info().Int("port", sdsPort).
 		Str("component", "firewall.sds").
 		Msg("SDS server serving on-demand MITM certificates")
-	return grpcSrv.GracefulStop
+	return func() { stopSDSServer(grpcSrv, log) }
+}
+
+func stopSDSServer(grpcSrv *grpc.Server, log *logger.Logger) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "sds_stop_panic").
+					Str("component", "firewall.sds").
+					Msg("SDS graceful stop failed; forcing SDS shutdown")
+				grpcSrv.Stop()
+			}
+		}()
+		grpcSrv.GracefulStop()
+	}()
+
+	timer := time.NewTimer(sdsStopTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		log.Warn().
+			Str("event", "sds_graceful_stop_timeout").
+			Str("component", "firewall.sds").
+			Dur("timeout", sdsStopTimeout).
+			Msg("SDS streams remain open; forcing SDS shutdown")
+		grpcSrv.Stop()
+		<-done
+	}
 }
 
 // firewallBringupGate is the settings-driven firewall bringup startup
