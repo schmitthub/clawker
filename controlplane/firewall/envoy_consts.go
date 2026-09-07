@@ -118,4 +118,12 @@ const (
 	// concrete typed message. It appears on every filter, listener filter,
 	// transport socket, and per-filter override the generator emits.
 	keyTypedConfig = "typed_config"
+
+	// keyCommonTLSContext is the shared TLS-context key inside every
+	// Downstream/UpstreamTlsContext the generator emits.
+	keyCommonTLSContext = "common_tls_context"
+
+	// tlsTransportSocketName is the Envoy TLS transport-socket extension name
+	// used by every TLS transport socket the generator emits.
+	tlsTransportSocketName = "envoy.transport_sockets.tls"
 )

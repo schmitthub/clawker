@@ -86,10 +86,10 @@ func tlsInspectorListenerFilters() []any {
 // TLS with the per-domain MITM cert. ALPN advertises h2 + http/1.1 downstream.
 func downstreamMITMSocket(domain string) map[string]any {
 	return map[string]any{
-		"name": "envoy.transport_sockets.tls",
+		"name": tlsTransportSocketName,
 		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
-			"common_tls_context": map[string]any{
+			keyCommonTLSContext: map[string]any{
 				"alpn_protocols": []string{"h2", "http/1.1"},
 				"tls_certificates": []any{
 					map[string]any{

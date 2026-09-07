@@ -160,7 +160,7 @@ func quicDownstreamSocket(domain string) map[string]any {
 		keyTypedConfig: map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport",
 			"downstream_tls_context": map[string]any{
-				"common_tls_context": map[string]any{
+				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
 							"certificate_chain": map[string]any{"filename": fmt.Sprintf(envoyCertFileFmt, domain)},

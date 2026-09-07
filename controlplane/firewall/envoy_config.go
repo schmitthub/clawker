@@ -559,11 +559,11 @@ func buildOtelALSCluster(als ALSConfig) map[string]any {
 			},
 		},
 		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
+			"name": tlsTransportSocketName,
 			keyTypedConfig: map[string]any{
 				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 				"sni":   consts.MonitoringServiceOtelCollector,
-				"common_tls_context": map[string]any{
+				keyCommonTLSContext: map[string]any{
 					"tls_certificates": []any{
 						map[string]any{
 							"certificate_chain": map[string]any{
