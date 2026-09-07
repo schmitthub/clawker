@@ -110,10 +110,10 @@ github.com/microcosm-cc/bluemonday                                             B
 github.com/miekg/dns                                                           BSD-3-Clause
 github.com/munnerz/goautoneg                                                   BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
-github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
 github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil   BSD-3-Clause
 github.com/remyoudompheng/bigfft                                               BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
+github.com/stretchr/testify/internal/difflib                                   BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   BSD-3-Clause
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp                  BSD-3-Clause
@@ -143,8 +143,8 @@ modernc.org/sqlite                                                             B
 ISC
 ================================================================================
 
-github.com/davecgh/go-spew/spew                                                ISC
 github.com/emirpasic/gods                                                      ISC
+github.com/stretchr/testify/internal/spew                                      ISC
 
 ================================================================================
 MIT
@@ -210,6 +210,7 @@ github.com/yuin/goldmark                                                       M
 github.com/yuin/goldmark-emoji                                                 MIT
 go.uber.org/automaxprocs                                                       MIT
 go.uber.org/multierr                                                           MIT
+go.yaml.in/yaml/v3                                                             MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 
