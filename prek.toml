@@ -10,10 +10,13 @@
 # licenses-check regenerates NOTICE in place on drift, so it gets its
 # own tier between the two: after tidy (it reads module state), before
 # the concurrent read-only scans (they must not race a NOTICE rewrite).
+# The unit-test hook builds embedded binaries, so it must also finish
+# before the read-only scans load those binaries.
 
 [priorities]
 fix = 0
 licenses = 5
+build = 7
 scan = 10
 
 # ── Security ──────────────────────────────────────────────────────────────
@@ -96,7 +99,7 @@ entry = "make test"
 language = "system"
 types = ["go"]
 pass_filenames = false
-priority = "scan"
+priority = "build"
 
 [[repos.hooks]]
 id = "docs-check"

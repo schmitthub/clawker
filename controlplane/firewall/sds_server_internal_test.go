@@ -23,10 +23,13 @@ func newSDSCacheTestServer(t *testing.T) *SDSServer {
 	store, err := NewRulesStoreFromString(sdsCacheTestRules)
 	require.NoError(t, err)
 	certDir := t.TempDir()
+	ca := newTestCAStore(t, func() (string, error) { return certDir, nil })
+	_, _, err = ca.Ensure()
+	require.NoError(t, err)
 	srv, err := NewSDSServer(SDSServerDeps{
-		Store:     store,
-		CertDirFn: func() (string, error) { return certDir, nil },
-		Log:       logger.Nop(),
+		Store: store,
+		CA:    ca,
+		Log:   logger.Nop(),
 	})
 	require.NoError(t, err)
 	return srv

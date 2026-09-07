@@ -41,7 +41,8 @@ func TestStack_ensureConfigs_SDSCertsReadyLifecycle(t *testing.T) {
 	prov := new(fakeSDSProvisioner)
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
-	s := NewStack(nil, cfg, logger.Nop(), store, nil, prov, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), store, nil, prov, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	_, err = s.ensureConfigs()
 	require.NoError(t, err)
@@ -71,7 +72,8 @@ func TestStack_ensureConfigs_SDSLaneIndependentOfTelemetryLane(t *testing.T) {
 	prov := new(fakeSDSProvisioner)
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
-	s := NewStack(nil, cfg, logger.Nop(), store, nil, prov, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), store, nil, prov, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	_, err = s.ensureConfigs()
 	require.NoError(t, err)
@@ -89,7 +91,8 @@ func TestStack_sdsConfig_GatesOnSDSCertsReady(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	assert.False(t, s.sdsConfig().Enabled, "sdsCertsReady=false must disable the SDS lane")
 
 	s.sdsCertsReady = true
@@ -105,7 +108,8 @@ func TestStack_sdsConfig_GatesOnSDSCertsReady(t *testing.T) {
 func TestStack_ensureSDSClientCerts_NilProvisioner_NoOp(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	require.NoError(t, s.ensureSDSClientCerts())
 }

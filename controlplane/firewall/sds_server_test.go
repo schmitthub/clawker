@@ -48,14 +48,16 @@ func startSDSTestServer(t *testing.T) secretservice.SecretDiscoveryServiceClient
 	require.NoError(t, err)
 
 	certDir := t.TempDir()
+	ca, err := firewall.NewCAStore(func() (string, error) { return certDir, nil })
+	require.NoError(t, err)
 	srv, err := firewall.NewSDSServer(firewall.SDSServerDeps{
-		Store:     store,
-		CertDirFn: func() (string, error) { return certDir, nil },
-		Log:       logger.Nop(),
+		Store: store,
+		CA:    ca,
+		Log:   logger.Nop(),
 	})
 	require.NoError(t, err)
 
-	caCert, caKey, err := firewall.EnsureCA(certDir)
+	caCert, caKey, err := ca.Ensure()
 	require.NoError(t, err)
 	certPEM, keyPEM, err := firewall.GenerateDomainCert(caCert, caKey, sdsTestHostname)
 	require.NoError(t, err)

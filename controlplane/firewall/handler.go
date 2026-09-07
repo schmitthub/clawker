@@ -122,7 +122,7 @@ type Handler struct {
 	log        *logger.Logger
 	queue      *ActionQueue
 	enrolled   *pubsub.Topic[ebpf.EBPFContainerEnrolled]
-	certDirF   func() (string, error)
+	ca         *CAStore
 	listAgents func(ctx context.Context) ([]string, error)
 	identity   *IdentityAllocator
 
@@ -173,10 +173,8 @@ type HandlerDeps struct {
 	// wired topic — FirewallEnable simply skips the publish when nil.
 	EnrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled]
 
-	// CertDirFn optionally overrides FirewallCertSubdir resolution —
-	// tests pass a temp dir so RotateCA does not touch the real data path.
-	// nil defaults to cfg.FirewallCertSubdir.
-	CertDirFn func() (string, error)
+	// CA is shared with the stack and SDS server. Required by FirewallRotateCA.
+	CA *CAStore
 
 	// Identity is the sticky route-identity allocator. Nil degrades to
 	// "no identities": RoutesFromRules emits no routes and GenerateCorefile
@@ -253,10 +251,6 @@ func NewHandler(deps HandlerDeps) (*Handler, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
-	certDirFn := deps.CertDirFn
-	if certDirFn == nil && deps.Cfg != nil {
-		certDirFn = deps.Cfg.FirewallCertSubdir
-	}
 	return &Handler{
 		ebpf:           deps.EBPF,
 		stack:          deps.Stack,
@@ -266,7 +260,7 @@ func NewHandler(deps HandlerDeps) (*Handler, error) {
 		log:            log,
 		queue:          deps.Queue,
 		enrolled:       deps.EnrolledTopic,
-		certDirF:       certDirFn,
+		ca:             deps.CA,
 		listAgents:     deps.ListAgents,
 		identity:       deps.Identity,
 		cgroupIDFn:     ebpf.CgroupID,
@@ -1003,16 +997,15 @@ func (h *Handler) FirewallRotateCA(
 		// meaningful to rotate without it.
 		return nil, toStatus(errors.New("firewall rotate ca: rules store not wired"))
 	}
-	certDir, err := h.certDirF()
-	if err != nil {
-		return nil, toStatus(fmt.Errorf("%w: resolve cert dir: %v", ErrCertRegen, err))
+	if h.ca == nil {
+		return nil, toStatus(fmt.Errorf("%w: %w", ErrCertRegen, ErrNilCAStore))
 	}
 	rules, _, err := h.store.Rules()
 	if err != nil {
 		return nil, toStatus(fmt.Errorf("%w: %w", ErrCertRegen, err))
 	}
-	if err := RotateCA(certDir, rules); err != nil {
-		return nil, toStatus(fmt.Errorf("%w: %v", ErrCertRegen, err))
+	if rotateErr := h.ca.Rotate(rules); rotateErr != nil {
+		return nil, toStatus(fmt.Errorf("%w: %w", ErrCertRegen, rotateErr))
 	}
 
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)

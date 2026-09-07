@@ -749,7 +749,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store is `firewall.EgressRulesStore`, the domain facade over `storage.Store[EgressRulesFile]` with cross-process flock (`WithLock`). The facade holds no lock of its own — in-process serialization comes from the CP's `ActionQueue`, which every rules-file writer goes through as a non-coalescing `ActionRuleMutate` closure.
 
-**Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
+**Certificate PKI**: A persistent ECDSA P256 CA is generated on first run. The handler, stack, and SDS server share one `firewall.CAStore`. Its read lock protects CA loads, and its write lock protects CA creation and rotation. SDS only loads an existing CA. PEM writes use atomic rename, with the key written before the certificate. Per-domain certificates are generated for domains requiring MITM inspection (path rules). The CA cert is injected into agent containers at creation time via `containerfs`. `clawker firewall rotate-ca` regenerates everything.
 
 **Bypass escape hatch**: `clawker firewall bypass` sets an eBPF bypass flag for instant unrestricted egress, auto-clearing after a configurable timeout. No rule flushing or re-application needed — just a BPF map update.
 

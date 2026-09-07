@@ -84,10 +84,12 @@ func openSDSStream(t *testing.T, server *grpc.Server, clientTLS *tls.Config) {
 	store, err := firewall.NewRulesStoreFromString("rules: []")
 	require.NoError(t, err)
 	certDir := t.TempDir()
+	ca, err := firewall.NewCAStore(func() (string, error) { return certDir, nil })
+	require.NoError(t, err)
 	sds, err := firewall.NewSDSServer(firewall.SDSServerDeps{
-		Store:     store,
-		CertDirFn: func() (string, error) { return certDir, nil },
-		Log:       logger.Nop(),
+		Store: store,
+		CA:    ca,
+		Log:   logger.Nop(),
 	})
 	require.NoError(t, err)
 	secretservice.RegisterSecretDiscoveryServiceServer(server, sds)

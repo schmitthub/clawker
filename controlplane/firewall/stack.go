@@ -102,6 +102,7 @@ type Stack struct {
 	cfg       config.Config
 	log       *logger.Logger
 	store     EgressRulesStore
+	ca        *CAStore
 	otelCerts OtelCertProvisioner
 	sdsCerts  SDSCertProvisioner
 	// idFor answers dst→identity for Corefile generation (dnsbpf
@@ -184,11 +185,8 @@ type SDSCertProvisioner interface {
 	EnsureEnvoyClient() (certPath, keyPath, caPath string, err error)
 }
 
-// NewStack returns an initialized Stack. log may be nil (a Nop logger is
-// substituted); the other dependencies are required — nil docker or cfg
-// produces a nil Stack that panics at first use, which is preferable to
-// silent no-ops. otelCerts and sdsCerts may be nil — see
-// OtelCertProvisioner / SDSCertProvisioner.
+// NewStack constructs a Stack with the shared CAStore. log may be nil.
+// otelCerts and sdsCerts may be nil; each has a separate readiness check.
 func NewStack(
 	dc *docker.Client,
 	cfg config.Config,
@@ -197,7 +195,11 @@ func NewStack(
 	otelCerts OtelCertProvisioner,
 	sdsCerts SDSCertProvisioner,
 	idFor IdentityResolver,
-) *Stack {
+	ca *CAStore,
+) (*Stack, error) {
+	if ca == nil {
+		return nil, ErrNilCAStore
+	}
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -211,11 +213,11 @@ func NewStack(
 			Msg("no identity resolver wired; Corefile dnsbpf directives will be omitted (fail closed)")
 	}
 	return &Stack{
-		docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts, sdsCerts: sdsCerts, idFor: idFor,
+		docker: dc, cfg: cfg, log: log, store: store, ca: ca, otelCerts: otelCerts, sdsCerts: sdsCerts, idFor: idFor,
 		idForUnset:      idForUnset,
 		infraCertsReady: false,
 		sdsCertsReady:   false,
-	}
+	}, nil
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -511,7 +513,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("resolving firewall cert dir: %w", err)
 	}
 
-	caCert, caKey, err := EnsureCA(certDir)
+	caCert, caKey, err := s.ca.Ensure()
 	if err != nil {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}

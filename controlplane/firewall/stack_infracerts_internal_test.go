@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -46,7 +47,8 @@ func TestStack_ensureInfraClientCerts_DispatchesPerService(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	prov := &fakeOtelProvisioner{}
-	s := NewStack(nil, cfg, logger.Nop(), nil, prov, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, prov, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	require.NoError(t, s.ensureInfraClientCerts())
 	assert.Equal(t, []string{"envoy", "coredns"}, prov.calls)
@@ -70,7 +72,8 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	prov := &fakeOtelProvisioner{}
 	store, err := NewRulesStore(cfg)
 	require.NoError(t, err)
-	s := NewStack(nil, cfg, logger.Nop(), store, prov, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), store, prov, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	_, err = s.ensureConfigs()
 	require.NoError(t, err)
@@ -109,7 +112,8 @@ func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before returning MTLS=true")
 
 	s.infraCertsReady = true
@@ -129,7 +133,8 @@ func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 func TestStack_ensureInfraClientCerts_NilProvisioner_NoOp(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	require.NoError(t, s.ensureInfraClientCerts())
 }

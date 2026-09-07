@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -65,7 +66,8 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 	// builder resolves to a matching data dir for isFirewallData.
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	// isFirewallData returns true for any mount source rooted under
@@ -133,7 +135,11 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{}, nil, nil)
+	s, err := NewStack(
+		nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{}, nil, nil,
+		newTestCAStore(t, consts.FirewallCertSubdir),
+	)
+	require.NoError(t, err)
 	// Container specs gate mTLS bind-mounts on infraCertsReady so a
 	// partial mint can't wire missing cert paths into CoreDNS startup
 	// (which would hard-fail). The cert mint flow is exercised by
@@ -171,7 +177,8 @@ func TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady(t *testing.T)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	//nolint:exhaustruct,exhaustruct_v5 // spec fixture — topology fields the mounts don't read
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 

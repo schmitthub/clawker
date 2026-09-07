@@ -699,6 +699,7 @@ func startSDSServer(
 	cfg config.Config,
 	log *logger.Logger,
 	rulesStore fwhandler.EgressRulesStore,
+	caStore *fwhandler.CAStore,
 	serverCertPath, serverKeyPath string,
 ) func() {
 	degrade := func(err error, step string) {
@@ -710,9 +711,9 @@ func startSDSServer(
 	}
 
 	sdsSrv, err := fwhandler.NewSDSServer(fwhandler.SDSServerDeps{
-		Store:     rulesStore,
-		CertDirFn: consts.FirewallCertSubdir,
-		Log:       log,
+		Store: rulesStore,
+		CA:    caStore,
+		Log:   log,
 	})
 	if err != nil {
 		degrade(err, "construct")
@@ -882,6 +883,7 @@ func buildEnforcement(
 	dockerCli *docker.Client,
 	containerResolver fwhandler.ContainerResolver,
 	rulesStore fwhandler.EgressRulesStore,
+	caStore *fwhandler.CAStore,
 	stack *fwhandler.Stack,
 	ebpfMgr *ebpf.Manager,
 	identityAlloc *fwhandler.IdentityAllocator,
@@ -895,7 +897,7 @@ func buildEnforcement(
 	// docker context) names the wrong side of the mount in here.
 	dockerCli, err = docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}
 	cleanup = func() error { dockerCli.Close(); return nil }
 
@@ -904,7 +906,7 @@ func buildEnforcement(
 	// hierarchy discovery (cached parent) for rootless daemons.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return dockerCli, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+		return dockerCli, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
@@ -914,14 +916,25 @@ func buildEnforcement(
 	// event=otelcerts_unavailable in bootLogging.
 	rulesStore, err = fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return dockerCli, containerResolver, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+		return dockerCli, containerResolver, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+	}
+	caStore, err = fwhandler.NewCAStore(consts.FirewallCertSubdir)
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, cleanup, fmt.Errorf("CA store: %w", err)
 	}
 	// Sticky route-identity allocator (pre-SetReady startup gate on corruption).
 	//nolint:contextcheck // the identity table lives in internal/storage, whose lock/write API carries no context
 	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
-		return dockerCli, containerResolver, rulesStore, nil, nil, nil, cleanup, err
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, nil, cleanup, err
 	}
-	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor)
+	stack, err = fwhandler.NewStack(
+		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
+	)
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, cleanup, fmt.Errorf(
+			"firewall stack: %w", err,
+		)
+	}
 
 	// Construction only: the manager exists but loads nothing here. BPF
 	// pins are created by the ebpfLoadFlow startup step, after the admin
@@ -930,7 +943,7 @@ func buildEnforcement(
 	// now and covers every arm.
 	ebpfMgr = ebpf.NewManager(log)
 	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
-	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+	return dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, cleanup, nil
 }
 
 // bpffsHandoffSocketPath places the handoff socket in the firewall data
@@ -1080,6 +1093,7 @@ type grpcStackDeps struct {
 	ebpfMgr           *ebpf.Manager
 	stack             *fwhandler.Stack
 	rulesStore        fwhandler.EgressRulesStore
+	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
@@ -1121,6 +1135,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		EBPF:          d.ebpfMgr,
 		Stack:         d.stack,
 		Store:         d.rulesStore,
+		CA:            d.caStore,
 		Cfg:           d.cfg,
 		Resolver:      d.containerResolver,
 		Log:           d.log,
@@ -1528,7 +1543,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		sdsCerts = sdsSvc
 	}
 
-	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
+	dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
 		cfg,
 		log,
@@ -1579,6 +1594,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		ebpfMgr:           ebpfMgr,
 		stack:             stack,
 		rulesStore:        rulesStore,
+		caStore:           caStore,
 		identityAlloc:     identityAlloc,
 		containerResolver: containerResolver,
 		agentReg:          agentReg,
@@ -1643,7 +1659,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// firewall bringup gate so Envoy can fetch per-SNI secrets from its
 	// first boot. Degrades (event=sds_unavailable), never gates startup;
 	// stopSDS is nil on a degraded start.
-	stopSDS := startSDSServer(signalCtx, cfg, log, rulesStore, serverCertPath, serverKeyPath)
+	stopSDS := startSDSServer(signalCtx, cfg, log, rulesStore, caStore, serverCertPath, serverKeyPath)
 	if stopSDS != nil {
 		defer stopSDS()
 	}

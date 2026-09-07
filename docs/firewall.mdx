@@ -472,6 +472,7 @@ The firewall uses a self-signed certificate authority for TLS inspection. All HT
 - Domains with `path_rules` get per-path routing; domains without get allow-all routing --- both go through TLS inspection
 - The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
+- The control plane prevents CA reads during rotation. An SDS request only reads an existing CA; it cannot create a second CA during replacement.
 
 <Note>
 After rotating the CA, you must restart any running agent containers for them to pick up the new certificate.

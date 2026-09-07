@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -20,8 +21,9 @@ import (
 )
 
 const (
-	caCertFile = "ca-cert.pem"
-	caKeyFile  = "ca-key.pem"
+	caCertFile     = "ca-cert.pem"
+	caKeyFile      = "ca-key.pem"
+	pemTempPattern = ".pem-*.tmp"
 
 	caCommonName = "Clawker Firewall CA"
 	caValidYears = 10
@@ -33,6 +35,21 @@ const (
 	pemBlockECPrivateKey = "EC PRIVATE KEY"
 )
 
+// ErrNoCA means that an existing CA certificate or key is absent.
+var ErrNoCA = errors.New("firewall: CA certificate or key is absent")
+
+var errCAMismatch = errors.New("firewall: CA certificate and private key do not match")
+
+// LoadCA reads an existing CA pair without creating directories or files.
+// Concurrent callers in the control plane must use their shared CAStore.
+func LoadCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	cert, key, err := loadCA(filepath.Join(certDir, caCertFile), filepath.Join(certDir, caKeyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("%w: %w", ErrNoCA, err)
+	}
+	return cert, key, err
+}
+
 // encodePEM renders a DER payload as a PEM block of the given type. Headers is
 // explicitly nil: PEM headers are an RFC 1421 legacy that nothing in the firewall
 // stack reads, and Go's own encoders emit none — so every block this package
@@ -43,6 +60,7 @@ func encodePEM(blockType string, der []byte) []byte {
 
 // EnsureCA creates a self-signed CA keypair if none exists under certDir,
 // or loads the existing one.
+// Concurrent callers in the control plane must use their shared CAStore.
 func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("creating certs directory: %w", err)
@@ -52,7 +70,10 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 
 	// If both files exist, load and return.
 	if fileExists(certPath) && fileExists(keyPath) {
-		return loadCA(certPath, keyPath)
+		cert, key, loadErr := LoadCA(certDir)
+		if !errors.Is(loadErr, errCAMismatch) {
+			return cert, key, loadErr
+		}
 	}
 
 	// Generate new CA.
@@ -87,11 +108,12 @@ func EnsureCA(certDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("parsing CA certificate: %w", err)
 	}
 
-	if err := writeCertPEM(certPath, certDER); err != nil {
-		return nil, nil, fmt.Errorf("writing CA cert: %w", err)
+	// Commit the key first. caCertFile marks a completed new CA pair.
+	if writeErr := writeKeyPEM(keyPath, key); writeErr != nil {
+		return nil, nil, fmt.Errorf("writing CA key: %w", writeErr)
 	}
-	if err := writeKeyPEM(keyPath, key); err != nil {
-		return nil, nil, fmt.Errorf("writing CA key: %w", err)
+	if writeErr := writeCertPEM(certPath, certDER); writeErr != nil {
+		return nil, nil, fmt.Errorf("writing CA cert: %w", writeErr)
 	}
 
 	return cert, key, nil
@@ -284,7 +306,7 @@ func RegenerateDomainCerts(
 
 	plans, order := planDomainCerts(rules)
 
-	// Generate certs first — overwrites existing files in-place.
+	// Generate certificates first and replace each PEM file atomically.
 	// If generation fails partway, domains before the failure have fresh certs
 	// and domains after still have their old (valid) certs.
 	for _, bn := range order {
@@ -374,11 +396,11 @@ func writeDomainCert(
 	if err != nil {
 		return fmt.Errorf("generating cert for %s: %w", plan.domain, err)
 	}
-	if err = os.WriteFile(filepath.Join(certDir, basename+"-cert.pem"), certPEM, 0o600); err != nil {
-		return fmt.Errorf("writing cert for %s: %w", plan.domain, err)
-	}
-	if err = os.WriteFile(filepath.Join(certDir, basename+"-key.pem"), keyPEM, 0o600); err != nil {
+	if err = writePEMAtomic(filepath.Join(certDir, basename+"-key.pem"), keyPEM); err != nil {
 		return fmt.Errorf("writing key for %s: %w", plan.domain, err)
+	}
+	if err = writePEMAtomic(filepath.Join(certDir, basename+"-cert.pem"), certPEM); err != nil {
+		return fmt.Errorf("writing cert for %s: %w", plan.domain, err)
 	}
 	return nil
 }
@@ -482,13 +504,16 @@ func loadCA(certPath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, err
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing CA key: %w", err)
 	}
+	if !key.PublicKey.Equal(cert.PublicKey) {
+		return nil, nil, errCAMismatch
+	}
 
 	return cert, key, nil
 }
 
 func writeCertPEM(path string, certDER []byte) error {
 	data := encodePEM(pemBlockCertificate, certDER)
-	return os.WriteFile(path, data, 0o600)
+	return writePEMAtomic(path, data)
 }
 
 func writeKeyPEM(path string, key *ecdsa.PrivateKey) error {
@@ -497,5 +522,33 @@ func writeKeyPEM(path string, key *ecdsa.PrivateKey) error {
 		return fmt.Errorf("marshalling key: %w", err)
 	}
 	data := encodePEM(pemBlockECPrivateKey, keyDER)
-	return os.WriteFile(path, data, 0o600)
+	return writePEMAtomic(path, data)
+}
+
+// writePEMAtomic replaces a PEM file with a complete file from the same
+// directory. [os.CreateTemp] restricts access to the file owner.
+func writePEMAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), pemTempPattern)
+	if err != nil {
+		return fmt.Errorf("creating PEM temporary file: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// Remove temporary private key material after any failed write.
+			_ = os.Remove(tmp.Name()) // Cleanup cannot replace the original file error.
+		}
+	}()
+	if _, writeErr := tmp.Write(data); writeErr != nil {
+		_ = tmp.Close() // Cleanup cannot replace the write error.
+		return fmt.Errorf("writing PEM temporary file: %w", writeErr)
+	}
+	if closeErr := tmp.Close(); closeErr != nil {
+		return fmt.Errorf("closing PEM temporary file: %w", closeErr)
+	}
+	if renameErr := os.Rename(tmp.Name(), path); renameErr != nil {
+		return fmt.Errorf("committing PEM file: %w", renameErr)
+	}
+	committed = true
+	return nil
 }

@@ -36,7 +36,8 @@ func overrideCPBinarySHAForTest(t *testing.T, sha string) {
 func TestStack_driftLabels_StampsStackBuildSHA(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	overrideCPBinarySHAForTest(t, "sha-v1")
 	assert.Equal(t, "sha-v1", s.driftLabels()[labelStackBuildSHA])
@@ -50,7 +51,8 @@ func newDriftFixture(t *testing.T) (*dockermocks.FakeClient, *Stack, container.S
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := dockermocks.NewFakeClient(cfg)
-	s := NewStack(fake.Client, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(fake.Client, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 
 	labels := s.driftLabels()
 	labels[cfg.LabelManaged()] = cfg.ManagedLabelValue()
@@ -163,7 +165,8 @@ func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
 	overrideCPBinarySHAForTest(t, "sha-wired")
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	s := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil)
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	want := s.driftLabels()

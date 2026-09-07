@@ -37,8 +37,7 @@ const sdsCacheMaxEntries = 1024
 
 // Sentinels for missing required SDS server dependencies.
 var (
-	ErrNilSDSStore     = errors.New("firewall: NewSDSServer requires a non-nil EgressRulesStore")
-	ErrNilSDSCertDirFn = errors.New("firewall: NewSDSServer requires a non-nil CertDirFn")
+	ErrNilSDSStore = errors.New("firewall: NewSDSServer requires a non-nil EgressRulesStore")
 )
 
 // SDSServerDeps is the dependency set for the on-demand certificate SDS
@@ -49,9 +48,8 @@ type SDSServerDeps struct {
 	// handshake without any cross-subsystem invalidation.
 	Store EgressRulesStore
 
-	// CertDirFn resolves the firewall cert dir that holds the MITM CA. Read
-	// per mint so a RotateCA is picked up without restart plumbing.
-	CertDirFn func() (string, error)
+	// CA is shared with the handler and stack. SDS only loads its CA pair.
+	CA *CAStore
 
 	// Log is the CP structured logger. Optional — defaults to Nop.
 	Log *logger.Logger
@@ -74,9 +72,9 @@ type SDSServerDeps struct {
 type SDSServer struct {
 	secretservice.UnimplementedSecretDiscoveryServiceServer
 
-	store     EgressRulesStore
-	certDirFn func() (string, error)
-	log       *logger.Logger
+	store EgressRulesStore
+	ca    *CAStore
+	log   *logger.Logger
 
 	// mu serializes the check-then-mint sequence so concurrent requests for
 	// one SNI mint once; the LRU's own lock only covers single operations.
@@ -98,8 +96,8 @@ func NewSDSServer(deps SDSServerDeps) (*SDSServer, error) {
 	if deps.Store == nil {
 		return nil, ErrNilSDSStore
 	}
-	if deps.CertDirFn == nil {
-		return nil, ErrNilSDSCertDirFn
+	if deps.CA == nil {
+		return nil, ErrNilCAStore
 	}
 	log := deps.Log
 	if log == nil {
@@ -107,7 +105,7 @@ func NewSDSServer(deps SDSServerDeps) (*SDSServer, error) {
 	}
 	srv := new(SDSServer)
 	srv.store = deps.Store
-	srv.certDirFn = deps.CertDirFn
+	srv.ca = deps.CA
 	srv.log = log
 	cache, err := lru.New[string, sdsCacheEntry](sdsCacheMaxEntries)
 	if err != nil {
@@ -194,11 +192,7 @@ func (s *SDSServer) secretFor(name string) (sdsCacheEntry, error) {
 		return sdsCacheEntry{}, err
 	}
 
-	certDir, err := s.certDirFn()
-	if err != nil {
-		return sdsCacheEntry{}, fmt.Errorf("resolving cert dir: %w", err)
-	}
-	caCert, caKey, err := EnsureCA(certDir)
+	caCert, caKey, err := s.ca.Load()
 	if err != nil {
 		return sdsCacheEntry{}, fmt.Errorf("loading MITM CA: %w", err)
 	}
