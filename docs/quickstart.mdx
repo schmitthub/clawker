@@ -160,9 +160,6 @@ clawker run -it --rm --agent cache --worktree feature/cache:main @ --dangerously
 
 The `--worktree branch:base` flag creates a Git worktree off the base branch and mounts it into the container. Each agent works on its own branch with no conflicts.
 
-<Note>
-</Note>
-
 The shipped `wt` [alias](/aliases) collapses the boilerplate — it expands to `run --rm -it --agent $1 --worktree $2 @`, and arguments after it pass through to the harness, so the commands above become:
 
 ```bash
