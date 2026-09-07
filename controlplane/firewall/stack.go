@@ -68,6 +68,11 @@ const (
 	// forces a recreate (not just a restart) when it changes.
 	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
 
+	// labelSDSPort records ControlPlaneSettings.SDSPort. Envoy reads
+	// sdsClusterName at startup. A port change must replace a surviving
+	// container so it connects to the current SDS listener.
+	labelSDSPort = "dev.clawker.firewall.sds_port"
+
 	// labelStackBuildSHA stamps the CP's embedded-binary hash
 	// (consts.CPBinarySHA, injected by host bootstrap at CP create) on
 	// both siblings. Every other staleness vector — the pinned Envoy
@@ -939,6 +944,7 @@ func (s *Stack) driftLabels() map[string]string {
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
 		labelSDSCertsReady:   strconv.FormatBool(s.sdsCertsReady),
 		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.MonitoringConfig().OtelInfraPort)),
+		labelSDSPort:         strconv.Itoa(s.cfg.ControlPlaneSettings().SDSPort),
 		labelStackBuildSHA:   consts.CPBinarySHA,
 		labelBPFFSSource:     consts.HostBPFFSSource(),
 	}
@@ -1007,6 +1013,8 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
 			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
 			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
+			Str("desired_sds_port", spec.labels[labelSDSPort]).
+			Str("running_sds_port", summary.Labels[labelSDSPort]).
 			Str("desired_stack_build_sha", spec.labels[labelStackBuildSHA]).
 			Str("running_stack_build_sha", summary.Labels[labelStackBuildSHA]).
 			Msg("recreating firewall container — desired spec diverges from running container")
