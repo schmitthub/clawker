@@ -104,6 +104,7 @@ github.com/google/uuid                                                         B
 github.com/gorilla/css/scanner                                                 BSD-3-Clause
 github.com/grpc-ecosystem/grpc-gateway/v2                                      BSD-3-Clause
 github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc                           BSD-3-Clause
+github.com/hashicorp/golang-lru/v2/simplelru                                   BSD-3-Clause
 github.com/klauspost/compress                                                  BSD-3-Clause
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
 github.com/microcosm-cc/bluemonday                                             BSD-3-Clause

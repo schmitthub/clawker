@@ -12,6 +12,7 @@ import (
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	secretservice "github.com/envoyproxy/go-control-plane/envoy/service/secret/v3"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -23,6 +24,16 @@ import (
 // SDSSecretTypeURL is the xDS type URL for TLS secrets, carried on every
 // delta discovery response the SDS server emits.
 const SDSSecretTypeURL = "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret"
+
+// sdsCacheMaxEntries bounds the per-SNI mint cache. The secret name is the
+// peer's ClientHello SNI: admitted() checks only wildcard-zone membership, so
+// an agent can request an unbounded number of distinct admitted names, each a
+// permanent cache entry. Unbounded, that is a peer-driven OOM of the CP —
+// see the resilience contract in the package CLAUDE.md. The bound sits far
+// above any real workload's distinct-host count; an evicted entry costs one
+// re-mint on its next handshake, never a denial — admitted() stays the only
+// gate.
+const sdsCacheMaxEntries = 1024
 
 // Sentinels for missing required SDS server dependencies.
 var (
@@ -67,8 +78,10 @@ type SDSServer struct {
 	certDirFn func() (string, error)
 	log       *logger.Logger
 
+	// mu serializes the check-then-mint sequence so concurrent requests for
+	// one SNI mint once; the LRU's own lock only covers single operations.
 	mu    sync.Mutex
-	cache map[string]sdsCacheEntry
+	cache *lru.Cache[string, sdsCacheEntry]
 }
 
 // sdsCacheEntry is one minted per-SNI secret. caSerial ties the entry to the
@@ -96,7 +109,11 @@ func NewSDSServer(deps SDSServerDeps) (*SDSServer, error) {
 	srv.store = deps.Store
 	srv.certDirFn = deps.CertDirFn
 	srv.log = log
-	srv.cache = map[string]sdsCacheEntry{}
+	cache, err := lru.New[string, sdsCacheEntry](sdsCacheMaxEntries)
+	if err != nil {
+		return nil, fmt.Errorf("firewall: sizing sds mint cache: %w", err)
+	}
+	srv.cache = cache
 	return srv, nil
 }
 
@@ -189,7 +206,7 @@ func (s *SDSServer) secretFor(name string) (sdsCacheEntry, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if entry, ok := s.cache[sni]; ok && entry.caSerial == caSerial {
+	if entry, ok := s.cache.Get(sni); ok && entry.caSerial == caSerial {
 		return entry, nil
 	}
 
@@ -208,7 +225,7 @@ func (s *SDSServer) secretFor(name string) (sdsCacheEntry, error) {
 		return sdsCacheEntry{}, fmt.Errorf("marshalling secret: %w", err)
 	}
 	entry := sdsCacheEntry{caSerial: caSerial, version: caSerial + "-" + sni, resource: resource}
-	s.cache[sni] = entry
+	s.cache.Add(sni, entry)
 	s.log.Info().
 		Str("component", "firewall.sds").
 		Str("sni", sni).
