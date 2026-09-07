@@ -12,7 +12,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [Unreleased]
 
-- **Fixed:** Firewall startup failure on Linux hosts (Envoy restart loop with `Failed to load incomplete private key`), introduced in 2026.9.1. Domain certificates are now readable by the Envoy process.
+- **Fixed:** Firewall certificate mounts on Linux hosts.
 
 ## [2026.9.1] - 2026-09-07
 
