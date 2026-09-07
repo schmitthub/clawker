@@ -132,3 +132,6 @@ Branch: `fix/wildcard-san-certs`. Plan: `/home/clawker/.claude/plans/500-envoy-n
 
 - Final full local gate passed with exit 0: `prek run --all-files`, installed Go 1.27.1, no skipped hooks and no toolchain override. Every required hook passed. Existing advisory documentation-age notices remain non-fatal. Shell syntax and `git diff --check` also pass. Final gate log: `/tmp/wildcard-san-required-hooks-final.log`.
 - The correction is ready for a normal commit and push to PR #519. Keep both issue-closing references. Replace the PR's stale local-version limitation with these actual passing check results; retain the host-only E2E limit.
+
+- Committed the correction as `e183ceab` (`fix: pass required wildcard TLS checks`) through the normal commit hooks. Every applicable hook passed; no `SKIP`, `--no-verify`, hook-path override, or Go version override was used. Checks with no matching staged files did not run again; they passed in the preceding full gate.
+- Pushed `e183ceab` to the existing branch and updated PR #519 with the current passing local checks and CI scanner alignment. Both issue-closing references remain. Remote CI must evaluate the new commit; the previous failures refer to the pre-correction code.
