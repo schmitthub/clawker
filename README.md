@@ -39,7 +39,7 @@ Wide table — scroll horizontally →
 <details>
 <summary>How this was assessed</summary>
 
-Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers both absent and undocumented capabilities. The comparison covers tools that sandbox a coding-agent CLI, plus the CLIs' own built-in sandboxing — code-execution sandboxes and programmatic SDKs are a separate category. Full per-provider notes with citations are in-repo under `.serena/memories/agent-sandbox-research/`.
+Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers both absent and undocumented capabilities. The comparison covers tools that sandbox a coding-agent CLI, plus the CLIs' own built-in sandboxing — code-execution sandboxes and programmatic SDKs are a separate category. Full per-provider notes with citations are in-repo under [the retained research notes](.serena/memories/research/agent-sandboxes/).
 
 </details>
 
