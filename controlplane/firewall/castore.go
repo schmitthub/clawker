@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/config"
 )
 
@@ -14,16 +15,27 @@ import (
 type CAStore struct {
 	mu        sync.RWMutex
 	certDirFn func() (string, error)
+	// reader is the identity that loads the per-domain leaves from disk —
+	// the Envoy sibling (consts.EnvoyUID), never CP root. Every domain pair
+	// the store regenerates is published under this owner.
+	reader sdscerts.FileOwner
 }
 
 // NewCAStore constructs a store without reading or writing certificates.
-func NewCAStore(certDirFn func() (string, error)) (*CAStore, error) {
+// reader is the domain-cert reader identity; see RegenerateDomainCerts.
+func NewCAStore(certDirFn func() (string, error), reader sdscerts.FileOwner) (*CAStore, error) {
 	if certDirFn == nil {
 		return nil, ErrNilCACertDirFn
 	}
 	store := new(CAStore)
 	store.certDirFn = certDirFn
+	store.reader = reader
 	return store, nil
+}
+
+// Reader is the domain-cert reader identity this store publishes leaves for.
+func (s *CAStore) Reader() sdscerts.FileOwner {
+	return s.reader
 }
 
 // Load reads an existing CA pair. It never creates certificate files.
@@ -56,5 +68,5 @@ func (s *CAStore) Rotate(rules []config.EgressRule) error {
 	if err != nil {
 		return fmt.Errorf("resolving CA directory: %w", err)
 	}
-	return RotateCA(certDir, rules)
+	return RotateCA(certDir, rules, s.reader)
 }

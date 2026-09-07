@@ -62,7 +62,7 @@ func newStackFixture(t *testing.T) *stackFixture {
 	fake.FakeAPI.ContainerListFn = func(context.Context, mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{}, nil
 	}
-	ca, err := fwcp.NewCAStore(consts.FirewallCertSubdir)
+	ca, err := fwcp.NewCAStore(consts.FirewallCertSubdir, currentUserOwner())
 	require.NoError(t, err)
 	stack, err := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil, nil, nil, ca)
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestStack_Accessors_EmptyWhenNetworkMissing(t *testing.T) {
 		return mobyclient.NetworkInspectResult{}, errors.New("network not found")
 	}
 
-	ca, err := fwcp.NewCAStore(consts.FirewallCertSubdir)
+	ca, err := fwcp.NewCAStore(consts.FirewallCertSubdir, currentUserOwner())
 	require.NoError(t, err)
 	stack, err := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil, nil, nil, ca)
 	require.NoError(t, err)

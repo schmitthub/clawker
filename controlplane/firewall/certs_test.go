@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -13,8 +14,115 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/config"
 )
+
+// currentUserOwner is the domain-cert reader identity tests hand to the cert
+// writers: an unprivileged runner can only chown to itself.
+func currentUserOwner() sdscerts.FileOwner {
+	return sdscerts.FileOwner{UID: os.Geteuid(), GID: os.Getegid()}
+}
+
+// ownerOf returns the numeric UID and GID of path from the inode.
+func ownerOf(t *testing.T, path string) (int, int) {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	require.True(t, ok, "inode owner needs a unix stat")
+	return int(st.Uid), int(st.Gid)
+}
+
+// httpsRule is a minimal TLS-terminated rule: the only inputs the cert writer
+// reads are dst and proto.
+func httpsRule(dst string) config.EgressRule {
+	return config.EgressRule{
+		Dst:                   dst,
+		Proto:                 "https",
+		Port:                  "",
+		Action:                "",
+		PathRules:             nil,
+		PathDefault:           "",
+		InsecureSkipTLSVerify: false,
+	}
+}
+
+// TestRegenerateDomainCerts_EnvoyReadableLayout pins the on-disk contract the
+// Envoy sibling depends on. Envoy runs as consts.EnvoyUID, not as CP root, so
+// each domain pair must be owned by the reader at 0600 and the certs directory
+// must be traversable for the reader's group. Docker Desktop on macOS hides a
+// wrong layout (its bind mounts flatten host ownership); Linux hosts do not —
+// Envoy reads EACCES as an empty file and exits with "Failed to load
+// incomplete private key".
+func TestRegenerateDomainCerts_EnvoyReadableLayout(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+	reader := currentUserOwner()
+
+	rules := []config.EgressRule{httpsRule("registry.npmjs.org")}
+	require.NoError(t, firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, reader))
+
+	dirInfo, err := os.Stat(certDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), dirInfo.Mode().Perm(), "certs dir must be group-traversable")
+	_, dirGID := ownerOf(t, certDir)
+	assert.Equal(t, reader.GID, dirGID, "certs dir group must be the reader group")
+
+	for _, name := range []string{"registry.npmjs.org-cert.pem", "registry.npmjs.org-key.pem"} {
+		path := filepath.Join(certDir, name)
+		fileInfo, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm(), name)
+		uid, gid := ownerOf(t, path)
+		assert.Equal(t, reader.UID, uid, name)
+		assert.Equal(t, reader.GID, gid, name)
+	}
+}
+
+// TestRegenerateDomainCerts_HealsPrivateCertsDir covers upgrade from a CP that
+// created the directory 0700: MkdirAll leaves an existing mode alone, so the
+// writer must chmod explicitly or the reader stays locked out.
+func TestRegenerateDomainCerts_HealsPrivateCertsDir(t *testing.T) {
+	certDir := filepath.Join(t.TempDir(), "certs")
+	require.NoError(t, os.Mkdir(certDir, 0o700))
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	rules := []config.EgressRule{httpsRule("registry.npmjs.org")}
+	require.NoError(t, firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner()))
+
+	dirInfo, err := os.Stat(certDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), dirInfo.Mode().Perm())
+}
+
+// TestRegenerateDomainCerts_OwnerFailureSurfaces pins two things: a chown the
+// writer cannot perform is an error, not a silently root-owned file, and the
+// failed pair is never published (no leaf, no temp file left behind).
+func TestRegenerateDomainCerts_OwnerFailureSurfaces(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can chown to any identity; the failure path needs an unprivileged runner")
+	}
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	// Own group so the directory step passes; UID 0 so the file chown fails.
+	reader := sdscerts.FileOwner{UID: 0, GID: os.Getegid()}
+	rules := []config.EgressRule{httpsRule("registry.npmjs.org")}
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, reader)
+	require.ErrorContains(t, err, "owner")
+
+	assert.NoFileExists(t, filepath.Join(certDir, "registry.npmjs.org-key.pem"))
+	assert.NoFileExists(t, filepath.Join(certDir, "registry.npmjs.org-cert.pem"))
+	entries, err := os.ReadDir(certDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".tmp", "failed write must remove its temporary file")
+	}
+}
 
 func TestEnsureCA_CreatesNew(t *testing.T) {
 	certDir := t.TempDir()
@@ -120,7 +228,7 @@ func TestRegenerateDomainCerts_CIDRFlatBasename(t *testing.T) {
 		{Dst: "192.168.1.5", Proto: "https"},   // single IP → unfolded literal
 		{Dst: "wss.example.com", Proto: "wss"}, // FQDN wss → unfolded, dots kept
 	}
-	require.NoError(t, firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey))
+	require.NoError(t, firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner()))
 
 	// The CIDR's "/" folds to "_" so the cert is one flat file pair, never a
 	// bogus subdirectory.
@@ -167,7 +275,7 @@ func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 		},
 	}
 
-	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner())
 	require.NoError(t, err)
 
 	// All TLS rules get certs — regardless of PathRules.
@@ -217,7 +325,7 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 			PathDefault: "deny",
 		},
 	}
-	err = firewall.RegenerateDomainCerts(rules, certDir, oldCACert, oldCAKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, oldCACert, oldCAKey, currentUserOwner())
 	require.NoError(t, err)
 
 	// Read old domain cert for comparison.
@@ -225,7 +333,7 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rotate.
-	err = firewall.RotateCA(certDir, rules)
+	err = firewall.RotateCA(certDir, rules, currentUserOwner())
 	require.NoError(t, err)
 
 	// New CA should exist and be different.
@@ -376,7 +484,7 @@ func TestRegenerateDomainCerts_WildcardAndExactDedup(t *testing.T) {
 			caCert, caKey, err := firewall.EnsureCA(certDir)
 			require.NoError(t, err)
 
-			err = firewall.RegenerateDomainCerts(tc.rules, certDir, caCert, caKey)
+			err = firewall.RegenerateDomainCerts(tc.rules, certDir, caCert, caKey, currentUserOwner())
 			require.NoError(t, err)
 
 			// Only one cert file pair — normalized to "claude.ai".
@@ -428,7 +536,7 @@ func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
 		},
 	}
 
-	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner())
 	require.NoError(t, err)
 
 	// Files should use the normalized domain (no leading dot).
@@ -459,7 +567,7 @@ func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
 		{Dst: "old-domain.com", Proto: "https"},
 		{Dst: "kept-domain.com", Proto: "https"},
 	}
-	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner())
 	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
 	assert.FileExists(t, filepath.Join(certDir, "kept-domain.com-cert.pem"))
@@ -468,7 +576,7 @@ func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
 	rules = []config.EgressRule{
 		{Dst: "kept-domain.com", Proto: "https"},
 	}
-	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
+	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey, currentUserOwner())
 	require.NoError(t, err)
 	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-cert.pem"))
 	assert.NoFileExists(t, filepath.Join(certDir, "old-domain.com-key.pem"))

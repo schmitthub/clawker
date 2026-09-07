@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/config"
 )
 
@@ -24,6 +25,14 @@ const (
 	caCertFile     = "ca-cert.pem"
 	caKeyFile      = "ca-key.pem"
 	pemTempPattern = ".pem-*.tmp"
+
+	// certDirectoryMode lets the domain-cert reader (the Envoy process, which
+	// runs as consts.EnvoyUID — not as CP root) traverse the certs directory
+	// through its group while CP keeps directory ownership. certFileMode keeps
+	// every PEM private to its owner; domain pairs are chowned to the reader
+	// before publication so that owner IS Envoy.
+	certDirectoryMode os.FileMode = 0o750
+	certFileMode      os.FileMode = 0o600
 
 	caCommonName = "Clawker Firewall CA"
 	caValidYears = 10
@@ -39,6 +48,14 @@ const (
 var ErrNoCA = errors.New("firewall: CA certificate or key is absent")
 
 var errCAMismatch = errors.New("firewall: CA certificate and private key do not match")
+
+// caFileOwner keeps the CA pair with the writer (CP root inside the CP
+// container): a -1 UID/GID is the POSIX "leave unchanged" value for chown.
+// Envoy never reads the CA pair — only the per-domain leaves it terminates
+// with — so the CA key must NOT be handed to the Envoy identity.
+func caFileOwner() sdscerts.FileOwner {
+	return sdscerts.FileOwner{UID: -1, GID: -1}
+}
 
 // LoadCA reads an existing CA pair without creating directories or files.
 // Concurrent callers in the control plane must use their shared CAStore.
@@ -357,14 +374,24 @@ func certBasename(dst string) string {
 //
 // Cert generation runs before stale cleanup so that a partial failure leaves
 // previously-working certs intact rather than an empty directory.
+//
+// reader is the identity of the process that loads the domain pairs — the
+// Envoy sibling, which runs as consts.EnvoyUID rather than as CP root. Every
+// domain pair is chowned to reader (mode certFileMode) before it is published
+// and certDir is made traversable for reader's group, exactly as
+// controlplane/sdscerts does for the SDS client material. Without this Envoy
+// reads an EACCES as an empty file and refuses its config with "Failed to load
+// incomplete private key" on every Linux host; Docker Desktop on macOS masks
+// the bug because its bind mounts flatten host ownership.
 func RegenerateDomainCerts(
 	rules []config.EgressRule,
 	certDir string,
 	caCert *x509.Certificate,
 	caKey *ecdsa.PrivateKey,
+	reader sdscerts.FileOwner,
 ) error {
-	if err := os.MkdirAll(certDir, 0o700); err != nil {
-		return fmt.Errorf("creating certs directory: %w", err)
+	if err := prepareCertDirectory(certDir, reader.GID); err != nil {
+		return fmt.Errorf("preparing certs directory: %w", err)
 	}
 
 	plans, order := planDomainCerts(rules)
@@ -373,7 +400,7 @@ func RegenerateDomainCerts(
 	// If generation fails partway, domains before the failure have fresh certs
 	// and domains after still have their old (valid) certs.
 	for _, bn := range order {
-		if err := writeDomainCert(certDir, bn, plans[bn], caCert, caKey); err != nil {
+		if err := writeDomainCert(certDir, bn, plans[bn], caCert, caKey, reader); err != nil {
 			return err
 		}
 	}
@@ -447,22 +474,24 @@ func planDomainCerts(rules []config.EgressRule) (map[string]*domainCertPlan, []s
 }
 
 // writeDomainCert signs one plan against the CA and writes the cert/key pair to
-// certDir under the plan's basename. Overwrites in place, so a failure here
-// leaves every not-yet-regenerated dst on its previous (still valid) cert.
+// certDir under the plan's basename, owned by reader. Overwrites in place, so a
+// failure here leaves every not-yet-regenerated dst on its previous (still
+// valid) cert.
 func writeDomainCert(
 	certDir, basename string,
 	plan *domainCertPlan,
 	caCert *x509.Certificate,
 	caKey *ecdsa.PrivateKey,
+	reader sdscerts.FileOwner,
 ) error {
 	certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, plan.certDomain())
 	if err != nil {
 		return fmt.Errorf("generating cert for %s: %w", plan.domain, err)
 	}
-	if err = writePEMAtomic(filepath.Join(certDir, basename+"-key.pem"), keyPEM); err != nil {
+	if err = writePEMAtomic(filepath.Join(certDir, basename+"-key.pem"), keyPEM, reader); err != nil {
 		return fmt.Errorf("writing key for %s: %w", plan.domain, err)
 	}
-	if err = writePEMAtomic(filepath.Join(certDir, basename+"-cert.pem"), certPEM); err != nil {
+	if err = writePEMAtomic(filepath.Join(certDir, basename+"-cert.pem"), certPEM, reader); err != nil {
 		return fmt.Errorf("writing cert for %s: %w", plan.domain, err)
 	}
 	return nil
@@ -471,7 +500,8 @@ func writeDomainCert(
 // RotateCA regenerates the CA keypair and all domain certificates.
 // The old CA files are overwritten. Any running containers will need
 // the new CA injected to trust the regenerated domain certs.
-func RotateCA(certDir string, rules []config.EgressRule) error {
+// reader is the domain-cert reader identity — see RegenerateDomainCerts.
+func RotateCA(certDir string, rules []config.EgressRule, reader sdscerts.FileOwner) error {
 	// Remove entire certs directory (CA + domain certs) so EnsureCA generates fresh ones.
 	if err := os.RemoveAll(certDir); err != nil {
 		return fmt.Errorf("removing old certs directory: %w", err)
@@ -482,10 +512,36 @@ func RotateCA(certDir string, rules []config.EgressRule) error {
 		return fmt.Errorf("regenerating CA: %w", err)
 	}
 
-	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {
+	if err = RegenerateDomainCerts(rules, certDir, caCert, caKey, reader); err != nil {
 		return fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
+	return nil
+}
+
+// prepareCertDirectory creates certDir if absent and makes it traversable for
+// readerGID: CP keeps ownership, the reader group gets certDirectoryMode. Both
+// updates go through one directory handle so a path swap between them cannot
+// land on a different directory. MkdirAll leaves an existing directory's mode
+// untouched, so the chmod also heals a directory created before this layout
+// (older CP versions created it 0700, which no non-root reader can enter).
+func prepareCertDirectory(certDir string, readerGID int) error {
+	if err := os.MkdirAll(certDir, certDirectoryMode); err != nil {
+		return fmt.Errorf("creating certs directory: %w", err)
+	}
+	dir, err := os.OpenRoot(certDir)
+	if err != nil {
+		return fmt.Errorf("opening certs directory: %w", err)
+	}
+	defer func() {
+		_ = dir.Close() // Releases the handle only; a directory handle has nothing to flush.
+	}()
+	if chownErr := dir.Chown(".", -1, readerGID); chownErr != nil {
+		return fmt.Errorf("setting certs directory group: %w", chownErr)
+	}
+	if chmodErr := dir.Chmod(".", certDirectoryMode); chmodErr != nil {
+		return fmt.Errorf("setting certs directory permissions: %w", chmodErr)
+	}
 	return nil
 }
 
@@ -574,9 +630,11 @@ func loadCA(certPath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, err
 	return cert, key, nil
 }
 
+// writeCertPEM and writeKeyPEM write the CA pair, which stays with the writer
+// (caFileOwner) — Envoy never loads it.
 func writeCertPEM(path string, certDER []byte) error {
 	data := encodePEM(pemBlockCertificate, certDER)
-	return writePEMAtomic(path, data)
+	return writePEMAtomic(path, data, caFileOwner())
 }
 
 func writeKeyPEM(path string, key *ecdsa.PrivateKey) error {
@@ -585,12 +643,15 @@ func writeKeyPEM(path string, key *ecdsa.PrivateKey) error {
 		return fmt.Errorf("marshalling key: %w", err)
 	}
 	data := encodePEM(pemBlockECPrivateKey, keyDER)
-	return writePEMAtomic(path, data)
+	return writePEMAtomic(path, data, caFileOwner())
 }
 
 // writePEMAtomic replaces a PEM file with a complete file from the same
-// directory. [os.CreateTemp] restricts access to the file owner.
-func writePEMAtomic(path string, data []byte) error {
+// directory. Mode (certFileMode) and owner are fixed on the temporary file
+// BEFORE the rename publishes it, so a reader never observes the new file
+// under the wrong identity. [os.CreateTemp] already restricts the temporary
+// file to its creator, so a failed chown leaks nothing readable.
+func writePEMAtomic(path string, data []byte, owner sdscerts.FileOwner) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), pemTempPattern)
 	if err != nil {
 		return fmt.Errorf("creating PEM temporary file: %w", err)
@@ -598,13 +659,19 @@ func writePEMAtomic(path string, data []byte) error {
 	committed := false
 	defer func() {
 		if !committed {
+			_ = tmp.Close() // Cleanup cannot replace the original error; the normal path checks Close below.
 			// Remove temporary private key material after any failed write.
 			_ = os.Remove(tmp.Name()) // Cleanup cannot replace the original file error.
 		}
 	}()
 	if _, writeErr := tmp.Write(data); writeErr != nil {
-		_ = tmp.Close() // Cleanup cannot replace the write error.
 		return fmt.Errorf("writing PEM temporary file: %w", writeErr)
+	}
+	if chmodErr := tmp.Chmod(certFileMode); chmodErr != nil {
+		return fmt.Errorf("setting PEM file mode: %w", chmodErr)
+	}
+	if chownErr := tmp.Chown(owner.UID, owner.GID); chownErr != nil {
+		return fmt.Errorf("setting PEM file owner: %w", chownErr)
 	}
 	if closeErr := tmp.Close(); closeErr != nil {
 		return fmt.Errorf("closing PEM temporary file: %w", closeErr)

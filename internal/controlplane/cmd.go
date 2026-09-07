@@ -945,7 +945,12 @@ func buildEnforcement(
 	if err != nil {
 		return dockerCli, containerResolver, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
 	}
-	caStore, err = fwhandler.NewCAStore(consts.FirewallCertSubdir)
+	// Domain leaves are read by the Envoy sibling, which the stack runs as
+	// consts.EnvoyUID — the same reader identity sdscerts provisions for.
+	caStore, err = fwhandler.NewCAStore(
+		consts.FirewallCertSubdir,
+		sdscerts.FileOwner{UID: consts.EnvoyUID, GID: consts.EnvoyGID},
+	)
 	if err != nil {
 		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, cleanup, fmt.Errorf("CA store: %w", err)
 	}

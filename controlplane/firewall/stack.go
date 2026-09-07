@@ -539,7 +539,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 		s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
 	}
 
-	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {
+	if err = RegenerateDomainCerts(rules, certDir, caCert, caKey, s.ca.Reader()); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
