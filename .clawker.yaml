@@ -315,6 +315,10 @@ security:
           - action: allow
             path: /repos/moby/moby/
           - action: allow
+            methods:
+              - GET
+            path: /repos/docker/for-mac/
+          - action: allow
             path: /repos/containerd/containerd/
           - action: allow
             path: /repos/opencontainers/runc/
