@@ -37,7 +37,7 @@ priority = "fix"
 
 [[repos]]
 repo = "https://github.com/golangci/golangci-lint"
-rev = "c0d3ddc9cf3faa61a4e378e879ece580256d76e5" # frozen: v2.12.2
+rev = "27774aaf853a4fd21f1dd5e69439459dc1b26e68" # frozen: v2.13.2
 
 [[repos.hooks]]
 id = "golangci-lint-full"
