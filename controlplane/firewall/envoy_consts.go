@@ -138,6 +138,7 @@ const (
 
 	// Recurring Envoy config keys the generator emits across many nodes.
 	keyFilename          = "filename"
+	keyCluster           = "cluster"
 	keyClusterName       = "cluster_name"
 	keyTransportSocket   = "transport_socket"
 	keyALPNProtocols     = "alpn_protocols"

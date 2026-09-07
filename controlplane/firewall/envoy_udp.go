@@ -98,8 +98,8 @@ func udpProxyTerminalLayer(ctx *genCtx) error {
 					"action": map[string]any{
 						"name": "route",
 						keyTypedConfig: map[string]any{
-							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
-							"cluster": ctx.upstreamCluster,
+							"@type":    "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
+							keyCluster: ctx.upstreamCluster,
 						},
 					},
 				},
@@ -129,8 +129,8 @@ func udpDenyTerminalLayer(ctx *genCtx) error {
 					"action": map[string]any{
 						"name": "route",
 						keyTypedConfig: map[string]any{
-							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
-							"cluster": denyClusterName,
+							"@type":    "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
+							keyCluster: denyClusterName,
 						},
 					},
 				},

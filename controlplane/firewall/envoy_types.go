@@ -515,8 +515,8 @@ func (c *EnvoyConfig) Bytes() ([]byte, error) {
 	root := map[string]any{
 		// SDS requires both fields before it can request certificates.
 		"node": map[string]any{
-			"id":      envoyContainerName,
-			"cluster": envoyContainerName,
+			"id":       envoyContainerName,
+			keyCluster: envoyContainerName,
 		},
 		"static_resources": map[string]any{
 			"listeners": c.listenerList(),

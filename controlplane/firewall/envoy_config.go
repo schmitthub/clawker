@@ -501,7 +501,7 @@ func denyDefaultFilterChain(als ALSConfig) map[string]any {
 				keyTypedConfig: map[string]any{
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
-					"cluster":     denyClusterName,
+					keyCluster:    denyClusterName,
 					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", consts.VerdictDenied, als),
 				},
 			},

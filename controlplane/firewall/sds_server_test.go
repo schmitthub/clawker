@@ -2,6 +2,7 @@ package firewall_test
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -14,12 +15,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+const sdsTestHostname = "sds.test"
 
 const sdsTestRules = `
 rules:
@@ -52,10 +55,17 @@ func startSDSTestServer(t *testing.T) secretservice.SecretDiscoveryServiceClient
 	})
 	require.NoError(t, err)
 
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+	certPEM, keyPEM, err := firewall.GenerateDomainCert(caCert, caKey, sdsTestHostname)
+	require.NoError(t, err)
+	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
 	lis := bufconn.Listen(1 << 20)
-	// The test listener uses memory only and accepts no network connections.
-	// nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(grpc.Creds(credentials.NewServerTLSFromCert(&serverCert)))
 	secretservice.RegisterSecretDiscoveryServiceServer(grpcSrv, srv)
 	go func() {
 		if serveErr := grpcSrv.Serve(lis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
@@ -68,7 +78,7 @@ func startSDSTestServer(t *testing.T) secretservice.SecretDiscoveryServiceClient
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return lis.DialContext(ctx)
 		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(roots, sdsTestHostname)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
