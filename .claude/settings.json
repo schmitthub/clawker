@@ -6,5 +6,8 @@
   },
   "enabledPlugins": {
     "mintlify@claude-plugins-official": true
+  },
+  "attribution": {
+    "sessionUrl": false
   }
 }
