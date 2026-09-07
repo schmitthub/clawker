@@ -7,9 +7,13 @@
 # concurrently (capped by PREK_CONCURRENT_HOOKS). go-mod-tidy mutates
 # go.mod/go.sum, so it runs alone in the "fix" tier before every scan
 # that reads module state (govulncheck, licenses, tests, lint).
+# licenses-check regenerates NOTICE in place on drift, so it gets its
+# own tier between the two: after tidy (it reads module state), before
+# the concurrent read-only scans (they must not race a NOTICE rewrite).
 
 [priorities]
 fix = 0
+licenses = 5
 scan = 10
 
 # ── Security ──────────────────────────────────────────────────────────────
@@ -112,7 +116,8 @@ language = "system"
 # (vendored code), so trigger on either changing.
 files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$'
 pass_filenames = false
-priority = "scan"
+# Mutates NOTICE on drift — must not share the concurrent scan tier.
+priority = "licenses"
 
 [[repos.hooks]]
 id = "claude-freshness"
