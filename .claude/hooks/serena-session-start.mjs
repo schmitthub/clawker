@@ -27,7 +27,6 @@ if (input.session_id) {
 // Read first. The PreToolUse gate is the hard backstop if this nudge is ignored.
 process.stdout.write(`SERENA INIT REQUIRED — strictly enforced this session. Before ANY Read/Edit, run:
 1. mcp__serena__initial_instructions
-2. mcp__serena__check_onboarding_performed
-3. mcp__serena__list_memories
+2. mcp__serena__list_memories
 The PreToolUse gate will DENY Read/Edit until this completes.
 `);

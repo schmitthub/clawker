@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // PostToolUse hook: mark Serena as initialized for this session.
-// Fires after mcp__serena__check_onboarding_performed completes.
+// Fires after mcp__serena__initial_instructions completes.
 //
 // Run by Claude Code's JS runtime — native JSON, no jq. Keyed STRICTLY on the
 // Claude session id from stdin. There is deliberately NO $PPID fallback: hooks
