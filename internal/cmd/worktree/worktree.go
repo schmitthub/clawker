@@ -2,12 +2,13 @@
 package worktree
 
 import (
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmd/worktree/add"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/list"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/prune"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 )
 
 // NewCmdWorktree creates the worktree parent command.
@@ -21,12 +22,7 @@ Worktrees allow running containers against different branches simultaneously
 without switching branches in your main repository. Each worktree is a
 separate checkout of the repository at a specific branch.
 
-Worktrees are created automatically when using 'clawker run --worktree <branch>'.
-
-Worktree containers mask the main repo's .git/hooks and .git/config read-only
-(security measure for unattended sessions): 'git config --local' and 'git remote add'
-fail, and 'git push -u' still pushes the branch but can't persist upstream tracking
-(easy-to-miss warning, exit 0). See https://docs.clawker.dev/worktrees#worktree-caveats`,
+Worktrees are created automatically when using 'clawker run --worktree <branch>'.`,
 		Example: `  # Create a worktree for a new branch
   clawker worktree add feat-42
 

@@ -43,7 +43,7 @@ clawker run -it --agent review @  # Start a "review" agent in parallel
 - **Bind or snapshot workspaces** — Mount your repo for live editing, or copy it for pure isolation
 - **Harness bundles** — Claude Code and Codex ship built in; per-project images layer your packages, language stacks, and custom build instructions on a pinned Debian substrate, and you can author your own harness bundles
 - **Project-scoped namespacing** — Multi-agent, multi-project isolation via Docker labels and naming conventions
-- **Git worktree integration** — Spin up agents on separate branches with automatic worktree management and hardened unattended-session lockdown. See [Worktree Caveats](/worktrees#worktree-caveats).
+- **Git worktree integration** — Spin up agents on separate branches with automatic worktree management.
 - **Command aliases** — One-word shortcuts that expand to full invocations (`clawker go dev`), shareable with your team via project config. See [Command Aliases](/aliases).
 - **Monitoring stack** — Optional OpenTelemetry Collector + OpenSearch + OpenSearch Dashboards + Prometheus for agent observability
 - **Per-decision egress observability** — eBPF event stream (`allowed` / `denied` / `bypassed`) flows to OpenSearch alongside Envoy and CoreDNS access logs, so bypass windows leave a full audit trail. See [Egress Observability](/observability).
