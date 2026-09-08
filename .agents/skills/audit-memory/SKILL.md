@@ -1,36 +1,44 @@
 ---
 name: audit-memory
-description: Audit all Codex memory and documentation files for staleness, symbol accuracy, and context budget.
+description: Check agent instructions, memory files, and project docs for old information, incorrect symbols, and context size. Use only when the user explicitly requests an audit of these files.
 disable-model-invocation: true
 ---
 
 # Audit Memory
 
-Perform a comprehensive documentation health audit across all Codex context files.
+Use this procedure only when the user explicitly requests an audit of agent
+instructions, memory, or project documentation. Do not start an audit merely
+because another task reads or changes those files.
+
+Check the shared agent files and the active tool’s memory files. See [REFERENCE.md](REFERENCE.md) for package and memory checks.
 
 ## Steps
 
 ### 1. Inventory
 
-Glob all documentation files and build a summary table:
+List the source files below. Do not count a symbolic link as a second copy:
 
 - `AGENTS.md` (root)
-- `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg/*/AGENTS.md`
-- `.Codex/rules/*.md`
-- `.Codex/docs/*.md`
-- `.serena/memories/*.md`
+- `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, and `pkg/**/AGENTS.md`
+- `.agents/rules/*.md`
+- `.agents/docs/*.md`
+- `controlplane/**/AGENTS.md`, `clawkerd/AGENTS.md`
+- `.agents/templates/*.md`, `.agents/skills/*/SKILL.md`
+- `.serena/memories/**/*.md`
 - `docs/docs.json`, `docs/custom.css`, `docs/favicon.svg` — Mintlify site config, theme, and favicon
 - `docs/*.mdx` — Hand-authored Mintlify pages
 - `docs/cli-reference/*.md` — Auto-generated CLI reference (never edit directly; generated via Makefile, freshness checked in CI)
 
 For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** (`wc -c` / 4).
 
-Group into categories:
-- **Always-loaded**: root `AGENTS.md`, `.Codex/rules/*.md` without `paths:` frontmatter
-- **Path-scoped**: `.Codex/rules/*.md` with `paths:` frontmatter (loaded only when matching files touched)
-- **Lazy-loaded**: `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, `pkg/*/AGENTS.md`
-- **On-demand**: `.Codex/docs/*.md`
-- **WIP tracking**: `.serena/memories/*.md`
+Check every `CLAUDE.md` link: its relative target must be the sibling `AGENTS.md`. Check the links inside `.claude/` and `.codex/` against `.agents/README.md`.
+
+Group files by the active tool's documented loading behavior:
+- **Initial instructions**: root `AGENTS.md` through the tool's native entry path; Claude also loads rules without `paths:` at session start
+- **File-scoped rules**: Claude loads rules through `.claude/rules/` when `paths:` matches a file it reads; other coding agents read the whole rule directory because the root `AGENTS.md` requires it
+- **Package instructions**: `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, `pkg/**/AGENTS.md`
+- **On-demand**: `.agents/docs/*.md`
+- **WIP tracking**: `.serena/memories/**/*.md`
 - **Mintlify site**: `docs/docs.json`, `docs/custom.css`, `docs/*.mdx`, `docs/cli-reference/*.md`
 
 ### 2. Freshness Check
@@ -38,12 +46,12 @@ Group into categories:
 Run the freshness script and include its output:
 
 ```bash
-bash scripts/check-Codex-freshness.sh --no-color
+bash scripts/check-agents-freshness.sh --no-color
 ```
 
 ### 3. Symbol Accuracy
 
-For each `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg/*/AGENTS.md`:
+For each package `AGENTS.md` found in the inventory:
 
 1. Read the file
 2. Extract all backtick-wrapped Go identifiers (pattern: single backtick-wrapped words matching `[A-Z][A-Za-z0-9]*` — exported symbols)
@@ -54,22 +62,23 @@ For each `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg
 
 ### 4. Rules Path Validation
 
-For each `.Codex/rules/*.md` file with a `paths:` frontmatter field:
+For each `.agents/rules/*.md` file with a `paths:` frontmatter field:
 
-1. Parse the glob patterns from `paths: ["glob1", "glob2"]`
-2. Run `git ls-files '<glob>'` for each pattern
-3. Flag rules where no files match any glob (dead rule)
-4. Flag rules WITHOUT `paths:` frontmatter — these are always-loaded and should be scoped if possible
+1. Read the `paths:` patterns. Paths start at the repository root.
+2. Run `git ls-files -- ':(glob)<pattern>'` for each pattern. Git’s default path matching does not have the same `*` behavior.
+3. Report patterns with no current file matches. Check whether the rule is for files that will be added.
+4. Check the scope of rules without `paths:`. These apply to all tasks.
+5. Check that each rule is repository-wide. A rule for one package tree belongs in that tree's `AGENTS.md`.
 
 ### 5. Auto Memory Audit
 
-Check the auto memory directory (`~/.Codex/projects/*/memory/`):
+Check Serena's `.serena/memories/` graph and the active tool's memory directory when it is available. Authored references in `.agents/docs/` are not auto memory. Claude Code uses `~/.claude/projects/*/memory/`. Do not assume that Codex uses that structure. If a memory source is unavailable, report that limit:
 
 1. **MEMORY.md index completeness**: List all `.md` files in the directory. Flag any not referenced in `MEMORY.md` (unindexed).
 2. **Broken links**: Check that every `(filename.md)` reference in `MEMORY.md` points to an existing file.
 3. **Stale project memories**: Read each `project_*.md` and `firewall_*.md` file. Flag those whose descriptions no longer match reality (e.g., "ready for planning" when work is complete).
 4. **Frozen dates**: Flag any `currentDate` or hardcoded date blocks in `MEMORY.md` — these rot.
-5. **Content beyond 200 lines**: Flag if `MEMORY.md` exceeds 200 lines (only first 200 loaded per session).
+5. **Context limits**: Check the active tool’s documented load limit. Claude Code loads the first 200 lines of its auto-memory index; do not apply that limit to other memory formats.
 
 ### 6. Mintlify Docs Consistency
 
@@ -79,23 +88,22 @@ Check the auto memory directory (`~/.Codex/projects/*/memory/`):
 
 ### 7. Serena Memory Staleness
 
-Read each `.serena/memories/*.md` file and flag:
+Read `.serena/memories/memory_maintenance.md` and follow its memory graph rules. Check `.serena/memories/**/*.md` for broken `mem:` references, obsolete current guidance, and unsupported claims.
 
-- Files containing "COMPLETE", "Status: Complete", "Status: Done", or "DONE" — these track finished work and should be cleaned up
-- Files with no updates in >30 days (check `git log --format=%at -1`)
+Retained history and research can describe completed work. Do not mark a file for deletion only because it contains a completion marker or is more than 30 days old. Check its purpose and links first.
 
 ### 8. Contradiction Detection
 
 Check for contradictions between always-loaded context files:
 
-1. **Root AGENTS.md vs .Codex/rules/*.md**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
-2. **Root AGENTS.md vs global AGENTS.md** (`~/.Codex/AGENTS.md`): Check for conflicting behavioral directives (e.g., "pivot on tech debt" vs "surgical changes only").
+1. **Root AGENTS.md vs .agents/rules/*.md**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
+2. **Root AGENTS.md vs global instructions** (for example, `$CODEX_HOME/AGENTS.md` or `~/.claude/CLAUDE.md`, when present): Check for conflicting behavioral directives (e.g., "pivot on tech debt" vs "surgical changes only").
 3. **Within root AGENTS.md**: Flag repeated information (e.g., same fact stated twice in different sections).
 
 ### 9. Architecture and Design Accuracy
 
 1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
-2. For each `.Codex/docs/*.md` files:
+2. For each `.agents/docs/*.md` files:
    - Check for mentions of outdated components, patterns, or practices
    - Flag files that likely need updates based on the nature of the changes
 

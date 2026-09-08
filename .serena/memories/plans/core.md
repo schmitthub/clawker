@@ -2,6 +2,7 @@
 
 - For the current install model, use `mem:bundle/core`. For CP event ownership, use `mem:controlplane/core`.
 - These are retained proposals and task records. Check source and present task scope before using their phase state.
+- For new initiatives and task handoffs, use `.agents/skills/initiative/SKILL.md`. Its template is `assets/initiative.md` within the skill. Default initiative memory names are `plans/<initiative-name>/initiative`; link them from the relevant parent or this index. Complete one task per conversation; reviews and commits follow session permissions.
 
 ## Component work
 

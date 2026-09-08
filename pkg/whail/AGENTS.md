@@ -1,6 +1,6 @@
 # Whail Package
 
-Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — only `pkg/whail` and `internal/docker` may import the `APIClient` connector (with narrow exceptions for daemon processes; see `.claude/rules/docker-client.md`).
+Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — only `pkg/whail` and `internal/docker` may import the `APIClient` connector (with narrow exceptions for daemon processes; see `.agents/rules/code-style.md` (Whail Client Enforcement)).
 
 All list/inspect/mutate operations automatically inject managed label filters. Callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
 
@@ -155,7 +155,7 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 
 ## whailtest/ Package
 
-Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and `internal/docker`; see `.claude/rules/docker-client.md` for the import boundary rule.
+Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and `internal/docker`; see `.agents/rules/code-style.md` (Whail Client Enforcement) for the import boundary rule.
 
 - **`FakeAPIClient`**: function-field fake (nil = panic); `NewFakeAPIClient()`, `Reset()`
 - **`TestEngineOptions()`**: returns `EngineOptions` with test prefix
@@ -174,3 +174,5 @@ Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and
 3. List operations auto-inject managed filter — only managed resources returned
 4. Config structs are copied internally — caller state never mutated
 5. `EnsureNetwork` creates-if-not-exists, idempotent on already-connected containers
+6. `IsContainerManaged()` returns `(false, nil)` for a container that does not exist; it is not an error. Every mutating method checks it first, and unmanaged containers get `ErrContainerNotManaged` or `ErrContainerNotFound` depending on the method
+7. Channel-based methods (`ContainerWait`) return a nil response channel for unmanaged containers and use buffered error channels

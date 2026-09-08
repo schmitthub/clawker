@@ -9,5 +9,23 @@
   },
   "attribution": {
     "sessionUrl": false
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.agents/hooks/git-checks.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.agents/hooks/go-commands.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }

@@ -9,7 +9,7 @@
 `internal/storage.Store[T]` is a **type-safe, file-backed data handler**. Nothing more. It knows: file discovery (walk-up vs single file vs explicit dirs), YAML layer merge, schema-kind validation, provenance-routed atomic writes, flock. Migrations: domain packages own the DEFINITIONS (schema evolution is domain knowledge); the engine owns the EXECUTION POINT — per-layer, node-level, inside `New`'s load pipeline before merge+decode (the only window where old-shape data is readable and repairable, since the load decode is strict).
 
 A **caller is a domain worldview** that owns:
-1. the **tagged schema struct** (the type contract — `yaml`/`label`/`desc`/`default` tags per `.claude/rules/storage-schema.md`),
+1. the **tagged schema struct** (the type contract — `yaml`/`label`/`desc`/`default` tags per `.agents/rules/storage-schema.md`),
 2. the **constructor pair** — domain `New`/`NewFromString` wrapping eager `storage.New[T](opts...)`/`storage.NewFromString[T](yaml)`, wiring paths/filenames/migrations/lock via options, and
 3. optionally, **typed accessor methods** built on the verbs — the PREFERRED consumer surface (USER RATIFIED 2026-07-25): convenience wrappers like `ProjectEgressRules()` that internally call `storage.Get[V]`. Raw engine verbs stay available to every caller as the escape hatch for edge cases. Accessors are domain convenience ON the verbs — never machinery replacing them (no interfaces-as-store-contract, no closures, no seams).
 
@@ -71,7 +71,7 @@ Construction (`storage.New` — eager: files seed the data; `storage.NewFromStri
 
 Option set carries over from options.go (verified 2026-07-25): WithFilenames (ordered variants; first = merge precedence at same depth), WithDefaultFilename (fresh-write pin; falls back to Filenames[0]), WithDefaults/WithDefaultsFromStruct (YAML base layer, lowest priority), WithWalkUp (anchor must be CWD or ancestor; dual placement .clawker/{f} → .clawker/.{f} → .{f}, each .yaml/.yml — discover.go:91-97), WithDirs (dual-placement probes), WithPaths + XDG conveniences (WithConfigDir/WithDataDir/WithStateDir/WithCacheDir — stay engine-side AS IS, USER RULED 2026-07-25; resolver.go survives), WithDotDefault, WithLock, WithHeader, **WithMigrations (LIVES — migration machinery stays, runs inside New pre-decode)**. Priority walk-up > Dirs > Paths; dedup by resolved path.
 
-Domain packages own the wrapping constructor pair (mandated, `.claude/rules/store-backed-package.md`) — domain contract is an INTERFACE; unexported impl embeds the store; constructor calls storage.New (which loads), returns the impl as the interface:
+Domain packages own the wrapping constructor pair (mandated, `.agents/rules/store-backed-package.md`) — domain contract is an INTERFACE; unexported impl embeds the store; constructor calls storage.New (which loads), returns the impl as the interface:
 ```go
 type StateStore interface {
     // domain accessors — the preferred consumer surface

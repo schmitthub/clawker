@@ -2,7 +2,7 @@
 
 BPF loader + manager for clawker's cgroup programs. Lives under `internal/controlplane/` because ebpf is a **feature of the control plane**, not a peer service: once BPF programs are loaded into the kernel they persist independently of any userspace process, so there is no separate "ebpf service" to run. The CP owns `Manager.Load()` lifetime and drives everything through direct Go imports.
 
-The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/CLAUDE.md`), but the real interface is `AdminService` gRPC.
+The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/AGENTS.md`), but the real interface is `AdminService` gRPC.
 
 ## Layout
 
@@ -34,7 +34,7 @@ bpftest/             Privileged prog-run harness (cilium bpf/tests pattern): loa
                      wrappers + real production maps unpinned, seeds them, runs via
                      prog.Run(). Gated on PRIVILEGED_TESTS=1 (`make test-bpf` / CI bpf
                      job) — always skips in the zero-cap dev container.
-cmd/                 break-glass ebpf-manager binary (see cmd/CLAUDE.md)
+cmd/                 break-glass ebpf-manager binary (see cmd/AGENTS.md)
 ```
 
 ## Lifetime ownership

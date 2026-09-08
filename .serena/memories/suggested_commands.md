@@ -17,7 +17,7 @@ Run from the project root unless a working directory is given.
 | Run all hooks | `make pre-commit` |
 | Generate CLI docs and config schemas | `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas` |
 | Check generated docs | `make docs-check` |
-| Check instruction freshness | `bash scripts/check-claude-freshness.sh --no-color` |
+| Check instruction freshness | `bash scripts/check-agents-freshness.sh --no-color` |
 | Check Serena references, if its CLI is installed | `serena memories check` |
 
 - Format changed Go files with `gofmt -w` followed by their paths.

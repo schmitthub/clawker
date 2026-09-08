@@ -1,5 +1,7 @@
 # netlogger subpackage
 
+Pipeline contract (collector routing, indices, record schema, runtime UAT): `internal/monitor/AGENTS.md`.
+
 Userspace consumer of the BPF `events_ringbuf`. Drains per-decision-point egress records, enriches each with `{container_id, agent, project, domain}` attribution looked up by `cgroup_id`, and pushes the result through an OTel log sink to the trusted-infra OTLP receiver. Lives under `internal/controlplane/firewall/ebpf/` because it is the userspace half of the ebpf egress event emitter — the BPF programs in `bpf/clawker.c` submit records into the pinned ringbuf; this package shapes them into the OTLP log stream the monitoring backend consumes.
 
 The package ships as a per-decision-point egress event emitter with an OTel sink and a circuit breaker; CP main constructs the `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps it with `NewCircuitExporter`, and wires it through `Deps.OtelLoggerProvider`. The drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushAll()`.

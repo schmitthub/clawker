@@ -6,11 +6,11 @@ instruction files here yet.
 
 ## Convention
 
-One file per rule in `.claude/rules/`. The file points at the rule; it does
+One file per rule in `.agents/rules/`. The file points at the rule; it does
 not copy the rule text.
 
 - File name: `<rule>.instructions.md`, where `<rule>` is the base name of
-  the file in `.claude/rules/`.
+  the file in `.agents/rules/`.
 - `applyTo`: copy the globs from the `paths:` front matter of the rule file.
   Join several globs with a comma.
 - Body: one line that names the rule file to apply.
@@ -24,14 +24,14 @@ not copy the rule text.
 
 ```markdown
 ---
-applyTo: "internal/git/**"
+applyTo: "controlplane/**"
 ---
 
-Apply the rules in `.claude/rules/git.md` to these files.
+Apply the Control-plane safety section of `controlplane/AGENTS.md` to these files.
 ```
 
 ## Related files
 
 - `.github/copilot-instructions.md`: repository-wide review priorities and
-  the path-to-rule table that stands in for these files until they exist.
+  the shared rule directory that stands in for these files until they exist.
 - `.github/skills/code-review/SKILL.md`: the review procedure.

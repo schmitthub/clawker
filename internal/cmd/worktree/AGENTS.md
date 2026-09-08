@@ -62,7 +62,7 @@ type AddOptions struct {
 
 `clawker worktree add` is the canonical, full-surface worktree command — tracking flags live here. The `--worktree` shortcut on container commands is a limited happy-path alias (default track-on-match, no flag surface).
 
-For idempotent "get or create" behavior, use `--worktree` on container commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
+For idempotent "get or create" behavior, use `--worktree` on container commands instead (see `internal/cmd/container/shared/AGENTS.md`).
 
 Delegates orchestration to `project.ProjectManager.CurrentProject(ctx).CreateWorktree(...)`.
 

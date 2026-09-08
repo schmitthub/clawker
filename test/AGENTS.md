@@ -131,7 +131,7 @@ Tests drive the full CLI pipeline via `h.Run()`. The CP AdminService is reached 
 
 ## Debugging Resource Leaks
 
-All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestName`. See `.claude/rules/testing.md` for lookup commands.
+All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestName`. See `.agents/rules/testing.md` for lookup commands.
 
 ## Dependencies
 

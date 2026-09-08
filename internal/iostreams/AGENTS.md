@@ -30,7 +30,7 @@ fmt.Fprintln(ios.ErrOut, "Processing...")   // stderr for status (humans)
 
 Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`. Constructors: `System()` (production), `Test()` (external testing — returns `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)`, uses `mocks.FakeTerm{}`).
 
-**Logging**: IOStreams does NOT carry a logger. Commands access logger via `f.Logger` (Factory lazy noun). See `internal/logger/CLAUDE.md`.
+**Logging**: IOStreams does NOT carry a logger. Commands access logger via `f.Logger` (Factory lazy noun). See `internal/logger/AGENTS.md`.
 
 ### Test() (exported constructor)
 
@@ -84,7 +84,7 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 ### Build Progress Display
 
-**Moved to `internal/tui/progress.go`** — See `internal/tui/CLAUDE.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `(*tui.TUI).RunProgress(ctx, cfg)` via Factory noun.
+**Moved to `internal/tui/progress.go`** — See `internal/tui/AGENTS.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `(*tui.TUI).RunProgress(ctx, cfg)` via Factory noun.
 
 **Pager**: `SetPager(cmd)`, `GetPager()`, `StartPager()`, `StopPager()`. Precedence: `CLAWKER_PAGER` > `PAGER` > platform default.
 
@@ -94,7 +94,7 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 ### Table Output
 
-**Public API in `internal/tui/table.go`** — See `internal/tui/CLAUDE.md` for full TablePrinter API.
+**Public API in `internal/tui/table.go`** — See `internal/tui/AGENTS.md` for full TablePrinter API.
 
 **Styled rendering in `internal/iostreams/table.go`** — `RenderStyledTable(headers []string, rows [][]string, overrides *TableStyleOverrides) string` uses `lipgloss/table` with `StyleFunc` for per-cell styling. Headers are muted uppercase. First column uses brand color. All borders disabled. Column widths auto-sized to terminal width. Pass `nil` for overrides to use defaults.
 
@@ -180,10 +180,12 @@ Lipgloss-based pure functions for composing visual output:
 - `CanPrompt()` false when `neverPrompt` set (CI)
 - `Blue()` = BlueStyle (`ColorDeepSkyBlue`, no bold); `Primary()` = TitleStyle (`ColorPrimary` = `ColorBurntOrange`, bold)
 - `tui/` uses `iostreams` styles and layout helpers by direct import (no re-export file)
+- Prefer the semantic color methods (`cs.Primary` / `Success` / `Warning` / `Error` / `Info` / `Muted`) over raw colors (`cs.Red` / `Green` / `Yellow`) in command code
+- Multi-step progress belongs to `f.TUI.RunProgress(...)` (live-display), not to iostreams spinners
 
 ## Text Utilities
 
-**Moved to `internal/text/`** — See `internal/text/CLAUDE.md` for the full API. Pure leaf package (stdlib only, no iostreams dependency).
+**Moved to `internal/text/`** — See `internal/text/AGENTS.md` for the full API. Pure leaf package (stdlib only, no iostreams dependency).
 
 ## Import Boundary
 

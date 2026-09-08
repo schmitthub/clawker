@@ -2,7 +2,7 @@
 
 A reusable Docker engine wrapper with automatic label-based resource isolation. All operations — create, list, remove, build — are filtered through managed labels. Resources created outside whail are invisible; resources created by whail cannot escape.
 
-Wraps `github.com/moby/moby/client`. **Only `pkg/whail` imports the moby `APIClient` connector, and only `internal/docker` imports `pkg/whail`.** Typed moby imports are fine anywhere; standalone daemon processes have narrow connector exceptions — see `.claude/rules/docker-client.md`.
+Wraps `github.com/moby/moby/client`. **Only `pkg/whail` imports the moby `APIClient` connector, and only `internal/docker` imports `pkg/whail`.** Typed moby imports are fine anywhere; standalone daemon processes have narrow connector exceptions — see `.agents/rules/code-style.md` (Whail Client Enforcement).
 
 ## Quick Start
 

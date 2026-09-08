@@ -10,7 +10,7 @@ import (
 )
 
 // The ONLY firewall Envoy-generation tests. Three STRICT rules (see
-// .claude/rules/envoy.md → Testing):
+// controlplane/firewall/AGENTS.md → Envoy egress generation → Testing):
 //  1. input is real egress-rules YAML loaded through the package's own
 //     NewRulesStoreFromString seam — the exact production read path, never
 //     structs/mocks/internals;
@@ -25,7 +25,7 @@ import (
 // feature golden re-tests in isolation what the mega-config already covers, loses
 // the cross-rule interaction diff, and rots. A new case is justified ONLY for one
 // of the two reasons listed below; if neither applies, it goes in comprehensiveRules.
-// (Full rationale: .claude/rules/envoy.md → Testing §.)
+// (Full rationale: controlplane/firewall/AGENTS.md → Envoy egress generation → Testing.)
 //
 // Strategy: `comprehensive` (+ `comprehensive_mtls`) is the all-encompassing
 // interaction golden — every co-existable feature in ONE config so cross-rule

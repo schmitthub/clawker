@@ -1,5 +1,7 @@
 # clawkerd
 
+Read the Control-plane safety section of `controlplane/AGENTS.md` before changing this package. Its failure rules (no `panic`, `log.Fatal`, or `os.Exit` on the boot or serve path; every long-lived goroutine recovers; subsystems degrade with `event=<subsystem>_unavailable`) apply here.
+
 Per-container agent daemon AND PID 1 init of the agent container. Owns:
 
 1. **CP-dialed mTLS listener** on `:7700` (`ClawkerdService.Session`) — command dispatch surface for the entire container lifetime.

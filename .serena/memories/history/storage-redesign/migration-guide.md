@@ -23,7 +23,7 @@ Current state on branch: `Txn`/`Tx`/`txnMu` already deleted; storage tests green
 
 ## Phase 2 — owning packages (constructor pairs)
 
-Every implementer: tagged schema + `New` + `NewFromString`, per `.claude/rules/store-backed-package.md` constructor section.
+Every implementer: tagged schema + `New` + `NewFromString`, per `.agents/rules/store-backed-package.md` constructor section.
 
 - `internal/config` — has both routes; adapt to eager New (load errors stay at construction, same as today). Accessor-layer question RESOLVED (2026-07-25): typed domain accessors are the PREFERRED consumer surface — config accessors stay, reimplemented over `storage.Get[V]` internally.
 - `internal/project` (registry) — adapt.
@@ -54,10 +54,10 @@ Every implementer: tagged schema + `New` + `NewFromString`, per `.claude/rules/s
 
 ## Phase 5 — docs/rules
 
-- `internal/storage/CLAUDE.md` — full rewrite to new surface (Txn/Refresh/Get(&out)/snapshot-Read references purged; gotcha row "Compound read-modify-write isn't atomic — wrap in Txn" dies).
-- `.claude/rules/store-backed-package.md` — constructor-pair section stands; **interface + moq + domain-verb prescription conflicts with the no-wrapper ruling** — rewrite per canon (USER decision on what replaces the interface guidance; `internal/state`'s `StateStore` interface itself may be judged slop — ASK).
-- `.claude/rules/storage-schema.md` — mostly stands (tag contract unchanged).
-- `internal/config/CLAUDE.md`, firewall `CLAUDE.md`, `.claude/docs/DESIGN.md` §2.4 — update.
+- `internal/storage/AGENTS.md` — full rewrite to new surface (Txn/Refresh/Get(&out)/snapshot-Read references purged; gotcha row "Compound read-modify-write isn't atomic — wrap in Txn" dies).
+- `.agents/rules/store-backed-package.md` — constructor-pair section stands; **interface + moq + domain-verb prescription conflicts with the no-wrapper ruling** — rewrite per canon (USER decision on what replaces the interface guidance; `internal/state`'s `StateStore` interface itself may be judged slop — ASK).
+- `.agents/rules/storage-schema.md` — mostly stands (tag contract unchanged).
+- `internal/config/AGENTS.md`, firewall `CLAUDE.md`, `.agents/docs/DESIGN.md` §2.4 — update.
 - Auto-memory `project_storage_txn_slop_removal` — close out when shipped.
 
 ## Known open questions for the user (collect answers before the relevant phase)

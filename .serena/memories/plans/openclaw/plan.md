@@ -94,7 +94,7 @@ non-TTY; `--detach` is documented. Remaining narrow checks, folded into P1:
 - Secrets: `--secret-input-mode ref` + `agent.from_env` so keys stay in the
   host env, never in a volume or a repo.
 - Gateway token: generate host-side, pass via env; do not bake.
-- Firewall discovery loop per `.claude/rules/firewall-uat.md` — run, collect
+- Firewall discovery loop per `.agents/skills/firewall-uat/SKILL.md` — run, collect
   actual blocks, widen the floor from observed traffic only.
 - Channel order: **Discord + Telegram first** (bot TLS/wss, should survive
   MITM). WhatsApp/Signal/Matrix flagged as MITM-risk — clawker never does SNI

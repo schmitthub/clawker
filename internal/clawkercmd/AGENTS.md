@@ -4,7 +4,7 @@ Application entry point, centralized error rendering, and background notificatio
 (the update notifier and the show-once changelog teaser).
 
 The CLI's own domain types live in `internal/clawker` — notably `Session`, the
-per-invocation flags this package honors. See `internal/clawker/CLAUDE.md`.
+per-invocation flags this package honors. See `internal/clawker/AGENTS.md`.
 
 ## Exported Symbols
 
@@ -89,7 +89,7 @@ no-op. The same facade is shared by both checks; they write **disjoint** fields,
 and both now run sequentially on `Main`'s own goroutine after `ExecuteC`, so the
 CLI is a single writer of the state file — a `Write` can never flush another
 check's half-staged fields (each persist is a Set+Set+Write cycle the store
-cannot make atomic across calls; see `internal/storage/CLAUDE.md`).
+cannot make atomic across calls; see `internal/storage/AGENTS.md`).
 
 ## Background Update Check
 
@@ -121,7 +121,7 @@ Fetched only when notifications are on. The cursor lifecycle lives entirely in
 - After the command completes (both error and success paths), `drainNotifications` reads the channel and calls `printChangelogTeaser`; it self-guards on an empty slice.
 
 `changelog.CheckForChanges` owns the read/first-run-seed/advance of the cursor
-(see `internal/changelog/CLAUDE.md`): first run seeds at current and shows
+(see `internal/changelog/AGENTS.md`): first run seeds at current and shows
 nothing (no catch-up backfill); subsequent runs diff `(cursor, current]`.
 
 `printChangelogTeaser` renders to `ios.ErrOut`: a "📣 What's new in clawker:"

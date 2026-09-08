@@ -1,6 +1,21 @@
 # Store UI Package
 
-Generic orchestration layer for browsing and editing `storage.Store[T]` instances. Bridges typed stores (`internal/storage`) and terminal presentation (`internal/tui`).
+Generic orchestration layer for browsing and editing `storage.Store[T]` instances. Bridges typed stores (`internal/storage`) and terminal presentation (`internal/tui`). Domain adapters here edit packages built to the Store-backed package contract in `internal/storage/AGENTS.md`; read it before adding an adapter.
+
+## Mental Model: Multi-Layer Config Editor
+
+Store UI is a **config placement tool**, not an override editor. It gives users a unified view across all layer files so they can make informed decisions about where to place config values based on their project's directory structure.
+
+**Layered inheritance**: Clawker configs use walk-up file discovery. A monorepo might have:
+- `./clawker.yaml` — repo root config (cascades to all subdirs)
+- `./frontend/.clawker.yaml` — frontend-specific overrides
+- `~/.config/clawker/clawker.yaml` — user-level defaults
+
+The same key in different layer files is **inheritance**, not duplication. Merge strategies (`union`, `override`) resolve how values combine across layers.
+
+**The browser shows the merged state** — the effective config for the current working directory, with per-layer breakdown showing which file each value comes from. This is read-only context. When the user edits a field and picks a save target, they're writing to a specific layer file. The user might save a value to the repo root file knowing it won't affect their CWD (a closer layer wins) but will cascade to sibling directories.
+
+**Validation guards writes, not editors.** Editors collect input freely. The write boundary (per-layer) is where validation happens, because that's where layer context is available. Don't put domain validation in TUI editors — they show merged state and can't know the user's intent until a layer is chosen.
 
 ## Architecture
 
@@ -151,6 +166,24 @@ the editor never showed them. Deleting the key (`d`) still works.
 7. `KindMap` → `BrowserMap` → `KVEditorModel` (interactive key-value pair editor); `KindStructSlice` → `BrowserStructSlice` → `TextareaEditorModel` (raw YAML)
 8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save. `Edit` is `BuildBrowser` + `tui.RunProgram` — one wiring, not two.
 9. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.Remove`. Lets lower-priority layer values show through.
+
+## When Adding a New Store Editor
+
+1. **Domain adapter** under `internal/config/storeui/<domain>/` exports:
+   - `Overrides() []storeui.Override` — TUI-only customizations (`Hidden`, `ReadOnly`, `Kind`, `Options`, `Order`). Labels/descriptions come from struct tags, not overrides.
+   - `LayerTargets(store) ([]storeui.LayerTarget, error)` — where the user can save each field. Delegate to `storeui.BuildLayerTargets(store)`, which derives targets from the store's own `WriteTargets()` (walk-up target → "Project", configured dirs → "User", discovered layers → shortened path; each target carries `Filename` so the adapter can relabel filenames it recognizes, e.g. the project adapter's `Local` override file). Never hardcode locations the store cannot rediscover.
+   - `Edit(ios, store) (storeui.Result, error)` — convenience wrapper that wires overrides + targets into `storeui.Edit[T]`.
+2. **Cobra command** under `internal/cmd/<noun>/edit/` — thin wrapper: load config → get store → call domain `Edit` → print success/cancel. Nothing else belongs here.
+3. **Wire into parent** — add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
+4. **Tests** — at minimum: `TestOverrides_AllPathsMatchFields` (prevents typo rot against `WalkFields(schema)`), a round-trip integration test that drives the store through `WalkFields → SetFieldValue → store.Set → store.Write → reload`, and a unit test for any non-trivial override decision.
+
+## Override Quick Reference
+
+- `Hidden: true` removes a field. Use prefix-based hiding — hiding `"build.instructions"` also hides `"build.instructions.env"`, `"build.instructions.root_run"`, etc.
+- `ReadOnly: true` for fields managed by other systems (e.g., `host_proxy.*` ports)
+- `Kind: storeui.KindSelect` + `Options: []string{...}` for enum-like fields
+- `Order: N` to control sort position within a tab (lower = first)
+- `ApplyOverrides` **panics on duplicate override paths** — catch that in tests
 
 ## Gotchas
 

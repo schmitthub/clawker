@@ -48,8 +48,8 @@ Report each miss (priority 4).
 
 ## 5. Standing rules
 
-Apply the remaining priority 4 rules and the path-to-rule table in
-`.github/copilot-instructions.md`.
+Apply the remaining priority 4 rules and the rule files that
+`.github/copilot-instructions.md` names.
 
 ## 6. Report
 

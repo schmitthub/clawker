@@ -26,7 +26,7 @@ Executes a command in a running container. Supports TTY mode with terminal resiz
 credential env vars (and SSH/GPG via the socket bridge) are baked into the
 container's own environment once, at container creation
 (`shared.CreateContainer` → `workspace.SetupGitCredentials`, see
-`internal/cmd/container/shared/CLAUDE.md`); `docker exec` processes inherit
+`internal/cmd/container/shared/AGENTS.md`); `docker exec` processes inherit
 that environment automatically, so no per-exec setup is needed.
 `ExecOptions.HostProxy` is wired from the Factory but unused in `execRun`.
 

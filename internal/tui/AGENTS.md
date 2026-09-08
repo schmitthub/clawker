@@ -10,6 +10,8 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 **Style pattern**: Use `func(string) string` instead of `lipgloss.Style` in signatures. Inline via type inference: `style := iostreams.PanelStyle`.
 
+**Qualified references**: styles `iostreams.HeaderStyle` / `PanelStyle` / `ListItemSelectedStyle`; colors `iostreams.ColorPrimary` / `ColorSuccess` / `ColorError`; layout helpers `iostreams.Stack()` / `Row()` / `FlexRow()`. Interactive components follow the BubbleTea `Init()` / `Update()` / `View()` pattern and run through `tui.RunProgram(ios, model)`.
+
 **Composition principle**: TUI provides generic reusable components — it does NOT contain consumer-specific logic. If you need a special view that doesn't exist, create a generic one in tui that can be customized or expanded upon in the command layer package you need it in. For example, `RunDashboard` is a generic channel-driven dashboard; consumer packages implement `DashboardRenderer` to provide their domain-specific view. Importing bubbletea types for interface implementation is acceptable in consumer packages.
 
 ## Keys (`keys.go`)
@@ -20,7 +22,28 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 ## Stateless Render Functions (`components.go`)
 
-Full table of render helpers (`RenderHeader`, `RenderStatus`, `RenderBadge`, `RenderProgress`, `RenderDivider`, `RenderTable`, `RenderPercentage`, `RenderBytes`, `RenderTag`, etc.) lives in `.claude/rules/tui.md` — it's auto-loaded whenever you touch `internal/tui/**`. Config types: `HeaderConfig`, `StatusConfig`, `ProgressConfig`, `TableConfig`, `KeyValuePair`.
+Stateless rendering helpers that compose `iostreams` styles into reusable visual elements. Use these instead of hand-rolling styled output in command code. Config types: `HeaderConfig`, `StatusConfig`, `ProgressConfig`, `TableConfig`, `KeyValuePair`.
+
+| Function | Purpose |
+|----------|---------|
+| `RenderHeader(HeaderConfig)` | Title + optional subtitle + optional right-aligned timestamp |
+| `RenderDashHeader(cs, DashHeaderConfig)` | Full-width dash-separated header bar (title + subtitle) |
+| `RenderStatus(StatusConfig)` | Status indicator with colored symbol (uses `iostreams.StatusIndicator`) |
+| `RenderBadge(text, ...render)` | Styled badge (default: `iostreams.BadgeStyle`) |
+| `RenderCountBadge(count, label)` | Count + muted label (e.g., "3 containers") |
+| `RenderProgress(ProgressConfig)` | Progress bar or fraction (supports bar mode and text mode) |
+| `RenderDivider(width)` | Horizontal rule |
+| `RenderLabeledDivider(label, width)` | Horizontal rule with centered label |
+| `RenderLeftLabeledDivider(label, width)` | Horizontal rule with left-aligned label |
+| `RenderEmptyState(message, width, height)` | Centered empty-state message |
+| `RenderError(err, width)` | Error message with word wrapping |
+| `RenderLabelValue(label, value)` | Single label: value pair |
+| `RenderKeyValueTable(pairs, width)` | Aligned key-value table with colon separators |
+| `RenderTable(TableConfig)` | Full table with headers, divider, and rows |
+| `RenderPercentage(value)` | Color-coded percentage (muted < 60%, warning 60-80%, error >= 80%) |
+| `RenderBytes(bytes)` | Human-readable byte sizes (B, KB, MB, GB) |
+| `RenderTag(text, ...render)` | Single tag (default: `iostreams.TagStyle`) |
+| `RenderTags(tags, ...render)` | Space-separated list of tags |
 
 ## Interactive Components
 
@@ -124,6 +147,8 @@ Three standalone BubbleTea field models. All use value semantics and share `Fiel
 - `WizardStep` / `WizardPage` (`wizard.go`, `wizardpage.go`) — multi-step form via `TUI.RunWizard(steps []WizardStep)` → `WizardResult{Values, Submitted}`. `WizardStep{ID, Title, Page, SkipIf, HelpKeys}` where `Page` is a `WizardPage` interface. Construct pages via `NewSelectPage`, `NewTextPage`, `NewConfirmPage`, `NewBrowserPage` (`wizardpage.go`). Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respected in both directions.
 
 ## FieldBrowserModel (`fieldbrowser.go`)
+
+Editor semantics, the mental model for layered config editing, and the store-editor checklist live in `internal/storeui/AGENTS.md`.
 
 Generic tabbed field browser/editor. Domain-agnostic — no knowledge of stores, reflection, or config schemas. Used by `internal/storeui` to edit any `Store[T]`.
 

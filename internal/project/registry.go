@@ -92,7 +92,7 @@ type Registry interface {
 // *storage.Store[ProjectRegistry] so the engine verbs stay reachable as the
 // escape hatch; those promoted methods never leak past the Registry interface,
 // since the type is unexported and only ever handed out as the interface (the
-// canonical store-backed pattern — see .claude/rules/store-backed-package.md).
+// canonical store-backed pattern — see .agents/rules/store-backed-package.md).
 type registryImpl struct {
 	*storage.Store[ProjectRegistry]
 }

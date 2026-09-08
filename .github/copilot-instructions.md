@@ -1,7 +1,7 @@
 # Copilot code review instructions
 
 You review pull requests for this repository. `AGENTS.md` at the repository
-root and the rule files in `.claude/rules/` are the coding standard. This file
+root and the rule files in `.agents/rules/` are the coding standard. This file
 tells you what to look for first and how to write each comment.
 
 Read the head branch of the pull request. Compare every added or changed line
@@ -18,7 +18,7 @@ Markers to find in the diff:
 - `//lint:ignore`
 - Changes to `exclusions`, `exclude`, or `nolintlint` settings in `.golangci.yml`
 
-The repository rule (`AGENTS.md`, section "Error Handling") is: do not add a
+The repository rule (`.agents/rules/code-style.md`, section "Error Handling") is: do not add a
 lint suppression without explicit maintainer approval. Correct the code so the
 linter passes. An explanation text after the marker is not sufficient on its
 own. In each comment:
@@ -65,7 +65,7 @@ Report each of these as a blocking finding:
   does not apply to that listener.
 - **Crash path.** `panic`, `log.Fatal`, or `os.Exit` on the control plane
   boot or serve path, or a serve goroutine without a `recover`. See
-  "CP crashing is a SECURITY incident" in `AGENTS.md`. A degraded subsystem
+  the CP failure rules in `controlplane/AGENTS.md`. A degraded subsystem
   must emit a structured log line with `event=<subsystem>_unavailable`.
 
 ## Priority 3: `CLAUDE.md` files
@@ -88,8 +88,7 @@ replace `CLAUDE.md` with a relative link to it.
 
 ## Priority 4: standing rules from `AGENTS.md`
 
-Flag these when they appear in the diff. Name the `AGENTS.md` section in the
-comment.
+Flag these when they appear in the diff. Name the shared rule file in the comment.
 
 - An error assigned to `_` or otherwise not handled.
 - A meaningful string literal that is not a named constant.
@@ -112,30 +111,13 @@ comment.
 
 - Write in plain, direct English. One sentence, one idea.
 - One finding per comment. Anchor the comment to the line.
-- Name the rule file or `AGENTS.md` section the finding comes from.
+- Name the shared rule file the finding comes from.
 - Give the fix, not only the problem.
 
 ## Rule files by path
 
-Read the matching rule file before you review a change in that path. This
-table mirrors the `paths:` front matter in each rule file.
-
-| Path | Rule file |
-| --- | --- |
-| `**/*.go` | `.claude/rules/testing.md` |
-| `internal/**`, `cmd/**` | `.claude/rules/dependency-placement.md` |
-| `internal/cmd/container/**` | `.claude/rules/container-commands.md` |
-| `internal/docker/**`, `pkg/whail/**` | `.claude/rules/docker-client.md` |
-| `controlplane/firewall/envoy_*.go` | `.claude/rules/envoy.md` |
-| `internal/git/**` | `.claude/rules/git.md` |
-| `internal/hostproxy/**` | `.claude/rules/hostproxy.md` |
-| `internal/iostreams/**`, `internal/cmd/**` | `.claude/rules/iostreams.md` |
-| `docs/**` | `.claude/rules/mintlify-docs.md` |
-| `internal/monitor/**`, `cmd/coredns-clawker/plugins/otel/**`, `controlplane/firewall/ebpf/netlogger/**`, `internal/consts/monitoring.go` | `.claude/rules/monitoring.md` |
-| `internal/storage/**`, `internal/config/schema*`, `internal/config/defaults*` | `.claude/rules/storage-schema.md` |
-| `internal/state/**`, `internal/config/**`, `internal/project/**`, `internal/storage/**`, `internal/storeui/**`, `controlplane/firewall/**` | `.claude/rules/store-backed-package.md` |
-| `internal/storeui/**`, `internal/config/storeui/**`, `internal/tui/fieldbrowser*`, `internal/tui/listeditor*`, `internal/tui/textareaeditor*` | `.claude/rules/storeui.md` |
-| `internal/tui/**` | `.claude/rules/tui.md` |
-
-`.claude/rules/code-style.md` and `.claude/rules/firewall-uat.md` apply to
-every path.
+Read every rule in [`.agents/rules/`](../.agents/rules/) whose `paths:` frontmatter
+matches a changed file, and every rule without `paths:`. It applies to added and untracked files too.
+Use the same rule source as Claude Code and Codex; do not copy the path table here.
+Constants, errors, and context rules are in `.agents/rules/code-style.md`.
+Dependency version requirements are in `.agents/docs/development.md`.

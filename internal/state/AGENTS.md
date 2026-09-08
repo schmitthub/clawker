@@ -19,18 +19,16 @@ other's way, and neither may be dropped without the other:
    (`internal/clawkercmd.Main`), so no `Set`→`Write` cycle interleaves with
    another's. The background goroutine that runs before the command only
    fetches; it never touches this store. The store cannot make a compound
-   Set-then-Write atomic across calls (see `internal/storage/CLAUDE.md`);
+   Set-then-Write atomic across calls (see `internal/storage/AGENTS.md`);
    serialization is architectural, never a lock in this package.
 
-This package is the **reference implementation** of
-`.claude/rules/store-backed-package.md` — read that rule before changing its
-shape.
+This package is the **reference implementation** of the Store-backed package contract in `internal/storage/AGENTS.md`. Read that contract before changing its shape.
 
 ## Related Docs
 
-- `internal/storage/CLAUDE.md` — the underlying store engine, merge strategy, write model
-- `internal/update/CLAUDE.md` — the pure checker whose result this package persists
-- `internal/clawkercmd/CLAUDE.md` — `Main()` constructs the facade and wires it to the checker + changelog teaser
+- `internal/storage/AGENTS.md` — the underlying store engine, merge strategy, write model
+- `internal/update/AGENTS.md` — the pure checker whose result this package persists
+- `internal/clawkercmd/AGENTS.md` — `Main()` constructs the facade and wires it to the checker + changelog teaser
 
 ## Schema
 

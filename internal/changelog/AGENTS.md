@@ -9,7 +9,7 @@ The package is split so the network hop and the cursor access can happen at
 different times: `GetChangelogEntries` fetches and parses, `CheckForChanges`
 (`changelog.go`, alongside `Entry` and the `between` range query) owns the
 cursor over already-fetched entries. The CLI fetches before running the user's
-command and decides after (see `internal/clawkercmd/CLAUDE.md`). `Entry` is the
+command and decides after (see `internal/clawkercmd/AGENTS.md`). `Entry` is the
 parsed unit. `Parse` (`parse.go`)
 is also exported so tooling can render a local `CHANGELOG.md` through the same
 teaser path (the `changelog-preview` make target → `internal/clawkercmd`

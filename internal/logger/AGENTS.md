@@ -12,7 +12,7 @@ Zerolog-based file-only logging with optional OTEL bridge. Struct-based API — 
 
 **Dual-destination**: When `OtelOptions` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via a custom `io.Writer` sink (`otelLogWriter`) that parses zerolog's JSON output and re-emits each record as an OTEL `log.Record` with all structured fields preserved. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
 
-**User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See `cli-output-style-guide` memory for per-scenario details.
+**User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See [.agents/docs/cli-output-style-guide.md](../../.agents/docs/cli-output-style-guide.md) for per-scenario details.
 
 ## Types
 
@@ -85,7 +85,7 @@ type OtelOptions struct {
 }
 ```
 
-Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawkercp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/CLAUDE.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
+Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawkercp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/AGENTS.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
 
 ## Constructors
 
@@ -113,7 +113,7 @@ failure mode is benign for an append log (see doc comments).
 
 `NewWriter` writes structured JSON to an arbitrary `io.Writer` with no file rotation and no OTEL bridge. Used in tests (passing `*bytes.Buffer`) and as the degraded fallback in `clawkercp` when `New` fails (writes to `os.Stderr`). Debug level by default.
 
-**Note**: Both `clawkerd` and `clawkercp` use `New(...)` as their primary logger, not `NewWriter`. `clawkercp` sets `EchoStdout: true` to mirror records to stdout so `docker logs clawker-controlplane` shows them alongside the file/OTEL sinks. `clawkerd` uses `New(...)` writing to `/var/log/clawker/clawkerd.log` without `EchoStdout` — per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `clawkerd/CLAUDE.md` for the full level taxonomy.
+**Note**: Both `clawkerd` and `clawkercp` use `New(...)` as their primary logger, not `NewWriter`. `clawkercp` sets `EchoStdout: true` to mirror records to stdout so `docker logs clawker-controlplane` shows them alongside the file/OTEL sinks. `clawkerd` uses `New(...)` writing to `/var/log/clawker/clawkerd.log` without `EchoStdout` — per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `clawkerd/AGENTS.md` for the full level taxonomy.
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 

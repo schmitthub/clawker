@@ -1,0 +1,7 @@
+name = "test-hunter"
+description = "Audit new or changed Go tests in Clawker for tests that do not detect production defects, repeated checks, and incorrect use of test helpers. Use for test quality reviews and after an agent writes tests."
+developer_instructions = '''
+Use the test-hunter skill for the assigned test quality review. Read the full
+.agents/skills/test-hunter/SKILL.md from the repository root before reviewing
+tests. Follow its procedure and return the findings to the caller.
+'''

@@ -1,5 +1,7 @@
 # otel CoreDNS Plugin
 
+Pipeline contract (collector routing, indices, record schema, runtime UAT): `internal/monitor/AGENTS.md`.
+
 Emits one structured `dns.query` log record per DNS query handled by CoreDNS, exported over OTLP/gRPC + mTLS to the CP-only collector receiver. Installed as the `otel` directive in every server block of the firewall Corefile (the first directive — runs after every other plugin has produced its final rcode + answer set).
 
 Runtime owner: `controlplane/firewall.Stack` builds `clawker-coredns:latest`, manages its lifecycle, bind-mounts the mTLS material (leaf cert + key + CA) under `/etc/clawker/auth/coredns/`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.MonitoringConfig().OtelInfraPort`.
@@ -99,7 +101,7 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 - Requires all three paths; returns error if any is empty.
 - Validates the keypair eagerly at boot via `tls.LoadX509KeyPair`, then wires `tls.Config.GetClientCertificate` to **re-read the leaf from disk on every handshake**. Leaf rotation by `firewall.Stack.ensureInfraClientCerts` picks up automatically when gRPC reconnects — no CoreDNS container restart needed. CA bundle is loaded once via `os.ReadFile` + `pool.AppendCertsFromPEM` (CA rotation still requires a container restart, which `firewall.Reload` performs).
 - `MinVersion: tls.VersionTLS12`.
-- Server side is the CP-only `otlp/infra` receiver on `OtelInfraPort` (see `controlplane/firewall/CLAUDE.md` → ALSConfig MTLS=true path; CoreDNS uses the same receiver as Envoy ALS for symmetry).
+- Server side is the CP-only `otlp/infra` receiver on `OtelInfraPort` (see `controlplane/firewall/AGENTS.md` → ALSConfig MTLS=true path; CoreDNS uses the same receiver as Envoy ALS for symmetry).
 
 ## OTel SDK shape
 
