@@ -31,6 +31,12 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Pin external dependencies to exact versions with integrity verification. See the [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use targeted packages or `make test`.
 
+## Dependency placement
+
+- Implementation lives in `internal/<package>/`, never in `cmdutil/`. `cmdutil/` holds only the Factory struct, output utilities, and argument validators.
+- The only question is who constructs a dependency. Constructed at startup and used by three or more commands: a Factory field. Constructed at startup for fewer commands: the command imports the package and holds it on its Options struct. Needs CLI arguments or runtime context: constructed in the run function, tested by injecting a mock on Options.
+- Package ownership: Serena `architecture` memory, Key Packages and Package Import DAG.
+
 ## Testing rules
 
 - Docker is always available. Never defer or skip Docker-based tests. When a change touches containers, networks, or volumes, write the integration test in the same task.
