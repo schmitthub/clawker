@@ -4,10 +4,10 @@ Clawker is a Go CLI that runs coding agents in Docker containers with controlled
 
 ## Shared instructions
 
-Claude Code and Codex must use the same project instructions, rules, skills, and references.
+Claude Code and Codex must use the same project instructions, skills, and memories.
 Store instructions in regular `AGENTS.md` files. Each must have a sibling `CLAUDE.md` symbolic link with the relative target `AGENTS.md`.
 Before reading or changing files, read the Serena `core` memory and the memories it names for the touched domain.
-Read package `AGENTS.md` files along the path to each file, including files outside the working directory. Requirements for one package tree live in that tree's `AGENTS.md`, not in a rule file.
+Read package `AGENTS.md` files along the path to each file, including files outside the working directory. Requirements for one package tree live in that tree's `AGENTS.md`.
 Use instructions already loaded in the session. Do not load an entire reference directory.
 Keep `.agents/` independent of any harness. Store native settings and tool-specific hooks in `.claude/` or `.codex/`. A skill that is also a subagent keeps each harness definition in its `agents/` directory.
 
