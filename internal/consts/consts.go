@@ -313,6 +313,8 @@ const (
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
 	CLIStateFile = "update-state.yaml"
+	// ClawkerCLIDBFile is the CLI-owned database in the state directory.
+	ClawkerCLIDBFile = "clawker-cli.db"
 )
 
 // SysFSBPFPath is the kernel's canonical BPF filesystem mount point. It is
@@ -396,8 +398,9 @@ const PostInitMarkerFile = "post-initialized"
 // in-container DotClawkerDir; clawkerd's init plan runs the matching
 // step (the plan step Name and the script basename must agree).
 const (
-	HookPostInit = "post-init"
-	HookPreRun   = "pre-run"
+	HookPostInit    = "post-init"
+	HookSocketsWait = "sockets-wait"
+	HookPreRun      = "pre-run"
 )
 
 // Auth material subdirectory segments under authDir. Shared by the
@@ -875,12 +878,13 @@ const (
 	EnvGitHTTPS = "CLAWKER_GIT_HTTPS"
 )
 
-// Bridged socket types. Wire vocabulary shared by the env payload
-// builder (internal/docker), the in-container socket server, and the
-// host-side socket bridge.
+// Socket bridge wire vocabulary shared by the env payload builder, the
+// container socket server, the host bridge, and the daemon command.
 const (
-	SocketTypeSSHAgent = "ssh-agent"
-	SocketTypeGPGAgent = "gpg-agent"
+	SocketTypeSSHAgent    = "ssh-agent"
+	SocketTypeGPGAgent    = "gpg-agent"
+	SocketTypeBridged     = "bridged"
+	BridgeSocketsFileFlag = "sockets-file"
 )
 
 // ---------------------------------------------------------------------------
@@ -914,6 +918,22 @@ func subdirPathUnder(subdir string, baseDir string) (string, error) {
 func ensureDir(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+const privateDirectoryMode os.FileMode = 0o700
+
+func ensurePrivateDir(dir string) (string, error) {
+	return ensureDirWithMode(dir, privateDirectoryMode)
+}
+
+func ensureDirWithMode(dir string, mode os.FileMode) (string, error) {
+	if err := os.MkdirAll(dir, mode); err != nil {
+		return "", fmt.Errorf("creating private dir %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		return "", fmt.Errorf("tightening private dir %s: %w", dir, err)
 	}
 	return dir, nil
 }
@@ -1361,6 +1381,16 @@ func ReadyFilePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, ReadyFile), nil
+}
+
+// ClawkerCLIDBPath ensures the state directory and returns the CLI database
+// path.
+func ClawkerCLIDBPath() (string, error) {
+	dir, err := ensurePrivateDir(StateDir())
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ClawkerCLIDBFile), nil
 }
 
 // AuditLogPath ensures <StateDir>/audit and returns the audit log file path.

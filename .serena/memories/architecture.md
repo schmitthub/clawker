@@ -26,7 +26,7 @@ Agent file layout is in `.agents/skills/agent-files/SKILL.md`.
 │              │  │                     │  │                       │
 │ docker/      │  │ storage/ (engine)   │  │ controlplane/ (CP daemon — Envoy+DNS+BPF) │
 │ workspace/   │  │ config/ (project)   │  │ hostproxy/ (auth)     │
-│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/ (SSH)   │
+│ containerfs/ │  │ config/ (settings)  │  │ socketbridge/         │
 │ bundler/     │  │ project/ (registry) │  │ keyring/ (creds)      │
 │              │  │ storeui/ (TUI edit) │  │                       │
 │ pkg/whail    │  │                     │  │                       │
@@ -362,6 +362,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — only internal import is `internal/consts` (stdlib-only). See `internal/storage/AGENTS.md` |
 | `internal/config` | Domain facade composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with value-specific/group accessors, path/constant helpers (~40 methods), and `ProjectStore()`/`SettingsStore()` as the raw-verb escape hatch. **Foundation** — imports storage, consts, build. See `internal/config/AGENTS.md` |
+| `internal/db` | Process-wide CLI SQLite connection and schema migrations. `DB` is connection machinery only; table verbs live on separate stores such as `SocketGrantStore`. Factory noun `f.DB()`. See `internal/db/AGENTS.md` |
 | `internal/state` | `StateStore` — domain facade over `Store[State]` for the CLI's persisted runtime state (update-check cache + changelog cursor). The reference implementation of the Store-backed package contract in `internal/storage/AGENTS.md`. Factory noun `f.CLIState()`. See `internal/state/AGENTS.md` |
 | `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
@@ -390,7 +391,7 @@ User interaction utilities with TTY and CI awareness.
 | `controlplane/firewall` | Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS container lifecycle), `ActionQueue` (serialized mutation, rule writes included), Envoy/CoreDNS config generators, certificate PKI, `EgressRulesStore`/`RouteIdentityStore` facades, cgroup helpers, drift resolver, rich error types |
 | `controlplane/firewall/ebpf` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |
 | `controlplane/firewall/ebpf/netlogger` | Per-decision-point egress event emitter — drains BPF `events_ringbuf`, enriches by `cgroup_id` via pub/sub enrollment events, emits OTLP log records (`service.name=ebpf-egress`) on the trusted infra lane |
-| `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
+| `internal/socketbridge` | SSH/GPG forwarding and approved harness-declared Unix socket bridges via muxrpc over `docker exec` |
 | `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
@@ -433,7 +434,7 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - URL opening: Container → `host-open` script → POST /open/url → host browser
 - OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
-- SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
+- SSH/GPG and approved harness sockets: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
 ### Firewall Subsystem (CP-owned)
 
@@ -500,7 +501,7 @@ Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `
 
 **Certificate PKI:** Path-based egress rules require TLS interception. One `firewall.CAStore` is shared by the handler, stack, and SDS server. `Load` holds a read lock and never generates a CA; `Ensure` and `Rotate` hold a write lock. PEM files are replaced by atomic rename, key first. A loaded certificate and key must match. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair in `FirewallDataSubdir/certs`. `GenerateDomainCert` signs per-domain certificates for Envoy's MITM termination. `FirewallRotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy. Wildcard HTTPS/WSS TCP chains use the on-demand certificate selector. `firewall.SDSServer` checks the SNI against stored wildcard rule zones and calls `GenerateSNICert` for a leaf with that exact SAN. `startSDSServer` serves delta xDS over mTLS on `ControlPlaneSettings.SDSPort` before firewall startup. The stack sets the Envoy process identity from `consts.EnvoyUID` and `consts.EnvoyGID`. `CAStore` carries that identity as the domain-cert reader: every per-domain leaf and key is chowned to it with mode `0600` before the rename publishes the file, and the certs directory is group-traversable (`0750`, reader group) while CP retains ownership. The CA pair stays with CP root; Envoy never loads it. SDS client files follow the same layout. Ownership and permissions are set before each atomic file replacement — a bind mount on a Linux host preserves host ownership, so a root-owned `0600` leaf is unreadable to Envoy and fails its config load. SDS failures log `event=sds_unavailable` and leave other CP services running. QUIC chains retain static certificates because the selector does not support QUIC; deeper names require TCP fallback.
 
-**Rule persistence:** Active egress rules live behind `firewall.EgressRulesStore` — the domain facade over `storage.Store[EgressRulesFile]`, backed by `egress-rules.yaml` under `FirewallDataSubdir`; the Handler and Stack hold the interface, never the raw store. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `bundler.EgressRules(cfg, harness)` composes the selected harness's required egress floor with the project's own contribution (`cfg.ProjectEgressRules()` — `security.firewall.rules` plus the `add_domains` shorthand); `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
+**Rule persistence:** Active egress rules live behind `firewall.EgressRulesStore` — the domain facade over `storage.Store[EgressRulesFile]`, backed by `egress-rules.yaml` under `FirewallDataSubdir`; the Handler and Stack hold the interface, never the raw store. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). Container command run functions load the runtime harness once. They pass its egress floor to `BootstrapServicesPreStart`, which uses `bundler.ComposeEgressRules` to add the project's own contribution (`cfg.ProjectEgressRules()` — `security.firewall.rules` plus the `add_domains` shorthand) without a second harness read. Pre-start sends the union to `FirewallAddRules`; `BootstrapServicesPostStart` issues `FirewallEnable` after Docker start creates the cgroup.
 
 **Network isolation:** The CP creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — `gateway+EnvoyIPLastOctet` (.2) for Envoy, `gateway+CoreDNSIPLastOctet` (.3) for CoreDNS, `gateway+CPIPLastOctet` (.202) for the CP container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. Static-IP assignment cannot go through whail's `EnsureNetwork` helper (which hard-overwrites `EndpointSettings`) — call `dc.EnsureNetwork` first, then explicit `NetworkingConfig.IPAMConfig.IPv4Address` in `ContainerCreate`.
 
@@ -735,6 +736,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │  controlplane/adminclient → auth, consts, api/admin/v1           │
 │  hostproxy → config, logger                                     │
 │  socketbridge → config, logger                                  │
+│  db → config, logger, socketbridge                              │
 │  containerfs → config, keyring, logger                          │
 │  monitor → config                                               │
 │  docs → config, storage                                         │
@@ -748,7 +750,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │           pkg/whail, pkg/whail/buildkit                         │
 │  workspace → config, docker, logger                             │
 │  cmdutil → config, controlplane/manager, controlplane/adminclient,│
-│            docker, git, hostproxy, iostreams, logger, project,  │
+│            db, docker, git, hostproxy, iostreams, logger, project,│
 │            prompter, socketbridge, tui, api/admin/v1            │
 │            (mostly type-level imports for Factory struct fields) │
 └─────────────────────────────────────────────────────────────────┘
@@ -794,13 +796,14 @@ Each package with complex dependencies provides test infrastructure:
 | `controlplane/firewall/ebpf/netlogger/` (test-only) | In-package seams: `Sink` interface (`recordingSink` for processor tests), `ContainerInspecter` interface (`fakeInspecter`), `readerSource` interface (`fakeRingbuf`); `newTestService` helper wires bus subscriptions without requiring CAP_BPF |
 | `hostproxy/hostproxytest/` | `MockHostProxy` |
 | `socketbridge/mocks/` | `SocketBridgeManagerMock` (moq-generated) |
+| `db/mocks/` | `SocketGrantStoreMock` (moq-generated) |
 | `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `storage` | `ValidateDirectories()` — XDG directory collision detection |
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **composite package** by import count — it imports config, controlplane/manager, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)` and `ControlPlane func() manager.Manager`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities.
+`cmdutil` is a **composite package** by import count — it imports config, controlplane/manager, db, docker, git, hostproxy, iostreams, logger, project, prompter, socketbridge, tui, and `api/admin/v1`. However, its high fan-out is structural (type declarations for Factory struct fields like `AdminClient func(ctx) (adminv1.AdminServiceClient, error)`, `ControlPlane func() manager.Manager`, and `DB func() (*db.DB, error)`), not behavioral. It contains no construction logic — that lives in `cmd/factory/`. Commands and the entry point import cmdutil for the Factory type and shared utilities. `DB` is the only permanent CLI database noun; commands compose table stores over it in their Options closures.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 

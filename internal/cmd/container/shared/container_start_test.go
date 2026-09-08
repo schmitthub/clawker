@@ -21,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -58,6 +59,35 @@ func noopCPManager() func(context.Context) (cpmanager.Manager, error) {
 func testIOStreams() *iostreams.IOStreams {
 	tio, _, _, _ := iostreams.Test() //nolint:dogsled // only the streams handle matters here
 	return tio
+}
+
+func floorRuntimeHarness() RuntimeHarness {
+	return RuntimeHarness{
+		Name: "claude",
+		Provenance: bundle.Provenance{
+			Tier:    bundle.TierFloor,
+			Dir:     "",
+			Bundle:  bundle.BundleID{Namespace: "", Name: ""},
+			Shadows: nil,
+		},
+		Sockets:           nil,
+		Egress:            nil,
+		HasContainerLabel: true,
+	}
+}
+
+func preStartTestOpts(
+	streams *iostreams.IOStreams,
+	cfg func() (config.Config, error),
+	client func(context.Context) (*docker.Client, error),
+) CommandOpts {
+	var opts CommandOpts
+	opts.IOStreams = streams
+	opts.Config = cfg
+	opts.ControlPlane = noopCPManager()
+	opts.Client = client
+	opts.Harness = floorRuntimeHarness()
+	return opts
 }
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
@@ -128,7 +158,7 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := BootstrapServicesPreStart(context.Background(), "ctr", tt.cmdOpts)
+			_, err := BootstrapServicesPreStart(context.Background(), "ctr", tt.cmdOpts)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
@@ -139,21 +169,20 @@ func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {
 func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	t.Parallel()
 
-	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-		IOStreams:    testIOStreams(),
-		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
-		ControlPlane: noopCPManager(),
-		Client:       okClientProvider(t),
-	})
+	opts := preStartTestOpts(
+		testIOStreams(),
+		testRuntimeConfig("", `firewall: { enable: false }`),
+		okClientProvider(t),
+	)
+	_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)
 	}
 }
 
-// TestBootstrapServices_PreRunDelivery proves the every-start pre_run
-// contract: the hook script is always copied to the container (user body
-// when set, no-op wrapper when unset so a removed hook overwrites stale
-// content), and a copy failure aborts the start.
+// TestBootstrapServices_PreRunDelivery proves the every-start hook delivery
+// contract: sockets-wait and pre_run are always copied to the container, and
+// a copy failure aborts the start.
 func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -161,46 +190,46 @@ func TestBootstrapServices_PreRunDelivery(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-		})
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		fake.AssertCalledN(t, "CopyToContainer", 1)
+		fake.AssertCalledN(t, "CopyToContainer", 2)
 	})
 
 	t.Run("delivers no-op when pre_run unset", func(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainer()
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-		})
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig("", `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		fake.AssertCalledN(t, "CopyToContainer", 1)
+		fake.AssertCalledN(t, "CopyToContainer", 2)
 	})
 
 	t.Run("copy failure aborts the start", func(t *testing.T) {
 		t.Parallel()
 		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupCopyToContainerError(errors.New("copy boom"))
-		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
-			IOStreams:    testIOStreams(),
-			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
-			ControlPlane: noopCPManager(),
-			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
-		})
-		if err == nil || !strings.Contains(err.Error(), "injecting pre-run script") {
-			t.Fatalf("expected pre-run injection error, got %v", err)
+		opts := preStartTestOpts(
+			testIOStreams(),
+			testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
+			func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		)
+		_, err := BootstrapServicesPreStart(context.Background(), "ctr", opts)
+		if err == nil || !strings.Contains(err.Error(), "injecting sockets-wait script") {
+			t.Fatalf("expected sockets-wait injection error, got %v", err)
 		}
 	})
 }
@@ -234,13 +263,13 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio, bothProjectYAML))
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "GPG forwarding is configured")
 		calls := sb.EnsureBridgeCalls()
 		require.Len(t, calls, 1)
-		assert.True(t, calls[0].GpgEnabled, "precheck must not change the configured GPG flag")
+		assert.True(t, calls[0].Opts.GPGEnabled, "precheck must not change the configured GPG flag")
 	})
 
 	t.Run("missing SSH agent warns", func(t *testing.T) {
@@ -251,7 +280,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio, bothProjectYAML))
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio, bothProjectYAML))
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "SSH forwarding is configured")
@@ -269,7 +298,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		}
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio,
 			`security: { git_credentials: { forward_gpg: false, forward_ssh: true, copy_git_config: false } }`))
 		require.NoError(t, err)
 
@@ -295,7 +324,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 		)
 		opts.HostProxy = func() hostproxy.Service { return hp }
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, opts)
 		require.NoError(t, err)
 
 		assert.Contains(t, errOut.String(), "HTTPS credential forwarding is configured")
@@ -319,7 +348,7 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
 		sb := sbmocks.NewMockManager()
 		tio, _, _, errOut := iostreams.Test()
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", forwarderOpts(sb, tio,
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, forwarderOpts(sb, tio,
 			`security: { git_credentials: { forward_gpg: false, forward_ssh: false, copy_git_config: true } }`))
 		require.NoError(t, err)
 
@@ -341,12 +370,35 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome(t *testing.T) {
 		)
 		opts.HostProxy = func() hostproxy.Service { return hp }
 
-		err := BootstrapServicesPostStart(context.Background(), "ctr", opts)
+		err := BootstrapServicesPostStart(context.Background(), "ctr", nil, opts)
 		require.NoError(t, err)
 
 		assert.Empty(t, errOut.String())
 		require.Len(t, sb.EnsureBridgeCalls(), 1)
-		assert.True(t, sb.EnsureBridgeCalls()[0].GpgEnabled)
+		assert.True(t, sb.EnsureBridgeCalls()[0].Opts.GPGEnabled)
+	})
+
+	t.Run("generic sockets start a bridge without credential lanes", func(t *testing.T) {
+		t.Parallel()
+		sb := sbmocks.NewMockManager()
+		tio, _, _, _ := iostreams.Test()
+		sockets := []socketbridge.BridgedSocket{{
+			HostPath: "/host/service.sock",
+			Target:   "/run/service.sock",
+			Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
+			Group:    "service",
+			Mode:     "0660",
+		}}
+
+		err := BootstrapServicesPostStart(context.Background(), "ctr", sockets, forwarderOpts(sb, tio,
+			`security: { git_credentials: { forward_gpg: false, forward_ssh: false, copy_git_config: false } }`))
+		require.NoError(t, err)
+
+		calls := sb.EnsureBridgeCalls()
+		require.Len(t, calls, 1)
+		assert.Equal(t, "ctr", calls[0].Opts.ContainerID)
+		assert.False(t, calls[0].Opts.GPGEnabled)
+		assert.Equal(t, sockets, calls[0].Opts.Sockets)
 	})
 }
 
@@ -592,6 +644,7 @@ func TestContainerStart_StartFailureReapsAutoRemove(t *testing.T) {
 		Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
 		Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
 		ControlPlane: noopCPManager(),
+		Harness:      floorRuntimeHarness(),
 	}, docker.ContainerStartOptions{ContainerID: "ctr"})
 
 	if err == nil || !strings.Contains(err.Error(), "start boom") {
@@ -628,22 +681,37 @@ func testRuntimeConfig(projectYAML, settingsYAML string) func() (config.Config, 
 // against a real Hydra; that path lives in test/e2e and the manual
 // UAT flow.)
 
-// assertHarnessResolvable enforces the stale-harness-label gate at container
-// start: a qualified harness label resolves only while its bundle's source is
-// declared — a cached bundle whose `bundles:` entry was deleted must refuse the
-// start (the container would otherwise run against an egress floor weaker than
-// it was built for). A bare floor harness always resolves.
-func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
+// LoadContainerHarness enforces the stale-harness-label gate with the same
+// canonical reader that command run functions use.
+func TestLoadContainerHarness_DeclarationGated(t *testing.T) {
 	testenv.New(t)
 	const url = "https://example.com/acme/tools.git"
-	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url,
-		map[string]string{"harnesses/claude/harness.yaml": "version:\n  resolver: none\nstacks: []\n"})
+	bundletest.PlantCachedBundle(t, "acme", "tools", "1.0.0", url, map[string]string{
+		"harnesses/claude/harness.yaml":            "version:\n  resolver: none\nstacks: []\n",
+		"harnesses/claude/Dockerfile.harness.tmpl": `{{define "cmd"}}CMD ["true"]{{end}}`,
+	})
+	load := func(cfg config.Config, harnessName string) error {
+		fake := mocks.NewFakeClient(cfg)
+		fake.SetupContainerInspect(
+			"ctr",
+			container.Summary{ //nolint:exhaustruct,exhaustruct_v5 // The loader reads only labels.
+				ID:    "ctr",
+				Names: []string{"/ctr"},
+				Labels: map[string]string{
+					cfg.LabelManaged():  cfg.ManagedLabelValue(),
+					consts.LabelHarness: harnessName,
+				},
+			},
+		)
+		_, _, err := LoadContainerHarness(context.Background(), fake.Client, cfg, "ctr", logger.Nop())
+		return err
+	}
 
 	undeclared := configmocks.NewBlankConfig()
-	resolveErr := assertHarnessResolvable(undeclared, "acme.tools.claude")
+	resolveErr := load(undeclared, "acme.tools.claude")
 	require.Error(t, resolveErr)
 	require.ErrorIs(t, resolveErr, bundle.ErrNotCached)
-	assert.Contains(t, resolveErr.Error(), "no longer resolves")
+	assert.Contains(t, resolveErr.Error(), "no longer loads")
 	assert.Contains(t, resolveErr.Error(), "clawker bundle install")
 
 	declared := configmocks.NewBlankConfig()
@@ -655,8 +723,8 @@ func TestAssertHarnessResolvable_DeclarationGated(t *testing.T) {
 			},
 		}
 	}
-	require.NoError(t, assertHarnessResolvable(declared, "acme.tools.claude"))
+	require.NoError(t, load(declared, "acme.tools.claude"))
 
-	require.NoError(t, assertHarnessResolvable(undeclared, "claude"),
+	require.NoError(t, load(undeclared, "claude"),
 		"a bare floor harness resolves regardless of bundle declarations")
 }

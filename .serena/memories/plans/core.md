@@ -12,6 +12,8 @@
 - Dated OpenCode/Pi package and harness research: `mem:plans/multi-harness/harness-research-opencode-pi`.
 - Dated native plugin installation research and migration choices: `mem:plans/multi-harness/skill-distribution-native-install-research`.
 - Generic required-socket-bridge requirements: `mem:plans/generic-socket-bridge/requirements`.
+- Generic socket-bridge task plan and status: `mem:plans/generic-socket-bridge/plan`.
+- Generic socket-bridge review findings, overwritten per round: `mem:plans/generic-socket-bridge/review-findings`.
 - OpenClaw task decisions and phases: `mem:plans/openclaw/plan`.
 - OpenClaw source investigation that supported the plan: `mem:plans/openclaw/research`.
 

@@ -138,6 +138,7 @@ func TestLoadHarness_Floor(t *testing.T) {
 	b, err := bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
 	require.NoError(t, err)
 	assert.Equal(t, bundler.DefaultHarnessName, b.Name)
+	assert.Equal(t, bundle.TierFloor, b.Provenance.Tier)
 }
 
 // A loose project harness resolves by its bare name and its Name is that
@@ -149,6 +150,49 @@ func TestLoadHarness_LooseProject(t *testing.T) {
 	b, err := bundler.LoadHarness(cfg, "mytool")
 	require.NoError(t, err)
 	assert.Equal(t, "mytool", b.Name)
+	assert.Equal(t, bundle.TierLooseProject, b.Provenance.Tier)
+	assert.Equal(
+		t,
+		filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), "mytool"),
+		b.Provenance.Dir,
+	)
+}
+
+func TestLoadHarness_ExpandsSocketSources(t *testing.T) {
+	cfg, root := looseHarnessEnv(t)
+	t.Setenv("CLAWKER_TEST_SOCKET_ROOT", "")
+	writeLooseHarness(t, root, "mytool", `version: { resolver: none }
+sockets:
+  - source: ${CLAWKER_TEST_SOCKET_ROOT:-~/.missing}/some.sock
+    target: /tmp/some.sock
+    purpose: Exercise host path semantics.
+`)
+
+	b, err := bundler.LoadHarness(cfg, "mytool")
+	require.NoError(t, err)
+	require.Len(t, b.Manifest.Sockets, 1)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".missing", "some.sock"), b.Manifest.Sockets[0].Source)
+}
+
+func TestLoadHarness_DefersUnsetSocketSource(t *testing.T) {
+	cfg, root := looseHarnessEnv(t)
+	const missingSocket = "CLAWKER_TEST_MISSING_SOCKET"
+	t.Setenv(missingSocket, os.Getenv(missingSocket))
+	require.NoError(t, os.Unsetenv(missingSocket))
+	writeLooseHarness(t, root, "mytool", `version: { resolver: none }
+sockets:
+  - source: $CLAWKER_TEST_MISSING_SOCKET
+    target: /tmp/optional.sock
+    purpose: Exercise an optional missing socket.
+    optional: true
+`)
+
+	b, err := bundler.LoadHarness(cfg, "mytool")
+	require.NoError(t, err)
+	require.Len(t, b.Manifest.Sockets, 1)
+	assert.Equal(t, "$CLAWKER_TEST_MISSING_SOCKET", b.Manifest.Sockets[0].Source)
 }
 
 // A harness convention dir with no harness.yaml resolves (the dir exists) but

@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/clawker"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -41,6 +42,8 @@ type Factory struct {
 	Config   func() (config.Config, error)
 	Logger   func() (*logger.Logger, error)
 	CLIState func() (state.StateStore, error)
+	// DB is the process-wide CLI database connection.
+	DB func() (*db.DB, error)
 	// ProjectRegistry is the process-wide project registry facade — the
 	// single constructor of registry storage. Config walk-up anchoring,
 	// the project manager, and any command needing project-root resolution

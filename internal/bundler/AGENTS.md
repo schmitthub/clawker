@@ -8,7 +8,7 @@ Image-generation package: Dockerfile generation, harness bundle + stack/monitori
 |------|---------|
 | `dockerfile.go` | Dockerfile rendering (`ProjectGenerator`), build-context generation, embedded templates/scripts |
 | `basehash.go` | Base-image freshness hash (`BaseContentHash`) |
-| `bundle.go` | Bundle loading + validation (`LoadBundle`, staging/volume/seed/egress-floor validators, `validateStackDecls` for the harness `stacks:` dependency list), `Bundle` type + accessors (`WalkAssets`), harness-format filename consts (`HarnessManifestFile`, `HarnessTemplateFile`, `AssetsDir`). Monitoring is a bundle **peer component** enumerated by `internal/bundle`, never declared in `harness.yaml` — the harness manifest carries no `monitoring:` field. |
+| `bundle.go` | Bundle loading + validation (`LoadBundle`, staging/volume/seed/egress-floor/socket validators, `validateStackDecls` for the harness `stacks:` dependency list), `Bundle` type + accessors (`WalkAssets`), harness-format filename consts (`HarnessManifestFile`, `HarnessTemplateFile`, `AssetsDir`). Monitoring is a bundle **peer component** enumerated by `internal/bundle`, never declared in `harness.yaml` — the harness manifest carries no `monitoring:` field. |
 | `compose.go` | Master-template composition (`Compose`, `DeclaredBlocks`), block-slot + reserved-define validation |
 | `stack_load.go` | Stack definition loading (`LoadStackDefinition`, `StackDefinition`, `ValidateStackName` — accepts bare or qualified addresses via `consts.ValidateComponentRef`), stack-format filename consts (`StackManifestFile`, `StackRootFragmentFile`, `StackUserFragmentFile`) |
 | `harness.go` | Harness selection + loading through the one resolution algorithm (`internal/bundle` resolver: bare = loose > floor, qualified = installed), selector validation, provenance (`LoadHarness`, `ResolveHarnessName`, `ValidateHarnessSelector`, `ShippedHarnessNames`, `KnownHarnessNames`, `IsKnownHarness`) |
@@ -176,7 +176,7 @@ func ShippedHarnessNames() []string                                    // floor 
 func ResolveHarnessName(cfg config.Config, explicit string) (string, error) // explicit selector (validated), else the build.harness selection key, else DefaultHarnessName; nil-project tolerant
 func ValidateHarnessSelector(name string) error                        // bare or qualified; reserved image-tag alias check is bare-only
 func KnownHarnessNames(cfg config.Config) []string                     // floor ∪ loose ∪ installed-bundle harnesses via resolver.List; IsKnownHarness(cfg, name) bool
-func LoadHarness(cfg config.Config, name string) (*Bundle, error)      // resolves via bundle.NewResolver(cfg).Resolve, then LoadBundle(comp.FS)
+func LoadHarness(cfg config.Config, name string) (*Bundle, error)      // resolves, loads, records provenance, and expands resolvable socket source paths
 ```
 
 A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress, optional `managed_prompt` — the build-time copy target for clawker's managed agent context; absent = the harness doesn't take one) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. The parsed manifest (`config.Manifest` and its nested schema types) lives in `internal/config`; `LoadBundle` (`bundle.go`) reads + validates it, and `Compose` (`compose.go`) renders the fragment against the master template.
@@ -187,9 +187,13 @@ floor; a qualified `namespace.bundle.component` address resolves from the
 installed/in-place bundle set. There is no `harnesses:` path registry and no
 walkup. `LoadHarness` keeps its `(cfg, name)` signature and internally calls
 `bundle.NewResolver(cfg).Resolve(bundle.ComponentHarness, name)`, then
-`LoadBundle(name, comp.FS)` — so the `Bundle.Name` is the exact selection
-spelling (bare or dotted), which downstream becomes the image tag, the harness
-label, and the per-harness overlay key. A loose harness named like a floor one
+`LoadBundle(name, comp.FS)`. It records `comp.Provenance` on the returned
+`Bundle` and expands each socket source with `config.ExpandHostPath`. It leaves a
+source unchanged if expansion fails. The start command then applies required or
+optional socket behavior. Other callers, such as build and create, do not fail
+because a start-time socket is not available.
+The `Bundle.Name` is the exact selection spelling (bare or dotted), which
+downstream becomes the image tag, the harness label, and the per-harness overlay key. A loose harness named like a floor one
 shadows it (surfaced in build output). Custom harness = drop a bundle dir into a
 loose convention dir (`.clawker/harnesses/<name>/` or the user config-dir
 equivalent), or install a bundle. Unresolvable name = hard "not found" error.
@@ -216,9 +220,10 @@ Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-ro
 
 ```go
 func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error)
+func ComposeEgressRules(cfg config.Config, floor []config.EgressRule) []config.EgressRule
 ```
 
-Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = the configured default harness (`ResolveHarnessName`).
+Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. `EgressRules` loads a harness for callers that do not have one. Container start paths use `ComposeEgressRules` with the floor from their already-loaded runtime harness. Empty name = the configured default harness (`ResolveHarnessName`).
 
 ### Asset Placement in the Harness Image (cache-locality + inject-lifetime invariants)
 

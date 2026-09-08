@@ -16,11 +16,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
@@ -35,12 +37,15 @@ type StartOptions struct {
 	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	SocketGrants   func() (db.SocketGrantStore, error)
+	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 
-	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
-	Attach      bool
-	Containers  []string
-	Interactive bool
+	Agent         bool // Use agent name (resolves to clawker.<project>.<agent>)
+	Attach        bool
+	Containers    []string
+	Interactive   bool
+	ApproveGrants bool
 }
 
 // NewCmdStart creates the container start command.
@@ -54,7 +59,14 @@ func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) e
 		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
+		SocketGrants:   cmdutil.SocketGrantStore(f),
+		Prompter:       f.Prompter,
 		Logger:         f.Logger,
+		Agent:          false,
+		Attach:         false,
+		Containers:     nil,
+		Interactive:    false,
+		ApproveGrants:  false,
 	}
 
 	cmd := &cobra.Command{
@@ -92,6 +104,7 @@ Container names can be:
 	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Attach, "attach", "a", false, "Attach STDOUT/STDERR and forward signals")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Attach container's STDIN")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	return cmd
 }
@@ -142,32 +155,100 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		}
 
 		containerName := containers[0]
+		harness, harnessErr := runtimeHarnessForContainer(ctx, client, cfg, containerName, log)
+		if harnessErr != nil {
+			//nolint:contextcheck,wrapcheck // reap is cleanup after cancellation and returns the composed start error
+			return shared.ReapFailedStart(
+				client,
+				containerName,
+				fmt.Errorf("pre-start bootstrapping failed: %w", harnessErr),
+			)
+		}
 		// Bootstrap host services (CP ensure, host proxy, firewall init/rules)
 		// under a spinner BEFORE attach. Run in cooked mode here so the spinner
 		// stays clear of the raw-tty stream attachAndStart sets up. attachAndStart
 		// then handles attach + docker start + post-start without re-running
 		// pre-start.
 		cmdOpts := shared.CommandOpts{
-			IOStreams:    ios,
-			Client:       opts.Client,
-			Config:       opts.Config,
-			HostProxy:    opts.HostProxy,
-			ControlPlane: opts.ControlPlane,
-			AdminClient:  opts.AdminClient,
-			SocketBridge: opts.SocketBridge,
-			Logger:       opts.Logger,
+			IOStreams:     ios,
+			Client:        opts.Client,
+			Config:        opts.Config,
+			HostProxy:     opts.HostProxy,
+			ControlPlane:  opts.ControlPlane,
+			AdminClient:   opts.AdminClient,
+			SocketBridge:  opts.SocketBridge,
+			SocketGrants:  opts.SocketGrants,
+			Prompter:      opts.Prompter,
+			Logger:        opts.Logger,
+			ApproveGrants: opts.ApproveGrants,
+			Harness:       harness,
+			AgentName:     "",
+			Project:       "",
 		}
+		var bridgedSockets []socketbridge.BridgedSocket
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-			return shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+			var bootstrapErr error
+			bridgedSockets, bootstrapErr = shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
+			if bootstrapErr != nil {
+				return fmt.Errorf("bootstrap host services: %w", bootstrapErr)
+			}
+			return nil
 		}); err != nil {
 			// Reap a never-started --rm container so its name is freed.
 			return shared.ReapFailedStart(client, containerName, fmt.Errorf("pre-start bootstrapping failed: %w", err))
 		}
-		return attachAndStart(ctx, ios, log, client, containerName, cfg, cmdOpts, opts)
+		return attachAndStart(ctx, attachAndStartOptions{
+			IOStreams:      ios,
+			Log:            log,
+			Client:         client,
+			ContainerName:  containerName,
+			Config:         cfg,
+			BridgedSockets: bridgedSockets,
+			CommandOpts:    cmdOpts,
+			StartOptions:   opts,
+		})
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, ios, containers, cfg, opts)
+	return startContainersWithoutAttach(ctx, startContainersOptions{
+		IOStreams:    ios,
+		Client:       client,
+		Containers:   containers,
+		Config:       cfg,
+		Log:          log,
+		StartOptions: opts,
+	})
+}
+
+func runtimeHarnessForContainer(
+	ctx context.Context,
+	client *docker.Client,
+	cfg config.Config,
+	containerName string,
+	log *logger.Logger,
+) (shared.RuntimeHarness, error) {
+	harness, hasLabel, err := shared.LoadContainerHarness(ctx, client, cfg, containerName, log)
+	if err != nil {
+		return shared.RuntimeHarness{}, fmt.Errorf("loading runtime harness for %s: %w", containerName, err)
+	}
+	return shared.RuntimeHarness{
+		Name:              harness.Name,
+		Provenance:        harness.Provenance,
+		Sockets:           harness.Manifest.Sockets,
+		Egress:            harness.Manifest.Egress,
+		HasContainerLabel: hasLabel,
+	}, nil
+}
+
+type attachAndStartOptions struct {
+	IOStreams      *iostreams.IOStreams
+	Log            *logger.Logger
+	Client         *docker.Client
+	ContainerName  string
+	Config         config.Config
+	BridgedSockets []socketbridge.BridgedSocket
+	CommandOpts    shared.CommandOpts
+	StartOptions   *StartOptions
 }
 
 // attachAndStart attaches to a container, starts I/O, then starts the container.
@@ -179,16 +260,15 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 // ready to receive output immediately and avoids kernel pipe buffer issues.
 //
 //nolint:gocognit,cyclop,funlen // delicate attach→stream→start→wait sequence; the ordering invariants read better linear than split
-func attachAndStart(
-	ctx context.Context,
-	ios *iostreams.IOStreams,
-	log *logger.Logger,
-	client *docker.Client,
-	containerName string,
-	cfg config.Config,
-	cmdOpts shared.CommandOpts,
-	opts *StartOptions,
-) error {
+func attachAndStart(ctx context.Context, args attachAndStartOptions) error {
+	ios := args.IOStreams
+	log := args.Log
+	client := args.Client
+	containerName := args.ContainerName
+	cfg := args.Config
+	bridgedSockets := args.BridgedSockets
+	cmdOpts := args.CommandOpts
+	opts := args.StartOptions
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -282,8 +362,9 @@ func attachAndStart(
 		log.Debug().Err(err).Msg("container start failed")
 		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
-	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
-		return fmt.Errorf("starting container: %w", err)
+	postStartErr := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts)
+	if postStartErr != nil {
+		return fmt.Errorf("starting container: %w", postStartErr)
 	}
 	log.Debug().Msg("container started successfully")
 
@@ -399,26 +480,48 @@ func waitForContainerExit(
 	return ch
 }
 
+type startContainersOptions struct {
+	IOStreams    *iostreams.IOStreams
+	Client       *docker.Client
+	Containers   []string
+	Config       config.Config
+	Log          *logger.Logger
+	StartOptions *StartOptions
+}
+
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(
-	ctx context.Context,
-	ios *iostreams.IOStreams,
-	containers []string,
-	cfg config.Config,
-	opts *StartOptions,
-) error {
+func startContainersWithoutAttach(ctx context.Context, args startContainersOptions) error {
+	ios := args.IOStreams
+	client := args.Client
+	containers := args.Containers
+	cfg := args.Config
+	log := args.Log
+	opts := args.StartOptions
 	var errs []error
 	for _, name := range containers {
-		_, err := shared.ContainerStart(ctx,
+		harness, err := runtimeHarnessForContainer(ctx, client, cfg, name, log)
+		if err != nil {
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s Failed to start %s: %v\n", cs.FailureIcon(), name, err)
+			errs = append(errs, fmt.Errorf("failed to start %s: %w", name, err))
+			continue
+		}
+		_, err = shared.ContainerStart(ctx,
 			shared.CommandOpts{
-				IOStreams:    opts.IOStreams,
-				Client:       opts.Client,
-				Config:       opts.Config,
-				HostProxy:    opts.HostProxy,
-				ControlPlane: opts.ControlPlane,
-				AdminClient:  opts.AdminClient,
-				SocketBridge: opts.SocketBridge,
-				Logger:       opts.Logger,
+				IOStreams:     opts.IOStreams,
+				Client:        opts.Client,
+				Config:        opts.Config,
+				HostProxy:     opts.HostProxy,
+				ControlPlane:  opts.ControlPlane,
+				AdminClient:   opts.AdminClient,
+				SocketBridge:  opts.SocketBridge,
+				SocketGrants:  opts.SocketGrants,
+				Prompter:      opts.Prompter,
+				Logger:        opts.Logger,
+				ApproveGrants: opts.ApproveGrants,
+				Harness:       harness,
+				AgentName:     "",
+				Project:       "",
 			},
 			docker.ContainerStartOptions{
 				ContainerID: name,

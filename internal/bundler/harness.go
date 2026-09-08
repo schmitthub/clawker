@@ -108,7 +108,22 @@ func validateOverlayKeys(cfg config.Config, r *bundle.Resolver) error {
 // resolution algorithm (bare = floor/loose, qualified = installed/in-place).
 func LoadHarness(cfg config.Config, name string) (*Bundle, error) {
 	b, _, err := loadHarnessResolved(bundle.NewResolver(cfg), name)
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	expandHarnessSocketSources(b)
+	return b, nil
+}
+
+func expandHarnessSocketSources(harness *Bundle) {
+	for index := range harness.Manifest.Sockets {
+		source := harness.Manifest.Sockets[index].Source
+		expanded, err := config.ExpandHostPath(source)
+		if err != nil {
+			continue
+		}
+		harness.Manifest.Sockets[index].Source = expanded
+	}
 }
 
 // loadHarnessResolved resolves name to a harness Component through the resolver
@@ -125,5 +140,6 @@ func loadHarnessResolved(r *bundle.Resolver, name string) (*Bundle, bundle.Compo
 	if loadErr != nil {
 		return nil, bundle.Component{}, loadErr
 	}
+	b.Provenance = comp.Provenance
 	return b, comp, nil
 }

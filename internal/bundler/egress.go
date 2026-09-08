@@ -28,10 +28,16 @@ func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	floor := b.Manifest.Egress
+	return ComposeEgressRules(cfg, b.Manifest.Egress), nil
+}
+
+// ComposeEgressRules joins an already-loaded harness floor with the project
+// rules. Command composition roots use this function to prevent a second
+// harness read during start.
+func ComposeEgressRules(cfg config.Config, floor []config.EgressRule) []config.EgressRule {
 	project := cfg.ProjectEgressRules()
 	rules := make([]config.EgressRule, 0, len(floor)+len(project))
 	rules = append(rules, floor...)
 	rules = append(rules, project...)
-	return rules, nil
+	return rules
 }

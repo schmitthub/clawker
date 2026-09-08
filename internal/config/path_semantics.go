@@ -20,6 +20,7 @@ var envRefRe = regexp.MustCompile(`\$\{[^}]*\}`)
 // shell-style ${VAR:-fallback} defaults, a leading ~, and $VAR / ${VAR}
 // environment references. The result is absolute.
 func ExpandHostPath(p string) (string, error) {
+	expression := p
 	p = envDefaultRe.ReplaceAllStringFunc(p, func(m string) string {
 		groups := envDefaultRe.FindStringSubmatch(m)
 		if v := os.Getenv(groups[1]); v != "" {
@@ -37,6 +38,9 @@ func ExpandHostPath(p string) (string, error) {
 	}
 
 	p = os.ExpandEnv(p)
+	if p == "" {
+		return "", fmt.Errorf("expand %q: expansion is empty", expression)
+	}
 
 	// A relative result (e.g. a relative env-var value in a multi-account
 	// workflow) resolves against the current working directory, matching

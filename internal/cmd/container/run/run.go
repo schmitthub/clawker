@@ -3,6 +3,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -19,6 +20,7 @@ import (
 	wtshared "github.com/schmitthub/clawker/internal/cmd/worktree/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -44,13 +46,15 @@ type RunOptions struct {
 	ControlPlane    func(context.Context) (cpmanager.Manager, error)
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
+	SocketGrants    func() (db.SocketGrantStore, error)
 	Prompter        func() *prompter.Prompter
 	Logger          func() (*logger.Logger, error)
 	BundleManager   func() (*bundle.Manager, error)
 	Version         string
 
 	// Run-specific options
-	Detach bool
+	Detach        bool
+	ApproveGrants bool
 
 	// Computed fields (set during execution)
 	AgentName string
@@ -75,10 +79,16 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		ControlPlane:           f.ControlPlane,
 		AdminClient:            f.AdminClient,
 		SocketBridge:           f.SocketBridge,
+		SocketGrants:           cmdutil.SocketGrantStore(f),
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
 		BundleManager:          f.BundleManager,
 		Version:                f.Version,
+		Detach:                 false,
+		ApproveGrants:          false,
+		AgentName:              "",
+		Project:                "",
+		flags:                  nil,
 	}
 
 	cmd := &cobra.Command{
@@ -145,6 +155,7 @@ image built with "clawker build -t <harness>".`,
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background and print container ID")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
@@ -265,6 +276,14 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	opts.AgentName = o.result.AgentName
 	opts.Project = projectName
+	if o.result.Harness == nil {
+		//nolint:contextcheck,wrapcheck // reap is cleanup after cancellation and returns the composed start error
+		return shared.ReapFailedStart(
+			client,
+			o.result.ContainerID,
+			errors.New("created container has no loaded harness"),
+		)
+	}
 
 	// Bootstrap host services (CP ensure, host proxy, firewall init/rules)
 	// under a spinner BEFORE attach. Doing it here — in cooked mode, before
@@ -274,19 +293,35 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
-		IOStreams:    ios,
-		Client:       opts.Client,
-		Config:       opts.Config,
-		HostProxy:    opts.HostProxy,
-		ControlPlane: opts.ControlPlane,
-		AdminClient:  opts.AdminClient,
-		SocketBridge: opts.SocketBridge,
-		Logger:       opts.Logger,
-		AgentName:    opts.AgentName,
-		Project:      opts.Project,
+		IOStreams:     ios,
+		Client:        opts.Client,
+		Config:        opts.Config,
+		HostProxy:     opts.HostProxy,
+		ControlPlane:  opts.ControlPlane,
+		AdminClient:   opts.AdminClient,
+		SocketBridge:  opts.SocketBridge,
+		SocketGrants:  opts.SocketGrants,
+		Prompter:      opts.Prompter,
+		Logger:        opts.Logger,
+		ApproveGrants: opts.ApproveGrants,
+		Harness: shared.RuntimeHarness{
+			Name:              o.result.Harness.Name,
+			Provenance:        o.result.Harness.Provenance,
+			Sockets:           o.result.Harness.Manifest.Sockets,
+			Egress:            o.result.Harness.Manifest.Egress,
+			HasContainerLabel: true,
+		},
+		AgentName: opts.AgentName,
+		Project:   opts.Project,
 	}
+	var bridgedSockets []socketbridge.BridgedSocket
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
-		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
+		var bootstrapErr error
+		bridgedSockets, bootstrapErr = shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
+		if bootstrapErr != nil {
+			return fmt.Errorf("bootstrap host services: %w", bootstrapErr)
+		}
+		return nil
 	}); err != nil {
 		// Reap-on-failed-start: this invocation just created the container —
 		// free its name so the same command can simply be re-run.
@@ -309,15 +344,17 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", startErr))
 		}
-		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, cmdOpts); err != nil {
-			return fmt.Errorf("starting container: %w", err)
+		if postStartErr := shared.BootstrapServicesPostStart(
+			ctx, o.result.ContainerID, bridgedSockets, cmdOpts,
+		); postStartErr != nil {
+			return fmt.Errorf("starting container: %w", postStartErr)
 		}
 
 		fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
 		return nil
 	}
 
-	return attachThenStart(ctx, client, o.result.ContainerID, cmdOpts, opts, log)
+	return attachThenStart(ctx, client, o.result.ContainerID, bridgedSockets, cmdOpts, opts, log)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
@@ -334,6 +371,7 @@ func attachThenStart(
 	ctx context.Context,
 	client *docker.Client,
 	containerID string,
+	bridgedSockets []socketbridge.BridgedSocket,
 	cmdOpts shared.CommandOpts,
 	opts *RunOptions,
 	log *logger.Logger,
@@ -414,8 +452,9 @@ func attachThenStart(
 		log.Debug().Err(err).Msg("container start failed")
 		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
-	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
-		return fmt.Errorf("starting container: %w", err)
+	postStartErr := shared.BootstrapServicesPostStart(ctx, containerID, bridgedSockets, cmdOpts)
+	if postStartErr != nil {
+		return fmt.Errorf("starting container: %w", postStartErr)
 	}
 	log.Debug().Msg("container started successfully")
 

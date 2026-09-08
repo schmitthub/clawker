@@ -4,13 +4,16 @@ import (
 	"context"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 )
@@ -99,28 +102,40 @@ func TestManagerIsRunning(t *testing.T) {
 
 	t.Run("returns true for tracked live process", func(t *testing.T) {
 		m, pidsDir := sockebridgemocks.NewTestManager(t)
-		m.SetBridgeForTest("test-container", os.Getpid(), filepath.Join(pidsDir, "test-container.pid"))
+		m.SetBridgeForTest(
+			"test-container",
+			os.Getpid(),
+			filepath.Join(pidsDir, "test-container.pid"),
+			filepath.Join(pidsDir, "test-container.sockets.json"),
+		)
 
 		assert.True(t, m.IsRunning("test-container"))
 	})
 
 	t.Run("returns false for tracked dead process", func(t *testing.T) {
 		m, pidsDir := sockebridgemocks.NewTestManager(t)
-		m.SetBridgeForTest("test-container", 999999999, filepath.Join(pidsDir, "test-container.pid"))
+		m.SetBridgeForTest(
+			"test-container",
+			999999999,
+			filepath.Join(pidsDir, "test-container.pid"),
+			filepath.Join(pidsDir, "test-container.sockets.json"),
+		)
 
 		assert.False(t, m.IsRunning("test-container"))
 	})
 }
 
 func TestManagerStopBridge(t *testing.T) {
-	t.Run("removes PID file and tracking", func(t *testing.T) {
+	t.Run("removes bridge state files and tracking", func(t *testing.T) {
 		m, pidsDir := sockebridgemocks.NewTestManager(t)
 
 		containerID := "abc123def456789"
 		pidFile := filepath.Join(pidsDir, containerID+".pid")
+		socketsFile := filepath.Join(pidsDir, containerID+".sockets.json")
 		require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644))
+		require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, nil))
 
-		m.SetBridgeForTest(containerID, 999999999, pidFile) // Dead process — won't actually kill anything
+		m.SetBridgeForTest(containerID, 999999999, pidFile, socketsFile) // Dead process — won't actually kill anything
 
 		err := m.StopBridge(containerID)
 		assert.NoError(t, err)
@@ -128,30 +143,50 @@ func TestManagerStopBridge(t *testing.T) {
 		// Tracking should be removed
 		assert.False(t, m.HasBridgeForTest(containerID))
 
-		// PID file should be removed
+		// Bridge state files should be removed.
 		_, err = os.Stat(pidFile)
+		assert.True(t, os.IsNotExist(err))
+		_, err = os.Stat(socketsFile)
 		assert.True(t, os.IsNotExist(err))
 	})
 }
 
 func TestManagerStopAll(t *testing.T) {
-	t.Run("cleans up all PID files", func(t *testing.T) {
+	t.Run("cleans up all bridge state files", func(t *testing.T) {
 		m, pidsDir := sockebridgemocks.NewTestManager(t)
 
-		// Create some PID files with dead PIDs
+		// Create bridge state files with dead PIDs.
 		for _, id := range []string{"container-a", "container-b"} {
 			pidFile := filepath.Join(pidsDir, id+".pid")
 			require.NoError(t, os.WriteFile(pidFile, []byte("999999999"), 0o644))
+			socketsFile := filepath.Join(pidsDir, id+".sockets.json")
+			require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, nil))
 		}
 
 		err := m.StopAll()
 		assert.NoError(t, err)
 
-		// All PID files should be removed
+		// All bridge state files should be removed.
 		entries, err := os.ReadDir(pidsDir)
 		require.NoError(t, err)
 		assert.Empty(t, entries)
 	})
+}
+
+func TestRemoveOwnedBridgeStateFilesPreservesReplacementState(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "container.pid")
+	socketsFile := filepath.Join(dir, "container.sockets.json")
+	require.NoError(t, os.WriteFile(pidFile, []byte("200"), 0o600))
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, nil))
+
+	require.NoError(t, socketbridge.RemoveOwnedBridgeStateFiles(pidFile, socketsFile, 100))
+	assert.FileExists(t, pidFile)
+	assert.FileExists(t, socketsFile)
+
+	require.NoError(t, socketbridge.RemoveOwnedBridgeStateFiles(pidFile, socketsFile, 200))
+	assert.NoFileExists(t, pidFile)
+	assert.NoFileExists(t, socketsFile)
 }
 
 func TestShortID(t *testing.T) {
@@ -177,11 +212,17 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 	// Pre-track a bridge with a short container ID and the current PID
 	shortContainerID := "short"
 	pidFile := filepath.Join(pidsDir, shortContainerID+".pid")
-	m.SetBridgeForTest(shortContainerID, os.Getpid(), pidFile)
+	socketsFile := filepath.Join(pidsDir, shortContainerID+".sockets.json")
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, nil))
+	m.SetBridgeForTest(shortContainerID, os.Getpid(), pidFile, socketsFile)
 
 	// This should NOT panic from containerID[:12] slicing
 	assert.NotPanics(t, func() {
-		err := m.EnsureBridge(shortContainerID, false)
+		err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+			ContainerID: shortContainerID,
+			GPGEnabled:  false,
+			Sockets:     nil,
+		})
 		assert.NoError(t, err)
 	})
 }
@@ -191,18 +232,156 @@ func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 
 	containerID := "test-container-12345"
 	pidFile := filepath.Join(pidsDir, containerID+".pid")
+	socketsFile := filepath.Join(pidsDir, containerID+".sockets.json")
+	sockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "", Group: ""},
+		Group:    "",
+		Mode:     "",
+	}}
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, sockets))
 
 	// Pre-track a bridge with current PID (alive)
-	m.SetBridgeForTest(containerID, os.Getpid(), pidFile)
+	m.SetBridgeForTest(containerID, os.Getpid(), pidFile, socketsFile)
 
 	// EnsureBridge should be a no-op
-	err := m.EnsureBridge(containerID, false)
+	err := m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  true,
+		Sockets:     sockets,
+	})
 	assert.NoError(t, err)
 
 	// Should still be the same process
 	pid, ok := m.BridgePIDForTest(containerID)
 	assert.True(t, ok)
 	assert.Equal(t, os.Getpid(), pid)
+}
+
+func TestManagerEnsureBridge_RespawnsAdoptedBridgeOnSocketDrift(t *testing.T) {
+	m, bridgesDir := sockebridgemocks.NewTestManager(t)
+	containerID := "test-container-12345"
+	pidFile := filepath.Join(bridgesDir, containerID+".pid")
+	socketsFile := filepath.Join(bridgesDir, containerID+".sockets.json")
+
+	oldProcess := exec.Command("sleep", "30")
+	require.NoError(t, oldProcess.Start())
+	t.Cleanup(func() {
+		if socketbridge.IsProcessAliveForTest(oldProcess.Process.Pid) {
+			_ = oldProcess.Process.Kill() // Cleanup permits an already-exited process.
+		}
+	})
+	require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(oldProcess.Process.Pid)), 0o600))
+
+	staleSockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "owner", Group: "primary"},
+		Group:    "workers",
+		Mode:     "0600",
+	}}
+	require.NoError(t, socketbridge.WriteBridgedSocketsFile(socketsFile, staleSockets))
+
+	desiredSockets := []socketbridge.BridgedSocket{{
+		HostPath: "/host/service.sock",
+		Target:   "/run/service.sock",
+		Identity: socketbridge.ListenerIdentity{UID: 1000, GID: 1000, Owner: "owner", Group: "primary"},
+		Group:    "workers",
+		Mode:     "0660",
+	}}
+	t.Setenv(consts.EnvExecutable, writeFakeBridgeExecutable(t))
+	t.Cleanup(func() {
+		require.NoError(t, m.StopBridge(containerID))
+	})
+
+	require.NoError(t, m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  false,
+		Sockets:     desiredSockets,
+	}))
+	waitForProcessExit(t, oldProcess, time.Second)
+
+	newPID := socketbridge.ReadPIDFileForTest(pidFile)
+	assert.Positive(t, newPID)
+	assert.NotEqual(t, oldProcess.Process.Pid, newPID)
+	registrations, err := socketbridge.ReadBridgedSocketsFile(socketsFile)
+	require.NoError(t, err)
+	require.Len(t, registrations, 1)
+	assert.Equal(t, desiredSockets[0].HostPath, registrations[0].HostPath)
+	assert.Equal(t, desiredSockets[0].Target, registrations[0].Target)
+	assert.Equal(t, desiredSockets[0].Identity.UID, registrations[0].Identity.UID)
+	assert.Equal(t, desiredSockets[0].Identity.GID, registrations[0].Identity.GID)
+	assert.Equal(t, desiredSockets[0].Group, registrations[0].Group)
+	assert.Equal(t, desiredSockets[0].Mode, registrations[0].Mode)
+
+	require.NoError(t, m.EnsureBridge(socketbridge.EnsureBridgeOpts{
+		ContainerID: containerID,
+		GPGEnabled:  false,
+		Sockets:     desiredSockets,
+	}))
+	assert.Equal(t, newPID, socketbridge.ReadPIDFileForTest(pidFile))
+}
+
+func waitForProcessExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
+	t.Helper()
+
+	wait := make(chan error, 1)
+	go func() {
+		wait <- cmd.Wait()
+	}()
+	select {
+	case err := <-wait:
+		require.Error(t, err)
+	case <-time.After(timeout):
+		require.FailNow(t, "process did not exit")
+	}
+}
+
+func writeFakeBridgeExecutable(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "bridge")
+	script := `#!/bin/sh
+pid_file=""
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = "--pid-file" ]; then
+		shift
+		pid_file="$1"
+	fi
+	shift
+done
+printf '%s\n' "$$" > "$pid_file"
+trap 'rm -f "$pid_file"; exit 0' TERM INT
+while true; do
+	sleep 1
+done
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o700))
+	return path
+}
+
+func TestBridgeExecutable(t *testing.T) {
+	t.Run("configured override", func(t *testing.T) {
+		const override = "/test/bin/clawker"
+		t.Setenv(consts.EnvExecutable, override)
+
+		got, err := socketbridge.BridgeExecutableForTest()
+
+		require.NoError(t, err)
+		assert.Equal(t, override, got)
+	})
+
+	t.Run("current executable fallback", func(t *testing.T) {
+		t.Setenv(consts.EnvExecutable, "")
+		want, err := os.Executable()
+		require.NoError(t, err)
+
+		got, err := socketbridge.BridgeExecutableForTest()
+
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
 }
 
 // TestCheckHostSSHAgent pins the SSH lane precheck contract: every failure

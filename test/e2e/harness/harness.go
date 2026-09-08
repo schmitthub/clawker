@@ -68,6 +68,10 @@ type Harness struct {
 	// Cleanup stores the cleanup report after the test environment is torn down.
 	// Firewall tests can check this to fail if the stack was never running.
 	Cleanup *CleanupReport
+
+	promptMu     sync.Mutex
+	promptInput  string
+	promptQueued bool
 }
 
 // New builds a Harness whose FactoryOptions start at the zero baseline —
@@ -90,6 +94,27 @@ func New(t *testing.T, mutators ...func(*FactoryOptions)) *Harness {
 		mutate(opts)
 	}
 	return &Harness{T: t, Opts: opts, Cleanup: nil}
+}
+
+// QueuePromptInput makes the next Run call interactive and supplies its stdin.
+// The input is consumed once because each Run call represents a new CLI
+// process. This keeps interactive e2e journeys on the normal Run path.
+func (h *Harness) QueuePromptInput(input string) {
+	h.T.Helper()
+	h.promptMu.Lock()
+	defer h.promptMu.Unlock()
+	h.promptInput = input
+	h.promptQueued = true
+}
+
+func (h *Harness) takePromptInput() (string, bool) {
+	h.promptMu.Lock()
+	defer h.promptMu.Unlock()
+	input := h.promptInput
+	queued := h.promptQueued
+	h.promptInput = ""
+	h.promptQueued = false
+	return input, queued
 }
 
 // RunResult holds the outcome of a CLI command execution.
@@ -164,7 +189,12 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		// consts.CPBootLogFile is intentionally absent: nothing writes it
 		// yet (host-side manager logs land in the CLI log) — dumping it
 		// would always ENOENT-skip and imply coverage that isn't there.
-		for _, name := range []string{logger.DefaultLogFileName, consts.HostProxyLogFile, consts.ControlPlaneLogFile} {
+		for _, name := range []string{
+			logger.DefaultLogFileName,
+			consts.HostProxyLogFile,
+			consts.SocketBridgeLogFile,
+			consts.ControlPlaneLogFile,
+		} {
 			data, err := os.ReadFile(filepath.Join(logDir, name))
 			if err != nil {
 				continue
@@ -395,7 +425,20 @@ func (h *Harness) RequireServicesWereRunning(t *testing.T, services ...string) {
 func (h *Harness) Run(args ...string) *RunResult {
 	h.T.Helper()
 
-	f, _, out, errOut := NewFactory(h.T, h.Opts)
+	f, in, out, errOut := NewFactory(h.T, h.Opts)
+	if input, queued := h.takePromptInput(); queued {
+		f.IOStreams.SetStdinTTY(true)
+		f.IOStreams.SetStdoutTTY(true)
+		if _, err := in.WriteString(input); err != nil {
+			return &RunResult{
+				ExitCode: 1,
+				Err:      fmt.Errorf("harness: queue prompt input: %w", err),
+				Stdout:   "",
+				Stderr:   "",
+				Factory:  nil,
+			}
+		}
+	}
 
 	rootCmd, err := root.NewCmdRoot(f, "test", "test")
 	if err != nil {

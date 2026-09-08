@@ -197,6 +197,13 @@ fi
 	PreRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
 "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh"
 `
+
+	// SocketsWaitScript runs the every-start bridge readiness hook. The
+	// always-deliver path makes the script present, and the guard keeps an old
+	// container without the hook compatible. A hook failure stays fatal.
+	SocketsWaitScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookSocketsWait + `.sh" ] || exit 0
+"$HOME/` + consts.DotClawkerDir + `/` + consts.HookSocketsWait + `.sh"
+`
 )
 
 // gitconfigFilterScript returns the rendered git-step body; the %q slot

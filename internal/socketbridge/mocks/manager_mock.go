@@ -19,7 +19,7 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //
 //		// make and configure a mocked socketbridge.SocketBridgeManager
 //		mockedSocketBridgeManager := &SocketBridgeManagerMock{
-//			EnsureBridgeFunc: func(containerID string, gpgEnabled bool) error {
+//			EnsureBridgeFunc: func(opts socketbridge.EnsureBridgeOpts) error {
 //				panic("mock out the EnsureBridge method")
 //			},
 //			IsRunningFunc: func(containerID string) bool {
@@ -42,7 +42,7 @@ var _ socketbridge.SocketBridgeManager = &SocketBridgeManagerMock{}
 //	}
 type SocketBridgeManagerMock struct {
 	// EnsureBridgeFunc mocks the EnsureBridge method.
-	EnsureBridgeFunc func(containerID string, gpgEnabled bool) error
+	EnsureBridgeFunc func(opts socketbridge.EnsureBridgeOpts) error
 
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(containerID string) bool
@@ -60,10 +60,8 @@ type SocketBridgeManagerMock struct {
 	calls struct {
 		// EnsureBridge holds details about calls to the EnsureBridge method.
 		EnsureBridge []struct {
-			// ContainerID is the containerID argument value.
-			ContainerID string
-			// GpgEnabled is the gpgEnabled argument value.
-			GpgEnabled bool
+			// Opts is the opts argument value.
+			Opts socketbridge.EnsureBridgeOpts
 		}
 		// IsRunning holds details about calls to the IsRunning method.
 		IsRunning []struct {
@@ -94,21 +92,19 @@ type SocketBridgeManagerMock struct {
 }
 
 // EnsureBridge calls EnsureBridgeFunc.
-func (mock *SocketBridgeManagerMock) EnsureBridge(containerID string, gpgEnabled bool) error {
+func (mock *SocketBridgeManagerMock) EnsureBridge(opts socketbridge.EnsureBridgeOpts) error {
 	if mock.EnsureBridgeFunc == nil {
 		panic("SocketBridgeManagerMock.EnsureBridgeFunc: method is nil but SocketBridgeManager.EnsureBridge was just called")
 	}
 	callInfo := struct {
-		ContainerID string
-		GpgEnabled  bool
+		Opts socketbridge.EnsureBridgeOpts
 	}{
-		ContainerID: containerID,
-		GpgEnabled:  gpgEnabled,
+		Opts: opts,
 	}
 	mock.lockEnsureBridge.Lock()
 	mock.calls.EnsureBridge = append(mock.calls.EnsureBridge, callInfo)
 	mock.lockEnsureBridge.Unlock()
-	return mock.EnsureBridgeFunc(containerID, gpgEnabled)
+	return mock.EnsureBridgeFunc(opts)
 }
 
 // EnsureBridgeCalls gets all the calls that were made to EnsureBridge.
@@ -116,12 +112,10 @@ func (mock *SocketBridgeManagerMock) EnsureBridge(containerID string, gpgEnabled
 //
 //	len(mockedSocketBridgeManager.EnsureBridgeCalls())
 func (mock *SocketBridgeManagerMock) EnsureBridgeCalls() []struct {
-	ContainerID string
-	GpgEnabled  bool
+	Opts socketbridge.EnsureBridgeOpts
 } {
 	var calls []struct {
-		ContainerID string
-		GpgEnabled  bool
+		Opts socketbridge.EnsureBridgeOpts
 	}
 	mock.lockEnsureBridge.RLock()
 	calls = mock.calls.EnsureBridge

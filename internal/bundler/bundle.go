@@ -6,11 +6,13 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -29,6 +31,13 @@ const HarnessTemplateFile = "Dockerfile.harness.tmpl"
 // verbatim under the same assets/ prefix; the template's COPY instructions
 // and seeds[].file entries reference assets/-relative paths.
 const AssetsDir = "assets"
+
+const dockerSocketSetting = "security.docker_socket"
+
+var (
+	socketEnvRefRE = regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\})`)
+	socketGroupRE  = regexp.MustCompile(`^[a-z_][a-z0-9_-]*\$?$`)
+)
 
 // File modes for staged build-context files.
 const (
@@ -50,6 +59,9 @@ func FileMode(name string) fs.FileMode {
 type Bundle struct {
 	// Name is the registry slug (also the image tag and label value).
 	Name string
+	// Provenance identifies the resolved harness source. It is set by
+	// LoadHarness and is zero for a direct LoadBundle validation call.
+	Provenance bundle.Provenance
 	// Manifest is the parsed harness.yaml.
 	Manifest config.Manifest
 	// Template is the raw Dockerfile.harness.tmpl content.
@@ -88,6 +100,9 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	if egressErr := validateEgressFloor(name, m.Egress); egressErr != nil {
 		return nil, egressErr
 	}
+	if socketErr := validateSockets(name, m.Sockets); socketErr != nil {
+		return nil, socketErr
+	}
 	if mpErr := validateManagedPrompt(name, m.Volumes, m.ManagedPrompt); mpErr != nil {
 		return nil, mpErr
 	}
@@ -98,11 +113,118 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	}
 
 	return &Bundle{
-		Name:     name,
+		Name: name,
+		Provenance: bundle.Provenance{
+			Tier:    bundle.Tier(0),
+			Dir:     "",
+			Bundle:  bundle.BundleID{Namespace: "", Name: ""},
+			Shadows: nil,
+		},
 		Manifest: m,
 		Template: string(rawTmpl),
 		fsys:     fsys,
 	}, nil
+}
+
+func validateSockets(name string, sockets []config.HarnessSocket) error {
+	seenTargets := make(map[string]bool, len(sockets))
+	for i, socket := range sockets {
+		field := fmt.Sprintf("sockets[%d]", i)
+		if err := validateSocket(name, field, socket, seenTargets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSocket(name, field string, socket config.HarnessSocket, seenTargets map[string]bool) error {
+	if err := validateSocketFields(name, field, socket); err != nil {
+		return err
+	}
+	if seenTargets[socket.Target] {
+		return fmt.Errorf("harness %q: duplicate socket target %q", name, socket.Target)
+	}
+	seenTargets[socket.Target] = true
+	if err := validateBannedSocketSource(name, field, socket.Source); err != nil {
+		return err
+	}
+	return validateSocketContainer(name, field, socket.Container)
+}
+
+func validateSocketFields(name, field string, socket config.HarnessSocket) error {
+	if strings.TrimSpace(socket.Source) == "" {
+		return fmt.Errorf("harness %q: %s.source is required", name, field)
+	}
+	if strings.TrimSpace(socket.Target) == "" {
+		return fmt.Errorf("harness %q: %s.target is required", name, field)
+	}
+	if strings.TrimSpace(socket.Purpose) == "" {
+		return fmt.Errorf("harness %q: %s.purpose is required", name, field)
+	}
+	if !path.IsAbs(socket.Target) {
+		return fmt.Errorf("harness %q: %s.target %q must be an absolute container path", name, field, socket.Target)
+	}
+	if err := validateSocketSource(socket.Source); err != nil {
+		return fmt.Errorf("harness %q: %s.source %q: %w", name, field, socket.Source, err)
+	}
+	return nil
+}
+
+func validateBannedSocketSource(name, field, source string) error {
+	for bannedIndex, bannedPath := range consts.BannedSocketPaths() {
+		if source != bannedPath {
+			continue
+		}
+		if bannedIndex == 0 {
+			return fmt.Errorf(
+				"harness %q: %s.source %q is banned; use %s for Docker daemon access",
+				name, field, bannedPath, dockerSocketSetting,
+			)
+		}
+		return fmt.Errorf("harness %q: %s.source %q is banned", name, field, bannedPath)
+	}
+	return nil
+}
+
+func validateSocketContainer(name, field string, socket config.HarnessSocketContainer) error {
+	if socket.Mode != "" {
+		mode, err := strconv.ParseUint(socket.Mode, 8, 16)
+		if err != nil || len(socket.Mode) != 4 || mode > 0o777 {
+			return fmt.Errorf(
+				"harness %q: %s.container.mode %q must be an octal permission value from 0000 through 0777",
+				name, field, socket.Mode,
+			)
+		}
+	}
+	if socket.Group != "" && !socketGroupRE.MatchString(socket.Group) {
+		return fmt.Errorf(
+			"harness %q: %s.container.group %q is not a valid group name",
+			name,
+			field,
+			socket.Group,
+		)
+	}
+	return nil
+}
+
+func validateSocketSource(source string) error {
+	if strings.Contains(source, "`") || strings.Contains(source, "$(") {
+		return errors.New("command substitution is not permitted")
+	}
+	if strings.ContainsAny(source, "*?") {
+		return errors.New("glob syntax is not permitted")
+	}
+
+	literal := socketEnvRefRE.ReplaceAllString(source, "")
+	if strings.Contains(literal, "$") {
+		return errors.New("environment variables must use $VAR, ${VAR}, or ${VAR:-fallback} syntax")
+	}
+	if tildeIndex := strings.IndexByte(literal, '~'); tildeIndex >= 0 {
+		if tildeIndex != 0 || (len(literal) > 1 && literal[1] != '/') {
+			return errors.New("tilde expansion is permitted only as a leading ~/ prefix")
+		}
+	}
+	return nil
 }
 
 // validateStaging checks the staging vocabulary at the load front door so a
