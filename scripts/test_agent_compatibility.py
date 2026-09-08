@@ -100,7 +100,7 @@ class LayoutTests(unittest.TestCase):
 
     def test_navigation_links_resolve(self):
         self.write(".agents/rules/git.md")
-        self.write(".agents/skills/agent-files/SKILL.md", "[gone](docs/gone.md) [ok](../../rules/git.md) [ext](https://x)\n"
+        self.write(".agents/skills/agent-files/SKILL.md", "[gone](docs/gone.md) [ok](../../rules/git.md) [ext](https://x) `f[T](x)`\n"
                                         "```\n[code](not/a/link.md)\n```\n")
         self.assertEqual([".agents/skills/agent-files/SKILL.md: broken link docs/gone.md"], self.errors())
 

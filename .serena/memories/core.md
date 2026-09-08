@@ -4,7 +4,7 @@
 - Project resolution uses the registry. Config receives a resolved project root; it does not resolve project identity.
 - The control plane (CP) runs whenever managed agent containers exist. The firewall is an optional CP subsystem.
 - Follow `AGENTS.md`, the nearest package `AGENTS.md`, and applicable `.agents/rules/` files. Package source defines the current API.
-- Root `AGENTS.md` requires every rule in `.agents/rules/` (repository-wide only; each rule's `paths:` sets its scope) and the package `AGENTS.md` chain for each target file, including files outside the initial working directory. There is no separate rule or task index. Shared procedures are in `.agents/skills/`; `.claude/skills` links to that directory. Task references are skills in `.agents/skills/` (writing-tests, cli-output, dev-checks, agent-files); package references live in package `AGENTS.md` files. GitHub Copilot files serve pull request code review.
+- Root `AGENTS.md` requires every rule in `.agents/rules/` (repository-wide only; each rule's `paths:` sets its scope) and the package `AGENTS.md` chain for each target file, including files outside the initial working directory. There is no separate rule or task index. Shared procedures are in `.agents/skills/`; `.claude/skills` links to that directory. Behavioral and situational guidance is a skill in `.agents/skills/` (each `SKILL.md` description states its trigger); Serena holds project knowledge. Package contracts live in package `AGENTS.md` files. GitHub Copilot files serve pull request code review.
 - `.agents/` contains harness-independent content. Keep native settings, reviewer definitions, and hooks specific to one tool as regular files in `.claude/` or `.codex/`. Do not move native configuration into shared directories or use links to hide its ownership.
 - The named `test-hunter` reviewer uses one shared skill. Claude's `.claude/agents/test-hunter.md` preloads it. Codex's `.codex/agents/test-hunter.toml` requires a read of the same skill; `config_file = "agents/test-hunter.toml"` in `.codex/config.toml` selects the native role.
 - Both tools use the same project instruction files, `.agents/skills`, `.agents/rules`, and Serena memory graph. `.claude/rules` and `.claude/skills` are directory links. Both native configurations register the same Git and Go guards. Keep required knowledge in shared files.
@@ -20,9 +20,8 @@
 
 - For memory placement, naming, and links: `mem:memory_maintenance`.
 - For dependency versions, generated assets, and build inputs: `mem:tech_stack`.
-- For development and host test commands: `mem:suggested_commands`.
+- For development commands, host checks, and completion checks: `.agents/skills/dev-checks/SKILL.md`.
 - For dependency injection, errors, output, and instruction files: `mem:conventions`.
-- For the checks required before completion: `mem:task_completion`.
 
 ## Module map
 

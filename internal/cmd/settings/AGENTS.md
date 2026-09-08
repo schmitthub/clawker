@@ -41,7 +41,7 @@ The heavy lifting lives in `internal/config/storeui/settings` (domain adapter �
 
 ## Related Rules
 
-- `internal/storeui/AGENTS.md` — store-UI mental model and editor checklist; `internal/storeui/AGENTS.md (Store UI reference section)` — full architecture
+- `internal/storeui/AGENTS.md` — store-UI mental model and editor checklist; `.agents/skills/store-editor/SKILL.md` — full architecture
 - `internal/storeui/AGENTS.md` — orchestrator API
 - `internal/tui/AGENTS.md` — `FieldBrowserModel`, `ListEditorModel`, `TextareaEditorModel`
 

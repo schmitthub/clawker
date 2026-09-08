@@ -38,9 +38,9 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Build, integration tests, embeds, hooks, and completion checks: [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - CLI, config, naming, package boundaries, and terminal behavior: Serena `project-guide` memory.
 - Agent file layout and native tool settings: [agent-files skill](.agents/skills/agent-files/SKILL.md).
-- Shared skills: `.agents/skills/`. Each `SKILL.md` names its use case; invoke the matching one for the task.
+- Shared skills: `.agents/skills/`. Each `SKILL.md` description names its trigger; invoke the matching one. Behavioral and situational guidance is a skill, not a memory.
 
 ## Tools and shared memory
 
-- When Serena is available, initialize it with `initial_instructions`, then `check_onboarding_performed` if available, then `list_memories`. Read `core` for the shared memory map. Use symbolic tools before full source-file reads. Update shared Serena memories before completing work. If Serena is absent, read the same memories under `.serena/memories/`.
+- When Serena is available, initialize it with `initial_instructions`, then `check_onboarding_performed` if available, then `list_memories`. Serena holds project knowledge: `core` is the map; `architecture`, `design`, `key-concepts`, `repo-structure`, `project-guide`, and the domain `*/core` memories hold the rest. Use symbolic tools before full source-file reads. Update shared Serena memories before completing work. If Serena is absent, read the same memories under `.serena/memories/`.
 - For GitHub repository documentation, try DeepWiki `ask_question`, then Context7, then other documentation tools. For library APIs, resolve the Context7 library ID before requesting its documentation.

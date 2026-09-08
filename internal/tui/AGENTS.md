@@ -167,4 +167,4 @@ Fields are grouped into tabs by top-level path key with sub-section headings for
 | `KVEditorModel` | YAML map string | `a` add pair, `e` edit value, `E` edit key, `d/backspace` delete, `↑/↓` nav, `enter` done, `esc` cancel | `enter` confirm, `esc` cancel | Default for `BrowserMap` fields. Shows merged store state — duplicate key validation belongs at the write boundary, not here |
 | `ItemListEditorModel` | YAML list-of-maps | `a` add, `e` edit, `d/backspace` delete, `↑/↓` nav, `enter` done, `esc` cancel | delegates to `FormEditorModel`: `tab/shift+tab` fields, `ctrl+s` confirm, `esc` cancel | `NewItemListEditor(label, value, []StructFieldDef)` — struct-slice items without domain knowledge. No validation yet: `Err()` always returns `""` and a YAML parse failure silently yields an empty list, so fix that before wiring it to a field |
 
-Wizard TUI components (`WizardModel`, `RunWizard`) are documented with the prompter in `internal/prompter/AGENTS.md`, section "Prompter and wizard reference".
+Wizard TUI components (`WizardModel`, `RunWizard`) are documented in `.agents/skills/wizard-commands/SKILL.md`.

@@ -111,6 +111,7 @@ def check_nav_links(root):
         if not path.is_file():
             continue
         text = re.sub(r"```.*?```", "", path.read_text(), flags=re.DOTALL)
+        text = re.sub(r"`[^`\n]*`", "", text)
         for match in re.finditer(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", text):
             target = match[1]
             if re.match(r"[a-z]+:", target):

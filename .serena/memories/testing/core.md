@@ -27,4 +27,4 @@
 - Golden files are package-specific. Update them only for an intended output change and review the diff.
 - Check actual container interactions for mounts, certificates, startup, and networking. File modes alone do not prove access by another process/container.
 - Rules: `.agents/rules/testing.md`; helper reference: `.agents/skills/writing-tests/SKILL.md`; integration contracts: `test/AGENTS.md`.
-- For exact commands and completion gates: `mem:suggested_commands`, `mem:task_completion`.
+- For exact commands and completion gates: `.agents/skills/dev-checks/SKILL.md`.
