@@ -495,7 +495,7 @@ Rules:
 - `cmdutil/` contains only: Factory struct (DI container), output utilities, arg validators
 - Heavy command helpers live in dedicated packages: `internal/bundler/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming, image resolution — `ResolveImageWithSource`, `ResolveImage`)
 
-See also the Dependency placement section of the root `AGENTS.md` (read when its file patterns match).
+See also the Dependency placement section of the root `AGENTS.md`.
 
 #### Pattern A vs Pattern B — Side-by-Side
 
