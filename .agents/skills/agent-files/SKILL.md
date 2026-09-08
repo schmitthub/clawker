@@ -141,7 +141,7 @@ exists:
 - Each symbolic link under `.agents`, `.claude`, and `.codex` is relative and
   resolves inside the repository. Links under `.agents` never resolve into a
   harness directory.
-- Each `config_file` value in `.codex/config.toml` resolves to a regular file.
+- Each `config_file` value in `.codex/config.toml` is relative and resolves to a regular file inside the repository.
 - Relative links in the root `AGENTS.md` and `.agents/skills` resolve.
 
 The check does not require named directories, links, skills, or subagents.

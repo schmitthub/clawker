@@ -8,7 +8,8 @@ instruction pairs:
 2. Every symbolic link under .agents, .claude, and .codex is relative and
    resolves inside the repository. Links under .agents never resolve into a
    harness directory.
-3. Every Codex `[agents.<name>] config_file` resolves to a regular file.
+3. Every Codex `[agents.<name>] config_file` is relative and resolves to a
+   regular file inside the repository.
 4. Relative links in the root AGENTS.md and .agents/skills resolve.
 """
 
@@ -16,8 +17,12 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.exit("Agent compatibility check needs Python 3.11 or later (tomllib).")
+
+import tomllib  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SHARED = Path(".agents")
@@ -96,9 +101,14 @@ def check_codex_roles(root):
         value = role.get("config_file")
         if value is None:
             continue
+        if Path(value).is_absolute():
+            errors.append(f"{CODEX_CONFIG}: [agents.{name}] config_file must be relative")
+            continue
         path = config.parent / value
         if path.is_symlink() or not path.is_file():
             errors.append(f"{CODEX_CONFIG}: [agents.{name}] config_file must be a regular file")
+        elif not path.resolve().is_relative_to(root):
+            errors.append(f"{CODEX_CONFIG}: [agents.{name}] config_file must stay inside the repository")
     return errors, len(roles)
 
 

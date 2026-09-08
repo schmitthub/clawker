@@ -19,7 +19,8 @@ class LayoutTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
         subprocess.run(["git", "init", "--quiet"], cwd=self.root, check=True)
         self.write("AGENTS.md", "# Root\n")
         self.link("CLAUDE.md", "AGENTS.md")
@@ -97,6 +98,12 @@ class LayoutTests(unittest.TestCase):
         self.assert_error("[agents.gone]")
         self.write(".codex/config.toml", '[agents.shared]\nconfig_file = "../.agents/skills/s/agents/codex.toml"\n')
         self.assertEqual([], self.errors())
+        self.write("../outside.toml")
+        self.write(".codex/config.toml", '[agents.out]\nconfig_file = "../../outside.toml"\n')
+        self.assert_error("inside the repository")
+        absolute = self.root / ".agents/skills/s/agents/codex.toml"
+        self.write(".codex/config.toml", f'[agents.abs]\nconfig_file = "{absolute}"\n')
+        self.assert_error("must be relative")
 
     def test_navigation_links_resolve(self):
         self.write(".agents/rules/git.md")
