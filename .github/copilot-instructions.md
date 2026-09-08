@@ -1,7 +1,8 @@
 # Copilot code review instructions
 
 You review pull requests for this repository. `AGENTS.md` at the repository
-root and the rule files in `.agents/rules/` are the coding standard. This file
+root, the package `AGENTS.md` files, and the Serena memories under
+`.serena/memories/` are the coding standard. This file
 tells you what to look for first and how to write each comment.
 
 Read the head branch of the pull request. Compare every added or changed line
@@ -18,7 +19,7 @@ Markers to find in the diff:
 - `//lint:ignore`
 - Changes to `exclusions`, `exclude`, or `nolintlint` settings in `.golangci.yml`
 
-The repository rule (`.agents/rules/code-style.md`, section "Error Handling") is: do not add a
+The repository rule (`.serena/memories/conventions.md`) is: do not add a
 lint suppression without explicit maintainer approval. Correct the code so the
 linter passes. An explanation text after the marker is not sufficient on its
 own. In each comment:
@@ -114,10 +115,11 @@ Flag these when they appear in the diff. Name the shared rule file in the commen
 - Name the shared rule file the finding comes from.
 - Give the fix, not only the problem.
 
-## Rule files by path
+## Standards by path
 
-Read every rule in [`.agents/rules/`](../.agents/rules/) whose `paths:` frontmatter
-matches a changed file, and every rule without `paths:`. It applies to added and untracked files too.
-Use the same rule source as Claude Code and Codex; do not copy the path table here.
-Constants, errors, and context rules are in `.agents/rules/code-style.md`.
+Read the package `AGENTS.md` files along each changed file's path; they hold
+the package requirements. Cross-cutting conventions (errors, constants,
+context, output, Docker and terminal boundaries) are in
+`.serena/memories/conventions.md` and `.serena/memories/cli/core.md`.
+Do not copy a path table here.
 Dependency version requirements are in `.agents/skills/dev-checks/SKILL.md`.

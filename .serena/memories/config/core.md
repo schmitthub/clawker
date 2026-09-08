@@ -10,7 +10,7 @@
 - Use specific `config.Config` getters. There is no whole-project or whole-settings snapshot getter.
 - `ProjectStore().Set` / `Remove` stage changes. `Write` persists them. Settings use the corresponding store.
 - Keys use explicit segments; a literal dot in an alias name is not a separator.
-- `internal/consts` owns shared names and path primitives. Use config accessors where the Config interface provides the required value.
+- `internal/consts` owns shared names and path primitives. Use config accessors where the Config interface provides the required value. Never hardcode config file names, subdirectories, or label domains in callers; read `ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, and similar methods.
 - `internal/config/schema.go` and the component schema files define persisted fields. `cmd/gen-docs/` generates JSON schemas from them.
 - Package contracts: `internal/config/AGENTS.md`, `internal/project/AGENTS.md`, `internal/state/AGENTS.md`.
 - For engine mutation and persistence rules: `mem:storage/core`.

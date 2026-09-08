@@ -1,6 +1,6 @@
 ---
 name: agent-files
-description: Use when adding or changing AGENTS.md files, CLAUDE.md links, rules, skills, subagents, command guards, or Claude Code and Codex settings in clawker.
+description: Use when adding or changing AGENTS.md files, CLAUDE.md links, skills, subagents, command guards, Serena memories, or Claude Code and Codex settings in clawker.
 ---
 
 # agent-files
@@ -14,9 +14,8 @@ for the task. Each regular `AGENTS.md` has a sibling
 ## File ownership
 
 - Project and package instructions: Root and package `AGENTS.md`. Claude reads sibling `CLAUDE.md` links; Codex reads `AGENTS.md`.
-- Repository-wide rules: `rules/*.md`. Claude loads them through the `.claude/rules` link with `paths:`; Codex reads them because the root `AGENTS.md` requires it.
+- Conventions and design knowledge: Serena memories under `.serena/memories/`. There is no rule directory; a mandatory constraint goes in the root or a package `AGENTS.md`.
 - Skills: `skills/*/SKILL.md`. Codex discovers the shared directory; `.claude/skills` links to it.
-- Architecture and API references: `docs/`. Both follow shared links.
 - Development templates: `templates/`. Both use the shared files.
 - Durable project memory: `../.serena/memories/`. Both use Serena or read the shared memory files.
 - Command guards: `hooks/`. Registered in both native configurations.
@@ -68,17 +67,11 @@ definitions, and hooks specific to one tool stay in that tool's directory.
 
 Codex reads `AGENTS.md` from the repository root through its working directory.
 Claude Code reads the sibling `CLAUDE.md` symbolic links. The shared root requires
-both tools to read the shared rules in `.agents/rules/` and package
-instructions along each target file's path. This explicit requirement
+both tools to read the Serena memories and package instructions along each
+target file's path. This explicit requirement
 also covers files outside the initial working directory.
 [Codex instructions](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
 [Claude memory](https://code.claude.com/docs/en/memory)
-
-Claude can also load rules through `.claude/rules`, a directory link to
-`.agents/rules`. Its `paths` fields control loading by file path. Codex follows
-the shared index's read instruction. Do not describe `.agents/rules` as a native
-Codex loader. When a rule changes, update its `paths` field and the shared index.
-Check both when changing a rule's scope.
 
 ### Skills, references, and memory
 
@@ -150,8 +143,7 @@ exists:
   resolves inside the repository. Links under `.agents` never resolve into a
   harness directory.
 - Each `config_file` value in `.codex/config.toml` resolves to a regular file.
-- Relative links in the root `AGENTS.md`, `.agents/rules`, and `.agents/skills`
-  resolve.
+- Relative links in the root `AGENTS.md` and `.agents/skills` resolve.
 
 The check does not require named directories, links, skills, or subagents.
 The PR lint workflow also runs the checker's own tests in

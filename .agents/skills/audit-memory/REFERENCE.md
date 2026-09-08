@@ -106,7 +106,7 @@ go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 | Root + always-loaded rules | < 500 lines | Rules without `paths:` frontmatter |
 | Total always-loaded (+ global) | < 800 lines | Includes the active tool’s global instructions |
 | Each `internal/*/AGENTS.md` | < 200 lines | Read for the applicable package |
-| Each `.agents/rules/*.md` | ~50-100 lines | Read when a file pattern matches |
+| Each Serena domain memory | < 150 lines | Read through `mem:` references from `core` |
 
 ## Staleness Thresholds
 

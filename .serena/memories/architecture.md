@@ -8,7 +8,7 @@
 - `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package API, write semantics, and testing details.
 
-Agent file layout is in `.agents/skills/agent-files/SKILL.md`. Shared rules are in `.agents/rules/`.
+Agent file layout is in `.agents/skills/agent-files/SKILL.md`.
 
 ## System Layers
 

@@ -8,7 +8,7 @@ Clawker is a Go CLI tool that runs coding agents in secure, reproducible Docker 
 - `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package contracts, persistence model, and test helpers.
 
-Agent file layout is in `.agents/skills/agent-files/SKILL.md`. Shared rules are in `.agents/rules/`.
+Agent file layout is in `.agents/skills/agent-files/SKILL.md`.
 
 ## Control-plane safety
 

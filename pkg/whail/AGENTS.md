@@ -1,6 +1,6 @@
 # Whail Package
 
-Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — only `pkg/whail` and `internal/docker` may import the `APIClient` connector (with narrow exceptions for daemon processes; see `.agents/rules/code-style.md` (Whail Client Enforcement)).
+Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — only `pkg/whail` and `internal/docker` may import the `APIClient` connector (with narrow exceptions for daemon processes; see the Serena `cli/core` memory).
 
 All list/inspect/mutate operations automatically inject managed label filters. Callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
 
@@ -155,7 +155,7 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 
 ## whailtest/ Package
 
-Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and `internal/docker`; see `.agents/rules/code-style.md` (Whail Client Enforcement) for the import boundary rule.
+Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and `internal/docker`; see the Serena `cli/core` memory for the import boundary rule.
 
 - **`FakeAPIClient`**: function-field fake (nil = panic); `NewFakeAPIClient()`, `Reset()`
 - **`TestEngineOptions()`**: returns `EngineOptions` with test prefix

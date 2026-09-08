@@ -6,7 +6,7 @@ Clawker is a Go CLI that runs coding agents in Docker containers with controlled
 
 Claude Code and Codex must use the same project instructions, rules, skills, and references.
 Store instructions in regular `AGENTS.md` files. Each must have a sibling `CLAUDE.md` symbolic link with the relative target `AGENTS.md`.
-Before reading or changing files, read every rule in [.agents/rules/](.agents/rules/). A rule without `paths:` applies to every task; `paths:` lists repository-root glob patterns.
+Before reading or changing files, read the Serena `core` memory and the memories it names for the touched domain.
 Read package `AGENTS.md` files along the path to each file, including files outside the working directory. Requirements for one package tree live in that tree's `AGENTS.md`, not in a rule file.
 Use instructions already loaded in the session. Do not load an entire reference directory.
 Keep `.agents/` independent of any harness. Store native settings and tool-specific hooks in `.claude/` or `.codex/`. A skill that is also a subagent keeps each harness definition in its `agents/` directory.
@@ -27,7 +27,7 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 
 - The control plane (CP) runs whenever managed agent containers exist. Only its firewall subsystem is optional. Never gate other CP behavior on `firewall.enable`.
 - A CP crash leaves pinned eBPF state without supervision. Before changing CP startup, serving, or their dependencies, read [control-plane safety](controlplane/AGENTS.md#control-plane-safety).
-- Do not add lint suppressions without explicit user approval. See [code style](.agents/rules/code-style.md) for errors, constants, and context rules.
+- Do not add lint suppressions without explicit user approval. See the Serena `conventions` memory for errors, constants, and context rules.
 - Pin external dependencies to exact versions with integrity verification. See the [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use targeted packages or `make test`.
 

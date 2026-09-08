@@ -5,7 +5,7 @@ description: Use when adding or changing command output in clawker: stdout and s
 
 # cli-output
 
-Read this reference for CLI output examples. The [shared output rules](../../rules/code-style.md#output-conventions-gh-style) define stream placement; examples below apply those rules.
+Read this reference for CLI output examples. The output rules in the Serena `cli/core` memory define stream placement; examples below apply those rules.
 
 ## 1. Core Principle
 

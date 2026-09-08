@@ -20,7 +20,7 @@
       "mcp__MCP_DOCKER__mcp-add",
       "mcp__MCP_DOCKER__get_file_contents",
       "mcp__deepwiki__ask_question",
-      "Bash(rg --files .agents/rules .agents/skills)",
+      "Bash(rg --files .agents/skills)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "mcp__serena__find_referencing_symbols",

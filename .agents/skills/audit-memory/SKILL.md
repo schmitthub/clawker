@@ -20,7 +20,6 @@ List the source files below. Do not count a symbolic link as a second copy:
 
 - `AGENTS.md` (root)
 - `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, and `pkg/**/AGENTS.md`
-- `.agents/rules/*.md`
 - `controlplane/**/AGENTS.md`, `clawkerd/AGENTS.md`
 - `.agents/skills/*/SKILL.md` and their sidecar files
 - `.serena/memories/**/*.md`
@@ -33,8 +32,7 @@ For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** 
 Check every `CLAUDE.md` link: its relative target must be the sibling `AGENTS.md`. Check the links inside `.claude/` and `.codex/` against `.agents/skills/agent-files/SKILL.md`.
 
 Group files by the active tool's documented loading behavior:
-- **Initial instructions**: root `AGENTS.md` through the tool's native entry path; Claude also loads rules without `paths:` at session start
-- **File-scoped rules**: Claude loads rules through `.claude/rules/` when `paths:` matches a file it reads; other coding agents read the whole rule directory because the root `AGENTS.md` requires it
+- **Initial instructions**: root `AGENTS.md` through the tool's native entry path
 - **Package instructions**: `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, `pkg/**/AGENTS.md`
 - **On-demand**: `.agents/skills/*/SKILL.md` (loaded on description match) and `.serena/memories/**/*.md` (loaded through `mem:` references)
 - **WIP tracking**: `.serena/memories/**/*.md`
@@ -59,15 +57,11 @@ For each package `AGENTS.md` found in the inventory:
    - **Missing**: identifiers documented but not found in Go source (renamed or deleted)
    - **Undocumented**: exported Go symbols (`^func [A-Z]`, `^type [A-Z]`, `^var [A-Z]`, `^const [A-Z]`) in the directory not mentioned in the AGENTS.md. **Exclude** `Test*` and `Benchmark*` functions — these don't belong in AGENTS.md.
 
-### 4. Rules Path Validation
+### 4. Serena Graph Validation
 
-For each `.agents/rules/*.md` file with a `paths:` frontmatter field:
-
-1. Read the `paths:` patterns. Paths start at the repository root.
-2. Run `git ls-files -- ':(glob)<pattern>'` for each pattern. Git’s default path matching does not have the same `*` behavior.
-3. Report patterns with no current file matches. Check whether the rule is for files that will be added.
-4. Check the scope of rules without `paths:`. These apply to all tasks.
-5. Check that each rule is repository-wide. A rule for one package tree belongs in that tree's `AGENTS.md`.
+1. Run `serena memories check` when the CLI is available; otherwise resolve every `mem:` reference by hand.
+2. Confirm `core` links each domain memory and each referring line says what the target covers.
+3. Flag behavioral or situational content in a memory; it belongs in a skill.
 
 ### 5. Auto Memory Audit
 
@@ -95,7 +89,7 @@ Retained history and research can describe completed work. Do not mark a file fo
 
 Check for contradictions between always-loaded context files:
 
-1. **Root AGENTS.md vs .agents/rules/*.md**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
+1. **Root AGENTS.md vs Serena `conventions`**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
 2. **Root AGENTS.md vs global instructions** (for example, `$CODEX_HOME/AGENTS.md` or `~/.claude/CLAUDE.md`, when present): Check for conflicting behavioral directives (e.g., "pivot on tech debt" vs "surgical changes only").
 3. **Within root AGENTS.md**: Flag repeated information (e.g., same fact stated twice in different sections).
 

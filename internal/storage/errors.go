@@ -6,7 +6,7 @@
 // and scoped writes with atomic I/O.
 //
 // storage is low-level infrastructure: consumers compose a Store[T] behind a
-// domain interface (see .agents/rules/store-backed-package.md) rather than
+// domain interface (see the Store-backed package contract in internal/storage/AGENTS.md) rather than
 // exposing the store or constructing one at call sites.
 package storage
 
