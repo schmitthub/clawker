@@ -51,8 +51,7 @@ the hook reports layout problems at commit time and CI reports them on the
 pull request. See the compatibility sections below
 for what it checks.
 
-For instruction changes, check files and formats with `git diff --check` and
-the advisory `bash scripts/check-agents-freshness.sh --no-color`. Do not run
+For instruction changes, check files and formats with `git diff --check`. Do not run
 application tests, install or run Claude Code, or make model API calls for
 these checks.
 

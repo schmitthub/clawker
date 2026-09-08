@@ -132,17 +132,6 @@ pass_filenames = false
 priority = "scan"
 
 [[repos.hooks]]
-id = "agents-freshness"
-name = "Agent doc freshness (advisory)"
-shell = "bash"
-entry = "bash scripts/check-agents-freshness.sh --strict --non-interactive --no-color | head -50 || true"
-language = "system"
-files = '\.go$'
-pass_filenames = false
-verbose = true
-priority = "scan"
-
-[[repos.hooks]]
 id = "plugin-drift"
 name = "Plugin Dockerfile template drift check"
 shell = "bash"

@@ -40,11 +40,7 @@ Group files by the active tool's documented loading behavior:
 
 ### 2. Freshness Check
 
-Run the freshness script and include its output:
-
-```bash
-bash scripts/check-agents-freshness.sh --no-color
-```
+For each `AGENTS.md`, compare its last commit date with the last commit date of Go files in its directory (`git log -1 --format=%cs -- <path>`). List files whose source changed after the instruction file.
 
 ### 3. Symbol Accuracy
 
@@ -95,7 +91,7 @@ Check for contradictions between always-loaded context files:
 
 ### 9. Architecture and Design Accuracy
 
-1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
+1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check, git status, or commit messages
 2. For each reference skill (`writing-tests`, `cli-output`, `dev-checks`, `agent-files`) and each design memory (`architecture`, `design`, `key-concepts`, `repo-structure`, `project-guide`):
    - Check for mentions of outdated components, patterns, or practices
    - Flag files that likely need updates based on the nature of the changes

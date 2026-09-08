@@ -87,5 +87,5 @@ Reference map of the clawker repo. Referenced from root `AGENTS.md`.
 │   ├── adversarial/           # Adversarial C2 harness (Go server + SQLite, exposed via ngrok)
 │   ├── e2e/                   # E2E integration tests
 │   └── whail/                 # Whail BuildKit integration tests
-└── scripts/                   # install.sh, install-hooks.sh, check-agents-freshness.sh, etc.
+└── scripts/                   # install.sh, install-hooks.sh, check-agent-compatibility.py, etc.
 ```

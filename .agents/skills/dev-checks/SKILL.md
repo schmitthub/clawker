@@ -23,7 +23,6 @@ Run commands from the repository root unless a command specifies another path.
 | Generate CLI docs and config schemas | `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas` |
 | Check generated docs | `make docs-check` |
 | Local Mintlify preview | `npx mintlify dev --docs-directory docs` |
-| Check instruction freshness | `bash scripts/check-agents-freshness.sh --no-color` |
 | Check Serena references, if its CLI is installed | `serena memories check` |
 | Whail golden regeneration | `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v` |
 
