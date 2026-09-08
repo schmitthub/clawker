@@ -8,7 +8,7 @@
 
 Bring `clawker image build` (aliased as `clawker build`) to **flag-surface parity with `docker build`** for flags that have genuine clawker value. Drop anything packaging/distribution-flavored — clawker images run **locally on the same daemon they were built on**.
 
-Holistic secondary goal: follow standard build-CLI conventions for **proper metadata, tags, digest capture, attestations**. For a security-positioned tool, attestations (`--provenance`, `--sbom`) are first-class even for local-only builds (audit trail + SBOM for CVE scanning).
+Holistic secondary goal: follow standard build-CLI mem:conventions for **proper metadata, tags, digest capture, attestations**. For a security-positioned tool, attestations (`--provenance`, `--sbom`) are first-class even for local-only builds (audit trail + SBOM for CVE scanning).
 
 ## Curation Filter (Phase 2 outcome — locked)
 

@@ -5,7 +5,7 @@ Clawker is a Go CLI tool that runs coding agents in secure, reproducible Docker 
 ## Related Docs
 
 - `mem:architecture` — package layering and dependency boundaries.
-- `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
+- `internal/storage/AGENTS.md` — storage package API, node tree mem:architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package contracts, persistence model, and test helpers.
 
 Agent file layout is in `.agents/skills/agent-files/SKILL.md`.
@@ -526,7 +526,7 @@ Clawker-specific middleware that builds on the External Engine:
 
 - Initializes External Engine with clawker's label configuration
 - Receives `Config` interface for label keys, naming, and path helpers
-- Handles clawker-specific logic (agent naming, volume conventions)
+- Handles clawker-specific logic (agent naming, volume mem:conventions)
 - Exposes high-level interface for Cobra commands
 
 ```go
@@ -655,7 +655,7 @@ General codes (extensible later):
 - `0` - Success
 - `1` - General error
 
-Pattern follows GitHub CLI conventions.
+Pattern follows GitHub CLI mem:conventions.
 
 ## 7. Security Model
 
@@ -699,7 +699,7 @@ So `post_init` is an init step (one-time) and `pre_run` is a boot step (every st
 
 The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `mem:architecture` and `controlplane/firewall/AGENTS.md` for the as-built design.
 
-**Why this architecture:**
+**Why this mem:architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
 - **Real-time dns_cache via dnsbpf plugin**: Every successful A-record response goes through the `dnsbpf` CoreDNS plugin, which writes `IP → {identity, TTL}` into the pinned BPF `dns_cache` map (identity = the zone's CP-allocated route identity). Writing at resolution time keeps the cache in step with DNS round-robin — the IP the agent is about to connect to is always the one just answered. NXDOMAIN responses are never written to the cache.
 - **TLS inspection**: Envoy terminates TLS for every allowed HTTPS/WSS rule, with certificates signed by the firewall CA. Wildcard TCP chains obtain per-SNI certificates from the CP SDS service over mTLS. CP creates the SDS client files with owner-only access for the Envoy process. The client directory grants read and traversal access to the Envoy group and is mounted read-only.

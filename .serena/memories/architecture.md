@@ -90,7 +90,7 @@ Reusable library with label-based resource isolation. Standalone for use in othe
 
 ### internal/docker - Clawker Middleware
 
-Thin layer configuring whail with clawker's conventions.
+Thin layer configuring whail with clawker's mem:conventions.
 
 **Key abstractions:**
 

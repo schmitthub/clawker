@@ -74,7 +74,7 @@ Sources:
 ## C. Feature set & granularity
 
 ### network_default_posture
-network_default_posture: Partial — deny-by-default is the architecture and the recommended/pre-selected default, but the user explicitly chooses among three modes at first `sbx login` (or after `sbx policy reset`): **Open** (allow everything except private networks/localhost/link-local/cloud metadata), **Balanced** (deny-by-default with a pre-populated allowlist of common dev domains — described as "a good starting point"), or **Locked Down** (deny-by-default, explicit allowlist only, strictest). So an "unconfigured" sandbox's actual posture depends on the choice made at login, not a single fixed default.
+network_default_posture: Partial — deny-by-default is the mem:architecture and the recommended/pre-selected default, but the user explicitly chooses among three modes at first `sbx login` (or after `sbx policy reset`): **Open** (allow everything except private networks/localhost/link-local/cloud metadata), **Balanced** (deny-by-default with a pre-populated allowlist of common dev domains — described as "a good starting point"), or **Locked Down** (deny-by-default, explicit allowlist only, strictest). So an "unconfigured" sandbox's actual posture depends on the choice made at login, not a single fixed default.
 Sources:
 - https://www.docker.com/blog/untrusted-autonomous-workload-ai-sandboxes/ — "Open ... Balanced - Deny-by-default with pre-allowed common dev domains ... Locked Down - Deny-by-default, explicit allowlist required"
 - https://docs.docker.com/ai/sandboxes/security/defaults/ — "All outbound HTTP and HTTPS traffic is blocked unless an explicit rule allows it (deny-by-default)"

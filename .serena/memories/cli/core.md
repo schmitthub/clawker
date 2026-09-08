@@ -6,7 +6,7 @@
 - Follow `NewCmd(f, runF)`: construction tests capture options through `runF`; execution tests use the same command with injected dependencies.
 - Shared container operations belong in `internal/cmd/container/shared/`. A noun's subdirectories otherwise represent subcommands.
 - Docker calls pass through `internal/docker` and `pkg/whail`. Only `pkg/whail` imports the Moby `APIClient` connector and only `internal/docker` imports `pkg/whail`. Typed Moby imports (`client.Filters`, `container.Config`, ...) are fine anywhere. Standalone daemon packages (`internal/hostproxy`, `internal/cmd/bridge`, `cmd/clawkercp`, `internal/controlplane`) may import the connector directly; they need lightweight Docker access without whail's label isolation.
-- Cobra: always `PersistentPreRunE`, never `PersistentPreRun`. Every command sets `Example` with indented examples. Follow https://clig.dev/ conventions.
+- Cobra: always `PersistentPreRunE`, never `PersistentPreRun`. Every command sets `Example` with indented examples. Follow https://clig.dev/ mem:conventions.
 - Managed labels are authoritative. A matching container name does not establish ownership.
 - A project agent has three name segments. A global agent has two and omits the project label; an empty project label is not equivalent.
 - CP command operations use `f.AdminClient(ctx)`. Do not call the firewall handler directly from a CLI command.

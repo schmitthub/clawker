@@ -379,7 +379,7 @@ Official references:
 4. Add the required-service readiness barrier and failure cleanup.
 5. Test on Linux and macOS.
 6. Build a Codex App Server proof with the generic bridge.
-7. Update architecture, design, package references, CLI docs, Mintlify docs,
+7. Update mem:architecture, design, package references, CLI docs, Mintlify docs,
    schemas, README content, and Serena memories.
 
 ## Open design decisions

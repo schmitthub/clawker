@@ -40,7 +40,7 @@ Branch: `fix/wildcard-san-certs`. Plan: `/home/clawker/.claude/plans/500-envoy-n
 - Commit attribution: do not copy Claude co-author trailers or Claude session links into Codex commits. The old trailer instruction was incorrect and is superseded by the user's correction. Add no replacement attribution for these commits.
 
 - Final code checks passed: `GOTOOLCHAIN=go1.26.6 go build ./...`, `go test ./controlplane/... ./internal/...`, and `golangci-lint run --config .golangci.yml ./...` with the same toolchain (0 issues). Lint uses `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/Users/andrew/Code/clawker` so its existing merge-base filter can read this mounted repository. `.golangci.yml` is unchanged. Golden SHA256 checks passed.
-- README, design, architecture, package references, and Mintlify firewall docs describe the final certificate behavior and QUIC limit. The user requested UAT commands in the final reply only; no separate UAT document. Live UAT remains pending.
+- README, design, mem:architecture, package references, and Mintlify firewall docs describe the final certificate behavior and QUIC limit. The user requested UAT commands in the final reply only; no separate UAT document. Live UAT remains pending.
 
 - Initial commit hook run: all checks passed except Semgrep's TLS check on the test-only `bufconn` listener. The following milestone records the correction and successful retry.
 
