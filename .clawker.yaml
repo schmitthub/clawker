@@ -17,6 +17,8 @@ harnesses:
       claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@949a27ef1e5fda1a6e7b561e777bcece345c6ffd serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
       claude mcp add -s local -t http deepwiki https://mcp.deepwiki.com/mcp
       claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
+      claude plugin marketplace add DietrichGebert/ponytail
+      claude plugin install ponytail@ponytail
   codex:
     post_init: |
       uvx --from git+https://github.com/oraios/serena@949a27ef1e5fda1a6e7b561e777bcece345c6ffd serena setup codex
@@ -24,6 +26,8 @@ harnesses:
       codex mcp add deepwiki --url https://mcp.deepwiki.com/mcp
       codex mcp add context7 --env PATH="$PATH" --env SSL_CERT_FILE="$SSL_CERT_FILE" --env CURL_CA_BUNDLE="$CURL_CA_BUNDLE" --env NODE_USE_SYSTEM_CA=1 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
       sed -i -e '/^\[mcp_servers\.serena\]$/a startup_timeout_sec = 30' -e '/^\[mcp_servers\.context7\]$/a startup_timeout_sec = 30' "$CODEX_HOME/config.toml"
+      codex plugin marketplace add DietrichGebert/ponytail
+      codex plugin add ponytail@ponytail
 build:
   stacks:
     - go
@@ -94,6 +98,7 @@ build:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install prek
+      - uv tool install graphifyy
       - go install golang.org/x/tools/gopls@latest
       - go install gotest.tools/gotestsum@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
