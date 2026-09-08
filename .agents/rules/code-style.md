@@ -71,7 +71,7 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
   - `return cmdutil.FlagErrorf("bad flag: %s", val)` — triggers usage display
   - `return cmdutil.SilentError` — error already displayed
 - **`--format` flag**: Per-command machine-readable output (`json`, `table`, `TEMPLATE`); formatted data → stdout, status/progress → stderr
-- Stream rules above apply to static output. Live-display and live-interactive scenarios delegate rendering to the TUI layer — see [.agents/docs/cli-output-style-guide.md](../docs/cli-output-style-guide.md) for per-scenario details
+- Stream rules above apply to static output. Live-display and live-interactive scenarios delegate rendering to the TUI layer — see [.agents/skills/cli-output/SKILL.md](../skills/cli-output/SKILL.md) for per-scenario details
 
 ### Deprecated (do not use in new code)
 - `cmdutil.HandleError`, `cmdutil.PrintNextSteps`, `cmdutil.PrintErrorf`

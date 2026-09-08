@@ -10,6 +10,6 @@
 - The collector endpoint is a base URL from config. Do not concatenate per-signal endpoints in bundler code.
 - Trusted CP/Envoy/CoreDNS telemetry and agent telemetry have separate paths. Certificate provisioning packages under `controlplane/` have separate roles.
 - Live ingest, routing, and certificate access need runtime proof. Template unit tests do not establish those results.
-- Package contract: `internal/monitor/AGENTS.md`. Runtime checks: `internal/monitor/AGENTS.md` → Runtime UAT. Detailed map: `.agents/docs/MONITORING-REFERENCE.md`.
+- Package contract: `internal/monitor/AGENTS.md`. Runtime checks: `internal/monitor/AGENTS.md` → Runtime UAT. Detailed map: `internal/monitor/AGENTS.md (Monitoring reference section)`.
 - For component resolution: `mem:bundle/core`.
 - For eBPF egress events and SDS identity separation: `mem:controlplane/firewall/core`.

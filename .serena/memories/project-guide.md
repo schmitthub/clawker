@@ -1,9 +1,6 @@
 # Project guide
 
-Read this file for CLI, config, package boundary, or terminal work.
-The [architecture](ARCHITECTURE.md) and [design](DESIGN.md) documents define
-the system. Read [REPO-STRUCTURE.md](REPO-STRUCTURE.md) for package locations
-and [KEY-CONCEPTS.md](KEY-CONCEPTS.md) for types. Package `AGENTS.md` files
+`mem:architecture` and `mem:design` define the system. `mem:repo-structure` has package locations and `mem:key-concepts` the core types. Package `AGENTS.md` files
 provide API references; check current package source for exact signatures.
 Code and command paths below start at the repository root.
 

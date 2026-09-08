@@ -4,12 +4,11 @@
 
 ## Related Docs
 
-- `.agents/docs/DESIGN.md` — behavior and product-level rationale.
+- `mem:design` — behavior and product-level rationale.
 - `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package API, write semantics, and testing details.
 
-Agent instructions and tool links are described in `.agents/README.md`. Shared
-rules are stored in `.agents/rules/`; each rule's `paths:` frontmatter defines its file scope.
+Agent file layout is in `.agents/skills/agent-files/SKILL.md`. Shared rules are in `.agents/rules/`.
 
 ## System Layers
 
@@ -415,7 +414,7 @@ Commands follow a **4-scenario output model** — each command picks the simples
 
 **TUI Factory noun**: Commands access TUI via `f.TUI` (`*tui.TUI`). `NewTUI(ios)` is created eagerly in the factory. Commands call `opts.TUI.RunProgress(...)` for multi-step tree displays, registering lifecycle hooks via `opts.TUI.RegisterHooks(...)`.
 
-See [cli-output-style-guide.md](cli-output-style-guide.md) for full scenario details and rendering specs.
+See `.agents/skills/cli-output/SKILL.md` for full scenario details and rendering specs.
 
 ### internal/hostproxy - Host Proxy Service
 

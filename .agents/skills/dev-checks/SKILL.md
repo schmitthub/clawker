@@ -1,10 +1,14 @@
-# Development checks
+---
+name: dev-checks
+description: Use when building clawker, running unit or integration tests, changing dependencies or pins, regenerating docs or embeds, installing hooks, or completing work.
+---
 
-Read this file before building, testing, changing dependencies, or completing work.
+# dev-checks
+
 Run commands from the repository root unless a command specifies another path.
 
 Write tests before production code. Put integration tests in `test/*/`.
-Use the [testing reference](TESTING-REFERENCE.md) for fixtures and test helpers.
+Use the [writing-tests skill](../writing-tests/SKILL.md) for fixtures and test helpers.
 Generate mocks with `moq` through `//go:generate`; never edit generated mocks.
 Run `go generate ./...` from the owning `internal/<package>` directory.
 
@@ -75,7 +79,7 @@ After bug fixes or feature changes:
 
 Generate CLI reference pages; do not edit generated pages by hand: `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas`
 Local preview: `npx mintlify dev --docs-directory docs`
-See [docs/AGENTS.md](../../docs/AGENTS.md) for conventions.
+See [docs/AGENTS.md](../../../docs/AGENTS.md) for conventions.
 
 Do not bypass Git hooks with flags, environment variables, configuration
 overrides, or Git plumbing commands.

@@ -21,9 +21,8 @@ List the source files below. Do not count a symbolic link as a second copy:
 - `AGENTS.md` (root)
 - `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, and `pkg/**/AGENTS.md`
 - `.agents/rules/*.md`
-- `.agents/docs/*.md`
 - `controlplane/**/AGENTS.md`, `clawkerd/AGENTS.md`
-- `.agents/templates/*.md`, `.agents/skills/*/SKILL.md`
+- `.agents/skills/*/SKILL.md` and their sidecar files
 - `.serena/memories/**/*.md`
 - `docs/docs.json`, `docs/custom.css`, `docs/favicon.svg` — Mintlify site config, theme, and favicon
 - `docs/*.mdx` — Hand-authored Mintlify pages
@@ -31,13 +30,13 @@ List the source files below. Do not count a symbolic link as a second copy:
 
 For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** (`wc -c` / 4).
 
-Check every `CLAUDE.md` link: its relative target must be the sibling `AGENTS.md`. Check the links inside `.claude/` and `.codex/` against `.agents/README.md`.
+Check every `CLAUDE.md` link: its relative target must be the sibling `AGENTS.md`. Check the links inside `.claude/` and `.codex/` against `.agents/skills/agent-files/SKILL.md`.
 
 Group files by the active tool's documented loading behavior:
 - **Initial instructions**: root `AGENTS.md` through the tool's native entry path; Claude also loads rules without `paths:` at session start
 - **File-scoped rules**: Claude loads rules through `.claude/rules/` when `paths:` matches a file it reads; other coding agents read the whole rule directory because the root `AGENTS.md` requires it
 - **Package instructions**: `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, `pkg/**/AGENTS.md`
-- **On-demand**: `.agents/docs/*.md`
+- **On-demand**: `.agents/skills/*/SKILL.md` (loaded on description match) and `.serena/memories/**/*.md` (loaded through `mem:` references)
 - **WIP tracking**: `.serena/memories/**/*.md`
 - **Mintlify site**: `docs/docs.json`, `docs/custom.css`, `docs/*.mdx`, `docs/cli-reference/*.md`
 
@@ -72,7 +71,7 @@ For each `.agents/rules/*.md` file with a `paths:` frontmatter field:
 
 ### 5. Auto Memory Audit
 
-Check Serena's `.serena/memories/` graph and the active tool's memory directory when it is available. Authored references in `.agents/docs/` are not auto memory. Claude Code uses `~/.claude/projects/*/memory/`. Do not assume that Codex uses that structure. If a memory source is unavailable, report that limit:
+Check Serena's `.serena/memories/` graph and the active tool's memory directory when it is available. Skills and package `AGENTS.md` files are not auto memory. Claude Code uses `~/.claude/projects/*/memory/`. Do not assume that Codex uses that structure. If a memory source is unavailable, report that limit:
 
 1. **MEMORY.md index completeness**: List all `.md` files in the directory. Flag any not referenced in `MEMORY.md` (unindexed).
 2. **Broken links**: Check that every `(filename.md)` reference in `MEMORY.md` points to an existing file.
@@ -103,7 +102,7 @@ Check for contradictions between always-loaded context files:
 ### 9. Architecture and Design Accuracy
 
 1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
-2. For each `.agents/docs/*.md` files:
+2. For each reference skill (`writing-tests`, `cli-output`, `dev-checks`, `agent-files`) and each design memory (`architecture`, `design`, `key-concepts`, `repo-structure`, `project-guide`):
    - Check for mentions of outdated components, patterns, or practices
    - Flag files that likely need updates based on the nature of the changes
 

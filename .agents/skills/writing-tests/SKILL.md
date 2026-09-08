@@ -1,4 +1,9 @@
-# Testing Reference — Detailed Examples
+---
+name: writing-tests
+description: Use when writing, changing, or running Go tests in clawker: test helpers, fakes, moq mocks, command test tiers, the e2e harness, golden files, and the storage oracle.
+---
+
+# writing-tests
 
 > Extended test patterns and examples. For essential rules, see `.agents/rules/testing.md`.
 
@@ -961,7 +966,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 
 ### Context Window Management
 
-- For multi-task initiatives across conversations, use the [initiative skill](../skills/initiative/SKILL.md) to plan and complete one task at a time with a handoff prompt.
+- For multi-task initiatives across conversations, use the [initiative skill](../initiative/SKILL.md) to plan and complete one task at a time with a handoff prompt.
 - Each task gets a fresh context window with self-contained handoff prompt providing all needed context
 
 ### Pure Function Testing (internal/docker)

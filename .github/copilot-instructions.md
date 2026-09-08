@@ -120,4 +120,4 @@ Read every rule in [`.agents/rules/`](../.agents/rules/) whose `paths:` frontmat
 matches a changed file, and every rule without `paths:`. It applies to added and untracked files too.
 Use the same rule source as Claude Code and Codex; do not copy the path table here.
 Constants, errors, and context rules are in `.agents/rules/code-style.md`.
-Dependency version requirements are in `.agents/docs/development.md`.
+Dependency version requirements are in `.agents/skills/dev-checks/SKILL.md`.

@@ -76,7 +76,7 @@ class LayoutTests(unittest.TestCase):
             ".claude/rules/broken.md": "../../.agents/rules/missing.md",
             ".claude/rules/absolute.md": str(self.root / ".agents/rules/a.md"),
             ".codex/outside.md": "../../outside.md",
-            ".agents/docs/native.json": "../../.claude/settings.json",
+            ".agents/hooks/native.json": "../../.claude/settings.json",
         }
         self.write("../outside.md")
         self.write(".claude/settings.json")
@@ -100,9 +100,9 @@ class LayoutTests(unittest.TestCase):
 
     def test_navigation_links_resolve(self):
         self.write(".agents/rules/git.md")
-        self.write(".agents/README.md", "[gone](docs/gone.md) [ok](rules/git.md) [ext](https://x)\n"
+        self.write(".agents/skills/agent-files/SKILL.md", "[gone](docs/gone.md) [ok](../../rules/git.md) [ext](https://x)\n"
                                         "```\n[code](not/a/link.md)\n```\n")
-        self.assertEqual([".agents/README.md: broken link docs/gone.md"], self.errors())
+        self.assertEqual([".agents/skills/agent-files/SKILL.md: broken link docs/gone.md"], self.errors())
 
 
 if __name__ == "__main__":

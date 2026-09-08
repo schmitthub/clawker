@@ -146,7 +146,7 @@ Commands use function references on Options structs. `NewCmd*` takes `*Factory` 
 
 ## Testing
 
-Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.agents/docs/TESTING-REFERENCE.md`.
+Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.agents/skills/writing-tests/SKILL.md`.
 
 **Tiers**: Tier 1 (flag parsing via `runF` trapdoor), Tier 2 (Cobra+Factory with `nil` runF), Tier 3 (unit, direct calls).
 

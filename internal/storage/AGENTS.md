@@ -3,8 +3,8 @@
 ## Related Docs
 
 - Store-backed package contract (this file, last section) — how to build a `Store[T]`-backed domain package (interface + impl + schema + migrations + mocks + tests)
-- `.agents/docs/ARCHITECTURE.md` — package DAG (storage is a leaf), configuration triad diagram
-- `.agents/docs/DESIGN.md` §2.4 — configuration system rationale, merge strategy, write model
+- `mem:architecture` — package DAG (storage is a leaf), configuration triad diagram
+- `mem:design` §2.4 — configuration system rationale, merge strategy, write model
 - `internal/config/AGENTS.md` — consumer API reference; composes `Store[Project]` + `Store[Settings]`
 
 ## Worldview

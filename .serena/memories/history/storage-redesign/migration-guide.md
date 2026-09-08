@@ -57,7 +57,7 @@ Every implementer: tagged schema + `New` + `NewFromString`, per `.agents/rules/s
 - `internal/storage/AGENTS.md` — full rewrite to new surface (Txn/Refresh/Get(&out)/snapshot-Read references purged; gotcha row "Compound read-modify-write isn't atomic — wrap in Txn" dies).
 - `.agents/rules/store-backed-package.md` — constructor-pair section stands; **interface + moq + domain-verb prescription conflicts with the no-wrapper ruling** — rewrite per canon (USER decision on what replaces the interface guidance; `internal/state`'s `StateStore` interface itself may be judged slop — ASK).
 - `.agents/rules/storage-schema.md` — mostly stands (tag contract unchanged).
-- `internal/config/AGENTS.md`, firewall `CLAUDE.md`, `.agents/docs/DESIGN.md` §2.4 — update.
+- `internal/config/AGENTS.md`, firewall `CLAUDE.md`, `mem:design` §2.4 — update.
 - Auto-memory `project_storage_txn_slop_removal` — close out when shipped.
 
 ## Known open questions for the user (collect answers before the relevant phase)

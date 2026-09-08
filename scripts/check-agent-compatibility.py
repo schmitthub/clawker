@@ -9,7 +9,7 @@ instruction pairs:
    resolves inside the repository. Links under .agents never resolve into a
    harness directory.
 3. Every Codex `[agents.<name>] config_file` resolves to a regular file.
-4. Relative links in the root AGENTS.md and the top-level .agents files resolve.
+4. Relative links in the root AGENTS.md, .agents/rules, and .agents/skills resolve.
 """
 
 import os
@@ -104,7 +104,9 @@ def check_codex_roles(root):
 
 def check_nav_links(root):
     errors = []
-    files = [root / "AGENTS.md", *sorted((root / SHARED).glob("*.md"))]
+    files = [root / "AGENTS.md", *sorted((root / SHARED).glob("*.md")),
+             *sorted((root / SHARED / "rules").glob("*.md")),
+             *sorted((root / SHARED / "skills").glob("*/*.md"))]
     for path in files:
         if not path.is_file():
             continue

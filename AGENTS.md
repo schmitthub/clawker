@@ -17,7 +17,7 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Define a verifiable result before coding. For work with multiple steps, state a short plan and its checks.
 - This is an alpha project. Correct design defects and technical debt before continuing affected work.
 - Consider architecture, tests, documentation, and effects on users and developers. Use a simpler design when possible.
-- Follow [DESIGN.md](.agents/docs/DESIGN.md) and [ARCHITECTURE.md](.agents/docs/ARCHITECTURE.md); update them when the design changes.
+- Follow the Serena `design` and `architecture` memories; update them when the design changes.
 - Write tests before production code. Add missing interfaces, mocks, fakes, and test subpackages as required. All applicable tests must pass.
 - Update the README, affected `AGENTS.md` files, documentation, and shared memories after changes.
 - When both agents work at the same time, preserve the other agent's edits and check the current diff before writing shared files.
@@ -28,16 +28,16 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - The control plane (CP) runs whenever managed agent containers exist. Only its firewall subsystem is optional. Never gate other CP behavior on `firewall.enable`.
 - A CP crash leaves pinned eBPF state without supervision. Before changing CP startup, serving, or their dependencies, read [control-plane safety](controlplane/AGENTS.md#control-plane-safety).
 - Do not add lint suppressions without explicit user approval. See [code style](.agents/rules/code-style.md) for errors, constants, and context rules.
-- Pin external dependencies to exact versions with integrity verification. See [development checks](.agents/docs/development.md).
+- Pin external dependencies to exact versions with integrity verification. See the [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use targeted packages or `make test`.
 
 ## Commands and references
 
 - Build CLI: `go build -o bin/clawker ./cmd/clawker`
 - Unit tests without Docker: `make test`
-- Build, integration tests, embeds, hooks, and completion checks: [development](.agents/docs/development.md).
-- CLI, config, naming, package boundaries, and terminal behavior: [project guide](.agents/docs/project-guide.md).
-- Shared file layout and native tool settings: [.agents/README.md](.agents/README.md).
+- Build, integration tests, embeds, hooks, and completion checks: [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
+- CLI, config, naming, package boundaries, and terminal behavior: Serena `project-guide` memory.
+- Agent file layout and native tool settings: [agent-files skill](.agents/skills/agent-files/SKILL.md).
 - Shared skills: `.agents/skills/`. Each `SKILL.md` names its use case; invoke the matching one for the task.
 
 ## Tools and shared memory

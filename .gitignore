@@ -157,3 +157,6 @@ firewall-tests-debug.log
 
 .claude/scheduled_tasks.lock
 internal/cmd/container/shared/assets/idmap-mount
+
+# Python bytecode from the agent-file checks
+__pycache__/

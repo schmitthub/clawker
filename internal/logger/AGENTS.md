@@ -12,7 +12,7 @@ Zerolog-based file-only logging with optional OTEL bridge. Struct-based API — 
 
 **Dual-destination**: When `OtelOptions` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via a custom `io.Writer` sink (`otelLogWriter`) that parses zerolog's JSON output and re-emits each record as an OTEL `log.Record` with all structured fields preserved. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
 
-**User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See [.agents/docs/cli-output-style-guide.md](../../.agents/docs/cli-output-style-guide.md) for per-scenario details.
+**User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See [.agents/skills/cli-output/SKILL.md](../../.agents/skills/cli-output/SKILL.md) for per-scenario details.
 
 ## Types
 

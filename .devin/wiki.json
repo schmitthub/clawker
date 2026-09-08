@@ -32,7 +32,7 @@
       "parent": "Architecture",
       "page_notes": [
         {
-          "content": "Source of truth for the directory tree is `.agents/docs/REPO-STRUCTURE.md`. Important: `clawker-socket-server` is NOT a top-level `cmd/` binary despite being mentioned widely. Its source lives at `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` and it is built into agent images, where it resides at `/usr/local/bin/clawker-socket-server`. It is a container-side runtime helper, not a clawker deliverable. Devin grepping `cmd/` for it will not find it; grep `internal/hostproxy/internals/cmd/` instead."
+          "content": "Source of truth for the directory tree is `mem:repo-structure`. Important: `clawker-socket-server` is NOT a top-level `cmd/` binary despite being mentioned widely. Its source lives at `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` and it is built into agent images, where it resides at `/usr/local/bin/clawker-socket-server`. It is a container-side runtime helper, not a clawker deliverable. Devin grepping `cmd/` for it will not find it; grep `internal/hostproxy/internals/cmd/` instead."
         }
       ]
     },

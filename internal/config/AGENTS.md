@@ -2,8 +2,8 @@
 
 ## Related Docs
 
-- `.agents/docs/ARCHITECTURE.md` — package boundaries and config's place in the DAG.
-- `.agents/docs/DESIGN.md` — config precedence and project resolution rationale.
+- `mem:architecture` — package boundaries and config's place in the DAG.
+- `mem:design` — config precedence and project resolution rationale.
 - `internal/storage/AGENTS.md` — underlying store engine, merge strategy, write model. Its Struct Tag Contract section is the checklist for `schema.go` and `defaults.go` changes; its Store-backed package contract is the construction contract this package follows.
 - `internal/storeui/AGENTS.md` — the store-editor checklist for domain adapters under `storeui/`.
 

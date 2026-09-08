@@ -1,6 +1,11 @@
-# CLI Output Style Guide
+---
+name: cli-output
+description: Use when adding or changing command output in clawker: stdout and stderr streams, tables, --format and filter flags, ColorScheme, prompts, progress and tree display, and output tests.
+---
 
-Read this reference for CLI output examples. The [shared output rules](../rules/code-style.md#output-conventions-gh-style) define stream placement; examples below apply those rules.
+# cli-output
+
+Read this reference for CLI output examples. The [shared output rules](../../rules/code-style.md#output-conventions-gh-style) define stream placement; examples below apply those rules.
 
 ## 1. Core Principle
 

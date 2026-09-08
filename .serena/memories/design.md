@@ -4,18 +4,17 @@ Clawker is a Go CLI tool that runs coding agents in secure, reproducible Docker 
 
 ## Related Docs
 
-- `.agents/docs/ARCHITECTURE.md` — package layering and dependency boundaries.
+- `mem:architecture` — package layering and dependency boundaries.
 - `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package contracts, persistence model, and test helpers.
 
-Agent instructions and tool links are described in `.agents/README.md`. Shared
-rules are stored in `.agents/rules/`; each rule's `paths:` frontmatter defines its file scope.
+Agent file layout is in `.agents/skills/agent-files/SKILL.md`. Shared rules are in `.agents/rules/`.
 
 ## Control-plane safety
 
 The control plane is required infrastructure. Its firewall subsystem is optional.
 A CP crash can leave pinned eBPF programs without supervision. Read and follow
-[control-plane safety](../../controlplane/AGENTS.md#control-plane-safety) for lifecycle, failure
+`controlplane/AGENTS.md` (Control-plane safety section) for lifecycle, failure
 handling, and trust requirements before changing this design.
 
 ## 1. Philosophy: "The Padded Cell"
@@ -698,7 +697,7 @@ So `post_init` is an init step (one-time) and `pre_run` is a boot step (every st
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.agents/docs/ARCHITECTURE.md` and `controlplane/firewall/AGENTS.md` for the as-built design.
+The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `mem:architecture` and `controlplane/firewall/AGENTS.md` for the as-built design.
 
 **Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).

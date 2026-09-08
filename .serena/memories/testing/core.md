@@ -26,5 +26,5 @@
 - Add a failing regression test before behavior changes. Do not add assertions that only repeat implementation details.
 - Golden files are package-specific. Update them only for an intended output change and review the diff.
 - Check actual container interactions for mounts, certificates, startup, and networking. File modes alone do not prove access by another process/container.
-- Rules: `.agents/rules/testing.md`; helper reference: `.agents/docs/TESTING-REFERENCE.md`; integration contracts: `test/AGENTS.md`.
+- Rules: `.agents/rules/testing.md`; helper reference: `.agents/skills/writing-tests/SKILL.md`; integration contracts: `test/AGENTS.md`.
 - For exact commands and completion gates: `mem:suggested_commands`, `mem:task_completion`.

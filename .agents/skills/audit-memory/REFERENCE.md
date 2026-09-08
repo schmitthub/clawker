@@ -54,7 +54,7 @@ grep -E '^\s*func \([^)]+\) [A-Z]' *.go | grep -v '_test.go' | sed 's/.*) \([A-Z
 
 ### Location
 
-Authored references are in `.agents/docs/`. Serena memory is in `.serena/memories/`.
+Task references are skills in `.agents/skills/`. Serena memory is in `.serena/memories/`.
 The path below is specific to Claude Code. Check the active tool before use.
 
 ```

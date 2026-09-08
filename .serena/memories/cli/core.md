@@ -15,7 +15,7 @@
 - `internal/term` owns low-level terminal access.
 - `internal/iostreams` owns streams, colors, and Lip Gloss access.
 - `internal/prompter` owns simple questions. `internal/tui` owns Bubble Tea/Bubbles and live views.
-- Detailed output recipes: `.agents/docs/cli-output-style-guide.md`.
+- Detailed output recipes: `.agents/skills/cli-output/SKILL.md`.
 - Package contracts: `internal/cmdutil/AGENTS.md`, `internal/cmd/factory/AGENTS.md`, `internal/docker/AGENTS.md`, `pkg/whail/AGENTS.md`.
 - For container creation and terminal cleanup: `mem:runtime/core`.
 - For output streams and error rules: `mem:conventions`.

@@ -82,8 +82,7 @@ Dev config (when `.clawkerlocal/` XDG overrides are active):
 `.clawkerlocal/.local/share/clawker/firewall/envoy.yaml` — **~31k lines, grep/
 sed only, never full-read**. Corefile / rules / certs are siblings. Use it to
 ground a runtime result in the artifact (e.g. `grep -c upgrade_configs` to
-confirm 0 when no `wss` rule exists). The `.clawkerlocal/` override layout is in
-[project-guide.md](../../docs/project-guide.md).
+confirm 0 when no `wss` rule exists). The `.clawkerlocal/` override layout is in the Serena `project-guide` memory.
 
 ## Adversarial C2 harness
 

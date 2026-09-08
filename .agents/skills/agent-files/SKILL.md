@@ -1,11 +1,70 @@
-# Claude Code and Codex compatibility
+---
+name: agent-files
+description: Use when adding or changing AGENTS.md files, CLAUDE.md links, rules, skills, subagents, command guards, or Claude Code and Codex settings in clawker.
+---
+
+# agent-files
+
+This directory contains harness-independent project content. Claude Code and
+Codex use one set of project instructions. Start with the
+[root AGENTS.md](../../../AGENTS.md); it names the rules, skills, and references
+for the task. Each regular `AGENTS.md` has a sibling
+`CLAUDE.md` link with the relative target `AGENTS.md`, including package instructions.
+
+## File ownership
+
+- Project and package instructions: Root and package `AGENTS.md`. Claude reads sibling `CLAUDE.md` links; Codex reads `AGENTS.md`.
+- Repository-wide rules: `rules/*.md`. Claude loads them through the `.claude/rules` link with `paths:`; Codex reads them because the root `AGENTS.md` requires it.
+- Skills: `skills/*/SKILL.md`. Codex discovers the shared directory; `.claude/skills` links to it.
+- Architecture and API references: `docs/`. Both follow shared links.
+- Development templates: `templates/`. Both use the shared files.
+- Durable project memory: `../.serena/memories/`. Both use Serena or read the shared memory files.
+- Command guards: `hooks/`. Registered in both native configurations.
+- Subagents: `skills/<name>/agents/claude.md`, `skills/<name>/agents/codex.toml`. `.claude/agents/<name>.md` links to the Claude file; `.codex/config.toml` names the Codex file.
+- GitHub PR review: `../.github/copilot-instructions.md` and `../.github/skills/`. GitHub review instructions use the same rule directory.
+
+Use the [initiative skill](../initiative/SKILL.md) to plan development or
+testing across conversations and resume one task at a time. Its reusable
+template lives in the skill's `assets/` directory. Plans and task results live
+in the shared Serena memory graph.
+
+Native configuration belongs to its harness:
+
+- `.claude/settings.json`, `.claude/settings.local.json.example`, and Claude-only `.claude/hooks/` files are regular native files. `.claude/agents/` holds links to skill sidecars or Claude-only agents.
+- `.codex/config.toml` contains Codex settings and names the Codex subagent files.
+- Both native configurations call the shared command guards in `.agents/hooks/`.
+- Harness metadata for a skill lives in that skill's `agents/` directory: `openai.yaml` for Codex skill policy, `claude.md` and `codex.toml` for subagent definitions.
+
+## Maintenance rules
+
+- Add project requirements once, in a shared file. Link to that source from both tools.
+- Keep required rules separate from optional skill procedures. A rule file is repository-wide; a requirement for one package tree goes in that tree's `AGENTS.md`.
+- Keep the root brief. Put commands in the [dev-checks skill](../dev-checks/SKILL.md), project details in the Serena `project-guide` memory, and CP constraints in [the control-plane instructions](../../../controlplane/AGENTS.md#control-plane-safety).
+- Keep native configuration and private state in `.claude/` or `.codex/`. Do not store them in `.agents/` through copies or links.
+- When agents work at the same time, preserve current edits and use the shared memory graph for project knowledge.
+- Read the compatibility sections below before changing loading conditions, hooks, or native reviewer settings.
+
+## Verification
+
+The `agent-compat` commit hook and the PR lint workflow run
+`scripts/check-agent-compatibility.py`. Do not run it by hand before a commit;
+the hook reports layout problems at commit time and CI reports them on the
+pull request. See the compatibility sections below
+for what it checks.
+
+For instruction changes, check files and formats with `git diff --check` and
+the advisory `bash scripts/check-agents-freshness.sh --no-color`. Do not run
+application tests, install or run Claude Code, or make model API calls for
+these checks.
+
+## Claude Code and Codex compatibility
 
 Read this file when changing native settings or the shared file layout.
 Project instructions must have one source that both tools can read.
 `.agents/` contains harness-independent content. Native settings, reviewer
 definitions, and hooks specific to one tool stay in that tool's directory.
 
-## Instruction loading
+### Instruction loading
 
 Codex reads `AGENTS.md` from the repository root through its working directory.
 Claude Code reads the sibling `CLAUDE.md` symbolic links. The shared root requires
@@ -21,7 +80,7 @@ the shared index's read instruction. Do not describe `.agents/rules` as a native
 Codex loader. When a rule changes, update its `paths` field and the shared index.
 Check both when changing a rule's scope.
 
-## Skills, references, and memory
+### Skills, references, and memory
 
 Codex discovers repository skills under `.agents/skills`. Claude uses the same
 files through `.claude/skills`. Add a skill once in the shared directory.
@@ -41,7 +100,7 @@ The root memory is `core`. Keep durable project knowledge there or in shared
 references; do not make required knowledge depend on one tool's private memory.
 The CLI output and prompter references are files in `.agents/docs`, not memories.
 
-## Native hooks and reviewer settings
+### Native hooks and reviewer settings
 
 `.claude/settings.json` and `.codex/config.toml` are regular files in their
 native directories. Both configurations register
@@ -78,7 +137,7 @@ description, tool limits, and the instruction to read the skill. Skills without
 an `agents/` definition stay plain skills. Harness-only agents can still live in
 `.claude/agents` or `.codex` as regular files.
 
-## Checks and limits
+### Checks and limits
 
 The `agent-compat` commit hook and the PR lint workflow run
 `scripts/check-agent-compatibility.py`. Agents do not run it by hand. It reads
@@ -91,7 +150,7 @@ exists:
   resolves inside the repository. Links under `.agents` never resolve into a
   harness directory.
 - Each `config_file` value in `.codex/config.toml` resolves to a regular file.
-- Relative links in the root `AGENTS.md` and the top-level `.agents` files
+- Relative links in the root `AGENTS.md`, `.agents/rules`, and `.agents/skills`
   resolve.
 
 The check does not require named directories, links, skills, or subagents.

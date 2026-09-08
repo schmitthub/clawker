@@ -4,8 +4,8 @@ paths: ["**/*.go"]
 
 # Testing rules
 
-Helper APIs, fixtures, tiers, and examples: [TESTING-REFERENCE.md](../docs/TESTING-REFERENCE.md).
-Commands and completion checks: [development.md](../docs/development.md).
+Helper APIs, fixtures, tiers, and examples: [writing-tests skill](../skills/writing-tests/SKILL.md).
+Commands and completion checks: [dev-checks skill](../skills/dev-checks/SKILL.md).
 
 ## Docker integration tests are first-class
 
