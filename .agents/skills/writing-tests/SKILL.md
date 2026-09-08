@@ -5,7 +5,7 @@ description: Use when writing, changing, or running Go tests in clawker: test he
 
 # writing-tests
 
-> Extended test patterns and examples. For essential rules, see `.agents/rules/testing.md`.
+> Extended test patterns and examples. For the mandatory rules, see the Testing rules section of the root `AGENTS.md`.
 
 ---
 

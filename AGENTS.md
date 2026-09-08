@@ -31,6 +31,17 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Pin external dependencies to exact versions with integrity verification. See the [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use targeted packages or `make test`.
 
+## Testing rules
+
+- Docker is always available. Never defer or skip Docker-based tests. When a change touches containers, networks, or volumes, write the integration test in the same task.
+- Unit tests are co-located `*_test.go` files without Docker. `test/e2e/` needs Docker; `test/whail/` needs Docker and BuildKit. No build tags; directory separation only. Name tests `TestFunctionName`, `TestFeature_Integration`, or `TestFeature_E2E`.
+- Each package in the dependency DAG provides its own test utilities. If a node lacks them, add them first.
+- Use unique agent names with random suffixes. Stop containers before removing them. Register cleanup with `t.Cleanup()` and use `context.Background()` inside it. Gate Docker tests with `RequireDocker(t)` or `SkipIfNoDocker(t)`.
+- Never discard errors; log cleanup failures with `t.Logf`.
+- Co-located `*_test.go` files never import `test/e2e/harness`. Never call `factory.New()` outside `internal/clawkercmd/cmd.go`; build `&cmdutil.Factory{}` literals with test doubles.
+- Add no production code only to serve a test seam. Test doubles adapt to production, not the reverse.
+- Helpers, fixtures, tiers, and examples: [writing-tests skill](.agents/skills/writing-tests/SKILL.md).
+
 ## Commands and references
 
 - Build CLI: `go build -o bin/clawker ./cmd/clawker`
