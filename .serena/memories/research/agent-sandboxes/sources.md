@@ -43,4 +43,4 @@
 - **Monitoring and Logging**: The ability to monitor the agent's activity and log its actions for debugging and auditing purposes.
 - **Performance**: The impact of the sandbox on the agent's performance, including any overhead introduced by the isolation mechanisms.
 - **Security**: The security features of the sandbox, including protection against malicious agents, vulnerabilities, and attacks. This can include features like resource limits, access controls, and secure communication channels.
-- **Architecture**: The underlying architecture of the sandbox, including the technologies and frameworks used to implement it. This can include containerization, virtualization, or other isolation techniques. ig Supervisor, Hypervisor, Controlplane, Dataplane, etc. VM vs Container, benetfits etc. 
+- **Architecture**: The underlying mem:architecture of the sandbox, including the technologies and frameworks used to implement it. This can include containerization, virtualization, or other isolation techniques. ig Supervisor, Hypervisor, Controlplane, Dataplane, etc. VM vs Container, benetfits etc. 

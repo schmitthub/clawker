@@ -47,7 +47,7 @@ Sources: docs/firewall.mdx
 dns_level_blocking: Yes — CoreDNS returns NXDOMAIN for unlisted domains; subtree exfil closed via exact-host scoping (#320).
 ### domain_native_enforcement
 domain_native_enforcement: Yes — rules enforced against hostnames at request time end-to-end: CoreDNS policy at resolution, Envoy SNI/Host matching + dynamic-forward-proxy clusters for FQDN flows (zero ORIGINAL_DST for domain rules; IP/CIDR is a separate explicit rule type, not an enforcement fallback). No resolve-once IP-set snapshotting — immune to both LB-rotation breakage and CDN shared-IP over-permission that resolve-to-iptables designs (devcontainers reference firewall, resolve-then-CIDR-check proxies) exhibit.
-Sources: docs/firewall.mdx; .claude/rules/firewall-uat.md (LOGICAL_DNS/DFP, no ORIGINAL_DST for FQDN flows)
+Sources: docs/firewall.mdx; .agents/skills/firewall-uat/SKILL.md (LOGICAL_DNS/DFP, no ORIGINAL_DST for FQDN flows)
 ### tls_mitm_inspection
 tls_mitm_inspection: Yes — Envoy always MITMs TLS (SSL_CERT_FILE/CURL_CA_BUNDLE preset); per-rule insecure_skip_tls_verify for upstream self-signed.
 ### http_path_rules

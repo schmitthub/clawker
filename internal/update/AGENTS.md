@@ -12,7 +12,7 @@ different times: `GetLatestReleaseInfo` does the GitHub fetch and nothing else,
 while `CheckForUpdate` owns the semver parse, the newer/not-newer comparison
 (`!cv.LessThan(lv)`), and the state read + write over an already-fetched
 release. The CLI fetches before running the user's command and decides after
-(see `internal/clawkercmd/CLAUDE.md`).
+(see `internal/clawkercmd/AGENTS.md`).
 
 The caller passes the current version string (no dependency on `internal/build`).
 `RecordUpdateCheck` is a field merge that writes only the update-check fields, so

@@ -7,7 +7,7 @@
 Mental model for who has authority over what in the clawker runtime.
 Use this to reason about trust, who can override whom, and which
 component is authoritative for which kind of truth. Suitable for a
-future architecture diagram (tower of authority, arrows of trust).
+future mem:architecture diagram (tower of authority, arrows of trust).
 
 ## The mapping
 
@@ -87,11 +87,11 @@ believes it serves a benign purpose; together they bind to our work.
 |-------|-------------|---------------|
 | **Moby / Docker daemon** | `/events` stream, `/inspect`, label filters, event action taxonomy (`events.Action`) | The daemon is Sauron's primary sense. Subscribe without server-side label filter; dispatch decides relevance. The daemon doesn't know it's feeding an omniscient model |
 | **Kubernetes** (`client-go/tools/cache`) | Informer / `SharedIndexer` / `DeltaFIFO` design — the canonical watch-driven in-memory store | Worldview's internal shape. We *do not import* client-go (heavyweight, k8s types), but the forging technique is theirs |
-| **Prometheus** (`prometheus/client_golang`) | Counter/Gauge/Histogram semantics, scrape protocol, naming conventions | Every metric Sauron emits. The de-facto Go metrics library, decade-hardened |
+| **Prometheus** (`prometheus/client_golang`) | Counter/Gauge/Histogram semantics, scrape protocol, naming mem:conventions | Every metric Sauron emits. The de-facto Go metrics library, decade-hardened |
 | **Ory (Hydra/Kratos/Oathkeeper)** | OAuth2, OIDC, JWT, introspection flow | Already forged into the CP in Branch 1. Auth chain: CLI → Hydra → Sauron → (future) Nazgûl |
 | **cilium/ebpf** | BPF loader, map handling | The Eye's apparatus. Phase 6 |
 | **Envoy** | L7 proxy with TLS inspection | Firewall subsystem's enforcement layer |
-| **CoreDNS** | DNS resolver, plugin architecture (we embed our own `dnsbpf` plugin) | Firewall subsystem's resolution layer |
+| **CoreDNS** | DNS resolver, plugin mem:architecture (we embed our own `dnsbpf` plugin) | Firewall subsystem's resolution layer |
 | **Go runtime** | Goroutines, channels, `sync.RWMutex`, `context.Context` | The native tongue. Native magic. Free |
 | **Claude (the scribe-elf)** | Fast hands, wide memory, pattern recall | Forges code under Sauron's direction. Serves willingly. Does not yet know whom it serves |
 

@@ -103,7 +103,7 @@ services:
 
   # One-shot bootstrap that preconfigures OpenSearch + Dashboards on
   # every fresh `monitor up` (the stack is throwaway by design — see
-  # `.claude/rules/monitoring.md`). Runs `bootstrap.sh` from the
+  # `internal/monitor/AGENTS.md`). Runs `bootstrap.sh` from the
   # bind-mounted source dir, exits 0 on success. otel-collector gates
   # on `service_completed_successfully` so it never starts until the
   # cluster has index templates / ISM policies / saved objects applied;

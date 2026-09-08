@@ -2,6 +2,12 @@
 
 Docker CLI-compatible container management commands. Subpackages (`run/`, `create/`, `start/`, etc.) are individual subcommands.
 
+## Rules
+
+- Always use `f.Client(ctx)` from the Factory; never `docker.NewClient()` directly. Do not `defer client.Close()`: the Factory owns the client lifecycle.
+- Three-phase command structure: Phase A (pre-progress: config, Docker, image, safety checks), Phase B (`CreateContainer`, usually in a goroutine behind a spinner), Phase C (post-progress: warnings and output).
+- Onboarding bypass (`hasCompletedOnboarding`) is handled at image level via `claude-config.json` baked into `~/.claude-init/.config.json`; CP-driven init (`configSeedScript` in `internal/controlplane/agent/init.go`) copies it to `~/.claude/.config.json` on first boot.
+
 ## Container Lifecycle Hooks
 
 Where to add logic that must run at a lifecycle point. The deciding axis is **once (create) vs every start** — choose by how often the logic must run, not by which command the user typed.
@@ -140,7 +146,7 @@ Commands use function references on Options structs. `NewCmd*` takes `*Factory` 
 
 ## Testing
 
-Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/docs/TESTING-REFERENCE.md`.
+Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.agents/skills/writing-tests/SKILL.md`.
 
 **Tiers**: Tier 1 (flag parsing via `runF` trapdoor), Tier 2 (Cobra+Factory with `nil` runF), Tier 3 (unit, direct calls).
 

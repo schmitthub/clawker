@@ -123,14 +123,12 @@ pass_filenames = false
 priority = "licenses"
 
 [[repos.hooks]]
-id = "claude-freshness"
-name = "Claude doc freshness (advisory)"
-shell = "bash"
-entry = "bash scripts/check-claude-freshness.sh --strict --non-interactive --no-color | head -50 || true"
+id = "agent-compat"
+name = "Agent compatibility"
+entry = "python3 scripts/check-agent-compatibility.py"
 language = "system"
-files = '\.go$'
+always_run = true
 pass_filenames = false
-verbose = true
 priority = "scan"
 
 [[repos.hooks]]

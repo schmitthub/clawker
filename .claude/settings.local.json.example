@@ -20,7 +20,7 @@
       "mcp__MCP_DOCKER__mcp-add",
       "mcp__MCP_DOCKER__get_file_contents",
       "mcp__deepwiki__ask_question",
-      "Bash(find .claude/rules .claude/docs -type f -name *.md)",
+      "Bash(rg --files .agents/skills)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "mcp__serena__find_referencing_symbols",
@@ -51,7 +51,7 @@
       "Bash(brew info:*)",
       "Bash(make clawker:*)",
       "Bash(curl -sL \"https://raw.githubusercontent.com/coredns/coredns/v1.14.2/go.mod\")",
-      "Bash(chmod +x /Users/andrew/Code/clawker/.claude/hooks/serena-session-start.sh)"
+      "Bash(chmod +x .claude/hooks/serena-session-start.mjs)"
     ]
   },
   "hooks": {
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-session-start.mjs",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-session-start.mjs\"",
             "timeout": 5
           }
         ]
@@ -72,17 +72,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-first.mjs",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-first.mjs\"",
             "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/git-checks.sh"
           }
         ]
       }
@@ -93,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-init-marker.mjs",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-init-marker.mjs\"",
             "timeout": 5
           }
         ]

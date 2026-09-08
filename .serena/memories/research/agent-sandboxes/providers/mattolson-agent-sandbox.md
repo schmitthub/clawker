@@ -99,7 +99,7 @@ Dual: kernel netfilter (iptables `init-firewall.sh` drops all direct outbound ex
 - README — "even if an application ignores the proxy env vars, it cannot reach the internet directly"
 
 ### fail_closed
-Yes (by architecture) — iptables default-deny is applied at container start and persists in the kernel netns; there is no separate control plane whose death opens egress. If the proxy sidecar dies, the agent has no egress path (fails closed to total block). Not documented as an explicit guarantee but structurally implied.
+Yes (by mem:architecture) — iptables default-deny is applied at container start and persists in the kernel netns; there is no separate control plane whose death opens egress. If the proxy sidecar dies, the agent has no egress path (fails closed to total block). Not documented as an explicit guarantee but structurally implied.
 - README — iptables "Blocks all direct outbound"; proxy is the only egress path.
 
 ### network_audit
@@ -192,6 +192,6 @@ extensibility: Moderate — custom/local images (`./images/build.sh` + edit comp
 - nested_containers: no docs on docker-socket/DinD — unknown.
 - performance: no benchmarks — unknown.
 - audit_log: proxy logs are per-request but documented as a debugging aid, not a formal audit product; credited functionally.
-- fail_closed: inferred from documented iptables-default-deny architecture, not an explicit doc guarantee.
+- fail_closed: inferred from documented iptables-default-deny mem:architecture, not an explicit doc guarantee.
 - lifecycle hooks: no documented post-init/pre-run command hooks (shell.d is shell-init customization only).
 - UDP/QUIC/ICMP: blocked by the default-deny firewall in practice but not surfaced as governed policy dimensions; only SSH is an explicitly documented protocol block.

@@ -71,3 +71,5 @@ result, err := prompter.Confirm("Continue?", false)
 ## Tests
 
 `prompter_test.go` -- unit tests for all prompt types and non-interactive fallback
+
+Full reference: `.agents/skills/wizard-commands/SKILL.md`.

@@ -27,7 +27,7 @@ Plus a practical "sandbox your OpenClaw in 5 minutes" article in Mintlify.
 | D1 | Harness POC lives in **clawker-bundle-example**, not openclaw-deploy | openclaw-deploy will be "a full featured setup not just a harness" — shipping the harness there drags "a lot of other crap" onto users who only want the harness. Bundle repo = candidate for embedding later. |
 | D2 | State = **named volumes** (standard harness default) | Harness stays conventional. openclaw-deploy separately layers bind mounts — it already binds the entire openclaw user homedir (necessary for homebrew), so memories/data survive container lifecycles. Two layers, not one compromise. |
 | D3 | IaC = **full pivot**, but deferred | clawker owns the firewall; Envoy/CoreDNS/bypass sidecars get deleted. Tailscale "figure out later — we'll prob just have to include it in the harness bundle run stage and set it all up ourselves." **First phases are local-only.** |
-| D4 | Article = **practical 5-minute sandbox guide** | Top-of-funnel traffic. The precursor→clawker architecture table stays available as later material, not the lede. |
+| D4 | Article = **practical 5-minute sandbox guide** | Top-of-funnel traffic. The precursor→clawker mem:architecture table stays available as later material, not the lede. |
 
 ## Phases
 
@@ -94,7 +94,7 @@ non-TTY; `--detach` is documented. Remaining narrow checks, folded into P1:
 - Secrets: `--secret-input-mode ref` + `agent.from_env` so keys stay in the
   host env, never in a volume or a repo.
 - Gateway token: generate host-side, pass via env; do not bake.
-- Firewall discovery loop per `.claude/rules/firewall-uat.md` — run, collect
+- Firewall discovery loop per `.agents/skills/firewall-uat/SKILL.md` — run, collect
   actual blocks, widen the floor from observed traffic only.
 - Channel order: **Discord + Telegram first** (bot TLS/wss, should survive
   MITM). WhatsApp/Signal/Matrix flagged as MITM-risk — clawker never does SNI

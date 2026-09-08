@@ -76,7 +76,7 @@ openclaw onboard --non-interactive --accept-risk \
 - Headless OAuth is NOT scriptable — do it on a desktop, copy
   `agents/<id>/agent/auth-profiles.json` to the host.
 
-## openclaw-deploy (precursor architecture)
+## openclaw-deploy (precursor mem:architecture)
 
 Pulumi TS → VPS (Hetzner tested / DigitalOcean / OCI) running a compose-ish
 topology that clawker later generalized:

@@ -11,4 +11,4 @@
 - `Makefile` defines binary embeds, BPF toolchain inputs, protobuf generation, docs, and tests. `prek.toml` defines local hooks; `.golangci.yml` defines lint checks.
 - Pin external inputs to exact versions or commit hashes. Container image pins must identify multi-architecture manifest lists. Generated binaries and BPF outputs are not committed.
 - `clawker-plugin/` is a Git submodule with its own history. Its source changes and the parent pointer change are separate commits.
-- For exact build and generation commands: `mem:suggested_commands`.
+- For exact build and generation commands: `.agents/skills/dev-checks/SKILL.md`.

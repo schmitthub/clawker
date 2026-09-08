@@ -1,14 +1,17 @@
 [features]
 hooks = true
 
+[agents.test-hunter]
+config_file = "../.agents/skills/test-hunter/agents/codex.toml"
+
 [[hooks.PreToolUse]]
 matcher = "^Bash$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'bash "$(git rev-parse --show-toplevel)/.codex/hooks/git-checks.sh"'
+command = 'bash "$(git rev-parse --show-toplevel)/.agents/hooks/git-checks.sh"'
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'bash "$(git rev-parse --show-toplevel)/.codex/hooks/go-commands.sh"'
+command = 'bash "$(git rev-parse --show-toplevel)/.agents/hooks/go-commands.sh"'
 timeout = 5

@@ -1,5 +1,7 @@
 # internal/clawkerd
 
+Read the Control-plane safety section of `controlplane/AGENTS.md` before changing this package. Its failure rules (no `panic`, `log.Fatal`, or `os.Exit` on the boot or serve path; every long-lived goroutine recovers; subsystems degrade with `event=<subsystem>_unavailable`) apply here.
+
 Entrypoint package for the clawkerd per-container agent daemon binary. Owns `Main()` and `run()`; everything else lives in the `clawkerd` daemon package (imported here as `daemon`). Mirrors the `controlplane` binary split:
 
 - `cmd/clawkerd/clawkerd.go` (package `main`) → `os.Exit(clawkerd.Main())` — thin shell, nothing else.
@@ -22,7 +24,7 @@ Entrypoint package for the clawkerd per-container agent daemon binary. Owns `Mai
 
 `run` returns `(int, error)` — the int carries the bash-convention / child exit code (`128+signum` for a signaled child) that `os.Exit` must propagate for Docker `restart: on-failure`; the error flags a pre-spawn bootstrap failure (`Main` forces a non-zero exit so a misconfigured container fails loud). Deterministic pre-spawn config failures return `exitCodeConfig` (2) so an operator running `restart: on-failure:max-retries=N` can trip-and-stop instead of restart-looping.
 
-Daemon lifecycle detail (boot sequence, spawn lifecycle, listener, resilience contract) lives in `clawkerd/CLAUDE.md`.
+Daemon lifecycle detail (boot sequence, spawn lifecycle, listener, resilience contract) lives in `clawkerd/AGENTS.md`.
 
 ## Files
 

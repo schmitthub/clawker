@@ -1,6 +1,6 @@
 # bundler/registry Subpackage
 
-npm registry client and version metadata types for `internal/bundler`. Full API surface is documented in the parent `internal/bundler/CLAUDE.md` under the "Subpackage: `registry/`" section — treat this file as a pointer to the source of truth, not a duplicate.
+npm registry client and version metadata types for `internal/bundler`. Full API surface is documented in the parent `internal/bundler/AGENTS.md` under the "Subpackage: `registry/`" section — treat this file as a pointer to the source of truth, not a duplicate.
 
 ## Files
 

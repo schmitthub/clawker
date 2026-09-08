@@ -19,6 +19,11 @@ The host proxy runs as a **daemon subprocess** that persists beyond CLI command 
 | `CallbackChannel` | `callback.go` | OAuth callback registration and capture |
 | `MockHostProxy` | `hostproxytest/` | Test mock implementing all endpoints |
 
+## Constraints
+
+- `Manager` lazy-inits with `sync.Once`; call `EnsureRunning()` before any container command.
+- Daemon scope is strictly the host proxy lifecycle. The firewall stack (Envoy + CoreDNS) is owned by the CP daemon (`controlplane/firewall`, run by `cmd/clawkercp`).
+
 ## Constants
 
 ```go

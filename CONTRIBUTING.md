@@ -154,7 +154,7 @@ Before making significant changes, familiarize yourself with the codebase:
 - **[docs/testing.md](docs/testing.md)** — Test strategy, patterns, and how to write tests
 - **[docs/cli-reference/](docs/cli-reference/)** — Auto-generated CLI command docs
 
-Package-specific docs live in `internal/*/CLAUDE.md` files.
+Package-specific docs live in `internal/*/AGENTS.md` files.
 
 ## Issue Labels
 

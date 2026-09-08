@@ -4,6 +4,19 @@ Templates + generation for the monitoring stack (Docker Compose + OTEL Collector
 
 The package carries ONLY generic infrastructure config (envoy/coredns/cli/clawkercp/ebpf-egress lanes, compose, prometheus, bootstrap machinery) — agent-side observability is delivered by **monitoring units** resolved at render time (`units.go`), and a grep-guard test (`TestNoClaudeCodeInMonitorPackage`) pins the zero-claude-code invariant. The otel-config template ranges over the seeded unit union to emit per-lane exporters, routing entries, pipelines, and service-scoped OTTL datapoint renames.
 
+> **Ground in the live telemetry spec before any monitoring work — do not guess.**
+> Claude Code's metric/event surface evolves and is far larger than whatever a
+> running stack happens to have emitted. Before designing dashboards, queries,
+> ingest pipelines, index templates, or collector config, ALWAYS load the
+> upstream spec into context:
+> **https://code.claude.com/docs/en/monitoring-usage.md** (the `.md` suffix
+> serves raw markdown — fetch that, not the rendered page). It is the source of
+> truth for every metric (name, unit, attributes), every event
+> (`claude_code.*` name + fields), the standard/identity attributes, and the
+> **"Audit security events"** mapping of security signals → events. Live probes
+> confirm what is *currently flowing*; the spec tells you what *exists*. Use both
+> — never infer a field, label, or event name from memory.
+
 ## Monitoring units (`unit.go`, `units.go`, `ledger.go`)
 
 The unit loader lives here now (`unit.go`, relocated from `internal/bundler`): `LoadMonitoringUnit`, `MonitoringUnit`, `WalkArtifacts`, front-door validation, and the artifact-dir consts. `internal/monitor` is its sole consumer.
@@ -33,7 +46,7 @@ func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, no
 
 Enablement is **selection**, not a flag: a project's `monitor.extensions` (override-merge; the virtual defaults layer selects the floor claude-code unit, and an explicit empty list opts out) names the units it seeds; there is no host registry and no per-unit active toggle. `monitor up` merges the cwd projection into the host ledger and renders the collector config over the **all-ever-seeded union** (option D) so a teammate's routings survive; `monitor reload` applies a selection edit to a running stack (collector recreate); `monitor down --volumes` deletes the ledger. A record whose `service.name` matches no seeded lane falls to the debug-only `logs/untrusted_unrouted` pipeline — never indexed.
 
-> Confirming live ingest/routing/rendering is **not** unit-testable — see `.claude/rules/monitoring.md` → "Runtime UAT" for the curl-container working-session loop (ask the user to `clawker monitor up`; you can't from inside a container).
+> Confirming live ingest/routing/rendering is **not** unit-testable — see Runtime UAT below for the curl-container working-session loop (ask the user to `clawker monitor up`; you can't from inside a container).
 
 Service hostnames live in `internal/consts/monitoring.go`. `MonitoringServiceHostnames` (`otel-collector`, `prometheus`) is the subset wired into CoreDNS's `internalHosts` forward zones — only services agent containers legitimately need to dial. `opensearch-node` and `opensearch-dashboards` are intentionally omitted: agents never query indices directly, so those containers reach each other via Docker's embedded resolver without going through CoreDNS.
 
@@ -184,7 +197,7 @@ If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejec
 
 ### Templates only apply at index creation
 
-OpenSearch index templates only take effect when an index is created — they do NOT retroactively re-map existing indices. The monitoring stack is preconfigured + ephemeral by design (see `.claude/rules/monitoring.md` → "Monitoring stack throwaway"), so the canonical way to pick up template / ISM / saved-object edits is `clawker monitor down --volumes && clawker monitor up`. Bootstrap re-runs on every `monitor up`; PUT semantics make template / ISM updates idempotent and `?overwrite=true` makes saved-objects import idempotent, but pre-existing index mappings stay locked to whatever was applied at first ingest of that index.
+OpenSearch index templates only take effect when an index is created — they do NOT retroactively re-map existing indices. The monitoring stack is preconfigured + ephemeral by design (see Runtime UAT below), so the canonical way to pick up template / ISM / saved-object edits is `clawker monitor down --volumes && clawker monitor up`. Bootstrap re-runs on every `monitor up`; PUT semantics make template / ISM updates idempotent and `?overwrite=true` makes saved-objects import idempotent, but pre-existing index mappings stay locked to whatever was applied at first ingest of that index.
 
 Ingest pipeline bodies (`ingest-pipelines/*.json`) are the exception — they're resolved by name on every document, so editing a Painless script and re-running `monitor up` picks up the change without a volume wipe. Only changing which pipeline name an index uses (the `settings.index.default_pipeline` or `settings.index.final_pipeline` reference in the index template) requires the volume cycle, because the binding is set at index creation.
 
@@ -226,12 +239,64 @@ All `opensearch/*` exporters have `sending_queue.enabled: true` and `retry_on_fa
 
 **Envoy access logs**: Envoy ships records via the native `envoy.access_loggers.open_telemetry` sink to the collector's mTLS-gated `otlp/infra` receiver. Resource attribute `service.name=envoy` is set on the Envoy side (see `firewall/envoy_config.go::otelAccessLogEntry`), and the cluster `otel_collector_als` (parameterized by `ALSConfig` — `MTLS=true` dials `OtelInfraPort` with an upstream TLS transport_socket using the CLI-CA-chained leaf bind-mounted under `/etc/envoy/otel-tls/`; `MTLS=false` causes the OTel access-log sink AND the `otel_collector_als` cluster to be omitted entirely at the sender — gated in `buildHTTPAccessLog` / `buildTCPAccessLog` / `buildClusters` — so infra services never cross into the untrusted `otel-collector:4317` lane reserved for agent containers) handles the gRPC connection. The legacy `envoy.access_loggers.stdout` sink is kept alongside for `docker logs clawker-envoy` triage when the monitoring stack is down (and is the sole access-log sink in degraded mode).
 
+**Envoy access-log fields**: Structured fields land on OTLP attributes using OTel semantic conventions for network/server/client/tls (not the legacy overloaded `proto` field, which is gone): `network.transport` (always `tcp` today), `network.protocol.name` (`http` for HCM chains; rule's `proto:` value verbatim for opaque TCP listeners; empty for the deny chain), `network.protocol.version` (raw `%PROTOCOL%` — `HTTP/1.1` / `HTTP/2` / `HTTP/3`; HTTP-only, absent on TCP/SSH records), `tls.established` (boolean — Envoy substitution emits `"true"`/`"false"` strings; the `envoy-normalize` ingest pipeline coerces to real boolean), `tls.protocol.version`, `tls.cipher`. Plus identity on OTel canonical names: `server.address` (SNI via `%REQUESTED_SERVER_NAME%` on TLS-MITM HCM + TCP/SSH chains; Host header via `%REQ(Host)%` on the plaintext HCM chain — single consolidated "host the client was trying to reach"; replaces deprecated `tls.server.name`), `client.address` (`%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%`), `network.peer.address`/`network.peer.port` (post-resolution upstream peer). Plus the clawker firewall verdict on `action` (`allowed`/`denied`, stamped from route metadata via `%METADATA(ROUTE:clawker:action)%` for HCM chains and hardcoded for TCP-level filter chains). Plus HTTP-only fields: `method`, `path`, `response_code`, `response_code_details`, `user_agent`, `req_duration_ms`/`resp_duration_ms`/`resp_tx_duration_ms`, `upstream_transport_failure_reason`. Plus Envoy-specific operational fields with no OTel mapping: `listener_ip`, `bytes_sent`/`bytes_received`/`upstream_bytes_sent`/`upstream_bytes_received`, `duration_ms`, `response_flags` (short Envoy codes), `upstream_tls_version`/`upstream_tls_cipher` (upstream MITM re-encryption diagnostic — flat, not nested under `tls.client.*` because OTel deprecated that subtree without leaving a canonical home for upstream-side re-encryption). The OTel collector's `transform/envoy_logs` processor coerces all numeric attributes (`response_code`, `bytes_*`, `*_ms`, `network.peer.port`) from Envoy's string substitution to typed ints before the opensearchexporter, and defaults `severity_text=INFO` / `severity_number=9` since Envoy ALS does not populate severity. **Pruned** (no longer emitted): `source`, `timestamp`, `request_host`, `domain`, `client_ip`, `upstream_ip`, `upstream_port`, `response_flags_long`, `filter_chain_name`, `connection_termination_details`, `upstream_host`, `connection_id`, `stream_id` — all redundant with `resource.service.name`, `@timestamp` envelope, the OTel canonical field, short response_flags, or unused. See `controlplane/firewall/AGENTS.md` → Access-log schema for the field-by-field rationale. The firewall verdict is read from `action` ONLY — never inferred from `response_code` (upstream-returned 403 vs clawker-blocked 403 distinguished by route metadata, not status code).
+
 **CoreDNS query logs**: ships via the in-tree `otel` CoreDNS plugin (`cmd/coredns-clawker/plugins/otel/`) which emits one structured `dns.query` OTLP log record per query (OTLP/gRPC + mTLS) to the collector's `otlp/infra` receiver. The plugin is the **first** directive in every server block (set in `cmd/coredns-clawker/main.go`) so it observes the final rcode + answer set after `forward`/`template`/etc. Endpoint host:port is wired by `firewall.Stack` via `CLAWKER_COREDNS_OTEL_ENDPOINT`; CLI-CA-chained leaf is bind-mounted at `/etc/clawker/auth/coredns/client.{pem,key}` + the CA at `/etc/clawker/auth/coredns/ca.pem`. Leaves are issued + rotated by `internal/controlplane/infracerts`; `tls.Config.GetClientCertificate` re-reads the leaf on every handshake so rotation requires no container restart. Each record carries `event.name=dns.query` plus attributes `client.address` (OTel-canonical, replaces colloquial `client_ip`), `zone`, `query_name`, `qtype`, `rcode`, `answer_count`, `duration_ms`, and (when non-empty) `answers`. There is no `action` attribute — CoreDNS makes no explicit allow/deny decision per query (it forwards or NXDOMAINs by zone), so `rcode` is the honest signal; a prior zone-derived `action` was provably wrong (a non-allowlisted subdomain of an exact-allow apex logged `action=allowed` while returning NXDOMAIN). No per-record `source=coredns` attribute — `service.name=coredns` (resource layer) + `ingest_source=coredns` (stamped post-routing) cover provenance. NXDOMAIN comes through with `rcode=NXDOMAIN`; resolver errors set `record.SetErr(...)` with `rcode=SERVFAIL`. The stdout `log` plugin is kept alongside for `docker logs clawker-coredns` triage when the monitoring stack is down — it is no longer scraped into OpenSearch.
 
-**netlogger eBPF egress events**: ships via netlogger's own `*sdklog.LoggerProvider` (built by `controlplane.NewOtelLoggerProvider`, see `internal/controlplane/firewall/ebpf/netlogger/CLAUDE.md`) over OTLP/gRPC + mTLS to the collector's `otlp/infra` receiver. The mTLS leaf is minted per-handshake from `otelcerts.Service.LoadTLSConfig("netlogger")` — chains through the same infra intermediate CA as the CP zerolog bridge, no new on-disk material. The provider carries `service.name=ebpf-egress` so `routing/trusted` lands records in `clawker-ebpf-egress` instead of `clawkercp` — different retention + volume profile + consumer audience (per-agent security telemetry vs operator-facing daemon health). `event.name` is per-emit-site (`ebpf.egress.connect` / `ebpf.egress.sendmsg` / `ebpf.egress.sock_create`) so dashboards can filter by record kind. Each record carries that plus attributes `action` (`allowed`/`denied`/`bypassed`), `container_id`, `agent`, `project`, `cgroup_id`, `bpf_ts_ns`, `dst_ip`, `dst_port`, `l4_proto` + `l4_proto_code`, `ipv6`, `ipv4_mapped`, `no_dst`, `dst_host`, `identity`. Strict directive with per-code-path carve-outs: every field is emitted on every record EXCEPT `dst_ip` (omitted when `!DstIP.IsValid()` — sock_create + native-IPv6-with-no-addr defensive), `dst_port` (omitted when `no_dst=true`), and `dst_host` (omitted when no DNS context — direct-IP connect). Operators partition via `_exists_:attributes.<key>`. `dst_ip` follows the Cilium / Tetragon address representation: a single attribute carrying either an IPv4 dotted-quad or an IPv6 colon-form string (BPF emits a flat 16-byte slot; OS `type: ip` mapping accepts both). No `source` or `component` per-record attributes — `service.name` + `ingest_source` resource attrs discriminate (the per-record dupes were dropped as schema rot). The CP boot path degrades to `event=netlogger_unavailable` when the collector preflight dial fails (20s deadline; no background reconnect), so firewall enforcement is unaffected when the monitoring stack is down.
+**netlogger eBPF egress events**: ships via netlogger's own `*sdklog.LoggerProvider` (built by `controlplane.NewOtelLoggerProvider`, see `internal/controlplane/firewall/ebpf/netlogger/AGENTS.md`) over OTLP/gRPC + mTLS to the collector's `otlp/infra` receiver. The mTLS leaf is minted per-handshake from `otelcerts.Service.LoadTLSConfig("netlogger")` — chains through the same infra intermediate CA as the CP zerolog bridge, no new on-disk material. The provider carries `service.name=ebpf-egress` so `routing/trusted` lands records in `clawker-ebpf-egress` instead of `clawkercp` — different retention + volume profile + consumer audience (per-agent security telemetry vs operator-facing daemon health). `event.name` is per-emit-site (`ebpf.egress.connect` / `ebpf.egress.sendmsg` / `ebpf.egress.sock_create`) so dashboards can filter by record kind. Each record carries that plus attributes `action` (`allowed`/`denied`/`bypassed`), `container_id`, `agent`, `project`, `cgroup_id`, `bpf_ts_ns`, `dst_ip`, `dst_port`, `l4_proto` + `l4_proto_code`, `ipv6`, `ipv4_mapped`, `no_dst`, `dst_host`, `identity`. Strict directive with per-code-path carve-outs: every field is emitted on every record EXCEPT `dst_ip` (omitted when `!DstIP.IsValid()` — sock_create + native-IPv6-with-no-addr defensive), `dst_port` (omitted when `no_dst=true`), and `dst_host` (omitted when no DNS context — direct-IP connect). Operators partition via `_exists_:attributes.<key>`. `dst_ip` follows the Cilium / Tetragon address representation: a single attribute carrying either an IPv4 dotted-quad or an IPv6 colon-form string (BPF emits a flat 16-byte slot; OS `type: ip` mapping accepts both). No `source` or `component` per-record attributes — `service.name` + `ingest_source` resource attrs discriminate (the per-record dupes were dropped as schema rot). The CP boot path degrades to `event=netlogger_unavailable` when the collector preflight dial fails (20s deadline; no background reconnect), so firewall enforcement is unaffected when the monitoring stack is down.
 
 `spanmetrics` is a connector — traces flow through it and re-emerge as RED (rate / errors / duration) metrics on the metrics pipeline. `prometheus/self` scrapes the collector's own telemetry endpoint so operational metrics for the collector itself land in Prometheus alongside agent telemetry. `debug` writes every batch to the collector's stdout — surfaces in `docker logs clawker-otel-collector`, verbose by design.
 
 The `otlp` HTTP receiver has no `cors` block — browser-based pushers will be rejected by preflight. OTLP/HTTP from server-side clients works fine; if a future SPA needs to push directly, add a `cors.allowed_origins` entry scoped to that origin to the receiver in `otel-config.yaml.tmpl`.
 
 OpenSearch's security plugin is disabled in the compose template (`DISABLE_SECURITY_PLUGIN=true`) so the collector talks plain HTTP to it on the docker network. OpenSearch Dashboards runs with its security plugin disabled too — no login required for local development.
+
+## Runtime UAT (you assist — you cannot unit-test the stack)
+
+Golden files + template-render tests prove the generated compose/otel-config/bootstrap JSON is **valid**. They do NOT prove the live pipeline **ingests, routes, indexes, and renders**. There is no unit seam for "did a Claude Code log land in the `claude-code` index with the right mapping." That is observed live. When asked to confirm monitoring behavior, run a working-session loop with the user — mirror `.agents/skills/firewall-uat/SKILL.md`:
+
+### 1. Locate yourself
+- `$CLAWKER_AGENT` set → inside an agent container. You **cannot** run `clawker monitor *` (host-only; `feedback_no_host_clawker_in_container`). Confirm — a plain dev shell with the repo also exists.
+- `$CLAWKER_AGENT` unset → host shell; you may drive `clawker monitor *` yourself. Host bash sandbox strips network/docker — use `dangerouslyDisableSandbox: true`.
+
+### 2. Bring the stack up (ask the user if you can't)
+- Lifecycle is CLI-owned: `clawker monitor up` / `status` / `down --volumes` (`feedback_cli_owns_compose_lifecycle`). In a container you cannot run it — ask the user to `clawker monitor up` and confirm `clawker monitor status` is green before you probe.
+- Stack is throwaway (`feedback_monitoring_stack_throwaway`): index-template / saved-object / compose edits need `clawker monitor down --volumes && clawker monitor up` to take effect. Ingest-pipeline *body* edits are the exception — resolved by name per-doc, so a plain `monitor up` re-runs them.
+
+### 3. Check the docker socket
+- Reaching OpenSearch / Dashboards from inside the agent needs the docker socket (`/var/run/docker.sock`, gated by `security.docker_socket`, **default OFF**). Probe: `docker info` (sandbox-disabled).
+- **No socket** → you cannot reach the stack from in-container. Drive UAT entirely through the user: they run the queries host-side and paste results.
+- **Socket present** → use the curl-container pattern below.
+
+### 4. Query via a container (you can't dial the indices directly)
+CoreDNS only resolves `otel-collector` + `prometheus` for agents (`MonitoringServiceHostnames`); `opensearch-node` / `opensearch-dashboards` are intentionally unresolvable (`feedback_clawker_container_no_direct_net`), and the collector/Prometheus paths are push/scrape, not query. So hit the service containers on their own loopback:
+
+```
+# OpenSearch — what actually indexed (opensearch-node ships curl)
+docker exec opensearch-node curl -s 'http://localhost:9200/_cat/indices?v'
+docker exec opensearch-node curl -s 'http://localhost:9200/claude-code/_search?size=1&sort=@timestamp:desc' | python3 -m json.tool
+docker exec opensearch-node curl -s 'http://localhost:9200/clawker-envoy/_mapping' | python3 -m json.tool
+
+# Prometheus — confirm a series exists (use a curl sidecar; prom image has no curl)
+docker run --rm --network container:prometheus --entrypoint curl curlimages/curl \
+  -s 'http://localhost:9090/api/v1/query?query=claude_code_token_usage'
+
+# Collector / bootstrap triage
+docker logs clawker-otel-collector --tail 50
+docker logs clawker-opensearch-bootstrap   # one-shot; non-zero exit = stack half-up by design
+```
+
+Pattern: `docker exec <svc> curl …` where the image bundles curl (`opensearch-node`); else `docker run --rm --network container:<svc> --entrypoint curl curlimages/curl …` (Envoy, Prometheus).
+
+### 5. Back-and-forth
+You probe → report what indexed / scraped / rendered → user mutates host-side (`monitor down --volumes && up`, config edit) → you re-probe. Never declare a pipeline / index / dashboard change "working" from golden tests alone.
+
+## What NOT To Do
+
+- Don't add hostname knobs to `MonitoringConfig` for monitoring services — they're consts shared with the firewall plane.
+
+## What not to do
+
+- Do not add hostname knobs to `MonitoringConfig` for monitoring services; they are constants shared with the firewall plane (`internal/consts/monitoring.go`).
+
+Full reference: `.agents/skills/monitoring-checks/SKILL.md`.

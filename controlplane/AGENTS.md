@@ -23,48 +23,62 @@ Store; the firewall handler; concrete RPC handlers.
 - `run()` reads top-to-bottom through concrete calls. No numbered `// Phase N` comment
   scaffolding — a function that needs a comment table-of-contents is a god-function.
 
-## Resilience contract — CP crashing is a security incident, NOT an availability one
+## Control-plane safety
 
-This is the most important invariant in this package. Read it before adding any failure path to CP code. See the root `CLAUDE.md` for the canonical statement; this section enforces it for code under `internal/controlplane/`.
+Read this section before changing CP startup, serving, their dependencies, or
+the CP-to-agent trust contract. The failure rules apply to every package on the
+CP boot or serve path, including packages outside this directory
+(`internal/controlplane/`, `cmd/clawkercp/`, `clawkerd/`, `internal/clawkerd/`,
+`cmd/clawkerd/`, and anything they import).
 
-### Why CP must not crash
+### CP and firewall lifecycles
 
-A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
+- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `Manager.Start` (`controlplane/manager`). No "disable CP" flag. CP owns the clawker network.
+- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
 
-1. **Kills PID 1.** CP container exits non-zero. `on-failure` restart policy retries `consts.CPMaxRestartRetries` (3) times; deterministic bugs replay each time, then CP stays dead.
-2. **Skips the clean drain-to-zero path.** `firewall.Stack.Stop()` and `ebpfMgr.FlushAll()` are only called by the `AgentWatcher`'s drain callback in `internal/controlplane/cmd.go`. A panic bypasses both.
-3. **Leaves eBPF programs pinned and unsupervised.** Programs are attached to cgroups and survive in `/sys/fs/bpf`. The kernel keeps filtering agent egress against whatever rules were loaded at the moment of death.
-4. **Strands the stack trace on `os.Stderr` → `docker logs <cp>`.** It is NOT in the rotating `ControlPlaneLogFile`; it is NOT visible via `clawker controlplane status` (which only reports up/down).
-5. **Leaves agent containers running with no supervisor.** clawkerd has no awareness CP died; agents keep serving workloads.
+Do **NOT** gate non-firewall behavior on `firewall.enable`.
 
-### What this looks like to the user
+### CP crashing is a SECURITY incident, not an availability one
 
-- They see agents running. They assume the firewall is enforcing (it technically is, against frozen rules) and that CP is observing and ready to dispatch containment (it isn't).
-- `clawker firewall add <domain>` writes to the rules file but Envoy/CoreDNS reload requires CP — silently drops.
-- A `clawker firewall bypass <duration>` in flight when CP died has no expiry timer — the bypass is now permanent until manual intervention.
-- No CP→clawkerd Session means no observation of agent behavior, no command dispatch, no containment available even if a compromise is detected.
-- Agents are exposed to prompt injection, exfiltration, and lateral-movement attempts CP would otherwise see and contain. The user's mental model — "CP has my agents covered" — is silently false.
+This is the single most important invariant in the codebase. Read it before adding any failure path to CP code.
 
-### Hard rules
+**What happens when CP crashes (panic, log.Fatal, unrecovered goroutine):**
 
-1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** in any code reachable from `internal/controlplane/cmd.go` after `SetReady`. The only acceptable hard exits are:
-   - Pre-`SetReady` startup failures (exit code 1). Any error returned from `run()` before `SetReady` is such an exit — ordinary wiring failures (Ory health, eBPF load, gRPC listen) and deliberate startup gates (state/policy checks elevated to fail startup, e.g. `CleanupStaleBypass` (INV-B2-013) and the settings-driven `firewall.enable` stack bringup) alike. These exit WITHOUT flushing eBPF, so agents enrolled by a previous CP stay fail-closed rather than fail-open.
-   - The orchestrator's intentional drain-to-zero clean exit (code 0).
-2. **Constructors return `(*T, error)`.** Pattern: `agent.New`, `agent.NewExecutor`. Nil deps, cert load failures, schema errors → return error, never panic. `run()` in `internal/controlplane/cmd.go` logs structurally and degrades the subsystem (`dialer = nil`, `executor = nil`).
-3. **Long-lived goroutines must recover.** Wrap heartbeats, watchers, dispatch handlers, RPC interceptors with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The agent-watcher goroutine in `run()` (`internal/controlplane/cmd.go`, `event=agent_watcher_panic`) — which converts a panic into a terminal shutdown error so drain-to-zero / eBPF flush still runs — is the template. One bad event must not silently strand eBPF.
-4. **Subsystem failures degrade.** Broken Executor → `executor = nil` → dialer logs `agent_<plan>_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` in `internal/controlplane/cmd.go` as templates for new subsystems.
-5. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with enough fields for an operator to triage root cause AND blast radius. They will never see panic stacks; the structured log is the only surface.
-6. **Treat any urge to panic as a security review trigger.** Ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you are about to silently break the firewall enforcement boundary the user trusts. Return an error.
+1. PID 1 exits. CP container goes down. `on-failure` restart policy retries 3×; if the bug is deterministic (most are), CP stays dead.
+2. **eBPF programs stay attached to cgroups.** They're pinned under `/sys/fs/bpf` and survive the CP container's death. Agent containers' egress traffic continues to be filtered by whatever rule set was loaded at the moment CP died.
+3. **The clean drain-to-zero path is skipped.** `firewall.Stack.Stop()` and `ebpfMgr.FlushAll()` only run on intentional shutdown via the orchestrator. A panic skips both. eBPF state is now frozen and unsupervised.
+4. **Agent containers keep running.** They have no awareness that their supervisor died. They keep serving their workloads.
+5. **The user has no idea.** They see agents running. They assume the firewall is enforcing — and it technically is, against the rules that happened to be loaded. They assume CP is observing — it isn't. They assume CP can dispatch containment — it can't.
 
-### Existing escape hatches you'll find in code (and must not add to)
+**The result:**
 
-- The `register_panic` recover in `clawkerd/session.go::handleRegisterRequired` (NOT in CP — clawkerd-side, agent container can crash).
-- The agent-watcher goroutine recover in `run()` (`internal/controlplane/cmd.go`, `event=agent_watcher_panic`) — keep doing this for new long-lived goroutines.
-- `firewall/handler.go` returns `status.Error(...)` for handler-level failures; never panics.
+- No new firewall rules can be applied (`clawker firewall add` writes to the rules file but Envoy/CoreDNS need CP to reload).
+- No bypass can be expired (`clawker firewall bypass <duration>` schedules a CP-side timer; if CP died during a bypass, the bypass is now permanent until the user manually intervenes).
+- No CP→clawkerd Session means no command dispatch, no observation of agent behavior, no containment commands available even if compromise is detected.
+- Agents are vulnerable to prompt injection, exfiltration, and lateral-movement attempts that CP would otherwise observe and contain. The user's mental model ("CP has them covered") is silently false.
 
-### What about `consts.CPMaxRestartRetries`?
+The stack trace from a CP panic lands on `os.Stderr` → `docker logs <cp>`. It is NOT in the rotating `ControlPlaneLogFile` operators are wired to grep. It is NOT surfaced by `clawker controlplane status` (which only knows up/down). The user has to know to dig into raw docker logs to find it.
 
-It's a safety net, not a recovery strategy. By the time it triggers, eBPF has been pinned with no supervisor for at least the time it took to crash → restart → crash 3× → backoff. The restart policy exists for transient hardware/scheduler hiccups, not for software bugs we should have caught.
+**Hard rules for code on the CP boot/serve path** (`cmd/clawkercp/`, `internal/controlplane/`, anything imported by them):
+
+1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** outside the orchestrator's intentional shutdown sequence. Constructors return `(nil, error)` (see `agent.NewDialer`, `agent.NewExecutor`); main logs structurally and degrades. The only hard-exits permitted are: drain-to-zero clean exit (code 0), and the orchestrator's pre-`SetReady` startup-gate failures (code 1) — these exit WITHOUT flushing eBPF, so any agents enrolled by a previous CP stay fail-closed (filtered against the old rule set) rather than fail-open.
+2. **Every long-lived goroutine recovers.** Heartbeats, watchers, event handlers, RPC handlers — wrap with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The pub/sub stats heartbeat (`pubsub.NewStatsHeartbeat`, wired in `internal/controlplane/cmd.go`) is the canonical template. One bad event must not take down the daemon and silently strand eBPF.
+3. **Subsystem failures degrade, never cascade.** A broken Executor → `executor = nil`; CP never dispatches `AgentReady`, clawkerd-as-PID-1 never spawns the user CMD, and the container exits non-zero on `docker stop`; the firewall, registry, AdminService, dialer all stay up. A broken dialer → `dialer = nil`; CP→clawkerd dispatch disabled; everything else stays up. The patterns in `internal/controlplane/cmd.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.NewDialer(...)` block that degrades on error to `event=agent_dialer_unavailable` — are the templates; copy either for any new subsystem.
+4. **Every degraded path emits a structured log line.** `event=<subsystem>_unavailable` with component, error, downstream impact. Operator must be able to determine root cause AND blast radius from the structured log surface alone — they will not see panic stacks.
+5. **Treat CP shutdown as a privileged operation.** If you find yourself thinking "this should never happen, just panic," stop. In CP that line of reasoning compromises the security boundary the user trusts to be intact. Return an error and let the orchestrator decide.
+
+If you're tempted to write `panic()` in CP code, ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you've just turned a logic bug into a silent firewall failure. Return an error instead.
+
+### Asymmetric trust: dialer permissive, listener strict
+
+- **clawkerd-side listener (server):** STRICT. `clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
+- **CP-side dialer (client):** PERMISSIVE. `controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` events. Dial only fails on connectivity.
+
+**Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.
+
+**Trust attestation:** The CLI mints the agent certificate. CP writes the registry row through the Register handler. The dialer checks the peer certificate thumbprint against the row and emits the result on the bus. See [the agent package](agent/AGENTS.md) for the identity contract.
+
+Package-specific behavior below must preserve those requirements.
 
 ## Responsibilities
 
@@ -98,23 +112,23 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 |------------|---------|
 | `pubsub/` | Generic, dumb in-memory pub/sub pipe — `Topic[T]`/`Event[T]` (the typed bus), `NewStatsHeartbeat`. Zero imports of any CP sibling; recover-per-delivery so a panicking subscriber can't strand eBPF. |
 | `dockerevents/` | Docker-event bounded context: `feeder.go` (sole `DockerEvent` producer), dispatch/reconcile of `purpose=agent` container lifecycle onto the typed topic. |
-| `agent/` | Agent bounded context — sqlite registry, in-memory worldview repository, CP→clawkerd dialer (`agent.New`), `NewAgentWatcher`, `NewExecutor`, `IdentityInterceptor`. See `controlplane/agent/CLAUDE.md`. |
+| `agent/` | Agent bounded context — sqlite registry, in-memory worldview repository, CP→clawkerd dialer (`agent.New`), `NewAgentWatcher`, `NewExecutor`, `IdentityInterceptor`. See `controlplane/agent/AGENTS.md`. |
 | `server/` | gRPC composition: `NewAdminServer(fw, agents, log) (adminv1.AdminServiceServer, error)` (`server.go`) + `NewGRPCStack(GRPCDeps) (*GRPCStack, error)` (`grpc_stack.go`) — builds both listeners (admin + agent), wires interceptors, registers services. |
 | `auth/` | Ory auth stack: `AuthInterceptor`/`HydraIntrospector` (`authz.go`), `RegisterCLIClient`/`RegisterAgentClient` (`hydra_client.go`), `WriteOryConfigs` (`ory_configs.go`), Ory subprocess bringup (`ory_stack.go`). Mocks in `auth/mocks/`. |
 | `subprocess/` | `SubprocessManager` + `NewSubprocessManager` — Ory subprocess lifecycle (start, health, crash detection, reverse-order shutdown). |
 | `otel/` | `NewOtelLoggerProvider(OtelClientOptions) (*sdklog.LoggerProvider, error)` (`otelclient.go`) — generic per-subsystem OTel log-provider factory pushing OTLP/gRPC over mTLS to the trusted-infra receiver. |
-| `firewall/` | Envoy + CoreDNS + eBPF egress enforcement; `firewall.Handler` (the 13 firewall RPCs), `firewall.Stack`, Envoy/CoreDNS config generation, and the `ebpf/` subtree (loader + netlogger). See `controlplane/firewall/CLAUDE.md`. |
-| `manager/` | **Host-side CP lifecycle.** `ensureRunning`/`Stop`/`CPRunning` (`bootstrap.go`), `BuildCPContainerConfig` (`cp_container.go`), `Manager` interface (`Start`/`Stop`/`IsRunning`/`ProbeHealthz`) + `NewManager` (`manager.go`) — `Start` is the idempotent bringup; a boot the CP cannot finish alone surfaces as `*CPSOSError` for the CLI bootstrap verbs to assist (`internal/cmd/controlplane/shared`). Also the `//go:embed` of `clawkercp` + `ebpf-manager` + the host-side `bpffs-delegate` (`embed_cp.go`/`embed_ebpf.go`/`embed_bpffs.go`). Replaces the former `cpboot/`. See `controlplane/manager/CLAUDE.md`. |
+| `firewall/` | Envoy + CoreDNS + eBPF egress enforcement; `firewall.Handler` (the 13 firewall RPCs), `firewall.Stack`, Envoy/CoreDNS config generation, and the `ebpf/` subtree (loader + netlogger). See `controlplane/firewall/AGENTS.md`. |
+| `manager/` | **Host-side CP lifecycle.** `ensureRunning`/`Stop`/`CPRunning` (`bootstrap.go`), `BuildCPContainerConfig` (`cp_container.go`), `Manager` interface (`Start`/`Stop`/`IsRunning`/`ProbeHealthz`) + `NewManager` (`manager.go`) — `Start` is the idempotent bringup; a boot the CP cannot finish alone surfaces as `*CPSOSError` for the CLI bootstrap verbs to assist (`internal/cmd/controlplane/shared`). Also the `//go:embed` of `clawkercp` + `ebpf-manager` + the host-side `bpffs-delegate` (`embed_cp.go`/`embed_ebpf.go`/`embed_bpffs.go`). Replaces the former `cpboot/`. See `controlplane/manager/AGENTS.md`. |
 | `adminclient/` | CLI-side AdminService dialer (`dial.go`): `Dial`, `ProbeCPTime`, `LoadClientCert`, the two TLS configs (token-endpoint plain TLS vs gRPC mTLS), token source. |
-| `infracerts/` | Trusted-infra (OTLP/monitoring) mTLS cert material. See `controlplane/infracerts/CLAUDE.md`. |
-| `otelcerts/` | OTel client cert provisioning. See `controlplane/otelcerts/CLAUDE.md`. |
-| `sdscerts/` | Dedicated Envoy→CP SDS client identity (`envoy-sds-client` leaf, own material dir + readiness gate — deliberately NOT the telemetry lane's certs). See `controlplane/sdscerts/CLAUDE.md`. |
+| `infracerts/` | Trusted-infra (OTLP/monitoring) mTLS cert material. See `controlplane/infracerts/AGENTS.md`. |
+| `otelcerts/` | OTel client cert provisioning. See `controlplane/otelcerts/AGENTS.md`. |
+| `sdscerts/` | Dedicated Envoy→CP SDS client identity (`envoy-sds-client` leaf, own material dir + readiness gate — deliberately NOT the telemetry lane's certs). See `controlplane/sdscerts/AGENTS.md`. |
 
 ## AdminService composition
 
 `controlplane/server/server.go` exposes the unexported `adminServer` type that embeds `*firewall.Handler` (and, in future branches, additional RPC handlers). Method promotion produces the AdminServiceServer surface. `server.NewAdminServer(fw, agents, recovery, log) (adminv1.AdminServiceServer, error)` is the composition constructor — it returns an error (e.g. `ErrNilRegistry`, `ErrNilRecovery`) rather than panicking, per the CP no-crash contract. It is composed into the gRPC stack by `server.NewGRPCStack` (`controlplane/server/grpc_stack.go`), which `buildGRPCStack` in `internal/controlplane/cmd.go` calls to build and serve both listeners.
 
-The 13 firewall RPCs live in `controlplane/firewall/handler.go` — see `controlplane/firewall/CLAUDE.md` for the per-RPC table. Future handlers (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Subsystem><Action>[<Object>]` proto naming convention prevents method-name collisions.
+The 13 firewall RPCs live in `controlplane/firewall/handler.go` — see `controlplane/firewall/AGENTS.md` for the per-RPC table. Future handlers (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Subsystem><Action>[<Object>]` proto naming convention prevents method-name collisions.
 
 All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exception: `GetSystemTime` is mapped to the public scope (`consts.ScopePublic`) in `AdminMethodScopes()` — no bearer token, mTLS client cert still required at the listener — because it bootstraps the token exchange itself. `WatchSOS` is admin-scoped like the rest (recoverable failures only happen after the Ory stack is up — anything earlier exits 1 — so the CLI can always mint a token by the time there is something to watch): it is a server stream the CLI holds open while the CP boots, carrying an error or nothing — a delivered `SOS` is a startup failure the CLI can assist with while the CP stays alive waiting, a clean end-of-stream means resolved or nothing to report; the `SOS.kind` enum (`SOSKind`) is the CLI's dispatch discriminator — it switches on kind and never parses `message`, and an unknown kind (older CLI, newer CP) surfaces `message` as the error rather than hanging; unrecoverable failures never appear — the CP exits non-zero as usual (see the recovery queue in `internal/controlplane/cmd.go`). The ready-gate exemption list (`readyGateExemptMethods` in `controlplane/server/grpc_stack.go`) is the public set plus `WatchSOS`: the admin listener serves from construction, and the ready-gate interceptor rejects every non-exempt RPC with `codes.FailedPrecondition` until `SetReady`. An empty or unmapped scope fails closed (deny) — public is the explicit `ScopePublic` sentinel, never the zero value. Per-method scope diversification beyond this is intentionally not used — see Spec §8.
 
@@ -128,7 +142,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 4. `buildEnforcement` — CONSTRUCTION only: Docker client + `firewall.Stack` + the `firewall.EgressRulesStore` + the shared `firewall.CAStore` + the `RouteIdentityStore`-backed `IdentityAllocator` + `ebpf.NewManager`. No BPF state is created here; `ebpfLoadFlow` (flow step 9) is the step that loads. Returns the joined cleanup, safe on an unloaded manager.
 5. `buildTopics` — the typed pub/sub topics (`dockerTopic`, `agentTopic`, `enrolledTopic`); one topic per payload type, the generic audit hook self-attaches in `NewTopic`.
 6. `buildAgentInfra` — agent sqlite registry + `MobyPeerLookup` + `ContainerLister` + the in-memory `agent.Repository` (worldview) with its agent-event and docker-event subscriptions wired.
-7. `buildGRPCStack` — firewall `ActionQueue` + `fwhandler.Handler` (holds publish-only `enrolledTopic`) + the admin (`cp.AdminPort`, mTLS + ready gate + CLI-scope AuthInterceptor) and agent (`cp.AgentPort`, clawker-net only, agent-scope AuthInterceptor chained ahead of `agent.IdentityInterceptor`) gRPC listeners; both listeners are BOUND here and the agent listener starts serving (`ServeAgent`) — boot-time clawkerd dial-back/registration needs it. The admin surface hosts the 13 firewall RPCs + `ListAgents` + the bootstrap RPCs (the public `GetSystemTime`, the admin-scoped ready-gate-exempt `WatchSOS`). `IdentityInterceptor` runs a universal three-stage gate (CN pin to `consts.ContainerClawkerd` → peer-IP→`purpose=agent` container resolution reading `dev.clawker.{project,agent}` labels → constant-time `AgentFullName` vs `urn:clawker:agent:` URI SAN compare). CP→clawkerd dispatch is the OUTBOUND dialer (step 12), not this listener — see `internal/controlplane/agent/CLAUDE.md` and the asymmetric-trust clarification in the root `CLAUDE.md`.
+7. `buildGRPCStack` — firewall `ActionQueue` + `fwhandler.Handler` (holds publish-only `enrolledTopic`) + the admin (`cp.AdminPort`, mTLS + ready gate + CLI-scope AuthInterceptor) and agent (`cp.AgentPort`, clawker-net only, agent-scope AuthInterceptor chained ahead of `agent.IdentityInterceptor`) gRPC listeners; both listeners are BOUND here and the agent listener starts serving (`ServeAgent`) — boot-time clawkerd dial-back/registration needs it. The admin surface hosts the 13 firewall RPCs + `ListAgents` + the bootstrap RPCs (the public `GetSystemTime`, the admin-scoped ready-gate-exempt `WatchSOS`). `IdentityInterceptor` runs a universal three-stage gate (CN pin to `consts.ContainerClawkerd` → peer-IP→`purpose=agent` container resolution reading `dev.clawker.{project,agent}` labels → constant-time `AgentFullName` vs `urn:clawker:agent:` URI SAN compare). CP→clawkerd dispatch is the OUTBOUND dialer (step 12), not this listener — see `controlplane/agent/AGENTS.md` and [asymmetric trust](#asymmetric-trust-dialer-permissive-listener-strict).
 8. Serve the boot surfaces — `SetAdminServingCheck`, then `grpcStack.ServeAdmin(serveFailed)` MID-BOOT: the ready-gate-exempt bootstrap RPCs answer while the flow below runs (`WatchSOS` is the CLI's window into a boot waiting for assistance), and the ready-gate interceptor rejects every other admin RPC with `codes.FailedPrecondition` until `SetReady` — no rule mutation is accepted mid-boot. Then `startHealthz`, which answers 503 `not_ready` until the flow completes.
 9. STARTUP FLOW — ordered side-effect steps, each a pre-`SetReady` gate (exit 1, no eBPF flush, enrolled agents stay fail-closed):
    - `oryStack.Start` — writes Ory configs, starts Kratos + Hydra + Oathkeeper subprocesses, waits healthy, registers the CLI + agent Hydra clients; then `SetServiceProbes` installs the aggregate `/healthz` probes.
@@ -226,7 +240,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `Introspector` interface — `controlplane/auth/mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `cpmanager.Manager` interface — `cpmanagermocks.ManagerMock` (`controlplane/manager/mocks`) for break-glass `controlplane up/down/status` CLI tests.
 - `adminv1.AdminServiceClient` — `api/admin/v1/mocks.AdminServiceClientMock` for CLI tests that speak to the AdminService.
-- `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/CLAUDE.md`).
+- `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/AGENTS.md`).
 - `firewall.EgressRulesStore` / `firewall.RouteIdentityStore` — the two store-backed firewall domain facades; moq mocks in `controlplane/firewall/mocks/`. CP wiring (`buildEnforcement`) threads the interfaces, never a `storage.Store`. Firewall's own tests use real stores instead.
 - `agent.Registry` — moq-generated `RegistryMock` (in `controlplane/agent/mocks/registry_mock.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
 

@@ -148,7 +148,7 @@ CurrentRoot() (string, error)            // os.Getwd() → ResolveRoot
 
 ## Registry (`registry.go`)
 
-The store-backed domain facade for registry persistence (`consts.RegistryFile` in the data dir), built to `.claude/rules/store-backed-package.md`: the exported `Registry` **interface**, the unexported `registryImpl` embedding `*storage.Store[ProjectRegistry]`, and the `NewRegistry`/`NewRegistryFromString` constructor pair returning the interface.
+The store-backed domain facade for registry persistence (`consts.RegistryFile` in the data dir), built to the Store-backed package contract in `internal/storage/AGENTS.md`: the exported `Registry` **interface**, the unexported `registryImpl` embedding `*storage.Store[ProjectRegistry]`, and the `NewRegistry`/`NewRegistryFromString` constructor pair returning the interface.
 
 ```go
 type Registry interface {

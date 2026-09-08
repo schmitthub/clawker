@@ -3,16 +3,25 @@
 - Clawker manages AI agent containers through Docker. Resource labels determine ownership; names alone do not.
 - Project resolution uses the registry. Config receives a resolved project root; it does not resolve project identity.
 - The control plane (CP) runs whenever managed agent containers exist. The firewall is an optional CP subsystem.
-- Follow `AGENTS.md`, the nearest package `AGENTS.md`, and applicable `.claude/rules/` files. Package source defines the current API.
-- Design references: `.claude/docs/DESIGN.md`, `.claude/docs/ARCHITECTURE.md`. Full directory map: `.claude/docs/REPO-STRUCTURE.md`.
+- Follow `AGENTS.md`, the nearest package `AGENTS.md`, and the memories below. Package source defines the current API.
+- Root `AGENTS.md` requires this memory graph and the package `AGENTS.md` chain for each target file, including files outside the initial working directory. There is no rule directory and no rule or task index. Shared procedures are in `.agents/skills/`; `.claude/skills` links to that directory. Behavioral and situational guidance is a skill in `.agents/skills/` (each `SKILL.md` description states its trigger); Serena holds project knowledge. Package contracts live in package `AGENTS.md` files. GitHub Copilot files serve pull request code review.
+- `.agents/` contains harness-independent content. Keep native settings, reviewer definitions, and hooks specific to one tool as regular files in `.claude/` or `.codex/`. Do not move native configuration into shared directories or use links to hide its ownership.
+- The named `test-hunter` reviewer uses one shared skill. Claude's `.claude/agents/test-hunter.md` preloads it. Codex's role file is the skill sidecar `.agents/skills/test-hunter/agents/codex.toml`, named by `config_file` in `.codex/config.toml`.
+- Both tools use the same project instruction files, `.agents/skills`, and Serena memory graph. `.claude/skills` is a directory link. Both native configurations register the same Git and Go guards. Keep required knowledge in shared files.
+- The `agent-compat` commit hook and the PR lint workflow (`agent-compat` job) run `scripts/check-agent-compatibility.py`. Never run it by hand. It validates what exists: `AGENTS.md` + `CLAUDE.md -> AGENTS.md` pairs, relative in-repo symlinks under `.agents`/`.claude`/`.codex` (shared links never resolve into a harness dir), Codex `config_file` values, and navigation links. It forces no directory links, sidecars, or named files. Subagents: a skill's `agents/claude.md` is linked from `.claude/agents/<name>.md`; its `agents/codex.toml` is named by `[agents.<name>] config_file` in `.codex/config.toml`. Use `.agents/skills/dev-checks/SKILL.md` for commands and dependency pins; `controlplane/AGENTS.md` (Control-plane safety section) for CP safety. Package rules live in package `AGENTS.md` files; cross-cutting mem:conventions live in this memory graph.
+- For context and memory file changes, use canonical documentation, prior art, source inspection, and file checks. Do not run application tests. Do not install or run Claude Code for validation.
+- System design: `mem:design` (philosophy, concepts, security model, lifecycle) and `mem:architecture` (layers, Factory DI, package DAG, key packages). Directory map: `mem:repo-structure`. Core types and terms: `mem:key-concepts`. CLI surface, config schema, design decisions, terminal gotchas: `mem:project-guide`.
+
+- The docsweep workflow is retired by user request. Do not recreate it as a portable skill; it required its original Claude workflow runtime.
+
+- The audit-memory skill requires an explicit user request in its shared description and procedure. This is an instruction to both agents, not a native loading restriction. It has no vendor-specific metadata or per-tool invocation override.
 
 ## Work rules
 
 - For memory placement, naming, and links: `mem:memory_maintenance`.
 - For dependency versions, generated assets, and build inputs: `mem:tech_stack`.
-- For development and host test commands: `mem:suggested_commands`.
+- For development commands, host checks, and completion checks: `.agents/skills/dev-checks/SKILL.md`.
 - For dependency injection, errors, output, and instruction files: `mem:conventions`.
-- For the checks required before completion: `mem:task_completion`.
 
 ## Module map
 
@@ -34,5 +43,5 @@ These topic indexes contain dated records. Check current source before reusing t
 - For proposals and unresolved implementation phases: `mem:plans/core`.
 - For bug, feature, and plugin reports that need a status check: `mem:tracking/core`.
 - For provider comparisons and source methodology: `mem:research/core`.
-- For prior architecture, migrations, and limited approvals: `mem:history/core`.
+- For prior mem:architecture, migrations, and limited approvals: `mem:history/core`.
 - For operator-directed tests and prior incidents: `mem:security/core`.

@@ -35,4 +35,4 @@ Commands load config via `config.NewConfig()`. `serve` collects changed flags in
 
 Registered hidden in `internal/cmd/root/root.go`. Runtime lifecycle managed by `internal/hostproxy.Manager.EnsureRunning()`.
 
-See `internal/hostproxy/CLAUDE.md` for daemon architecture and HTTP API reference.
+See `internal/hostproxy/AGENTS.md` for daemon architecture and HTTP API reference.

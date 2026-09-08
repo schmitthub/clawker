@@ -40,7 +40,7 @@ This is assessment, not scoring: no numbers, no ratings, no scales, no weighting
 > granular egress: No — solution only offers host whitelisting. [link to proof]
 
 - **yes** — capability exists and is documented. Justification states what it provides; ALL limits/caveats listed (beta, one platform only, paid tier only, coarse granularity...).
-- **no** — positive evidence of the limitation/absence: explicit doc statement, maintainer response, closed won't-fix issue, or architecture that structurally precludes it. Justification states WHAT the solution offers instead (as in the example above). Docs silence is NEVER "no".
+- **no** — positive evidence of the limitation/absence: explicit doc statement, maintainer response, closed won't-fix issue, or mem:architecture that structurally precludes it. Justification states WHAT the solution offers instead (as in the example above). Docs silence is NEVER "no".
 - **partial** — allowed when the honest answer is mixed or you're unsure it fully qualifies: capability exists in weaker/narrower form than the criterion describes. Justification must state exactly what exists and what's missing.
 - **unknown** — docs silent / conflicting / couldn't determine. Justification states what was searched and why inconclusive. When torn between "no" and "unknown", pick "unknown".
 - **na** — category-nonsensical for this entry. Justify briefly.
@@ -85,7 +85,7 @@ Record what a competent developer gets **out of the box** with standard tooling.
 ## Axes & sub-criteria
 
 ### A. Identity
-- **built_on** (prose-only) — underlying tech: container / microVM / OS-level sandbox / cloud VM; what it's built on (Firecracker, gVisor, runc, seatbelt...); supervisor/control-plane architecture.
+- **built_on** (prose-only) — underlying tech: container / microVM / OS-level sandbox / cloud VM; what it's built on (Firecracker, gVisor, runc, seatbelt...); supervisor/control-plane mem:architecture.
 - **execution_locality** — determination: Local | Remote | Both. Where agent code actually executes. Prose covers data-residency implications: does project code / do credentials ever leave the dev's machine? Self-host option ≠ local (still a separate deployment) — note it but classify by where execution happens for the default usage mode.
 - **open_source** (prose-only) — license; self-hostable?
 - **maturity** (prose-only) — stars/age/backing/adoption, one line.
@@ -109,7 +109,7 @@ Network control (deepest scrutiny — differentiator block):
 - **proto_coverage** — breadth of protocol control beyond plain HTTPS: DNS, ICMP, TCP, UDP (incl. QUIC/HTTP3), and popular L7 protos (ssh, ws/wss, grpc, h2). Prose lists which are controlled, which are logged, which pass uncontrolled. Also note proto EXTENSIBILITY: fixed protocol set vs design where new/custom L7 protocols slot into the existing rule model (only as documented — shipped support and documented-extensible design are different claims; never credit undocumented plumbing).
 - **live_rule_reload** — rule change without sandbox restart.
 - **firewall_escape_hatch** — controlled break-glass: timed bypass with automatic re-enforcement, per-sandbox disable/enable. All-or-nothing (tear down the sandbox / turn feature off permanently) = No.
-- **enforcement_plane** — dataplane architecture: WHERE network policy is enforced — kernel level (eBPF/netfilter), userspace proxy, VM/hypervisor boundary, cloud network infra, or none. Prose: can the agent tamper with or route around the enforcement point from inside the sandbox; is traffic logged at that layer.
+- **enforcement_plane** — dataplane mem:architecture: WHERE network policy is enforced — kernel level (eBPF/netfilter), userspace proxy, VM/hypervisor boundary, cloud network infra, or none. Prose: can the agent tamper with or route around the enforcement point from inside the sandbox; is traffic logged at that layer.
 - **fail_closed** — network enforcement survives supervisor/control-plane failure. Prose: what happens to policy when the managing process dies.
 - **network_audit** — per-request egress log.
 Other:

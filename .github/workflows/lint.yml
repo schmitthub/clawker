@@ -39,3 +39,21 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.13.2
+
+  agent-compat:
+    name: Agent compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same check the agent-compat commit hook runs, plus the checker's own
+      # tests and the command-guard hook tests. Needs python3 >= 3.11 (tomllib);
+      # ubuntu-24.04 ships 3.12.
+      - name: Agent compatibility
+        run: python3 scripts/check-agent-compatibility.py
+
+      - name: Checker and hook tests
+        run: |
+          python3 scripts/test_agent_compatibility.py
+          python3 .agents/hooks/test_go_commands.py

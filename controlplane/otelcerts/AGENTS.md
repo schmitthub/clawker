@@ -90,7 +90,7 @@ and only assign into `otelCerts` on the success path. Boxing a typed-
 nil `*Service` into the interface would pass downstream `s.otelCerts
 == nil` checks while still dispatching `EnsureClient`/`LoadTLSConfig`
 on a nil receiver — turning the intended degraded mode into a panic
-that strands eBPF (see `internal/controlplane/CLAUDE.md`, "CP crashing
+that strands eBPF (see `internal/controlplane/AGENTS.md`, "CP crashing
 is a security incident"). The two-variable pattern is enforced by an
 inline comment in `main.go`.
 

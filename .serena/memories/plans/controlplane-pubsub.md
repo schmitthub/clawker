@@ -42,7 +42,7 @@ The compiler must reject a subscriber whose signature does not match the exact t
 The engine holds no application state and prescribes no state pattern. A subscription is `func(Event[T])`; what the handler does — update a Store in its repository, increment a metric, fire a side effect, or nothing — is the bounded context's business. State that a domain does keep is guarded by that Store's own synchronization and exposed (if at all) through a read-only Store interface.
 
 3.4 Resilient Delivery (CRITICAL — Clawker CP invariant)
-CP crashing is a security incident, not an availability one: a panic kills PID 1, skips drain-to-zero, and leaves eBPF programs pinned and unsupervised while the user believes the firewall is enforcing (see root CLAUDE.md + controlplane/CLAUDE.md). Because the bus is on the hot path of every CP event, the engine must:
+CP crashing is a security incident, not an availability one: a panic kills PID 1, skips drain-to-zero, and leaves eBPF programs pinned and unsupervised while the user believes the firewall is enforcing (see root CLAUDE.md + controlplane/AGENTS.md). Because the bus is on the hot path of every CP event, the engine must:
 - Never fan out via a bare `go handler(event)`. Every handler invocation runs under recover, contained to that one event — one panicking subscriber must not take down the daemon and strand eBPF.
 - Bound each subscriber and drop-oldest on overflow (counted), so a slow consumer never blocks the bus or other subscribers.
 - Make Publish non-blocking with a back-pressure signal (false on full/closed) so producers react rather than deadlock.
@@ -220,7 +220,7 @@ func Main() {
 	//    firewallService := firewall.New(dockerRepo.Containers) // read-only Store iface
 
 	// 4. Keep the control plane active (phased startup, drain-to-zero
-	//    shutdown — see controlplane/CLAUDE.md ordering).
+	//    shutdown — see controlplane/AGENTS.md ordering).
 }
 ```
 

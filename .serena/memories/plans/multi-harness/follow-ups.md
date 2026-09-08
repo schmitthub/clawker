@@ -20,6 +20,6 @@ the list; mark items DONE with the shipping commit rather than deleting them.
    every preset's language has a first-class `build.stacks` entry (typescript
    rides `node`). Presets' `build.instructions`/`packages` blocks that
    hand-roll those toolchains should then select the stack instead. Follow the
-   existing stack conventions: `stack.yaml` + root/user Dockerfile fragments,
+   existing stack mem:conventions: `stack.yaml` + root/user Dockerfile fragments,
    self-guarding installs (skip when the runtime is already present), and
    runtimes usable by the unprivileged user.

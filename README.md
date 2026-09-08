@@ -74,6 +74,7 @@ Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers
 ## Table of Contents
 
 - [Clawker — self-hosted AI coding agent sandbox (run Claude Code, Codex \& more in Docker)](#clawker--self-hosted-ai-coding-agent-sandbox-run-claude-code-codex--more-in-docker)
+  - [How clawker compares](#how-clawker-compares)
   - [Table of Contents](#table-of-contents)
   - [High-Level Feature Overview](#high-level-feature-overview)
   - [Installation](#installation)

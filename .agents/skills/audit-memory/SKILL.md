@@ -1,49 +1,50 @@
 ---
 name: audit-memory
-description: Audit all Codex memory and documentation files for staleness, symbol accuracy, and context budget.
+description: Check agent instructions, memory files, and project docs for old information, incorrect symbols, and context size. Use only when the user explicitly requests an audit of these files.
 disable-model-invocation: true
 ---
 
 # Audit Memory
 
-Perform a comprehensive documentation health audit across all Codex context files.
+Use this procedure only when the user explicitly requests an audit of agent
+instructions, memory, or project documentation. Do not start an audit merely
+because another task reads or changes those files.
+
+Check the shared agent files and the active tool’s memory files. See [REFERENCE.md](REFERENCE.md) for package and memory checks.
 
 ## Steps
 
 ### 1. Inventory
 
-Glob all documentation files and build a summary table:
+List the source files below. Do not count a symbolic link as a second copy:
 
 - `AGENTS.md` (root)
-- `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg/*/AGENTS.md`
-- `.Codex/rules/*.md`
-- `.Codex/docs/*.md`
-- `.serena/memories/*.md`
+- `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, and `pkg/**/AGENTS.md`
+- `controlplane/**/AGENTS.md`, `clawkerd/AGENTS.md`
+- `.agents/skills/*/SKILL.md` and their sidecar files
+- `.serena/memories/**/*.md`
 - `docs/docs.json`, `docs/custom.css`, `docs/favicon.svg` — Mintlify site config, theme, and favicon
 - `docs/*.mdx` — Hand-authored Mintlify pages
 - `docs/cli-reference/*.md` — Auto-generated CLI reference (never edit directly; generated via Makefile, freshness checked in CI)
 
 For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** (`wc -c` / 4).
 
-Group into categories:
-- **Always-loaded**: root `AGENTS.md`, `.Codex/rules/*.md` without `paths:` frontmatter
-- **Path-scoped**: `.Codex/rules/*.md` with `paths:` frontmatter (loaded only when matching files touched)
-- **Lazy-loaded**: `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, `pkg/*/AGENTS.md`
-- **On-demand**: `.Codex/docs/*.md`
-- **WIP tracking**: `.serena/memories/*.md`
+Check every `CLAUDE.md` link: its relative target must be the sibling `AGENTS.md`. Check the links inside `.claude/` and `.codex/` against `.agents/skills/agent-files/SKILL.md`.
+
+Group files by the active tool's documented loading behavior:
+- **Initial instructions**: root `AGENTS.md` through the tool's native entry path
+- **Package instructions**: `cmd/**/AGENTS.md`, `internal/**/AGENTS.md`, `test/**/AGENTS.md`, `pkg/**/AGENTS.md`
+- **On-demand**: `.agents/skills/*/SKILL.md` (loaded on description match) and `.serena/memories/**/*.md` (loaded through `mem:` references)
+- **WIP tracking**: `.serena/memories/**/*.md`
 - **Mintlify site**: `docs/docs.json`, `docs/custom.css`, `docs/*.mdx`, `docs/cli-reference/*.md`
 
 ### 2. Freshness Check
 
-Run the freshness script and include its output:
-
-```bash
-bash scripts/check-Codex-freshness.sh --no-color
-```
+For each `AGENTS.md`, compare its last commit date with the last commit date of Go files in its directory (`git log -1 --format=%cs -- <path>`). List files whose source changed after the instruction file.
 
 ### 3. Symbol Accuracy
 
-For each `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg/*/AGENTS.md`:
+For each package `AGENTS.md` found in the inventory:
 
 1. Read the file
 2. Extract all backtick-wrapped Go identifiers (pattern: single backtick-wrapped words matching `[A-Z][A-Za-z0-9]*` — exported symbols)
@@ -52,24 +53,21 @@ For each `cmd/*/AGENTS.md`, `internal/*/AGENTS.md`, `test/*/AGENTS.md`, and `pkg
    - **Missing**: identifiers documented but not found in Go source (renamed or deleted)
    - **Undocumented**: exported Go symbols (`^func [A-Z]`, `^type [A-Z]`, `^var [A-Z]`, `^const [A-Z]`) in the directory not mentioned in the AGENTS.md. **Exclude** `Test*` and `Benchmark*` functions — these don't belong in AGENTS.md.
 
-### 4. Rules Path Validation
+### 4. Serena Graph Validation
 
-For each `.Codex/rules/*.md` file with a `paths:` frontmatter field:
-
-1. Parse the glob patterns from `paths: ["glob1", "glob2"]`
-2. Run `git ls-files '<glob>'` for each pattern
-3. Flag rules where no files match any glob (dead rule)
-4. Flag rules WITHOUT `paths:` frontmatter — these are always-loaded and should be scoped if possible
+1. Run `serena memories check` when the CLI is available; otherwise resolve every `mem:` reference by hand.
+2. Confirm `core` links each domain memory and each referring line says what the target covers.
+3. Flag behavioral or situational content in a memory; it belongs in a skill.
 
 ### 5. Auto Memory Audit
 
-Check the auto memory directory (`~/.Codex/projects/*/memory/`):
+Check Serena's `.serena/memories/` graph and the active tool's memory directory when it is available. Skills and package `AGENTS.md` files are not auto memory. Claude Code uses `~/.claude/projects/*/memory/`. Do not assume that Codex uses that structure. If a memory source is unavailable, report that limit:
 
 1. **MEMORY.md index completeness**: List all `.md` files in the directory. Flag any not referenced in `MEMORY.md` (unindexed).
 2. **Broken links**: Check that every `(filename.md)` reference in `MEMORY.md` points to an existing file.
 3. **Stale project memories**: Read each `project_*.md` and `firewall_*.md` file. Flag those whose descriptions no longer match reality (e.g., "ready for planning" when work is complete).
 4. **Frozen dates**: Flag any `currentDate` or hardcoded date blocks in `MEMORY.md` — these rot.
-5. **Content beyond 200 lines**: Flag if `MEMORY.md` exceeds 200 lines (only first 200 loaded per session).
+5. **Context limits**: Check the active tool’s documented load limit. Claude Code loads the first 200 lines of its auto-memory index; do not apply that limit to other memory formats.
 
 ### 6. Mintlify Docs Consistency
 
@@ -79,23 +77,22 @@ Check the auto memory directory (`~/.Codex/projects/*/memory/`):
 
 ### 7. Serena Memory Staleness
 
-Read each `.serena/memories/*.md` file and flag:
+Read `.serena/memories/memory_maintenance.md` and follow its memory graph rules. Check `.serena/memories/**/*.md` for broken `mem:` references, obsolete current guidance, and unsupported claims.
 
-- Files containing "COMPLETE", "Status: Complete", "Status: Done", or "DONE" — these track finished work and should be cleaned up
-- Files with no updates in >30 days (check `git log --format=%at -1`)
+Retained history and research can describe completed work. Do not mark a file for deletion only because it contains a completion marker or is more than 30 days old. Check its purpose and links first.
 
 ### 8. Contradiction Detection
 
 Check for contradictions between always-loaded context files:
 
-1. **Root AGENTS.md vs .Codex/rules/*.md**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
-2. **Root AGENTS.md vs global AGENTS.md** (`~/.Codex/AGENTS.md`): Check for conflicting behavioral directives (e.g., "pivot on tech debt" vs "surgical changes only").
+1. **Root AGENTS.md vs Serena `conventions`**: Identify instructions that appear in both. Flag exact duplicates (wasted context) and conflicting statements.
+2. **Root AGENTS.md vs global instructions** (for example, `$CODEX_HOME/AGENTS.md` or `~/.claude/CLAUDE.md`, when present): Check for conflicting behavioral directives (e.g., "pivot on tech debt" vs "surgical changes only").
 3. **Within root AGENTS.md**: Flag repeated information (e.g., same fact stated twice in different sections).
 
 ### 9. Architecture and Design Accuracy
 
-1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
-2. For each `.Codex/docs/*.md` files:
+1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check, git status, or commit messages
+2. For each reference skill (`writing-tests`, `cli-output`, `dev-checks`, `agent-files`) and each design memory (`architecture`, `design`, `key-concepts`, `repo-structure`, `project-guide`):
    - Check for mentions of outdated components, patterns, or practices
    - Flag files that likely need updates based on the nature of the changes
 

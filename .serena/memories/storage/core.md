@@ -16,7 +16,7 @@
 ## References
 
 - Engine API: `internal/storage/AGENTS.md`.
-- Package construction: `.claude/rules/store-backed-package.md`.
-- Schema fields, tags, defaults, and validation: `.claude/rules/storage-schema.md`.
+- Package construction: Store-backed package contract section in `internal/storage/AGENTS.md`.
+- Schema fields, tags, defaults, and validation: `internal/storage/AGENTS.md` → Struct Tag Contract.
 - For config and project ownership: `mem:config/core`.
 - Prior rewrite records: `mem:history/storage-redesign/status`. Their phase state is historical.

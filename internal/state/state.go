@@ -65,7 +65,7 @@ type StateStore interface {
 // *storage.Store[State] so the engine verbs stay reachable as the escape hatch;
 // those promoted methods never leak past the StateStore interface, since the
 // type is unexported and only ever handed out as the interface (the canonical
-// store-backed pattern — see .claude/rules/store-backed-package.md).
+// store-backed pattern — see the Store-backed package contract in internal/storage/AGENTS.md).
 type stateStoreImpl struct {
 	*storage.Store[State]
 }

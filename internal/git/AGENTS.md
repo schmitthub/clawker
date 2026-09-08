@@ -15,6 +15,16 @@ Facade shape:
 - `GitManager`: top-level repository facade.
 - `WorktreeManager`: low-level linked worktree operations over go-git x/worktree.
 
+## Constraints
+
+- Forbidden imports: any `github.com/schmitthub/clawker/internal/*` package. Allowed: stdlib, `github.com/go-git/go-git/v6`, `github.com/go-git/go-billy/v6`, and their subpackages.
+- Return errors, do not log. Callers own logging; never import the logger package.
+- Pass configuration as parameters. No config package dependency; use `WorktreeDirProvider`. `SetupWorktree` and `RemoveWorktree` take the interface; `ListWorktrees` takes `[]WorktreeDirEntry` (the caller converts from config types).
+- Slashed branch names (`feature/foo`) work. The worktree name uses the slugified directory basename, not the branch name.
+- `GitManager` is the entry point; access sub-managers via `Worktrees()`.
+- Wrap go-git errors with context. Use the `ErrNotRepository` sentinel for non-git directories and support `errors.Is()`.
+- `WorktreeDirProvider` is the contract with `internal/project`. Adding a method requires a coordinated change to `internal/project.flatWorktreeDirProvider`.
+
 ## Exported API
 
 ### Constructors
@@ -181,6 +191,8 @@ Prefer `errors.Is` checks at command/service boundaries.
 - For real linked worktree behavior, use filesystem-backed temp repos.
 - For fast branch/ref behavior, use `internal/git/gittest` (`NewInMemoryGitManager`).
 - Worktree tests should explicitly validate both git metadata and directory-side effects.
+- Worktree tests need temp directories (go-git requires a real filesystem); `newTestRepoOnDisk(t)` creates a seeded repo.
+- Mock `WorktreeDirProvider` with `fakeWorktreeDirProvider` for high-level method tests.
 
 ## Dependencies
 

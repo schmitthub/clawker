@@ -1,240 +1,68 @@
 # Clawker
 
-## Output Style
-
-All output — chat replies, documentation, and code comments — must comply with ASD-STE100 Simplified Technical English. The ASD-STE100 rules and approved technical dictionary are the controlling standard. Apply the current ASD-STE100 rules and its approved technical dictionary as the controlling standard. When a word is not an approved dictionary term or a standard technical name, replace it or write the sentence without it. **Do not restate or summarize the standard; apply it.**
-
-<critical_instructions>
-
-## MANTRA
-
-Alpha project — architecture and design change often. Legacy code that no longer fits gets encountered regularly.
-
-* Don't write hacky code to get a task done. Think about the big picture.
-* When gaps or bad patterns are found, pivot and address them before continuing.
-* Consider impact on architecture, design, testing, documentation, user and developer experience.
-* Ask: "will this make future work easier or harder? does this decision serve the project or just my task?" If harder, rethink.
-* If a package is missing a test subpackage, interface, mock, or fake, add it to fit standard patterns so every caller benefits.
-
-Prioritize fixing technical debt and improving architecture over completing the immediate task.
-
-### Workflow Requirements
-
-**Planning**: Adhere to `.claude/docs/DESIGN.md` and `.claude/docs/ARCHITECTURE.md`. Update those docs if changes are needed.
-**Testing**: TDD — write tests before code. All tests must pass. Add fixtures, golden files, interfaces, mocks, fakes, and test helpers as needed. Integration tests go in `test/*/`.
-**Documentation**: Update README.md, relevant CLAUDE.md files, and memories after completing changes.
-
-</critical_instructions>
-
-<critical_clarification>
-
-## CP ≠ firewall (common LLM confusion)
-
-- **CP is unconditional infrastructure.** Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `AdminPort`, AgentService gRPC on `AgentPort`, agent registry, mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `Manager.Start` (`controlplane/manager`). No "disable CP" flag. CP owns clawker-net.
-- **Firewall is one optional subsystem CP manages.** Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT `clawker.yaml`). When disabled, CP/mTLS/registry/agent.Dialer/ListAgents continue to operate.
-
-Do **NOT** gate non-firewall behavior on `firewall.enable`.
-
-</critical_clarification>
-
-<critical_clarification>
-
-## CP crashing is a SECURITY incident, not an availability one
-
-This is the single most important invariant in the codebase. Read it before adding any failure path to CP code.
-
-**What happens when CP crashes (panic, log.Fatal, unrecovered goroutine):**
-
-1. PID 1 exits. CP container goes down. `on-failure` restart policy retries 3×; if the bug is deterministic (most are), CP stays dead.
-2. **eBPF programs stay attached to cgroups.** They're pinned under `/sys/fs/bpf` and survive the CP container's death. Agent containers' egress traffic continues to be filtered by whatever rule set was loaded at the moment CP died.
-3. **The clean drain-to-zero path is skipped.** `firewall.Stack.Stop()` and `ebpfMgr.FlushAll()` only run on intentional shutdown via the orchestrator. A panic skips both. eBPF state is now frozen and unsupervised.
-4. **Agent containers keep running.** They have no awareness that their supervisor died. They keep serving their workloads.
-5. **The user has no idea.** They see agents running. They assume the firewall is enforcing — and it technically is, against the rules that happened to be loaded. They assume CP is observing — it isn't. They assume CP can dispatch containment — it can't.
-
-**The result:**
-
-- No new firewall rules can be applied (`clawker firewall add` writes to the rules file but Envoy/CoreDNS need CP to reload).
-- No bypass can be expired (`clawker firewall bypass <duration>` schedules a CP-side timer; if CP died during a bypass, the bypass is now permanent until the user manually intervenes).
-- No CP→clawkerd Session means no command dispatch, no observation of agent behavior, no containment commands available even if compromise is detected.
-- Agents are vulnerable to prompt injection, exfiltration, and lateral-movement attempts that CP would otherwise observe and contain. The user's mental model ("CP has them covered") is silently false.
-
-The stack trace from a CP panic lands on `os.Stderr` → `docker logs <cp>`. It is NOT in the rotating `ControlPlaneLogFile` operators are wired to grep. It is NOT surfaced by `clawker controlplane status` (which only knows up/down). The user has to know to dig into raw docker logs to find it.
-
-**Hard rules for code on the CP boot/serve path** (`cmd/clawkercp/`, `internal/controlplane/`, anything imported by them):
-
-1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** outside the orchestrator's intentional shutdown sequence. Constructors return `(nil, error)` (see `agent.NewDialer`, `agent.NewExecutor`); main logs structurally and degrades. The only hard-exits permitted are: drain-to-zero clean exit (code 0), and the orchestrator's pre-`SetReady` startup-gate failures (code 1) — these exit WITHOUT flushing eBPF, so any agents enrolled by a previous CP stay fail-closed (filtered against the old rule set) rather than fail-open.
-2. **Every long-lived goroutine recovers.** Heartbeats, watchers, event handlers, RPC handlers — wrap with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The pub/sub stats heartbeat (`pubsub.NewStatsHeartbeat`, wired in `internal/controlplane/cmd.go`) is the canonical template. One bad event must not take down the daemon and silently strand eBPF.
-3. **Subsystem failures degrade, never cascade.** A broken Executor → `executor = nil`; CP never dispatches `AgentReady`, clawkerd-as-PID-1 never spawns the user CMD, and the container exits non-zero on `docker stop`; the firewall, registry, AdminService, dialer all stay up. A broken dialer → `dialer = nil`; CP→clawkerd dispatch disabled; everything else stays up. The patterns in `internal/controlplane/cmd.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.NewDialer(...)` block that degrades on error to `event=agent_dialer_unavailable` — are the templates; copy either for any new subsystem.
-4. **Every degraded path emits a structured log line.** `event=<subsystem>_unavailable` with component, error, downstream impact. Operator must be able to determine root cause AND blast radius from the structured log surface alone — they will not see panic stacks.
-5. **Treat CP shutdown as a privileged operation.** If you find yourself thinking "this should never happen, just panic," stop. In CP that line of reasoning compromises the security boundary the user trusts to be intact. Return an error and let the orchestrator decide.
-
-If you're tempted to write `panic()` in CP code, ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you've just turned a logic bug into a silent firewall failure. Return an error instead.
-
-</critical_clarification>
-
-<critical_clarification>
-
-## Asymmetric trust: dialer permissive, listener strict
-
-- **clawkerd-side listener (server):** STRICT. `clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
-- **CP-side dialer (client):** PERMISSIVE. `controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` events. Dial only fails on connectivity.
-
-**Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.
-
-**Trust attestation:** CLI mints agent cert + writes sqlite registry row at create time. Dialer cross-checks peer cert thumbprint against the row and emits result on the bus.
-
-</critical_clarification>
-
-## Repository Structure
-
-Full directory tree with per-package purpose: `.claude/docs/REPO-STRUCTURE.md`. Key roots: `cmd/` binaries, `internal/` packages, `pkg/whail/` reusable Docker client, `test/{e2e,whail}/` Docker-required suites, `api/` protobuf.
-
-## Build Commands
-
-```bash
-go build -o bin/clawker ./cmd/clawker                        # Build CLI
-make test                                                     # Unit tests (no Docker)
-make test-all                                                 # All suites (unit + e2e + whail)
-go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas    # Regenerate CLI docs for Mintlify + config JSON schemas
-npx mintlify dev --docs-directory docs                        # Local Mintlify preview
-
-# Golden file tests
-GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v
-
-# Docker-required tests
-go test ./test/e2e/... -v -timeout 10m
-go test ./test/whail/... -v -timeout 5m
-
-# Git hooks (prek)
-bash scripts/install-hooks.sh          # Install (once after clone)
-make pre-commit                        # Run all hooks (prek run --all-files)
-```
-
-### `make clawker` — only when embeds are missing
-
-`make clawker` builds the `//go:embed` binaries the prek go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
-
-```bash
-ls clawkerd/embed/assets/clawkerd \
-   controlplane/manager/assets/clawkercp \
-   controlplane/manager/assets/ebpf-manager \
-   controlplane/manager/assets/bpffs-delegate \
-   controlplane/firewall/assets/coredns-clawker \
-   internal/cmd/container/shared/assets/idmap-mount \
-  || make clawker
-```
-
-(Paths are the Makefile's `CLAWKERD_BINARY`/`CP_BINARY`/`EBPF_BINARY`/`BPFFS_DELEGATE_BINARY`/`COREDNS_BINARY`/`IDMAP_MOUNT_BINARY` vars — check there if this list drifts.)
-
-Embeds persist for the container's lifetime — they are only absent in a fresh container. Editing Go source does not invalidate them for hook purposes.
-
-## Key Concepts
-
-See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-specific `internal/*/CLAUDE.md` files are the source of truth for API surface.
-
-## CLI Commands
-
-See `docs/cli-reference/` for auto-generated command reference.
-
-**Top-level shortcuts**: `init`, `monitor *`, `version`, plus Docker-CLI-style container/image verbs each aliasing the matching subcommand (`build`, `create`, `run`, `start`, `stop`, `restart`, `kill`, `pause`, `unpause`, `rm`, `rmi`, `ps`, `attach`, `exec`, `logs`, `cp`, `rename`, `stats`, `top`, `wait`)
-**Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `prompt *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `plugin *` (alias `skill`)
-
-## Configuration
-
-> Always use `Config` interface accessors — never hardcode filenames or env var names. See `internal/config/CLAUDE.md`.
-
-### Project Config (`clawker.yaml`)
-
-```yaml
-build:
-  harness: "claude"
-  packages: ["git", "ripgrep"]
-  instructions: { env: {}, copy: [], root_run: [], user_run: [] }
-  inject: { after_from: [], after_packages: [] }
-agent: { env_file: [], from_env: [], env: {}, post_init: "", pre_run: "" }
-workspace: { default_mode: "bind" }
-security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
-```
-
-## Design Decisions
-
-1. Firewall enabled, Docker socket disabled by default
-2. Top-level shortcuts (`run`, `start`, `stop`, `ps`, ...) alias their matching `container`/`image` subcommand (Docker CLI pattern)
-3. Hierarchical naming: `clawker.project.agent`; labels (`dev.clawker.*`) authoritative for filtering
-4. stdout for data/status/success/next-steps; stderr for warnings/errors only; `--format` for machine-readable output
-5. Project registry replaces directory walking for resolution
-6. Global-scope agents (no project) → 2-segment names (`clawker.agent`); the `dev.clawker.project` label is intentionally absent (not present as an empty string), matching the 2-segment name shape
-7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands use `NewCmd(f, runF)` pattern
-8. Factory noun principle: fields return nouns, not verbs (`f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9. Package boundary: config file I/O + config-path helpers → `internal/config`; project identity/CRUD + project-root resolution (registry via `internal/storage`) → `internal/project`. `config` receives the resolved root as a primitive anchor (`WithProjectRoot(root)`); it does not depend on `internal/project`
-
-## No Hardcoded Strings
-
-Every meaningful string is a const — cross-cutting → `internal/consts/`, package-local → that package's `consts.go`, config-derived → `config.Config` accessors. Code references the const; comments/docs never hard-spell its value (write "the clawker network", not `clawker-net`).
-
-## Mock Generation
-
-Mocks generated by [moq](https://github.com/matryer/moq) via `//go:generate`. Never hand-edit. Regenerate: `cd internal/<package> && go generate ./...`
-
-## Important Gotchas
-
-* `os.Exit()` does NOT run deferred functions — restore terminal state explicitly
-* Raw terminal mode: Ctrl+C goes to container, not as SIGINT
-* Don't wait for stdin goroutine on container exit (may block on Read)
-* Docker hijacked connections need cleanup of both read and write sides
-* Terminal visual state must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
-* Docker Desktop SDK `HostConfig.Mounts` behaves differently from `Binds` for Unix sockets on macOS
-* `.clawkerlocal/` may exist during local development — check before defaults (see: `make localenv`)
-
-## Error Handling
-
-Do not add `//nolint:` directives without explicit user approval. Correct the code to satisfy the lint checks. Keep `exhaustruct` checks active and initialize all required struct fields explicitly.
-
-Never discard an `error` with `_` (`x, _ := fn()`) — handle it, wrap-and-return (`fmt.Errorf("ctx: %w", err)`), or `errors.Is` the one benign sentinel and surface the rest. The only exception is a genuinely unactionable error (e.g. deferred cleanup), which must carry a comment saying why.
-
-## Context Management
-
-**NEVER** store `context.Context` in struct fields. Pass as first parameter. Use `context.Background()` for cleanup in deferred functions.
-
-## Security: Version Pinning
-
-All external dependencies pinned to exact versions with integrity verification. Never use `@latest` or floating tags.
-
-| Context | Pinning requirement | Example |
-|---------|-------------------|---------|
-| Dockerfile base images | SHA256 digest | `FROM golang:1.26@sha256:abc...` |
-| CI workflow actions | SHA commit hash | `uses: actions/checkout@a1b2c3d...` |
-| Pre-commit hooks | SHA commit hash | `rev: 83d9cd68...  # frozen: v8.30.1` |
-| Container images in code | SHA256 digest | `DefaultGoBuilderImage = "golang:...@sha256:..."` |
-| Go tool installs | Exact version or SHA | `go install tool@v2.0.1` |
-
-All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.image.index.v1+json`). Verify with `docker buildx imagetools inspect`. Firewall stack binaries are built fresh from pinned BPF toolchain inputs — `BPF_APT_DEPS` in the Makefile pins clang/llvm/libbpf-dev/linux-libc-dev versions; CI runs `sudo make bpf-deps` on its pinned Ubuntu runner (see `.github/workflows/`), while `Dockerfile.controlplane` provides the same path for macOS devs. Nothing generated is committed.
-
-## Testing
-
-All tests must pass before any change is complete. See `.claude/rules/testing.md` for conventions.
-
-> **CRITICAL — IF RUNNING IN A CLAWKER CONTAINER (`$CLAWKER_AGENT` set):** Do NOT run `go test ./...`. The e2e suite tears down the host CP. Use targeted tests or `make test`.
-
-## Documentation
-
-Every `CLAUDE.md` must be a relative symbolic link to the sibling `AGENTS.md`: `CLAUDE.md -> AGENTS.md`. Store the instructions in `AGENTS.md`. Do not create regular `CLAUDE.md` files.
-
-* `.claude/rules/` — Auto-loaded guidelines (code style, testing, package rules)
-* `.claude/docs/` — On-demand reference (architecture, design, key concepts)
-* `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
-* `.github/copilot-instructions.md` — Copilot code review priorities and comment style
-* `.github/instructions/` — Path-scoped Copilot instructions; each file mirrors the `paths:` front matter of a `.claude/rules/` file (empty for now)
-* `.github/skills/` — Copilot skills; `code-review/SKILL.md` is the review procedure
-
-### Completion Gate
-
-After bug fixes or feature changes:
-- Check if fix addresses an issue in `clawker-plugin/skills/clawker-support/reference/known-issues.md` (git submodule — fixes there are committed in the clawker-plugin repo, then the submodule pointer is bumped here)
-- Update relevant Mintlify docs in `docs/` if user-facing behavior changed
-
-### Mintlify (docs.clawker.dev)
-
-Regenerate CLI reference: `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas`
-Local preview: `npx mintlify dev --docs-directory docs`
-See `.claude/rules/mintlify-docs.md` for conventions.
+Clawker is a Go CLI that runs coding agents in Docker containers with controlled access to host resources.
+
+## Shared instructions
+
+Claude Code and Codex must use the same project instructions, skills, and memories.
+Store instructions in regular `AGENTS.md` files. Each must have a sibling `CLAUDE.md` symbolic link with the relative target `AGENTS.md`.
+Before reading or changing files, read the Serena `core` memory and the memories it names for the touched domain.
+Read package `AGENTS.md` files along the path to each file, including files outside the working directory. Requirements for one package tree live in that tree's `AGENTS.md`.
+Use instructions already loaded in the session. Do not load an entire reference directory.
+Keep `.agents/` independent of any harness. Store native settings and tool-specific hooks in `.claude/` or `.codex/`. A skill that is also a subagent keeps each harness definition in its `agents/` directory.
+
+## Work rules
+
+- State assumptions. Present different interpretations and ask when the choice is unclear.
+- Define a verifiable result before coding. For work with multiple steps, state a short plan and its checks.
+- This is an alpha project. Correct design defects and technical debt before continuing affected work.
+- Consider architecture, tests, documentation, and effects on users and developers. Use a simpler design when possible.
+- Follow the Serena `design` and `architecture` memories; update them when the design changes.
+- Write tests before production code. Add missing interfaces, mocks, fakes, and test subpackages as required. All applicable tests must pass.
+- Update the README, affected `AGENTS.md` files, documentation, and shared memories after changes.
+- When both agents work at the same time, preserve the other agent's edits and check the current diff before writing shared files.
+- Use ASD-STE100 Simplified Technical English and its current approved dictionary for chat, documentation, and code comments. Replace unapproved words unless they are standard technical names. Apply the standard; do not restate it.
+
+## Critical rules
+
+- The control plane (CP) runs whenever managed agent containers exist. Only its firewall subsystem is optional. Never gate other CP behavior on `firewall.enable`.
+- A CP crash leaves pinned eBPF state without supervision. Before changing CP startup, serving, or their dependencies, read [control-plane safety](controlplane/AGENTS.md#control-plane-safety).
+- Do not add lint suppressions without explicit user approval. See the Serena `conventions` memory for errors, constants, and context rules.
+- Pin external dependencies to exact versions with integrity verification. See the [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
+- When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use targeted packages or `make test`.
+
+## Dependency placement
+
+- Implementation lives in `internal/<package>/`, never in `cmdutil/`. `cmdutil/` holds only the Factory struct, output utilities, and argument validators.
+- The only question is who constructs a dependency. Constructed at startup and used by three or more commands: a Factory field. Constructed at startup for fewer commands: the command imports the package and holds it on its Options struct. Needs CLI arguments or runtime context: constructed in the run function, tested by injecting a mock on Options.
+- Package ownership: Serena `architecture` memory, Key Packages and Package Import DAG.
+
+## Testing rules
+
+- Docker is always available. Never defer or skip Docker-based tests. When a change touches containers, networks, or volumes, write the integration test in the same task.
+- Unit tests are co-located `*_test.go` files without Docker. `test/e2e/` needs Docker; `test/whail/` needs Docker and BuildKit. No build tags; directory separation only. Name tests `TestFunctionName`, `TestFeature_Integration`, or `TestFeature_E2E`.
+- Each package in the dependency DAG provides its own test utilities. If a node lacks them, add them first.
+- Use unique agent names with random suffixes. Stop containers before removing them. Register cleanup with `t.Cleanup()` and use `context.Background()` inside it. Gate Docker tests with `RequireDocker(t)` or `SkipIfNoDocker(t)`.
+- Never discard errors; log cleanup failures with `t.Logf`.
+- Co-located `*_test.go` files never import `test/e2e/harness`. Never call `factory.New()` outside `internal/clawkercmd/cmd.go`; build `&cmdutil.Factory{}` literals with test doubles.
+- Add no production code only to serve a test seam. Test doubles adapt to production, not the reverse.
+- Helpers, fixtures, tiers, and examples: [writing-tests skill](.agents/skills/writing-tests/SKILL.md).
+
+## Commands and references
+
+- Build CLI: `go build -o bin/clawker ./cmd/clawker`
+- Unit tests without Docker: `make test`
+- Build, integration tests, embeds, hooks, and completion checks: [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
+- CLI, config, naming, package boundaries, and terminal behavior: Serena `project-guide` memory.
+- Agent file layout and native tool settings: [agent-files skill](.agents/skills/agent-files/SKILL.md).
+- Shared skills: `.agents/skills/`. Each `SKILL.md` description names its trigger; invoke the matching one. Behavioral and situational guidance is a skill, not a memory.
+
+## Project knowledge: Serena memory bank
+
+Project knowledge lives in the Serena memory bank at `.serena/memories/`: plain Markdown files, one topic per file, with `/` in a name as a topic folder (`cli/core`). Memories reference each other as `` `mem:<name>` ``. Nothing injects memory content; you read what the names and references make relevant.
+
+- Initialize Serena with `initial_instructions`, then `check_onboarding_performed` if available, then `list_memories`. Read `core` first: it is the graph root and names a memory for each work area with what that memory covers. Follow its `mem:` references for the domain you touch. If Serena is absent, read the same files under `.serena/memories/`.
+- System knowledge: `architecture` (layers, Factory dependency injection, package DAG, key packages), `design` (philosophy, concepts, security model, lifecycle), `key-concepts` (types and terms), `repo-structure` (directory map), `project-guide` (CLI surface, config schema, design decisions, terminal gotchas), `conventions` (errors, logging, constants, context, output), `tech_stack` (build inputs and pins), and a `<domain>/core` per work area.
+- Retained records: `plans/core`, `tracking/core`, `research/core`, `history/core`, `security/core`. Dated; check source before reusing a claim.
+- Update the affected memories before completing work. Follow `memory_maintenance` for placement, naming, and links, and run `serena memories check` when the CLI is available. Behavioral and situational guidance is a skill in `.agents/skills/`, not a memory.
+- For GitHub repository documentation, try DeepWiki `ask_question`, then Context7, then other documentation tools. For library APIs, resolve the Context7 library ID before requesting its documentation.
