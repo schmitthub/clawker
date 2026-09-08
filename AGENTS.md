@@ -57,7 +57,12 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Agent file layout and native tool settings: [agent-files skill](.agents/skills/agent-files/SKILL.md).
 - Shared skills: `.agents/skills/`. Each `SKILL.md` description names its trigger; invoke the matching one. Behavioral and situational guidance is a skill, not a memory.
 
-## Tools and shared memory
+## Project knowledge: Serena memory bank
 
-- When Serena is available, initialize it with `initial_instructions`, then `check_onboarding_performed` if available, then `list_memories`. Serena holds project knowledge: `core` is the map; `architecture`, `design`, `key-concepts`, `repo-structure`, `project-guide`, and the domain `*/core` memories hold the rest. Use symbolic tools before full source-file reads. Update shared Serena memories before completing work. If Serena is absent, read the same memories under `.serena/memories/`.
+Project knowledge lives in the Serena memory bank at `.serena/memories/`: plain Markdown files, one topic per file, with `/` in a name as a topic folder (`cli/core`). Memories reference each other as `` `mem:<name>` ``. Nothing injects memory content; you read what the names and references make relevant.
+
+- Initialize Serena with `initial_instructions`, then `check_onboarding_performed` if available, then `list_memories`. Read `core` first: it is the graph root and names a memory for each work area with what that memory covers. Follow its `mem:` references for the domain you touch. If Serena is absent, read the same files under `.serena/memories/`.
+- System knowledge: `architecture` (layers, Factory dependency injection, package DAG, key packages), `design` (philosophy, concepts, security model, lifecycle), `key-concepts` (types and terms), `repo-structure` (directory map), `project-guide` (CLI surface, config schema, design decisions, terminal gotchas), `conventions` (errors, logging, constants, context, output), `tech_stack` (build inputs and pins), and a `<domain>/core` per work area.
+- Retained records: `plans/core`, `tracking/core`, `research/core`, `history/core`, `security/core`. Dated; check source before reusing a claim.
+- Update the affected memories before completing work. Follow `memory_maintenance` for placement, naming, and links, and run `serena memories check` when the CLI is available. Behavioral and situational guidance is a skill in `.agents/skills/`, not a memory.
 - For GitHub repository documentation, try DeepWiki `ask_question`, then Context7, then other documentation tools. For library APIs, resolve the Context7 library ID before requesting its documentation.
