@@ -21,7 +21,16 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
+
+func approveGrantsRestartOptions() RestartOptions {
+	var opts RestartOptions
+	opts.Timeout = 10
+	opts.Containers = []string{"mycontainer"}
+	opts.ApproveGrants = true
+	return opts
+}
 
 func TestNewCmdRestart(t *testing.T) {
 	tests := []struct {
@@ -67,6 +76,13 @@ func TestNewCmdRestart(t *testing.T) {
 			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"dev"}},
 		},
 		{
+			name:       "with approve grants",
+			input:      "--approve-grants mycontainer",
+			wantOpts:   approveGrantsRestartOptions(),
+			wantErr:    false,
+			wantErrMsg: "",
+		},
+		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
@@ -76,10 +92,12 @@ func TestNewCmdRestart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			expectedPrompter := prompter.NewPrompter(nil)
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
 					return configmocks.NewBlankConfig(), nil
 				},
+				Prompter: func() *prompter.Prompter { return expectedPrompter },
 			}
 
 			var gotOpts *RestartOptions
@@ -109,9 +127,11 @@ func TestNewCmdRestart(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
+			require.Same(t, expectedPrompter, gotOpts.Prompter())
 			require.Equal(t, tt.wantOpts.Timeout, gotOpts.Timeout)
 			require.Equal(t, tt.wantOpts.Signal, gotOpts.Signal)
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.ApproveGrants, gotOpts.ApproveGrants)
 			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}

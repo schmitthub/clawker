@@ -109,6 +109,7 @@
           "security",
           "firewall",
           "credentials",
+          "host-sockets",
           "observability"
         ]
       },
@@ -353,6 +354,16 @@
               "cli-reference/clawker_firewall_disable",
               "cli-reference/clawker_firewall_bypass",
               "cli-reference/clawker_firewall_rotate-ca"
+            ]
+          },
+          {
+            "group": "Sockets",
+            "pages": [
+              "cli-reference/clawker_sockets",
+              "cli-reference/clawker_sockets_info",
+              "cli-reference/clawker_sockets_list",
+              "cli-reference/clawker_sockets_prune",
+              "cli-reference/clawker_sockets_revoke"
             ]
           },
           {

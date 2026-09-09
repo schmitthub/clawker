@@ -24,6 +24,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/git"
@@ -169,6 +171,37 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			}
 		})
 		return log, logErr
+	}
+
+	// --- DB ---
+	// Once-cached like dbFunc in internal/cmd/factory/default.go. DB owns
+	// connection machinery only; commands construct their table stores over
+	// this shared connection.
+	var (
+		dbOnce   sync.Once
+		database *db.DB
+		dbErr    error
+	)
+	f.DB = func() (*db.DB, error) {
+		dbOnce.Do(func() {
+			var path string
+			path, dbErr = consts.ClawkerCLIDBPath()
+			if dbErr != nil {
+				dbErr = fmt.Errorf("harness: CLI database path: %w", dbErr)
+				return
+			}
+			var databaseLog *logger.Logger
+			databaseLog, dbErr = f.Logger()
+			if dbErr != nil {
+				dbErr = fmt.Errorf("harness: logger for CLI database: %w", dbErr)
+				return
+			}
+			database, dbErr = db.Open(path, databaseLog)
+			if dbErr != nil {
+				dbErr = fmt.Errorf("harness: CLI database: %w", dbErr)
+			}
+		})
+		return database, dbErr
 	}
 
 	// --- Client ---

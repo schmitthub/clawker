@@ -1,6 +1,6 @@
 ---
 title: "Authoring Harnesses"
-description: "Write a coding-agent harness — the harness.yaml manifest (version, stacks, volumes, seeds, staging, egress) and its Dockerfile fragment"
+description: "Write a coding-agent harness — the harness.yaml manifest (version, stacks, volumes, seeds, staging, sockets, egress) and its Dockerfile fragment"
 icon: "code-branch"
 keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "harness", "authoring", "egress floor"]
 ---
@@ -63,6 +63,15 @@ staging:
   copy:
     - src: ${ACME_CONFIG_DIR:-~/.acme}/settings.json
       dest: .acme/settings.json
+
+sockets:
+  - source: ${ACME_HOME}/control.sock
+    target: /home/clawker/.acme/control.sock
+    purpose: Connect to the host Acme service
+    optional: true
+    container:
+      group: acme
+      mode: "0660"
 
 egress:
   - dst: api.acme.com
@@ -134,6 +143,43 @@ entry is an explicit `src`→`dest` directive; nothing is copied by convention.
 `src` expands `~`, `$VAR`/`${VAR}`, and `${VAR:-fallback}`; `dest` lands in a
 declared volume. `copy` entries can narrow what is copied (for example, an
 allowlist of JSON keys) so host secrets never travel into the container.
+
+### `sockets`
+
+Unix sockets that the harness can request from the host. Each entry has these
+fields:
+
+| Field | Purpose |
+|-------|---------|
+| `source` | Host socket path. Supports a leading `~`, `$VAR`, `${VAR}`, and `${VAR:-fallback}`. |
+| `target` | Absolute path for the socket in the container. |
+| `purpose` | Short reason shown in the approval prompt. |
+| `optional` | If `true`, the container can start without this socket. The default is `false`. |
+| `container.group` | Existing container group that owns the bridged socket. The default is the agent user's primary group. |
+| `container.mode` | Octal socket mode. The default is `0600`. |
+
+The `source`, `target`, and `purpose` fields are required. The harness reader
+expands the source to an absolute path. Before approval, Clawker resolves all
+symbolic links to the real socket path. The prompt, stored grant, and bridge all
+use this real path. See [Host socket bridges](/host-sockets) for the user
+workflow.
+
+The container group must exist, and the agent user must be a member of it. Add
+the group in the Dockerfile fragment when you use `container.group`:
+
+```dockerfile
+{{define "root_before_entrypoint" -}}
+RUN groupadd acme && usermod -aG acme ${CLAWKER_USER}
+{{- end}}
+```
+
+Use `CLAWKER_USER` in this block. The block runs with `zsh`, where `USERNAME`
+has shell-specific behavior.
+
+<Warning>
+  A harness cannot declare the Docker socket here. Docker socket access uses
+  the project `security.docker_socket` setting only.
+</Warning>
 
 ### `egress`
 

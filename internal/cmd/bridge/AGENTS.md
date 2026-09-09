@@ -80,7 +80,7 @@ Unexported — used only for dependency injection in tests. Production code pass
 | Docker stream disconnect | Events watcher → `bridge.Stop()` + `cancel()` |
 | Docker exec EOF | `bridge.Wait()` returns → normal exit |
 
-All paths lead to PID file removal via `defer os.Remove(pidFile)`.
+All paths remove the PID file and socket registration file through `socketbridge.RemoveOwnedBridgeStateFiles`. Ownership prevents an old daemon from deleting replacement daemon state after a fast restart.
 
 ## Imports
 

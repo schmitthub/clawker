@@ -70,3 +70,29 @@ func TestCacheDirTempFallback(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestClawkerCLIDBPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission modes")
+	}
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	t.Setenv(EnvStateDir, stateDir)
+
+	got, err := ClawkerCLIDBPath()
+	if err != nil {
+		t.Fatalf("ClawkerCLIDBPath: %v", err)
+	}
+	if want := filepath.Join(stateDir, ClawkerCLIDBFile); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	info, err := os.Stat(stateDir)
+	if err != nil {
+		t.Fatalf("stat state directory: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o700); got != want {
+		t.Errorf("state directory mode is %o, want %o", got, want)
+	}
+}

@@ -1669,6 +1669,7 @@ type CreateContainerResult struct {
 	ContainerName    string
 	WorkDir          string
 	HostProxyRunning bool
+	Harness          *bundler.Bundle
 }
 
 // CreateContainer is the single entry point for container creation, shared by
@@ -1807,6 +1808,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 		ContainerName:    containerName,
 		WorkDir:          ws.wd,
 		HostProxyRunning: hostProxyRunning,
+		Harness:          opts.harnessBundle,
 	}, nil
 }
 

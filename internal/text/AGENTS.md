@@ -22,6 +22,7 @@ All ANSI-aware functions count visible characters only, excluding escape sequenc
 | `WrapLines(s, width)` | Wrap and return []string |
 | `CountVisibleWidth(s)` | Visible char count (strips ANSI) |
 | `StripANSI(s)` | Remove ANSI escape sequences |
+| `SanitizeSingleLine(s)` | Strip ANSI and control data, then keep the first line |
 | `Indent(s, spaces)` | Prefix non-empty lines with spaces |
 | `JoinNonEmpty(sep, parts...)` | Join non-empty strings |
 | `Repeat(s, n)` | Repeat string n times |

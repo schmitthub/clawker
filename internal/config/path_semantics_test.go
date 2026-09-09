@@ -42,6 +42,15 @@ func TestExpandPaths(t *testing.T) {
 		assert.Equal(t, filepath.Join(wd, "prompts"), got)
 	})
 
+	t.Run("host side rejects an empty environment expansion", func(t *testing.T) {
+		t.Setenv("CLAWKER_TEST_EXPAND", "")
+
+		_, err := config.ExpandHostPath("$CLAWKER_TEST_EXPAND")
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "$CLAWKER_TEST_EXPAND")
+	})
+
 	t.Run("container side normalizes", func(t *testing.T) {
 		assert.Equal(t, ".codex/prompts", config.NormalizeContainerPath("./.codex/prompts/"))
 		assert.Equal(t, ".codex", config.NormalizeContainerPath(".codex"))

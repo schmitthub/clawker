@@ -282,6 +282,11 @@ security:
             path: /containerd/containerd/
           - action: allow
             path: /opencontainers/runc/
+          - action: allow
+            methods:
+              - GET
+              - POST
+            path: ~/DietrichGebert/ponytail(\.git)?(/.*)?
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false

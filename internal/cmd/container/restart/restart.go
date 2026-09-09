@@ -12,11 +12,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
@@ -30,12 +32,15 @@ type RestartOptions struct {
 	ControlPlane   func(context.Context) (cpmanager.Manager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager
+	SocketGrants   func() (db.SocketGrantStore, error)
+	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 
-	Agent      bool // treat arguments as agents names
-	Timeout    int
-	Signal     string
-	Containers []string
+	Agent         bool // treat arguments as agents names
+	Timeout       int
+	Signal        string
+	Containers    []string
+	ApproveGrants bool
 }
 
 // NewCmdRestart creates a new restart command.
@@ -49,7 +54,14 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 		ControlPlane:   f.ControlPlane,
 		AdminClient:    f.AdminClient,
 		SocketBridge:   f.SocketBridge,
+		SocketGrants:   cmdutil.SocketGrantStore(f),
+		Prompter:       f.Prompter,
 		Logger:         f.Logger,
+		Agent:          false,
+		Timeout:        0,
+		Signal:         "",
+		Containers:     nil,
+		ApproveGrants:  false,
 	}
 
 	cmd := &cobra.Command{
@@ -91,6 +103,7 @@ Container names can be:
 		BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().IntVarP(&opts.Timeout, "time", "t", 10, "Seconds to wait before killing the container")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "", "Signal to send (default: SIGTERM)")
+	cmdutil.AddApproveGrantsFlag(cmd, &opts.ApproveGrants)
 
 	return cmd
 }
@@ -101,6 +114,10 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	cfg, err := opts.Config()
 	if err != nil {
 		return err
+	}
+	log, err := opts.Logger()
+	if err != nil {
+		return fmt.Errorf("initializing logger: %w", err)
 	}
 
 	// Resolve container names
@@ -130,9 +147,9 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
-		if err := restartContainer(ctx, client, name, cfg, opts); err != nil {
-			errs = append(errs, err)
-			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
+		if restartErr := restartContainer(ctx, client, name, cfg, log, opts); restartErr != nil {
+			errs = append(errs, restartErr)
+			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, restartErr)
 		} else {
 			fmt.Fprintln(ios.Out, name)
 		}
@@ -149,6 +166,7 @@ func restartContainer(
 	client *docker.Client,
 	name string,
 	cfg config.Config,
+	log *logger.Logger,
 	opts *RestartOptions,
 ) error {
 	// Find container by name
@@ -159,19 +177,33 @@ func restartContainer(
 	if c == nil {
 		return fmt.Errorf("container %q not found", name)
 	}
+	harness, hasLabel, err := shared.LoadContainerHarness(ctx, client, cfg, c.ID, log)
+	if err != nil {
+		return fmt.Errorf("loading runtime harness for %s: %w", name, err)
+	}
 
 	// Restart carries no agent identity — AgentName/Project stay empty.
 	cmdOpts := shared.CommandOpts{
-		IOStreams:    opts.IOStreams,
-		Client:       opts.Client,
-		Config:       opts.Config,
-		HostProxy:    opts.HostProxy,
-		ControlPlane: opts.ControlPlane,
-		AdminClient:  opts.AdminClient,
-		SocketBridge: opts.SocketBridge,
-		Logger:       opts.Logger,
-		AgentName:    "",
-		Project:      "",
+		IOStreams:     opts.IOStreams,
+		Client:        opts.Client,
+		Config:        opts.Config,
+		HostProxy:     opts.HostProxy,
+		ControlPlane:  opts.ControlPlane,
+		AdminClient:   opts.AdminClient,
+		SocketBridge:  opts.SocketBridge,
+		SocketGrants:  opts.SocketGrants,
+		Prompter:      opts.Prompter,
+		Logger:        opts.Logger,
+		ApproveGrants: opts.ApproveGrants,
+		Harness: shared.RuntimeHarness{
+			Name:              harness.Name,
+			Provenance:        harness.Provenance,
+			Sockets:           harness.Manifest.Sockets,
+			Egress:            harness.Manifest.Egress,
+			HasContainerLabel: hasLabel,
+		},
+		AgentName: "",
+		Project:   "",
 	}
 
 	// If signal specified, kill with that signal first, then start
@@ -194,7 +226,8 @@ func restartContainer(
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	if errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts); errBootstrapPre != nil {
+	bridgedSockets, errBootstrapPre := shared.BootstrapServicesPreStart(ctx, c.ID, cmdOpts)
+	if errBootstrapPre != nil {
 		// Reap a never-started --rm container so its name is freed.
 		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))
@@ -205,7 +238,7 @@ func restartContainer(
 		//nolint:contextcheck,wrapcheck // reap runs on context.Background (Ctrl+C must not abort it) and returns the already-wrapped caller error
 		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("restarting container: %w", err))
 	}
-	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, cmdOpts)
+	errBootstrapPost := shared.BootstrapServicesPostStart(ctx, c.ID, bridgedSockets, cmdOpts)
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
 	}

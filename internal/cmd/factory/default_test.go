@@ -24,6 +24,9 @@ func TestNew(t *testing.T) {
 	if f.TUI == nil {
 		t.Error("expected TUI to be non-nil")
 	}
+	if f.DB == nil {
+		t.Error("expected DB to be non-nil")
+	}
 }
 
 // TestCacheableState pins the package-level helper. Closure-behavior

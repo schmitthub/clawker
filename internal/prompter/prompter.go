@@ -2,6 +2,7 @@ package prompter
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -94,6 +95,81 @@ func (p *Prompter) String(cfg PromptConfig) (string, error) {
 	}
 
 	return response, nil
+}
+
+// StringUntilValid asks for a string until it is present and valid. It uses
+// one buffered reader, so multiple answers from a pipe stay available.
+func (p *Prompter) StringUntilValid(cfg PromptConfig) (string, error) {
+	if !p.ios.IsInteractive() {
+		return p.String(cfg)
+	}
+
+	prompt := cfg.Message
+	if cfg.Default != "" {
+		prompt = fmt.Sprintf("%s [%s]", cfg.Message, cfg.Default)
+	}
+	reader := bufio.NewReader(p.ios.In)
+	for {
+		response, eof, readErr := p.readPromptAttempt(reader, prompt, cfg.Default)
+		if readErr != nil {
+			return "", readErr
+		}
+		accepted, validationErr := p.acceptPromptResponse(cfg, response, eof)
+		if validationErr != nil {
+			return "", validationErr
+		}
+		if !accepted {
+			continue
+		}
+		return response, nil
+	}
+}
+
+func (p *Prompter) acceptPromptResponse(cfg PromptConfig, response string, eof bool) (bool, error) {
+	if cfg.Required && response == "" {
+		if eof {
+			return false, fmt.Errorf("required input missing: %w", io.EOF)
+		}
+		return false, nil
+	}
+	validateErr := validatePromptResponse(cfg.Validator, response)
+	if validateErr == nil {
+		return true, nil
+	}
+	if _, writeErr := fmt.Fprintln(p.ios.ErrOut, validateErr); writeErr != nil {
+		return false, fmt.Errorf("write validation error: %w", writeErr)
+	}
+	if eof {
+		return false, validateErr
+	}
+	return false, nil
+}
+
+func (p *Prompter) readPromptAttempt(
+	reader *bufio.Reader,
+	prompt,
+	defaultValue string,
+) (string, bool, error) {
+	if _, writeErr := fmt.Fprintf(p.ios.ErrOut, "%s: ", prompt); writeErr != nil {
+		return "", false, fmt.Errorf("write prompt: %w", writeErr)
+	}
+	response, readErr := reader.ReadString('\n')
+	eof := errors.Is(readErr, io.EOF)
+	if readErr != nil && (!eof || response == "") {
+		return "", eof, fmt.Errorf("failed to read input: %w", readErr)
+	}
+	response = strings.TrimSpace(response)
+	if response == "" {
+		response = defaultValue
+	}
+	return response, eof, nil
+}
+
+func validatePromptResponse(validator func(string) error, response string) error {
+	if validator == nil {
+		return nil
+	}
+	return validator(response)
 }
 
 // Confirm prompts the user for a yes/no confirmation.

@@ -95,13 +95,16 @@ func TestContainerHarnessName_LabelIsSourceOfTruth(t *testing.T) {
 		},
 	})
 
-	got, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
+	got, explicit, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
 	if err != nil {
 		t.Fatalf("containerHarnessName() error = %v", err)
 	}
 	if got != "acme.tools.myharness" {
 		t.Errorf("containerHarnessName() = %q, want %q (container label, not configured default)",
 			got, "acme.tools.myharness")
+	}
+	if !explicit {
+		t.Error("containerHarnessName() reported the harness label as missing")
 	}
 }
 
@@ -115,12 +118,15 @@ func TestContainerHarnessName_UnlabeledFallsBackToDefault(t *testing.T) {
 		},
 	})
 
-	got, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
+	got, explicit, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
 	if err != nil {
 		t.Fatalf("containerHarnessName() error = %v — an unlabeled legacy container must fall back, not fail", err)
 	}
 	if got != defaultHarness {
 		t.Errorf("containerHarnessName() = %q, want configured default %q", got, defaultHarness)
+	}
+	if explicit {
+		t.Error("containerHarnessName() reported a fallback as an explicit label")
 	}
 }
 
@@ -130,12 +136,15 @@ func TestContainerHarnessName_NotFoundFallsBackToDefault(t *testing.T) {
 	other := container.Summary{ID: "some-other-container"} //nolint:exhaustruct // sparse fixture
 	fake.SetupContainerInspect("some-other-container", other)
 
-	got, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr-missing", logger.Nop())
+	got, explicit, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr-missing", logger.Nop())
 	if err != nil {
 		t.Fatalf("containerHarnessName() error = %v — not-found is the one benign sentinel and must collapse", err)
 	}
 	if got != defaultHarness {
 		t.Errorf("containerHarnessName() = %q, want configured default %q", got, defaultHarness)
+	}
+	if explicit {
+		t.Error("containerHarnessName() reported a not-found fallback as an explicit label")
 	}
 }
 
@@ -144,7 +153,7 @@ func TestContainerHarnessName_InspectFailureSurfaces(t *testing.T) {
 	fake := mocks.NewFakeClient(cfg)
 	fake.SetupContainerInspectError(errDaemon)
 
-	got, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
+	got, _, err := containerHarnessName(t.Context(), fake.Client, cfg, "ctr1", logger.Nop())
 	if err == nil {
 		t.Fatalf("containerHarnessName() = (%q, nil), want error — daemon failure silently resolved to the default",
 			got)

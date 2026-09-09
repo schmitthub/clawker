@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	cltext "github.com/schmitthub/clawker/internal/text"
 )
 
 // TUI provides the interactive presentation layer.
@@ -42,6 +44,27 @@ func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan Prog
 // IOStreams returns the underlying IOStreams for callers that need direct access.
 func (t *TUI) IOStreams() *iostreams.IOStreams {
 	return t.ios
+}
+
+// RenderDetails renders aligned labels and plain values with the active color
+// scheme. It returns an empty string when there are no rows.
+func (t *TUI) RenderDetails(pairs []KeyValuePair) string {
+	if len(pairs) == 0 {
+		return ""
+	}
+	maxKeyLen := 0
+	for _, pair := range pairs {
+		if width := cltext.CountVisibleWidth(pair.Key); width > maxKeyLen {
+			maxKeyLen = width
+		}
+	}
+	cs := t.ios.ColorScheme()
+	lines := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		label := fmt.Sprintf("%-*s:", maxKeyLen, pair.Key)
+		lines = append(lines, cs.Primary(label)+" "+pair.Value)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RunWizard runs a multi-step wizard using the given steps.

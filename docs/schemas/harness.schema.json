@@ -104,6 +104,39 @@
       },
       "type": "array"
     },
+    "sockets": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "container": {
+            "additionalProperties": false,
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "optional": {
+            "type": "boolean"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
     "stacks": {
       "items": {
         "type": "string"

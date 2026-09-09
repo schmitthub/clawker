@@ -5,26 +5,45 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/shlex"
+	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/db"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/socketbridge"
+	socketbridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
+
+func approveGrantsStartOptions() StartOptions {
+	var opts StartOptions
+	opts.Containers = []string{"clawker.myapp.dev"}
+	opts.ApproveGrants = true
+	return opts
+}
 
 var _blankCfg = configmocks.NewBlankConfig()
 
@@ -131,14 +150,24 @@ func TestNewCmdStart(t *testing.T) {
 				Containers: []string{"dev", "writer"},
 			},
 		},
+		{
+			name:       "approve grants",
+			input:      "--approve-grants",
+			args:       []string{"clawker.myapp.dev"},
+			wantOpts:   approveGrantsStartOptions(),
+			wantErr:    false,
+			wantErrMsg: "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			expectedPrompter := prompter.NewPrompter(nil)
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
 					return configmocks.NewBlankConfig(), nil
 				},
+				Prompter: func() *prompter.Prompter { return expectedPrompter },
 			}
 
 			var gotOpts *StartOptions
@@ -170,9 +199,11 @@ func TestNewCmdStart(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
+			require.Same(t, expectedPrompter, gotOpts.Prompter())
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
 			require.Equal(t, tt.wantOpts.Attach, gotOpts.Attach)
 			require.Equal(t, tt.wantOpts.Interactive, gotOpts.Interactive)
+			require.Equal(t, tt.wantOpts.ApproveGrants, gotOpts.ApproveGrants)
 			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}
@@ -278,6 +309,142 @@ func TestStartRun_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerStart")
+}
+
+func TestStartRun_SocketSourceUsesConfigPathSemantics(t *testing.T) {
+	env := testenv.New(t)
+	//nolint:usetesting // t.TempDir can exceed the Unix socket path limit
+	home, err := os.MkdirTemp(
+		"/tmp",
+		"clawker-socket-start-",
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(home))
+	})
+	t.Setenv("HOME", home)
+	t.Setenv("CLAWKER_TEST_SOCKET_ROOT", "")
+	const missingSocket = "CLAWKER_TEST_MISSING_SOCKET"
+	t.Setenv(missingSocket, os.Getenv(missingSocket))
+	require.NoError(t, os.Unsetenv(missingSocket))
+
+	projectRoot := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
+	t.Chdir(projectRoot)
+	env.WriteYAML(t, testenv.ProjectConfig, projectRoot, "security: { enable_host_proxy: false }\n")
+	env.WriteYAML(t, testenv.Settings, "", "firewall: { enable: false }\n")
+
+	const harnessName = "sockettest"
+	harnessDir := filepath.Join(projectRoot, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), harnessName)
+	require.NoError(t, os.MkdirAll(harnessDir, 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(harnessDir, bundler.HarnessManifestFile), []byte(`version: { resolver: none }
+sockets:
+  - source: ${CLAWKER_TEST_SOCKET_ROOT:-~/.missing}/some.sock
+    target: /tmp/some.sock
+    purpose: Exercise host path semantics.
+  - source: $CLAWKER_TEST_MISSING_SOCKET
+    target: /tmp/optional.sock
+    purpose: Exercise an optional missing socket.
+    optional: true
+`), 0o600),
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(harnessDir, bundler.HarnessTemplateFile), []byte(`{{define "cmd"}}
+CMD ["sleep", "infinity"]
+{{end}}
+`), 0o600))
+
+	fallbackSource := filepath.Join(home, ".missing", "some.sock")
+	fallbackPath := filepath.Join(home, "listeners", "fallback.sock")
+	fallbackListener := listenUnixSocket(t, fallbackPath)
+	t.Cleanup(func() {
+		require.NoError(t, fallbackListener.Close())
+	})
+	require.NoError(t, os.MkdirAll(filepath.Dir(fallbackSource), 0o755))
+	require.NoError(t, os.Symlink(fallbackPath, fallbackSource))
+
+	cfg, err := config.NewConfig(config.WithProjectRoot(projectRoot))
+	require.NoError(t, err)
+	fake := mocks.NewFakeClient(cfg)
+	setupContainerStart(fake)
+	const containerName = "clawker.sockettest.agent"
+	fake.SetupContainerInspect(
+		containerName,
+		container.Summary{ //nolint:exhaustruct,exhaustruct_v5 // The command reads only these inspect fields.
+			ID:    containerName,
+			Names: []string{"/" + containerName},
+			Image: "clawker:sockettest",
+			Labels: map[string]string{
+				cfg.LabelManaged():  cfg.ManagedLabelValue(),
+				consts.LabelHarness: harnessName,
+			},
+			State: "created",
+		},
+	)
+
+	database, err := db.Open(filepath.Join(env.Dirs.State, consts.ClawkerCLIDBFile), logger.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+	bridge := socketbridgemocks.NewMockManager()
+	f, in, out, errOut := testStartFactory(t, fake)
+	f.Config = func() (config.Config, error) { return cfg, nil }
+	f.DB = func() (*db.DB, error) { return database, nil }
+	f.SocketBridge = func() socketbridge.SocketBridgeManager { return bridge }
+
+	cmd := NewCmdStart(f, nil)
+	cmd.SetArgs([]string{"--approve-grants", containerName})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute(), "stderr: %s", errOut.String())
+	assert.Contains(t, out.String(), fallbackPath)
+	assert.Contains(t, errOut.String(), "was skipped")
+	require.Len(t, bridge.EnsureBridgeCalls(), 1)
+	require.Len(t, bridge.EnsureBridgeCalls()[0].Opts.Sockets, 1)
+	assert.Equal(t, fallbackPath, bridge.EnsureBridgeCalls()[0].Opts.Sockets[0].HostPath)
+	grants, err := db.NewSocketGrantStore(database, logger.Nop()).ListSocketGrants(t.Context())
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	assert.Equal(t, fallbackPath, grants[0].HostPath)
+
+	alternateRoot := filepath.Join(home, "alternate")
+	alternateSource := filepath.Join(alternateRoot, "some.sock")
+	alternatePath := filepath.Join(home, "listeners", "alternate.sock")
+	alternateListener := listenUnixSocket(t, alternatePath)
+	t.Cleanup(func() {
+		require.NoError(t, alternateListener.Close())
+	})
+	require.NoError(t, os.MkdirAll(filepath.Dir(alternateSource), 0o755))
+	require.NoError(t, os.Symlink(alternatePath, alternateSource))
+	t.Setenv("CLAWKER_TEST_SOCKET_ROOT", alternateRoot)
+
+	f, in, out, errOut = testStartFactory(t, fake)
+	f.Config = func() (config.Config, error) { return cfg, nil }
+	f.DB = func() (*db.DB, error) { return database, nil }
+	f.SocketBridge = func() socketbridge.SocketBridgeManager { return bridge }
+	cmd = NewCmdStart(f, nil)
+	cmd.SetArgs([]string{containerName})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.ErrorIs(t, cmd.Execute(), cmdutil.SilentError)
+	assert.Contains(t, errOut.String(), alternatePath)
+	grants, err = db.NewSocketGrantStore(database, logger.Nop()).ListSocketGrants(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, grants)
+}
+
+func listenUnixSocket(t *testing.T, path string) net.Listener {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	listener, err := net.Listen("unix", path)
+	require.NoError(t, err)
+	return listener
 }
 
 // TestStartRun_PreStartFailureReapsAutoRemove pins the non-attach path: a

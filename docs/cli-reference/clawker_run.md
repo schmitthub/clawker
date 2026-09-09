@@ -62,6 +62,7 @@ clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
       --add-host stringArray                Add custom host-to-IP mapping (host:ip)
       --agent string                        Agent name for container (uses clawker.<project>.<agent> naming)
       --annotation map                      Add an annotation to the container (passed through to the OCI runtime)
+      --approve-grants                      Approve this start's declared host socket requests without prompting
   -a, --attach list                         Attach to STDIN, STDOUT or STDERR
       --blkio-weight uint16                 Block IO (relative weight), between 10 and 1000, or 0 to disable
       --blkio-weight-device weight-device   Block IO weight (relative device weight)

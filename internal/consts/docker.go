@@ -34,12 +34,20 @@ const (
 	// stored in the docker CLI's config file.
 	EnvDockerContext = "DOCKER_CONTEXT"
 
+	// DockerSocketPath is the default Docker daemon socket path.
+	DockerSocketPath = "/var/run/docker.sock"
+
 	// DefaultDockerHost is the address the docker CLI's built-in default
 	// context resolves to, so falling back to it is parity rather than a
 	// guess. It is also where in-container tools expect to find the socket,
 	// which makes it the mount target too.
-	DefaultDockerHost = "unix:///var/run/docker.sock"
+	DefaultDockerHost = "unix://" + DockerSocketPath
 )
+
+// BannedSocketPaths returns host sockets that harnesses cannot declare.
+func BannedSocketPaths() []string {
+	return []string{DockerSocketPath}
+}
 
 // DockerHostEnv returns $DOCKER_HOST verbatim, or "" when unset. It is a dumb
 // getter — no scheme validation: a malformed value passes through and fails at

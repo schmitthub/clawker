@@ -6,11 +6,14 @@ package text
 import (
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 // ansiPattern matches ANSI escape sequences for stripping.
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+var ansiPattern = regexp.MustCompile(
+	`(\x1b\][^\x07]*(\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_])`,
+)
 var slugPattern = regexp.MustCompile(`[^a-z0-9-]+`)
 var leadingTrailingHyphenPattern = regexp.MustCompile(`^-+|-+$`)
 var multiHyphenPattern = regexp.MustCompile(`-{2,}`)
@@ -169,6 +172,20 @@ func CountVisibleWidth(s string) int {
 // StripANSI removes all ANSI escape sequences from a string.
 func StripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
+}
+
+// SanitizeSingleLine removes terminal control data and all content after the first line.
+func SanitizeSingleLine(s string) string {
+	s = StripANSI(s)
+	if lineEnd := strings.IndexAny(s, "\r\n"); lineEnd >= 0 {
+		s = s[:lineEnd]
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // Indent prefixes each non-empty line with the given number of spaces.

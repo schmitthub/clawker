@@ -71,11 +71,11 @@ Constants: `ProtocolVersion`, `readBufSize` (64KB), `maxMessageSize` (1MB).
 ## Manager Lifecycle
 
 1. `Precheck(ctx, PrecheckOptions)` -- host checks for the lanes the options request, mirroring the daemon's own lookups (GPG: `gpg --export` + gpg-agent extra socket; SSH: `SSH_AUTH_SOCK` set + dialable), failures wrapping the `ErrGPGUnavailable` / `ErrSSHAgentUnavailable` sentinels (`errors.Join` when both). The command layer sets each option from the project's git-credential config — a disabled lane is never probed — runs it before container start, and prints one stderr warning per configured lane the host cannot serve — warn only, no behavior change
-2. `EnsureBridge(containerID, gpgEnabled)` -- idempotent; checks in-memory tracking, then PID file, then spawns new daemon
+2. `EnsureBridge(EnsureBridgeOpts)` -- checks in-memory tracking, then the PID file; reuses a live daemon only when its socket registration set matches the current approved set, and otherwise replaces it
 3. Daemon runs `clawker bridge serve --container <id> --pid-file <path> [--gpg]`
 4. Daemon is detached (`Setsid: true`), persists across CLI invocations
-5. `StopBridge(containerID)` -- kills process, removes PID file
-6. `StopAll()` -- scans bridges directory for all PID files
+5. `StopBridge(containerID)` -- kills the process and removes its PID and socket registration files
+6. `StopAll()` -- scans the bridges directory and removes both state files for each PID file
 
 **Lifecycle integration with container commands:**
 - `run`, `start`, `exec` call `EnsureBridge` to start the daemon

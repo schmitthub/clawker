@@ -38,16 +38,44 @@ func (b *Bridge) SendMessageForTest(msg Message) error {
 	return b.sendMessage(msg)
 }
 
+// HandleOpenForTest calls the private OPEN handler.
+func (b *Bridge) HandleOpenForTest(msg Message) {
+	b.handleOpen(msg)
+}
+
+// HasStreamForTest reports whether the bridge tracks a stream.
+func (b *Bridge) HasStreamForTest(streamID uint32) bool {
+	b.streamMu.RLock()
+	defer b.streamMu.RUnlock()
+	_, ok := b.streams[streamID]
+	return ok
+}
+
+// CloseStreamForTest closes one tracked stream.
+func (b *Bridge) CloseStreamForTest(streamID uint32) {
+	b.closeStream(streamID)
+}
+
+// BuildRemoteSocketConfigForTest exposes the start-time socket env builder.
+func BuildRemoteSocketConfigForTest(existing []SocketConfig, bridged []BridgedSocket) ([]byte, error) {
+	return buildRemoteSocketConfig(existing, bridged)
+}
+
+// ForwarderCommandArgsForTest exposes docker exec argument construction.
+func ForwarderCommandArgsForTest(containerID string, socketsJSON []byte) []string {
+	return forwarderCommandArgs(containerID, socketsJSON)
+}
+
 // ReadMessageForTest exposes the package-level readMessage function.
-var ReadMessageForTest = func(r *bufio.Reader) (Message, error) {
+func ReadMessageForTest(r *bufio.Reader) (Message, error) {
 	return readMessage(r)
 }
 
 // --- Manager accessors ---
 
 // SetBridgeForTest injects a bridge tracking entry into the Manager for testing.
-func (m *Manager) SetBridgeForTest(id string, pid int, pidFile string) {
-	m.bridges[id] = &bridgeProcess{pid: pid, pidFile: pidFile}
+func (m *Manager) SetBridgeForTest(id string, pid int, pidFile, socketsFile string) {
+	m.bridges[id] = &bridgeProcess{pid: pid, pidFile: pidFile, socketsFile: socketsFile}
 }
 
 // HasBridgeForTest returns true if the Manager is tracking a bridge for the given container.
@@ -73,14 +101,23 @@ func (m *Manager) BridgeCountForTest() int {
 // --- Package-level function accessors ---
 
 // ReadPIDFileForTest exposes the private readPIDFile function.
-var ReadPIDFileForTest = readPIDFile
+func ReadPIDFileForTest(path string) int {
+	return readPIDFile(path)
+}
 
 // IsProcessAliveForTest exposes the private isProcessAlive function.
-var IsProcessAliveForTest = isProcessAlive
+func IsProcessAliveForTest(pid int) bool {
+	return isProcessAlive(pid)
+}
 
 // WaitForPIDFileForTest exposes the private waitForPIDFile function.
-var WaitForPIDFileForTest = func(path string, timeout time.Duration) error {
+func WaitForPIDFileForTest(path string, timeout time.Duration) error {
 	return waitForPIDFile(path, timeout)
+}
+
+// BridgeExecutableForTest exposes daemon executable resolution.
+func BridgeExecutableForTest() (string, error) {
+	return bridgeExecutable()
 }
 
 // CheckHostSSHAgentForTest exposes the private checkHostSSHAgent function.

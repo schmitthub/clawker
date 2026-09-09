@@ -43,6 +43,7 @@ func NewCmdBridgeServe() *cobra.Command {
 		containerID string
 		gpgEnabled  bool
 		pidFile     string
+		socketsFile string
 	)
 
 	cmd := &cobra.Command{
@@ -56,6 +57,10 @@ func NewCmdBridgeServe() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if containerID == "" {
 				return fmt.Errorf("--container flag is required")
+			}
+			sockets, err := loadBridgedSockets(socketsFile)
+			if err != nil {
+				return fmt.Errorf("load bridge registrations: %w", err)
 			}
 
 			// Initialize daemon logger — the bridge runs as a detached subprocess
@@ -82,6 +87,7 @@ func NewCmdBridgeServe() *cobra.Command {
 			log.Debug().
 				Bool("gpg", gpgEnabled).
 				Str("pid_file", pidFile).
+				Int("socket_count", len(sockets)).
 				Msg("starting socket bridge daemon")
 
 			// Write PID file
@@ -90,11 +96,16 @@ func NewCmdBridgeServe() *cobra.Command {
 					log.Error().Err(err).Msg("failed to write PID file")
 					return err
 				}
-				defer os.Remove(pidFile)
 			}
+			defer func() {
+				cleanupErr := socketbridge.RemoveOwnedBridgeStateFiles(pidFile, socketsFile, os.Getpid())
+				if cleanupErr != nil {
+					log.Warn().Err(cleanupErr).Msg("failed to remove bridge state files")
+				}
+			}()
 
 			// Create bridge
-			bridge := socketbridge.NewBridge(containerID, gpgEnabled, log)
+			bridge := socketbridge.NewBridge(containerID, gpgEnabled, sockets, log)
 
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())
@@ -150,8 +161,20 @@ func NewCmdBridgeServe() *cobra.Command {
 	cmd.Flags().StringVar(&containerID, "container", "", "Container ID to bridge into")
 	cmd.Flags().BoolVar(&gpgEnabled, "gpg", false, "Enable GPG agent forwarding")
 	cmd.Flags().StringVar(&pidFile, "pid-file", "", "Path to PID file")
+	cmd.Flags().StringVar(&socketsFile, consts.BridgeSocketsFileFlag, "", "Path to bridged socket registrations")
 
 	return cmd
+}
+
+func loadBridgedSockets(path string) ([]socketbridge.BridgedSocket, error) {
+	if path == "" {
+		return nil, nil
+	}
+	sockets, err := socketbridge.ReadBridgedSocketsFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load bridge socket registrations: %w", err)
+	}
+	return sockets, nil
 }
 
 // dockerEventsClient is the subset of Docker API needed for events watching.

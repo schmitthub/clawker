@@ -40,10 +40,11 @@ clawker container start [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent         Use agent name (resolves to clawker.<project>.<agent>)
-  -a, --attach        Attach STDOUT/STDERR and forward signals
-  -h, --help          help for start
-  -i, --interactive   Attach container's STDIN
+      --agent            Use agent name (resolves to clawker.<project>.<agent>)
+      --approve-grants   Approve this start's declared host socket requests without prompting
+  -a, --attach           Attach STDOUT/STDERR and forward signals
+  -h, --help             help for start
+  -i, --interactive      Attach container's STDIN
 ```
 
 ### Options inherited from parent commands
