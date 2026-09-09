@@ -1,5 +1,6 @@
 [features]
 hooks = true
+multi_agent = true
 
 [agents.test-hunter]
 config_file = "../.agents/skills/test-hunter/agents/codex.toml"

@@ -54,6 +54,7 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Unit tests without Docker: `make test`
 - Build, integration tests, embeds, hooks, and completion checks: [dev-checks skill](.agents/skills/dev-checks/SKILL.md).
 - CLI, config, naming, package boundaries, and terminal behavior: Serena `project-guide` memory.
+- Package dependency and layering questions: run `go list -deps ./<pkg>` or `go list -f '{{.ImportPath}} {{.Imports}}' ./...` and answer from that output.
 - Agent file layout and native tool settings: [agent-files skill](.agents/skills/agent-files/SKILL.md).
 - Shared skills: `.agents/skills/`. Each `SKILL.md` description names its trigger; invoke the matching one. Behavioral and situational guidance is a skill, not a memory.
 
