@@ -4,6 +4,5 @@ graphify-out/graph.json merge=graphify
 # graphify: skip line diffs on regenerated artifacts so GitHub PR diffs do not time out (upstream #3413).
 graphify-out/** linguist-generated
 graphify-out/graph.json -diff
-graphify-out/manifest.json -diff
 graphify-out/GRAPH_REPORT.md -diff
 graphify-out/.graphify_labels.json -diff

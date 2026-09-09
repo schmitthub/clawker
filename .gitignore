@@ -169,3 +169,5 @@ graphify-out/.graphify_python
 graphify-out/.graphify_root
 # dated pre-overwrite backups written by graphify export
 graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+# manifest re-stamps mtimes on every hook rebuild; first checkout does one free AST rebuild instead
+graphify-out/manifest.json
