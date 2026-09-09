@@ -1,5 +1,6 @@
 /*/**/Dockerfile       linguist-generated
 /Dockerfile*.template  linguist-language=Dockerfile
+# merge driver is per-clone: `graphify hook install` registers it. Without it git uses the default text merge.
 graphify-out/graph.json merge=graphify
 # graphify: skip line diffs on regenerated artifacts so GitHub PR diffs do not time out (upstream #3413).
 graphify-out/** linguist-generated
