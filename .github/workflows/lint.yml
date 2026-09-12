@@ -2,6 +2,11 @@ name: Lint
 
 on:
   workflow_call:
+    inputs:
+      run_golangci_lint:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -10,6 +15,7 @@ permissions:
 jobs:
   golangci-lint:
     name: golangci-lint
+    if: inputs.run_golangci_lint
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

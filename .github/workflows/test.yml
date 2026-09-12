@@ -2,6 +2,15 @@ name: Test
 
 on:
   workflow_call:
+    inputs:
+      run_unit:
+        required: false
+        type: boolean
+        default: true
+      run_bpf:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,6 +18,7 @@ permissions:
 jobs:
   unit:
     name: Unit Tests
+    if: inputs.run_unit
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -36,6 +46,7 @@ jobs:
     # binary runs under sudo via `make test-bpf` — and the pinned BPF apt
     # toolchain, which only resolves on ubuntu-24.04.
     name: BPF Prog-Run Tests
+    if: inputs.run_bpf
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

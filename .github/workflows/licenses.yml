@@ -2,6 +2,11 @@ name: Licenses
 
 on:
   workflow_call:
+    inputs:
+      run_licenses:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,6 +14,7 @@ permissions:
 jobs:
   licenses:
     name: License Check
+    if: inputs.run_licenses
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

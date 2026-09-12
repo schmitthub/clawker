@@ -2,6 +2,11 @@ name: Docs
 
 on:
   workflow_call:
+    inputs:
+      run_docs:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,6 +14,7 @@ permissions:
 jobs:
   docs:
     name: Generated Docs Check
+    if: inputs.run_docs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

@@ -16,8 +16,68 @@ permissions:
   actions: read
 
 jobs:
+  # Classifies the PR's changed paths so each check below runs only when its
+  # inputs changed. A gated job that does not run is reported as skipped,
+  # which GitHub counts as success for a required status check; the gate must
+  # sit on the job inside the reusable workflow (via the run_* input), never
+  # on the caller job or the workflow trigger, or the required check never
+  # reports and the PR hangs on "Expected". Every gate is fail-open: a missing
+  # output (this job failed) runs the check. Main runs every check on every
+  # push, so a wrong classification here is caught there.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      deps: ${{ steps.classify.outputs.deps }}
+      bpf: ${{ steps.classify.outputs.bpf }}
+      licenses: ${{ steps.classify.outputs.licenses }}
+      docs: ${{ steps.classify.outputs.docs }}
+      plugin: ${{ steps.classify.outputs.plugin }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # HEAD is the PR merge commit; HEAD^1 is the base branch tip.
+          fetch-depth: 2
+
+      - name: Classify changed paths
+        id: classify
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only HEAD^1 HEAD > changed.txt
+          echo "Changed files:"; sed 's/^/  /' changed.txt
+
+          # Files the CI gates themselves depend on: run everything.
+          all='^\.github/(workflows|actions)/|^Makefile$|^Dockerfile|^\.golangci\.yml$|^scripts/'
+          # Files no Go, BPF, or scanner job reads.
+          text='\.(md|mdx)$|^docs/|^\.(agents|claude|codex|serena|github)/|(^|/)(LICENSE|NOTICE)[^/]*$'
+          deps='^go\.(mod|sum)$'
+          bpf='(^|/)controlplane/firewall/ebpf/'
+          licenses='^go\.(mod|sum)$|(^|/)(LICENSE|NOTICE)[^/]*$'
+          docs='^cmd/|^internal/(cmd|cmdutil|config|consts|docs)/|^docs/'
+          plugin='^internal/bundler/assets/|^clawker-plugin$|^\.gitmodules$'
+
+          if grep -qE "$all" changed.txt; then
+            for k in code deps bpf licenses docs plugin; do echo "$k=true"; done | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          any()  { grep -qE  "$1" changed.txt && echo true || echo false; }
+          rest() { grep -qvE "$1" changed.txt && echo true || echo false; }
+          {
+            echo "code=$(rest "$text")"
+            echo "deps=$(any "$deps")"
+            echo "bpf=$(any "$bpf")"
+            echo "licenses=$(any "$licenses")"
+            echo "docs=$(any "$docs")"
+            echo "plugin=$(any "$plugin")"
+          } | tee -a "$GITHUB_OUTPUT"
+
   security:
     name: Security
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
@@ -25,35 +85,58 @@ jobs:
       security-events: write
       actions: read
     with:
-      run_dependency_review: true
+      run_dependency_review: ${{ needs.changes.outputs.deps != 'false' }}
+      run_semgrep: ${{ needs.changes.outputs.code != 'false' }}
+      run_govulncheck: ${{ needs.changes.outputs.code != 'false' }}
 
   lint:
     name: Lint
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
       actions: read
+    with:
+      run_golangci_lint: ${{ needs.changes.outputs.code != 'false' }}
 
   test:
     name: Test
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
+    with:
+      run_unit: ${{ needs.changes.outputs.code != 'false' }}
+      run_bpf: ${{ needs.changes.outputs.bpf != 'false' }}
 
   licenses:
     name: Licenses
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/licenses.yml
     permissions:
       contents: read
+    with:
+      run_licenses: ${{ needs.changes.outputs.licenses != 'false' }}
 
   docs:
     name: Docs
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
+    with:
+      run_docs: ${{ needs.changes.outputs.docs != 'false' }}
 
   plugin:
     name: Plugin
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/plugin.yml
     permissions:
       contents: read
+    with:
+      run_dockerfile_drift: ${{ needs.changes.outputs.plugin != 'false' }}
