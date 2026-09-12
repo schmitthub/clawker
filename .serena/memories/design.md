@@ -21,7 +21,7 @@ handling, and trust requirements before changing this design.
 
 ### Core Principle
 
-Standard Docker gives users full control—which is dangerous for beginners and risky when running autonomous AI agents. Clawker creates a "padded cell": users interact with Docker-like commands, but operations are isolated to clawker-managed resources only.
+Clawker creates a "padded cell" for the agent: an isolated, disposable container where the agent can thrash without hurting itself, the host, or anything outside the container. The padded cell is the agent container and its boundary. It is not the label jail: `pkg/whail` restricts clawker's own Docker operations to clawker-managed resources, which is a separate concern listed under Threat Model below. Do not conflate the two.
 
 ### Threat Model
 
