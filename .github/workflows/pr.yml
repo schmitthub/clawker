@@ -52,25 +52,31 @@ jobs:
           git diff --name-only HEAD^1 HEAD > changed.txt
           echo "Changed files:"; sed 's/^/  /' changed.txt
 
-          # Files no Go build, scanner, or generator reads.
-          text='\.(md|mdx)$|^docs/|^\.(agents|claude|codex|serena|github|semgrep)/|(^|/)(LICENSE|NOTICE)[^/]*$|^\.golangci\.yml$|^prek\.toml$|^scripts/|^clawker-plugin$'
-          # The composite action every Go job builds the embedded binaries with.
-          action='^\.github/actions/'
+          # Go source tree: every file under a Go directory is a build input
+          # (sources, go:embed assets, testdata, BPF C, proto), except the
+          # agent instruction files. Root-level build inputs are listed by name.
+          # Anything else at the root (.goreleaser.yaml, .clawker.yaml, prek.toml,
+          # dotfiles, top-level markdown) is not a CI input.
+          gosrc='^(cmd|internal|pkg|controlplane|clawkerd|test|api)/|^go\.(mod|sum)$|^buf(\.gen)?\.yaml$'
+          # Files inside Go directories that no Go job reads.
+          notinput='(^|/)(AGENTS|CLAUDE)\.md$|(^|/)(LICENSE|NOTICE)[^/]*$'
+          # Build tooling every Go job runs through.
+          build='^Makefile$|^\.github/actions/'
           wf='^\.github/workflows/'
           gomod='^go\.(mod|sum)$'
 
-          any()  { grep -qE  "$1" changed.txt && echo true || echo false; }
-          rest() { grep -qvE "$1" changed.txt && echo true || echo false; }
-          go=$(rest "$text")
+          grep -vE "$notinput" changed.txt > inputs.txt || true
+          any() { grep -qE "$1" inputs.txt && echo true || echo false; }
+          go=$(any "$gosrc")
           {
-            echo "semgrep=$([ "$go" = true ] && echo true || any "$wf|^\.semgrep/")"
-            echo "govulncheck=$([ "$go" = true ] && echo true || any "$action|${wf}security\.yml$")"
-            echo "dependency_review=$(any "$gomod|${wf}security\.yml$")"
-            echo "lint=$([ "$go" = true ] && echo true || any "$action|${wf}lint\.yml$|^\.golangci\.yml$")"
-            echo "unit=$([ "$go" = true ] && echo true || any "$action|${wf}test\.yml$")"
+            echo "semgrep=$([ "$go" = true ] && echo true || any "$wf|^\.semgrep|^Dockerfile|^scripts/")"
+            echo "govulncheck=$([ "$go" = true ] && echo true || any "$build|${wf}security\.yml$")"
+            echo "dependency_review=$(any "$gomod|$wf")"
+            echo "lint=$([ "$go" = true ] && echo true || any "$build|^\.golangci\.yml$|${wf}lint\.yml$")"
+            echo "unit=$([ "$go" = true ] && echo true || any "$build|${wf}test\.yml$")"
             echo "bpf=$(any "(^|/)controlplane/firewall/ebpf/|^Makefile$|${wf}test\.yml$")"
-            echo "licenses=$(any "$gomod|(^|/)(LICENSE|NOTICE)[^/]*$|^scripts/gen-notice\.sh$|^Makefile$|$action|${wf}licenses\.yml$")"
-            echo "docs=$(any "^cmd/|^internal/(cmd|cmdutil|config|consts|docs)/|^docs/|^Makefile$|$action|${wf}docs\.yml$")"
+            echo "licenses=$(grep -qE "(^|/)(LICENSE|NOTICE)[^/]*$" changed.txt && echo true || any "$gomod|^scripts/gen-notice\.sh$|$build|${wf}licenses\.yml$")"
+            echo "docs=$(any "^cmd/|^internal/(cmd|cmdutil|config|consts|docs)/|^docs/|$build|${wf}docs\.yml$")"
             echo "plugin=$(any "^internal/bundler/assets/|^clawker-plugin$|^\.gitmodules$|${wf}plugin\.yml$")"
           } | tee -a "$GITHUB_OUTPUT"
 
