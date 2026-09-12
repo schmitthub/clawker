@@ -1,7 +1,7 @@
 # clawker 
 
 <p align="center">
-<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs agent harnesses like <code>Claude Code</code> or <code>Codex</code> in isolated <code>Docker</code> containers on any MacOS/Linux host with docker installed.
+<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a CLI that runs agent harnesses like <code>Claude Code</code> or <code>Codex</code> in isolated <code>Docker</code> containers on any macOS/Linux host with Docker installed.
 </p>
 
 <div align="center">
