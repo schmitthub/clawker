@@ -15,8 +15,33 @@ permissions:
   actions: read
 
 jobs:
+  # Every check runs on every push to main; only the embedded binaries are
+  # built once and shared, as in pr.yml.
+  build:
+    name: Embedded binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build embedded control plane binaries
+        uses: ./.github/actions/build-controlplane-binaries
+
+      - name: Pack embedded binaries
+        run: make embeds-tar
+
+      - name: Upload embedded binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: embedded-binaries
+          path: embedded-binaries.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
   security:
     name: Security
+    needs: build
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
@@ -28,18 +53,21 @@ jobs:
 
   test:
     name: Test
+    needs: build
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
 
   licenses:
     name: Licenses
+    needs: build
     uses: ./.github/workflows/licenses.yml
     permissions:
       contents: read
 
   docs:
     name: Docs
+    needs: build
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read

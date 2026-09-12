@@ -16,8 +16,77 @@ permissions:
   actions: read
 
 jobs:
+  # Path filters from .github/filters.yml, one output per gated job. A gated
+  # job that does not run reports as skipped, which GitHub counts as success
+  # for a required status check. The gate must sit on the job inside the
+  # reusable workflow (the run_* input), never on the caller job or the
+  # workflow trigger, or the required check never reports and the PR hangs
+  # on "Expected". Gates are fail-open: if this job fails, its outputs are
+  # empty and every `!= 'false'` test below runs the job. Main runs every
+  # check on every push, so a wrong filter is caught after merge.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      govulncheck: ${{ steps.filter.outputs.govulncheck }}
+      dependency_review: ${{ steps.filter.outputs.dependency_review }}
+      lint: ${{ steps.filter.outputs.lint }}
+      unit: ${{ steps.filter.outputs.unit }}
+      bpf: ${{ steps.filter.outputs.bpf }}
+      licenses: ${{ steps.filter.outputs.licenses }}
+      docs: ${{ steps.filter.outputs.docs }}
+      plugin: ${{ steps.filter.outputs.plugin }}
+    steps:
+      # Checkout only to read the filters file; changed files come from the
+      # pull request API.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
+  # Builds the go:embed binaries and bpf2go bindings once per run and shares
+  # them as an artifact; every job below that needs them restores from it.
+  build:
+    name: Embedded binaries
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (
+        needs.changes.outputs.govulncheck != 'false' ||
+        needs.changes.outputs.lint != 'false' ||
+        needs.changes.outputs.unit != 'false' ||
+        needs.changes.outputs.licenses != 'false' ||
+        needs.changes.outputs.docs != 'false') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build embedded control plane binaries
+        uses: ./.github/actions/build-controlplane-binaries
+
+      # One tar keeps the executable bits; the artifact store drops them.
+      - name: Pack embedded binaries
+        run: make embeds-tar
+
+      - name: Upload embedded binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: embedded-binaries
+          path: embedded-binaries.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
   security:
     name: Security
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
@@ -25,35 +94,57 @@ jobs:
       security-events: write
       actions: read
     with:
-      run_dependency_review: true
+      run_dependency_review: ${{ needs.changes.outputs.dependency_review != 'false' }}
+      run_govulncheck: ${{ needs.changes.outputs.govulncheck != 'false' }}
 
   lint:
     name: Lint
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
       actions: read
+    with:
+      run_golangci_lint: ${{ needs.changes.outputs.lint != 'false' }}
 
   test:
     name: Test
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
+    with:
+      run_unit: ${{ needs.changes.outputs.unit != 'false' }}
+      run_bpf: ${{ needs.changes.outputs.bpf != 'false' }}
 
   licenses:
     name: Licenses
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/licenses.yml
     permissions:
       contents: read
+    with:
+      run_licenses: ${{ needs.changes.outputs.licenses != 'false' }}
 
   docs:
     name: Docs
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
+    with:
+      run_docs: ${{ needs.changes.outputs.docs != 'false' }}
 
   plugin:
     name: Plugin
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/plugin.yml
     permissions:
       contents: read
+    with:
+      run_dockerfile_drift: ${{ needs.changes.outputs.plugin != 'false' }}

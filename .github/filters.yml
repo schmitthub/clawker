@@ -1,0 +1,72 @@
+# Path filters for dorny/paths-filter, read by the "changes" job in pr.yml.
+# Each key is one output; a job in a reusable workflow runs when its key is
+# true. Globs use picomatch with dot files matched; '!' excludes.
+#
+# `go` is every file a Go build, test, or scan reads: sources, go:embed
+# assets, testdata, BPF C, proto. It is scoped by directory, not by
+# extension, because go:embed inputs have any extension (.md, .tmpl, .sh,
+# .sql, .o) and must live under the embedding package, so a directory match
+# is the exact rule. Agent instruction and license files never feed a build.
+
+go: &go
+  - 'cmd/**'
+  - 'internal/**'
+  - 'pkg/**'
+  - 'controlplane/**'
+  - 'clawkerd/**'
+  - 'test/**'
+  - 'api/**'
+  - '!**/AGENTS.md'
+  - '!**/CLAUDE.md'
+  - '!**/LICENSE*'
+  - '!**/NOTICE*'
+  - 'go.mod'
+  - 'go.sum'
+  - 'buf.yaml'
+  - 'buf.gen.yaml'
+  - 'Makefile'
+  - '.github/actions/**'
+
+govulncheck:
+  - *go
+  - '.github/workflows/security.yml'
+
+dependency_review:
+  - 'go.mod'
+  - 'go.sum'
+  - '.github/workflows/**'
+
+lint:
+  - *go
+  - '.golangci.yml'
+  - '.github/workflows/lint.yml'
+
+unit:
+  - *go
+  - '.github/workflows/test.yml'
+
+bpf:
+  - 'controlplane/firewall/ebpf/**'
+  - 'Makefile'
+  - '.github/workflows/test.yml'
+
+licenses:
+  - 'go.mod'
+  - 'go.sum'
+  - '**/LICENSE*'
+  - '**/NOTICE*'
+  - 'scripts/gen-notice.sh'
+  - 'Makefile'
+  - '.github/actions/**'
+  - '.github/workflows/licenses.yml'
+
+docs:
+  - *go
+  - 'docs/**'
+  - '.github/workflows/docs.yml'
+
+plugin:
+  - 'internal/bundler/assets/**'
+  - 'clawker-plugin'
+  - '.gitmodules'
+  - '.github/workflows/plugin.yml'

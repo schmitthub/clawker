@@ -160,3 +160,4 @@ internal/cmd/container/shared/assets/idmap-mount
 
 # Python bytecode from the agent-file checks
 __pycache__/
+embedded-binaries.tar

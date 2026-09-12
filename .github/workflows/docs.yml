@@ -2,6 +2,11 @@ name: Docs
 
 on:
   workflow_call:
+    inputs:
+      run_docs:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,13 +14,14 @@ permissions:
 jobs:
   docs:
     name: Generated Docs Check
+    if: inputs.run_docs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build embedded control plane binaries
-        uses: ./.github/actions/build-controlplane-binaries
+      - name: Restore embedded binaries
+        uses: ./.github/actions/restore-embedded-binaries
 
       - name: Check generated docs freshness
         run: make docs-check
