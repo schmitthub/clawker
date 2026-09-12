@@ -106,7 +106,7 @@ id = "docs-check"
 name = "Generated docs freshness"
 entry = "make docs-check"
 language = "system"
-files = '^(cmd/|internal/cmd/|internal/docs/|internal/config/schema\.go)'
+files = '^(cmd/|internal/cmd/|internal/docs/|internal/config/([^/]*_)?schema\.go$)'
 pass_filenames = false
 priority = "scan"
 
