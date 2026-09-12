@@ -34,18 +34,6 @@
     },
     "decoration": "grid"
   },
-  "font": {
-    "heading": {
-      "url": "https://cdn.fontshare.com/wf/DK2FOA46SRWJ5HXWWU5TK4N4CMHYD236/FPEAXZZSH5L2K5MTJFRIWD2MC32IJMN3/THOOS4VOCKT7H2XEB27NQDYM2NYS4AAR.woff2",
-      "format": "woff2",
-      "weight": "600"
-    },
-    "body": {
-      "url": "https://cdn.fontshare.com/wf/NWBQYJIM7GCZ5XWD7D26ARB3VDY55ZRT/K63EV2KZIGKLE7RANQ2U42S6SVHU5RJ7/X6XYTKIVDUW7GZTZPZNN4EUM5KH54KHF.woff2",
-      "format": "woff2",
-      "weight": "400"
-    }
-  },
   "styling": {
     "codeblocks": "dark",
     "eyebrows": "breadcrumbs"

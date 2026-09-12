@@ -33,7 +33,7 @@ Mintlify parses **all** `.md`/`.mdx` files as MDX — there is no per-file way t
 
 - Layout: Mintlify **Product Guide** template (`mintlify/templates/product-guide`): theme `almond`, lucide icons, global sidebar anchors (Home, GitHub, Releases), `navigation.directory: card`, groups with icons and `expanded: true` (except CLI Reference), navbar links empty with GitHub star-count button (`navbar.primary` must be an external URL; it opens a new tab)
 - Palette (canonical, do not change): amber (`#f59e0b` primary, `#fbbf24` light, `#d97706` dark); background `#09090b` with grid decoration; dark-only (`appearance.strict: true`)
-- Fonts: theme default (no `fonts` key)
+- Fonts: theme default. Do not add a `font` key; the schema key is `fonts` and a `font` block is ignored
 - Feature card on the homepage uses an amber gradient instead of the template's leaf images
 - Icons: `icons.library` is `lucide`; use lucide names in `icon=` props (`settings`, `zap`, `layers`, `boxes`, `box`, `package`, `shield`, `key`, `terminal`)
 
