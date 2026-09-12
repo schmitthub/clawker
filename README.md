@@ -1,80 +1,18 @@
-# Clawker — self-hosted AI coding agent sandbox (run Claude Code, Codex & more in Docker)
+# clawker 
 
 <p align="center">
-  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License"></a>
-  <a href="https://deepwiki.com/schmitthub/clawker"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple" alt="macOS"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Platform-Linux-4DA3FF?logo=linux&logoColor=fff&labelColor=0057B8" alt="Linux"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Codex-000000?logo=openai&logoColor=fff" alt="Codex"></a>
-  <img alt="Vibe coded with love" src="https://img.shields.io/badge/Vibe%20coded%20with-%F0%9F%92%97-1f1f1f?labelColor=ff69b4">
-</p>
-
-<p align="center">
-<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs coding-agent harnesses (<code>Claude Code</code> and <code>OpenAI Codex</code> ship built-in, more on the way, and you can bring your own via harness bundles) in isolated <code>Docker</code> containers on your own machine, no cloud and no subscription. It pairs a deny-by-default egress firewall (Envoy + custom CoreDNS + eBPF) for prompt-injection and data-exfiltration protection with the convenience features you actually want: image building, monitoring, parallel git-worktree agents, and credential forwarding — a devcontainer alternative that's local, free, <em>and</em> security-deep, whatever model your harness talks to (including Anthropic's latest mythos-class <code>Fable 5</code>). It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run coding agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and the sandbox modes these harnesses ship are the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running an agent in a container (you never even have to write a Dockerfile, it's got you covered).
+<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs agent harnesses like <code>Claude Code</code> or <code>Codex</code> in isolated <code>Docker</code> containers on any MacOS/Linux host with docker installed.
 </p>
 
 <div align="center">
   <img src="docs/assets/system-diagram.png" alt="system diagram" width="700">
 </div>
 
-## How clawker compares
-
-clawker runs the coding-agent CLIs you already use — Claude Code, Codex, and more — inside a locked-down container: a deny-by-default egress firewall enforced in the kernel, network and agent observability, and host-seamless DX. Here's how that stacks up against the CLIs' own built-in sandboxing and other tools built to contain a coding agent.
-
-Wide table — scroll horizontally →
-
-| Solution | Cost | Local | Open source | Self-hostable | Deny-by-default egress | Allowlist exists | Domain allowlist rules | Subdomain wildcard | IP/CIDR | Port scoping | Deny rules | HTTP path | HTTP method | Regex path | DNS-level block | Domain-native | TLS MITM | Kernel-level enforcement | Fail-closed firewall | Live firewall reload | Timed auto-bypass | Filters DNS | Filters TCP | Filters UDP | Filters QUIC | Filters ICMP | Filters SSH | Filters WebSocket | Per-request audit log | Metrics dashboard | Harness telemetry capture | Extensible monitoring | Active supervision | Fleet registry | SSH-agent fwd | GPG-agent fwd | Git-cred fwd | Cred-injection proxy | Host-browser auth | Live bind-mount | Ephemeral snapshot | Git-worktree mgmt | Harness seeding | Shared host state | Declarative config | Custom image/Dockerfile | Lifecycle hooks | Plugin/bundle system | Any agent CLI | Durable agent state | Rootless Docker Support |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **clawker** | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Docker Sandboxes | Free / $ org tier | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Nono | Free (OSS) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Agentbox (mattolson) | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Dev Containers | Free (OSS) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Claude Code sandbox | Free (needs Claude Code) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Codex CLI sandbox | Free (needs Codex) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Anthropic srt | Free (OSS) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-
-<details>
-<summary>How this was assessed</summary>
-
-Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers both absent and undocumented capabilities. The comparison covers tools that sandbox a coding-agent CLI, plus the CLIs' own built-in sandboxing — code-execution sandboxes and programmatic SDKs are a separate category. Full per-provider notes with citations are in-repo under [the retained research notes](.serena/memories/research/agent-sandboxes/).
-
-</details>
-
-> **Why "credential injection" isn't containment**
->
-> Some sandboxes keep secrets on the host and inject them into outbound requests, so the agent never sees the raw value. It reads well — until you notice the agent-facing CLIs mint live tokens on demand: `gh auth token`, `aws configure export-credentials`, `az account get-access-token`, `gcloud auth print-access-token`. Now the agent holds a real, replayable credential.
->
-> If egress is allowed at the *domain* level — all of `github.com`, all of `s3.amazonaws.com` — that token (and any repo it can read) goes straight to an attacker-controlled bucket, repo, or gist on the very same trusted domain. The injection layer was never in the path.
->
-> Hiding the secret in transit is not the same as containing the agent. Containment means scoping **where** authenticated requests can go — `github.com/your-org/` with method gating and a per-request audit log — and mediating the primitive itself (SSH/GPG agent sockets) so no replayable token exists in the first place. clawker does both.
-
-> **Why host-only allowlists — and IP/iptables enforcement — both leak**
->
-> Two coarse shortcuts show up again and again. The first is allowlisting by **host only**: "allow `github.com`." But *all* of `github.com` includes `github.com/attacker/exfil` — a read from your private repo and a push to theirs ride the exact same approved host. Real containment needs granularity *below* the hostname: path and method scoping, so `github.com/your-org/` is reachable and nothing else is.
->
-> The second is enforcing domain rules by resolving them to IPs once and pinning those in **iptables/nftables**. That leaks two ways. Load-balanced and CDN-fronted endpoints rotate IPs constantly, so the snapshot goes stale — legitimate traffic breaks, or you widen to whole CIDR ranges to compensate. And shared front-ends (Cloudflare, Fastly) sit thousands of unrelated sites behind the same addresses — allow one, allow them all. An IP rule can't even express `github.com/your-org/`; it has no idea what hostname the packet was ever for.
->
-> clawker enforces against the **name, at request time** — unlisted domains die at the DNS tier, and allowed ones are matched by SNI/Host at an L7 proxy that never trusts a resolve-once IP set. Rules stay bound to the domain, survive IP churn, and scope beneath the host.
-
-> **Why there's no "syscall filtering" column**
->
-> Some sandboxes lead with seccomp/AppArmor/Landlock syscall confinement. It's genuinely useful defense-in-depth, and it's on clawker's roadmap — but it sits *upstream* of where the real damage happens. Blocking a syscall only matters if the thing it enables reaches a risk sink: **exfiltration, data loss, persistence, or corruption**. clawker already closes those sinks directly — deny-by-default egress at the DNS/L7/kernel layers stops exfil, disposable containers make local corruption a `git revert` or a rebuild, and the workspace is the only thing that survives.
->
-> Lock the jewelry in a safe and it's a good idea — but it barely matters when the storefront is bulletproof glass on an airgap that slams shut the instant someone breaks it. Confine the syscalls and you've hardened a path to damage clawker has already sealed at the exit. Worth doing, ranked accordingly.
-
-> Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
-
-> ! Clawker is in an early development stage, but it's usable and has a lot of features. Expect breaking changes and rough edges. I quickly patch regressions that were missed. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
-
 ---
 
 ## Table of Contents
 
-- [Clawker — self-hosted AI coding agent sandbox (run Claude Code, Codex \& more in Docker)](#clawker--self-hosted-ai-coding-agent-sandbox-run-claude-code-codex--more-in-docker)
-  - [How clawker compares](#how-clawker-compares)
+- [clawker](#clawker)
   - [Table of Contents](#table-of-contents)
   - [High-Level Feature Overview](#high-level-feature-overview)
   - [Installation](#installation)
@@ -88,22 +26,15 @@ Each cell reflects the vendor's official documentation as of 2026-07; ❌ covers
   - [Working with Worktrees](#working-with-worktrees)
   - [Managing Resources](#managing-resources)
   - [Monitoring](#monitoring)
-  - [Roadmap / Known Issues](#roadmap--known-issues)
-  - [Contributing](#contributing)
-  - [License](#license)
 
 ---
 
-<details>
-<summary>Boring TLDR manifesto</summary>
-The rise of Agentic AI has been meteoric, but in the rush to ship model harnesses, the industry is skipping the risks and responsibilities that come with them. They’re avoiding dependency pain by shipping bare-metal software, when the harness itself needs a harness. LLMs are powerful, but they’re also unpredictable, naive, and easy to coerce—and handing one unrestricted code execution, network access, software install rights, internet reach, and full filesystem access to unsuspecting users is reckless. As a security engineer, I want my own machine protected, so clawker is the harness for the harness: an "agent-in-container" solution and a practical example of secure-by-default guardrails for agentic software. I hope this project inspires the industry to prioritize containerization natively in their agentic software offerings, and to build more tools that make it easy and seamless for users to run agents in containers with strong security defaults.
-</details>
-
 ## High-Level Feature Overview
 
-- **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle (a manifest + Dockerfile fragment + optional assets) and declaring it in your project's `clawker.yaml`. Images are harness-keyed: `clawker build -t codex` builds a specific harness, `clawker run @:codex` runs it, and the default harness carries a `:default` alias so bare `@` just works
-- **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, language **stacks** (go, node, python, rust, java, ruby, cpp, dotnet), and custom instructions, with a thin per-harness image layered on top. The per-container `clawkerd` daemon runs as PID 1, handles signal forwarding, drops privilege to the unprivileged `clawker` user kernel-side, and supervises the harness for the container's lifetime
-- **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry (sqlite), mTLS auth, and the command channel to every agent's `clawkerd`. The CLI talks to it over mTLS gRPC + OAuth2; see `clawker controlplane status`, `clawker controlplane agents`
+- **Multi-harness by design** — `Claude Code` and `OpenAI Codex` ship as embedded **harness bundles**, and any coding-agent CLI can be added by authoring a bundle
+- **No Dockerfile to write** — images build on a pinned Debian substrate with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.): a shared per-project base image carries your `build.packages`, authorable language **stacks** (go, node, python, rust, java, ruby, cpp, dotnet), and custom instructions, with a thin per-harness image layered on top.
+- **Per-host clawker control plane** (`clawker-controlplane` container) runs as a long-lived supervisor — it owns the firewall lifecycle, eBPF program lifetime, agent identity registry, and the command channel to every agent's `clawkerd`.
+- **Per-container supervision** — each container runs a `clawkerd` daemon as PID 1, which handles signal forwarding, drops privileges to the unprivileged `clawker` user kernel-side, and supervises the harness for the container's lifetime
 - **Injectable build-time instructions** to customize images per project: packages, environment variables, root run commands, user run commands, and more
 - **Bind or snapshot workspace modes**: mount your repository to the container for live editing, or copy it at runtime for pure isolation
 - **Fresh or copy agent mode**: start the harness with a clean slate, or stage your host settings, plugins, and skills into the container at create time for a seamless transition from doing work in a host instance to a container (the claude harness stages settings, CLAUDE.md, agents, skills, commands, and plugins). Credentials are never copied — you authenticate once inside the container (browser flows are proxied to your host) and the login persists in the harness's config volume across restarts and recreates
@@ -111,18 +42,17 @@ The rise of Agentic AI has been meteoric, but in the rush to ship model harnesse
 - **Host proxy service** sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with your harness (`claude`, `codex`) or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before the harness launches, letting you set up MCPs, etc.
-- **Envoy + custom CoreDNS + eBPF network firewall** enabled by default — Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network, while eBPF cgroup programs (loaded and attached from outside agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Provides DNS-level deny-by-default (unlisted domains return NXDOMAIN), per-domain TCP routing via a real-time BPF DNS cache, and TLS inspection with per-domain MITM certificates for path-level filtering. Agent containers themselves get **no Linux capabilities** — all enforcement happens kernel-side, outside the container's privilege scope. Each harness bundle ships its own egress floor (the claude harness allows the Anthropic API + OAuth domains, codex the OpenAI ones); project rules merge additively. Manage rules dynamically with `clawker firewall add/remove/list/status` (or `clawker firewall refresh` to live-apply project config egress edits), temporarily bypass with `clawker firewall bypass 5m --agent <agent_name>`, or disable entirely. A great security layer to mitigate runaway agents or prompt injections while giving them the network access they need.
-
-  Wildcard HTTPS/WSS rules use a certificate for each requested hostname, including names with multiple subdomain labels. CA rotation cannot expose a partially replaced CA pair to certificate requests. HTTP/3 keeps static certificates; clients need TCP fallback for deeper names.
+- **Dedicated Docker network** `clawker-net` that all containers run in
+- **L4-L7 firewall stack** enabled by default — eBPF cgroup programs attached from outside the container get a verdict on every outbound TCP, UDP, and raw socket. Unlisted domains never resolve (custom CoreDNS, NXDOMAIN). Allowed traffic goes through Envoy: TLS terminated with per-domain MITM certificates for path-and method-level rules on HTTPS, WebSocket, and HTTP/3; raw TCP, SSH, and UDP pinned to the host each rule names. Deny by default at every layer, IPv4 and dual-stack IPv6.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
-- **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
-- **Dedicated Docker network** that all containers run in
-- **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
-- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable default-harness agent: `clawker go dev`), `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`), and per-harness `claude`/`codex` (harness plus its auto-approve flag in one word) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
-- **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
+- **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names.
+- **Jailed from host Docker resources** Prevents the CLI from operating on resources without the automatically applied management labels.
+- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders.
+- **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`).
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary.
-- **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
-- **Interactive configuration editing**: TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`) with tabbed field browsing, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
+- **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics)
+- **Interactive configuration editing**: TUI-based editors for project config and user settings with tabbed field browsing, layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
+- **Rootless Docker Support** — Clawker can operate with rootless Docker, allowing you to run containers without requiring root privileges on the host system.
 
 ## Installation
 
@@ -454,40 +384,3 @@ Once the stack is up:
 - **OpenSearch Dashboards** — http://localhost:5601 — Discover view for log exploration
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
 - **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawkercp` (control-plane logs), `clawker-envoy` (firewall egress access logs), `clawker-coredns` (firewall DNS query logs), and `clawker-ebpf-egress` (eBPF egress decisions) indices
-
-> **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), ingest pipelines, a default 7-day ISM retention policy, a `clawker_prometheus` direct-query datasource, and a **`Clawker` analytics workspace** with index patterns + example visualizations imported. `otel-collector` and `prometheus` don't start until bootstrap exits cleanly.
->
-> **Get into the workspace:** from the OSD splash / welcome screen click **Clawker** under the **Analytics** panel on the far right. **See logs or metrics:** in the workspace UI's left navbar, under **Explore**, click **Logs** or **Metrics**.
->
-> Three dashboards ship preinstalled under the workspace's **Dashboards** view: **Claude Code Cost & Usage** (sessions, cost, token counters), **Claude Code Activity** (tool usage, code edits, hooks, MCP, plugins), and **Clawker Networking** (Envoy access logs, CoreDNS query log, eBPF egress decisions). Build additional dashboards off the index patterns and Prometheus datasource as needed.
-
-## Roadmap / Known Issues
-
-- More shipped harness bundles are on the way — experimental versions under development (codex, opencode, pi) live in the [example bundle](https://github.com/schmitthub/clawker-bundle-example). Try them with `clawker bundle install schmitthub/clawker-bundle-example`, and fork the repo or use it as a reference to tweak your own with the clawker plugin's `bundle-creator` skill
-- Linux works but hasn't been exercised as extensively as macOS
-
-See [GitHub Issues](https://github.com/schmitthub/clawker/issues?q=is%3Aissue+is%3Aopen) for current known issues and limitations.
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and PR process.
-
-Keep CP entrypoint helper tests in `internal/controlplane/cmd_helpers_test.go`. Keep SDS service tests with the code in `controlplane/firewall/`.
-
-Lint suppression directives require explicit approval from the project owner.
-
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
-
-## License
-
-Clawker is free software: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](LICENSE).
-
-One subproject is the exception: the clawker-support plugin, tracked as the `clawker-plugin/` git submodule ([schmitthub/clawker-plugin](https://github.com/schmitthub/clawker-plugin)), is licensed separately under the MIT License — see its LICENSE. Everything else in this repository is AGPL-3.0-or-later as described below.
-
-The AGPL's network-use clause (section 13) is deliberate: if you run a modified Clawker as a network service, you must offer its source to users of that service. This keeps Clawker free and open — for learning from and building on, not for closed SaaS wrappers.
-
-**Commercial licensing.** Don't want the AGPL's copyleft and network-use obligations — for example, to embed Clawker in a closed-source product or service? A commercial license is available. Contact andrew@ajschmitt.io.
-
-**Contributing.** Contributions are accepted under a Contributor License Agreement ([CLA.md](CLA.md)): you keep your copyright, your work is published under the AGPL, and you grant the maintainer the right to also offer it under a commercial license. This is what keeps dual-licensing possible.
-
-> I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker, spelled phonetically because `claucker` violates the phonetic rules of English and just doesn't roll off the fingers. The name predates the `clawdbot` `openclaw` `clawthis` `clawthat` naming craze and has no relation to openclaw.  
