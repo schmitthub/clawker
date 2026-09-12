@@ -3,28 +3,120 @@ title: "Clawker"
 sidebarTitle: "Overview"
 description: "Free, open-source extensible sandbox to run coding agents — Claude Code, OpenAI Codex, Opencode, Pi and more — in Docker on your own machine. A local self-hosted AI coding agent sandbox with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents — no cloud, no subscription."
 keywords: ["AI coding agent sandbox", "AI agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "Codex sandbox", "self-hosted", "open source", "egress firewall", "prompt injection protection", "data exfiltration", "network isolation", "deny-by-default", "parallel coding agents", "git worktree", "devcontainer alternative"]
+mode: frame
 ---
+
+<div data-product-guide-index className="flex w-full flex-col gap-8 max-w-5xl mx-auto px-4 md:px-8 lg:px-12 py-10 lg:gap-14 lg:py-16">
+  <div className="flex max-w-[540px] flex-col gap-2 self-center text-center">
+    <h1 className="text-[30px] font-medium leading-9 tracking-tight text-gray-900 dark:text-gray-50">
+      Clawker
+    </h1>
+    <p className="text-balance text-base leading-relaxed tracking-tight text-gray-600 dark:text-gray-400">
+      Free, open-source sandbox for running coding agents in Docker on your own machine, behind a deny-by-default egress firewall.
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <Card
+      title={<span className="product-guide-feature-card-title">Quickstart</span>}
+      icon="rocket"
+      href="/quickstart"
+      className="product-guide-feature-card"
+      size={28}
+    >
+      <span className="product-guide-feature-card-description">Install, initialize a project, and start your first agent in minutes.</span>
+    </Card>
+
+    <a href="/security" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+      <Icon icon="shield" color="rgb(var(--primary))" size={18} className="shrink-0" />
+      <div className="flex flex-col gap-1">
+        <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Security</span>
+        <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Threat model, egress firewall, credential forwarding, and observability.</span>
+      </div>
+    </a>
+    <a href="/worktrees" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+      <Icon icon="play" color="rgb(var(--primary))" size={18} className="shrink-0" />
+      <div className="flex flex-col gap-1">
+        <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Running agents</span>
+        <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Parallel agents on git worktrees and one-word command aliases.</span>
+      </div>
+    </a>
+    <a href="/bundles" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+      <Icon icon="package" color="rgb(var(--primary))" size={18} className="shrink-0" />
+      <div className="flex flex-col gap-1">
+        <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Bundles & extensions</span>
+        <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Harnesses, stacks, and monitoring extensions you can install or author.</span>
+      </div>
+    </a>
+    <a href="/cli-reference/clawker" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+      <Icon icon="terminal" color="rgb(var(--primary))" size={18} className="shrink-0" />
+      <div className="flex flex-col gap-1">
+        <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">CLI reference</span>
+        <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Every command, flag, and subcommand.</span>
+      </div>
+    </a>
+  </div>
+
+  <hr className="border-0 border-t border-border" />
+
+  <div className="flex flex-col gap-4">
+    <h2 className="font-serif text-xl font-medium leading-normal text-gray-900 dark:text-gray-50">Common tasks</h2>
+
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <a href="/installation" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="download" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Install Clawker</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Homebrew, curl, or build from source.</span>
+        </div>
+      </a>
+      <a href="/configuration" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="settings" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Configure a project</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Set up .clawker.yaml for images, workspaces, and security.</span>
+        </div>
+      </a>
+      <a href="/firewall" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="globe-lock" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Allow a domain</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Add path-scoped egress rules to the deny-by-default firewall.</span>
+        </div>
+      </a>
+      <a href="/worktrees" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="git-branch" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Run agents on worktrees</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Spin up agents on separate branches with automatic worktree management.</span>
+        </div>
+      </a>
+      <a href="/monitoring" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="activity" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Monitor agents</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">OpenTelemetry, OpenSearch, and Prometheus for agent observability.</span>
+        </div>
+      </a>
+      <a href="/custom-images" className="rounded-2xl flex flex-col gap-4 border bg-gray-50 p-4 outline-none shadow-sm shadow-gray-950/5 transition hover:border-primary hover:shadow-md dark:bg-gray-950 dark:shadow-black/20 dark:hover:border-primary">
+        <Icon icon="layers" color="rgb(var(--primary))" size={18} className="shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-serif text-base font-medium text-gray-900 dark:text-gray-50">Build a custom image</span>
+          <span className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">Layer packages, language stacks, and build steps on the base image.</span>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <hr className="border-0 border-t border-border" />
+
+  <div className="product-guide-prose text-gray-700 dark:text-gray-300">
 
 **Clawker is a free, open-source, local AI coding agent sandbox.** It runs coding-agent CLIs like [Claude Code](https://code.claude.com/docs), [OpenAI Codex](https://learn.chatgpt.com/docs/codex/cli), [OpenCode](https://opencode.ai/docs), [Pi](https://pi.dev/docs/latest), or any other harness — inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox.
 
 The rise of agentic AI has been meteoric, but in the rush to ship model harnesses the industry keeps skipping the risks that come with them. Letting an agent run in permissible modes on your bare-metal machine is fast — until a prompt injection turns it into a data-exfiltration tool with full access to your credentials and network. The harness itself needs a harness.
 
 Clawker is that harness. It pairs real network isolation — a **deny-by-default egress firewall** that blocks outbound traffic except to domains you allow — with git credential forwarding and parallel git-worktree agents, so you get the convenience of local, parallel coding agents *and* the network security to run them safely. It fills the gap between cloud agent sandboxes (isolated, but your code leaves your machine and you pay for it) and other local agent runners (free, but with no egress control): self-hosted agent infrastructure that is both fully local and security-deep.
-
-<CardGroup cols={2}>
-  <Card title="Quick Start" icon="terminal" href="/quickstart">
-    Get up and running with Clawker in minutes
-  </Card>
-  <Card title="Installation" icon="square-terminal" href="/installation">
-    All installation methods: Homebrew, curl, source build
-  </Card>
-  <Card title="Configuration" icon="sliders" href="/configuration">
-    Configure projects with .clawker.yaml
-  </Card>
-  <Card title="CLI Reference" icon="code" href="/cli-reference/clawker">
-    Complete command reference for all CLI commands
-  </Card>
-</CardGroup>
 
 ## What Is an Agent?
 
@@ -57,3 +149,6 @@ You (CLI) -> Clawker -> pkg/whail (label-isolated Docker engine) -> Docker SDK -
 ```
 
 Every container, volume, network, and image created by Clawker is tagged with `dev.clawker.*` labels. Clawker only sees and manages its own resources -- it cannot touch anything outside its label scope.
+
+  </div>
+</div>
