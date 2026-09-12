@@ -3,11 +3,11 @@
 ## File Conventions
 
 - `docs/docs.json` — Mintlify config (theme, nav, colors, integrations). **Not** `mint.json` (legacy name)
-- `docs/index.mdx` — Homepage
+- `docs/index.mdx` — Homepage. `mode: frame` landing page in the Product Guide template layout (hero, feature card, product cards, common tasks grid) with the prose sections below in `.product-guide-prose`
 - `docs/*.mdx` — Hand-authored pages (quickstart, installation, etc.). Exception: `docs/configuration.mdx` is **auto-generated** (from `cmd/gen-docs/configuration.mdx.tmpl` + schema struct tags — never edit directly)
 - `docs/cli-reference/*.md` — Auto-generated CLI reference (**never edit directly**). Generated via Makefile, checked in, freshness verified in CI (covers `docs/cli-reference/` and `docs/configuration.mdx`)
 - `docs/architecture.mdx`, `docs/design.mdx`, `docs/testing.md` — Developer docs with Mintlify frontmatter
-- `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
+- `docs/custom.css` — Mintlify Product Guide template `style.css` (sidebar anchor styling, frame-mode landing page, feature card) with amber palette
 - `docs/favicon.svg` — `>_` terminal prompt icon (amber `#f59e0b` on dark `#09090b`)
 - `docs/assets/` — Image assets directory
 
@@ -31,19 +31,16 @@ Mintlify parses **all** `.md`/`.mdx` files as MDX — there is no per-file way t
 
 ## Theming
 
-- Theme: `maple`, dark-only (`appearance.strict: true`)
-- Palette: amber (`#f59e0b` primary, `#fbbf24` light, `#d97706` dark)
-- Background: `#09090b` with grid decoration
-- Fonts: Fontshare CDN — Clash Display (headings, weight 600) + Satoshi (body, weight 400)
-- `custom.css` surfaces: `#111113` (sidebar, cards, footer), `#1a1a1f` (code blocks)
-- Glassmorphism navbar: `rgba(9,9,11,0.85)` with `backdrop-filter: blur(12px)`
-- Card hover: amber border glow (`rgba(245,158,11,0.4)`)
-- Code font: SF Mono → Cascadia Code → Fira Code → JetBrains Mono → monospace
+- Layout: Mintlify **Product Guide** template (`mintlify/templates/product-guide`): theme `almond`, lucide icons, global sidebar anchors (Home, GitHub, Releases), `navigation.directory: card`, groups with icons and `expanded: true` (except CLI Reference), navbar links empty with GitHub star-count button (`navbar.primary` must be an external URL; it opens a new tab)
+- Palette (canonical, do not change): amber (`#f59e0b` primary, `#fbbf24` light, `#d97706` dark); background `#09090b` with grid decoration; dark-only (`appearance.strict: true`)
+- Fonts: theme default. Do not add a `font` key; the schema key is `fonts` and a `font` block is ignored
+- Feature card on the homepage uses an amber gradient instead of the template's leaf images
+- Icons: `icons.library` is `lucide`; use lucide names in `icon=` props (`settings`, `zap`, `layers`, `boxes`, `box`, `package`, `shield`, `key`, `terminal`)
 
 ## Navigation Structure
 
-Sidebar groups: Quickstart, Security, Guides, CLI Reference (13 collapsible sub-groups: Top-Level Shortcuts, Container, Image, Volume, Network, Worktree, Monitor, Settings, Project, Firewall, Control Plane, Auth, Skill), Developer Guide.
-Navbar: Home → clawker.dev, GitHub link, Install button → /installation.
+Sidebar groups: Get started, Running Agents, Security, Building images, Extensions, Operations, Under the hood, Developer guide, CLI Reference (collapsible sub-groups per command family). Only top-level groups carry icons; pages never set `icon:` in frontmatter. A group's overview page uses `sidebarTitle: "Overview"` so the group name is not repeated (see `index.mdx`, `security.mdx`).
+Navbar: GitHub star-count button only. Sidebar global anchors: Home, GitHub, Releases.
 
 ## Architecture
 

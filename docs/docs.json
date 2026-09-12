@@ -1,8 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "maple",
+  "theme": "almond",
   "name": "Clawker",
   "favicon": "/favicon.svg",
+  "icons": {
+    "library": "lucide"
+  },
   "description": "Clawker is a free, open-source, self-hosted AI coding agent sandbox. Run Claude Code in Docker on your own machine with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents.",
   "seo": {
     "metatags": {
@@ -31,18 +34,6 @@
     },
     "decoration": "grid"
   },
-  "font": {
-    "heading": {
-      "url": "https://cdn.fontshare.com/wf/DK2FOA46SRWJ5HXWWU5TK4N4CMHYD236/FPEAXZZSH5L2K5MTJFRIWD2MC32IJMN3/THOOS4VOCKT7H2XEB27NQDYM2NYS4AAR.woff2",
-      "format": "woff2",
-      "weight": "600"
-    },
-    "body": {
-      "url": "https://cdn.fontshare.com/wf/NWBQYJIM7GCZ5XWD7D26ARB3VDY55ZRT/K63EV2KZIGKLE7RANQ2U42S6SVHU5RJ7/X6XYTKIVDUW7GZTZPZNN4EUM5KH54KHF.woff2",
-      "format": "woff2",
-      "weight": "400"
-    }
-  },
   "styling": {
     "codeblocks": "dark",
     "eyebrows": "breadcrumbs"
@@ -51,20 +42,10 @@
     "options": ["copy", "view", "claude"]
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Home",
-        "href": "https://clawker.dev"
-      },
-      {
-        "label": "GitHub",
-        "href": "https://github.com/schmitthub/clawker"
-      }
-    ],
+    "links": [],
     "primary": {
-      "type": "button",
-      "label": "Install",
-      "href": "/installation"
+      "type": "github",
+      "href": "https://github.com/schmitthub/clawker"
     }
   },
   "footer": {
@@ -80,23 +61,42 @@
   },
   "redirects": [],
   "navigation": {
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Home",
+          "icon": "house",
+          "href": "/"
+        },
+        {
+          "anchor": "GitHub",
+          "icon": "github",
+          "href": "https://github.com/schmitthub/clawker"
+        },
+        {
+          "anchor": "Releases",
+          "icon": "scroll-text",
+          "href": "https://github.com/schmitthub/clawker/releases"
+        }
+      ]
+    },
+    "directory": "card",
     "groups": [
       {
         "group": "Get started",
+        "icon": "rocket",
+        "expanded": true,
         "pages": [
           "index",
           "quickstart",
-          "installation"
-        ]
-      },
-      {
-        "group": "Configuration",
-        "pages": [
+          "installation",
           "configuration"
         ]
       },
       {
         "group": "Running Agents",
+        "icon": "play",
+        "expanded": true,
         "pages": [
           "worktrees",
           "aliases"
@@ -104,6 +104,8 @@
       },
       {
         "group": "Security",
+        "icon": "shield",
+        "expanded": true,
         "pages": [
           "threat-model",
           "security",
@@ -114,12 +116,16 @@
       },
       {
         "group": "Building images",
+        "icon": "layers",
+        "expanded": true,
         "pages": [
           "custom-images"
         ]
       },
       {
-        "group": "Bundles & extensions",
+        "group": "Extensions",
+        "icon": "package",
+        "expanded": true,
         "pages": [
           "bundles",
           "harnesses",
@@ -129,6 +135,8 @@
       },
       {
         "group": "Operations",
+        "icon": "activity",
+        "expanded": true,
         "pages": [
           "monitoring",
           "docker-hygiene"
@@ -136,6 +144,8 @@
       },
       {
         "group": "Under the hood",
+        "icon": "cpu",
+        "expanded": true,
         "pages": [
           "container-internals",
           "control-plane"
@@ -143,6 +153,8 @@
       },
       {
         "group": "Developer guide",
+        "icon": "code",
+        "expanded": true,
         "pages": [
           {
             "group": "Authoring",
@@ -165,6 +177,7 @@
       },
       {
         "group": "CLI Reference",
+        "icon": "terminal",
         "pages": [
           "cli-reference/clawker",
           {
