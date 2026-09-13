@@ -2,6 +2,11 @@ name: Plugin
 
 on:
   workflow_call:
+    inputs:
+      run_dockerfile_drift:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,6 +14,7 @@ permissions:
 jobs:
   dockerfile-drift:
     name: Dockerfile template drift check
+    if: inputs.run_dockerfile_drift
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

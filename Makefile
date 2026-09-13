@@ -1,6 +1,6 @@
 .PHONY: help \
         clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
-        bpf-deps ebpf ebpf-binary coredns-binary cp-binary bpffs-delegate-binary \
+        bpf-deps ebpf ebpf-binary coredns-binary cp-binary bpffs-delegate-binary embeds-tar embeds-untar \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
         changelog-preview \
@@ -457,6 +457,22 @@ $(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard control
 	@echo "Building bpffs-delegate for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/bpffs-delegate
+
+# embeds-tar packs every go:embed binary and bpf2go binding into one archive
+# so CI builds them once and hands the archive to the other jobs as an
+# artifact. Member order matters: embeds-untar extracts with --touch, so each
+# member's mtime is its extraction time, and a target must be extracted after
+# every prerequisite it lists (bindings before binaries, clawkerd before
+# clawkercp) or make rebuilds it.
+EMBEDS_TAR := embedded-binaries.tar
+EMBEDS_TAR_MEMBERS := $(BPF_BINDINGS) $(CLAWKERD_BINARY) $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY)
+
+embeds-tar: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary
+	tar -cf $(EMBEDS_TAR) $(EMBEDS_TAR_MEMBERS)
+
+embeds-untar:
+	tar -xmf $(EMBEDS_TAR)
+	rm -f $(EMBEDS_TAR)
 
 # idmap-mount-binary builds the elevated one-shot helper that attaches an
 # ID-mapped view of a workspace on a rootless Docker host. Pure Go: it links

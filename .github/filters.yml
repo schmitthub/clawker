@@ -1,0 +1,98 @@
+# Path filters for dorny/paths-filter, read by the "changes" job in pr.yml.
+# Each key is one output; a job in a reusable workflow runs when its key is
+# true. Globs use picomatch with dot files matched; '!' excludes.
+#
+# `go` is every file a Go build, test, or scan reads: sources, go:embed
+# assets, testdata, BPF C, proto. It is scoped by directory, not by
+# extension, because go:embed inputs have any extension (.md, .tmpl, .sh,
+# .sql, .o) and must live under the embedding package, so a directory match
+# is the exact rule. Agent instruction and license files never feed a build.
+#
+# `ci` is the gating wiring itself. An edit to it must run every gated job,
+# or a wrong rule merges without ever running the checks it controls.
+
+ci: &ci
+  - '.github/filters.yml'
+  - '.github/workflows/pr.yml'
+
+# `go_paths` is positive-only so a filter can reuse it with its own
+# exclusions. With some-with-excludes an exclusion is final: no later
+# include can match a file it rejected.
+go_paths: &go_paths
+  - 'cmd/**'
+  - 'internal/**'
+  - 'pkg/**'
+  - 'controlplane/**'
+  - 'clawkerd/**'
+  - 'test/**'
+  - 'api/**'
+  - 'go.mod'
+  - 'go.sum'
+  - 'buf.yaml'
+  - 'buf.gen.yaml'
+  - 'Makefile'
+  - 'Dockerfile.controlplane'
+  - '.github/actions/**'
+
+go: &go
+  - *go_paths
+  - '!**/AGENTS.md'
+  - '!**/CLAUDE.md'
+  - '!**/LICENSE*'
+  - '!**/NOTICE*'
+
+govulncheck:
+  - *ci
+  - *go
+  - '.github/workflows/security.yml'
+
+dependency_review:
+  - *ci
+  - '**/go.mod'
+  - '**/go.sum'
+  - '.github/workflows/**'
+
+lint:
+  - *ci
+  - *go
+  - '.golangci.yml'
+  - '.github/workflows/lint.yml'
+
+unit:
+  - *ci
+  - *go
+  - '.github/workflows/test.yml'
+
+bpf:
+  - *ci
+  - 'controlplane/firewall/ebpf/**'
+  - 'go.mod'
+  - 'go.sum'
+  - 'Makefile'
+  - 'Dockerfile.controlplane'
+  - '.github/workflows/test.yml'
+
+# go-licenses walks the import graph, so Go sources are inputs too. Built
+# from go_paths, not go, because go excludes LICENSE and NOTICE files.
+licenses:
+  - *ci
+  - *go_paths
+  - '!**/AGENTS.md'
+  - '!**/CLAUDE.md'
+  - '**/LICENSE*'
+  - '**/NOTICE*'
+  - 'scripts/gen-notice.sh'
+  - '.github/workflows/licenses.yml'
+
+docs:
+  - *ci
+  - *go
+  - 'docs/**'
+  - '.github/workflows/docs.yml'
+
+plugin:
+  - *ci
+  - 'internal/bundler/assets/**'
+  - 'clawker-plugin'
+  - '.gitmodules'
+  - '.github/workflows/plugin.yml'
