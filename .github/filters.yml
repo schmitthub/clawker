@@ -15,7 +15,10 @@ ci: &ci
   - '.github/filters.yml'
   - '.github/workflows/pr.yml'
 
-go: &go
+# `go_paths` is positive-only so a filter can reuse it with its own
+# exclusions. With some-with-excludes an exclusion is final: no later
+# include can match a file it rejected.
+go_paths: &go_paths
   - 'cmd/**'
   - 'internal/**'
   - 'pkg/**'
@@ -23,10 +26,6 @@ go: &go
   - 'clawkerd/**'
   - 'test/**'
   - 'api/**'
-  - '!**/AGENTS.md'
-  - '!**/CLAUDE.md'
-  - '!**/LICENSE*'
-  - '!**/NOTICE*'
   - 'go.mod'
   - 'go.sum'
   - 'buf.yaml'
@@ -34,6 +33,13 @@ go: &go
   - 'Makefile'
   - 'Dockerfile.controlplane'
   - '.github/actions/**'
+
+go: &go
+  - *go_paths
+  - '!**/AGENTS.md'
+  - '!**/CLAUDE.md'
+  - '!**/LICENSE*'
+  - '!**/NOTICE*'
 
 govulncheck:
   - *ci
@@ -66,10 +72,13 @@ bpf:
   - 'Dockerfile.controlplane'
   - '.github/workflows/test.yml'
 
-# go-licenses walks the import graph, so Go sources are inputs too.
+# go-licenses walks the import graph, so Go sources are inputs too. Built
+# from go_paths, not go, because go excludes LICENSE and NOTICE files.
 licenses:
   - *ci
-  - *go
+  - *go_paths
+  - '!**/AGENTS.md'
+  - '!**/CLAUDE.md'
   - '**/LICENSE*'
   - '**/NOTICE*'
   - 'scripts/gen-notice.sh'
