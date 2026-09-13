@@ -32,6 +32,7 @@ go: &go
   - 'buf.yaml'
   - 'buf.gen.yaml'
   - 'Makefile'
+  - 'Dockerfile.controlplane'
   - '.github/actions/**'
 
 govulncheck:
@@ -60,6 +61,7 @@ bpf:
   - *ci
   - 'controlplane/firewall/ebpf/**'
   - 'Makefile'
+  - 'Dockerfile.controlplane'
   - '.github/workflows/test.yml'
 
 licenses:
