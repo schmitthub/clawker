@@ -2,6 +2,11 @@ name: Lint
 
 on:
   workflow_call:
+    inputs:
+      run_golangci_lint:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -10,6 +15,7 @@ permissions:
 jobs:
   golangci-lint:
     name: golangci-lint
+    if: inputs.run_golangci_lint
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -25,15 +31,10 @@ jobs:
       - name: Fetch main for new-from-merge-base
         run: git fetch --no-tags origin main:main
 
-      # Build the embedded control plane binaries first. internal/controlplane/manager
-      # go:embed's assets/clawkercp + assets/ebpf-manager, internal/controlplane/firewall
-      # go:embed's assets/coredns-clawker, and internal/controlplane/firewall/ebpf/manager.go
-      # references types from the bpf2go-generated wrappers, so typecheck fails
-      # without these files on disk. The composite action handles setup-go +
-      # make bpf-deps + make ebpf-binary coredns-binary clawkerd-binary cp-binary
-      # bpffs-delegate-binary idmap-mount-binary.
-      - name: Build embedded control plane binaries
-        uses: ./.github/actions/build-controlplane-binaries
+      # Typecheck needs the go:embed targets and bpf2go bindings on disk.
+      # The caller's build job built them once; restore them here.
+      - name: Restore embedded binaries
+        uses: ./.github/actions/restore-embedded-binaries
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0

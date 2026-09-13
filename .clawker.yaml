@@ -314,6 +314,10 @@ security:
           - action: allow
             path: /repos/actions/checkout/
           - action: allow
+            path: ~/repos/actions/download-artifact(/.*)?
+          - action: allow
+            path: ~/repos/dorny/paths-filter(/.*)?
+          - action: allow
             path: /repos/charmbracelet/
           - action: allow
             path: /repos/moby/moby/

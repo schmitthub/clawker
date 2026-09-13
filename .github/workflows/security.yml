@@ -7,6 +7,10 @@ on:
         required: false
         type: boolean
         default: false
+      run_govulncheck:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -101,20 +105,18 @@ jobs:
 
   govulncheck:
     name: govulncheck SCA
+    if: inputs.run_govulncheck
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # govulncheck loads every Go package in the module. The go:embed targets
-      # (internal/controlplane/manager/assets/clawkercp + assets/ebpf-manager,
-      # internal/controlplane/firewall/assets/coredns-clawker) and
-      # internal/controlplane/firewall/ebpf's bpf2go-generated bindings must
-      # exist on disk. Built via the pinned Dockerfile.controlplane chain.
-      # See the action's own description for the "do this before any tool
-      # that re-checkouts" ordering rule.
-      - name: Build embedded control plane binaries
-        uses: ./.github/actions/build-controlplane-binaries
+      # govulncheck loads every Go package in the module, so the go:embed
+      # targets and bpf2go bindings must exist on disk. The caller's build
+      # job built them once; restore them here. Do this before any tool that
+      # re-checkouts (see below).
+      - name: Restore embedded binaries
+        uses: ./.github/actions/restore-embedded-binaries
 
       # Install and run govulncheck directly instead of using
       # golang/govulncheck-action — that action does its own `actions/checkout`

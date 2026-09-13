@@ -2,6 +2,11 @@ name: Licenses
 
 on:
   workflow_call:
+    inputs:
+      run_licenses:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -9,13 +14,14 @@ permissions:
 jobs:
   licenses:
     name: License Check
+    if: inputs.run_licenses
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build embedded control plane binaries
-        uses: ./.github/actions/build-controlplane-binaries
+      - name: Restore embedded binaries
+        uses: ./.github/actions/restore-embedded-binaries
 
       - name: Check NOTICE freshness
         run: make licenses-check
