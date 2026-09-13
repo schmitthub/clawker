@@ -21,9 +21,10 @@ jobs:
   # for a required status check. The gate must sit on the job inside the
   # reusable workflow (the run_* input), never on the caller job or the
   # workflow trigger, or the required check never reports and the PR hangs
-  # on "Expected". Gates are fail-open: if this job fails, its outputs are
-  # empty and every `!= 'false'` test below runs the job. Main runs every
-  # check on every push, so a wrong filter is caught after merge.
+  # on "Expected". If this job fails, its outputs are empty and every
+  # `!= 'false'` test below runs the job. An edit to the filters file or to
+  # this workflow runs every gated job (the `ci` filter), so a wrong rule is
+  # exercised before it merges.
   changes:
     name: Changed paths
     runs-on: ubuntu-24.04
@@ -49,6 +50,9 @@ jobs:
         id: filter
         with:
           filters: .github/filters.yml
+          # Default `some` compiles each `!glob` as a picomatch negation that
+          # matches every other path, so exclusions would match everything.
+          predicate-quantifier: some-with-excludes
 
   # Builds the go:embed binaries and bpf2go bindings once per run and shares
   # them as an artifact; every job below that needs them restores from it.

@@ -7,6 +7,13 @@
 # extension, because go:embed inputs have any extension (.md, .tmpl, .sh,
 # .sql, .o) and must live under the embedding package, so a directory match
 # is the exact rule. Agent instruction and license files never feed a build.
+#
+# `ci` is the gating wiring itself. An edit to it must run every gated job,
+# or a wrong rule merges without ever running the checks it controls.
+
+ci: &ci
+  - '.github/filters.yml'
+  - '.github/workflows/pr.yml'
 
 go: &go
   - 'cmd/**'
@@ -28,29 +35,35 @@ go: &go
   - '.github/actions/**'
 
 govulncheck:
+  - *ci
   - *go
   - '.github/workflows/security.yml'
 
 dependency_review:
+  - *ci
   - 'go.mod'
   - 'go.sum'
   - '.github/workflows/**'
 
 lint:
+  - *ci
   - *go
   - '.golangci.yml'
   - '.github/workflows/lint.yml'
 
 unit:
+  - *ci
   - *go
   - '.github/workflows/test.yml'
 
 bpf:
+  - *ci
   - 'controlplane/firewall/ebpf/**'
   - 'Makefile'
   - '.github/workflows/test.yml'
 
 licenses:
+  - *ci
   - 'go.mod'
   - 'go.sum'
   - '**/LICENSE*'
@@ -61,11 +74,13 @@ licenses:
   - '.github/workflows/licenses.yml'
 
 docs:
+  - *ci
   - *go
   - 'docs/**'
   - '.github/workflows/docs.yml'
 
 plugin:
+  - *ci
   - 'internal/bundler/assets/**'
   - 'clawker-plugin'
   - '.gitmodules'
