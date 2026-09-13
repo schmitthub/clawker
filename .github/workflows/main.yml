@@ -15,8 +15,10 @@ permissions:
   actions: read
 
 jobs:
-  # Every check runs on every push to main; only the embedded binaries are
-  # built once and shared, as in pr.yml.
+  # No path gating on main: every job here runs on every push. The embedded
+  # binaries are built once and shared, as in pr.yml. Lint runs on pull
+  # requests only (golangci-lint diffs against the merge base) and the plugin
+  # drift check is a pull request gate.
   build:
     name: Embedded binaries
     runs-on: ubuntu-24.04
@@ -42,6 +44,9 @@ jobs:
   security:
     name: Security
     needs: build
+    # Semgrep and Gitleaks do not need the binaries; keep them running when
+    # the build fails.
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read

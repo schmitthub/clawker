@@ -42,8 +42,8 @@ govulncheck:
 
 dependency_review:
   - *ci
-  - 'go.mod'
-  - 'go.sum'
+  - '**/go.mod'
+  - '**/go.sum'
   - '.github/workflows/**'
 
 lint:
@@ -60,19 +60,19 @@ unit:
 bpf:
   - *ci
   - 'controlplane/firewall/ebpf/**'
+  - 'go.mod'
+  - 'go.sum'
   - 'Makefile'
   - 'Dockerfile.controlplane'
   - '.github/workflows/test.yml'
 
+# go-licenses walks the import graph, so Go sources are inputs too.
 licenses:
   - *ci
-  - 'go.mod'
-  - 'go.sum'
+  - *go
   - '**/LICENSE*'
   - '**/NOTICE*'
   - 'scripts/gen-notice.sh'
-  - 'Makefile'
-  - '.github/actions/**'
   - '.github/workflows/licenses.yml'
 
 docs:

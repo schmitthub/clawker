@@ -9,7 +9,7 @@
 - Monitoring: OpenTelemetry Collector, Prometheus, OpenSearch, and OpenSearch Dashboards.
 - Tests: Go testing, testify, generated moq mocks, package fakes, and golden files.
 - `Makefile` defines binary embeds, BPF toolchain inputs, protobuf generation, docs, and tests. `prek.toml` defines local hooks; `.golangci.yml` defines lint checks.
-- CI: `.github/workflows/pr.yml` runs `dorny/paths-filter` with `.github/filters.yml` and passes one `run_*` boolean input per reusable workflow job; a skipped job satisfies a required status check. Embedded binaries are built once per run (`make embeds-tar`) and restored by `.github/actions/restore-embedded-binaries`. `main.yml` runs every check.
+- CI: `.github/workflows/pr.yml` runs `dorny/paths-filter` with `.github/filters.yml` and passes one `run_*` boolean input per reusable workflow job; a skipped job satisfies a required status check. Embedded binaries are built once per run (`make embeds-tar`) and restored by `.github/actions/restore-embedded-binaries`. `main.yml` runs Semgrep, Gitleaks, govulncheck, unit and BPF tests, license check, and docs check on every push with no path gating; lint, dependency review, and the plugin drift check are pull request only.
 - Pin external inputs to exact versions or commit hashes. Container image pins must identify multi-architecture manifest lists. Generated binaries and BPF outputs are not committed.
 - `clawker-plugin/` is a Git submodule with its own history. Its source changes and the parent pointer change are separate commits.
 - For exact build and generation commands: `.agents/skills/dev-checks/SKILL.md`.
