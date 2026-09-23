@@ -86,7 +86,7 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 **Moved to `internal/tui/progress.go`** — See `internal/tui/AGENTS.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `(*tui.TUI).RunProgress(ctx, cfg)` via Factory noun.
 
-**Pager**: `SetPager(cmd)`, `GetPager()`, `StartPager()`, `StopPager()`. Precedence: `CLAWKER_PAGER` > `PAGER` > platform default.
+**Pager**: `SetPager(cmd)`, `GetPager()`, `StartPager()`, `StopPager()`. Precedence: `CLAWKER_PAGER` > `PAGER` > platform default. `System()` sets the pager from that order; `Test()` has none. `StartPager` changes `Out` only after the pager starts. When the user quits the pager early, writes succeed and the rest of the output is dropped.
 
 **Alt Screen**: `SetAlternateScreenBufferEnabled(bool)`, `StartAlternateScreenBuffer()`, `StopAlternateScreenBuffer()`, `RefreshScreen()`
 

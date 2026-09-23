@@ -2,9 +2,13 @@ package iostreams
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -141,10 +145,55 @@ func TestStopPager_NoopWithoutStart(t *testing.T) {
 	ios.StopPager()
 }
 
-func TestErrClosedPagerPipe(t *testing.T) {
-	inner := fmt.Errorf("broken pipe")
-	err := &ErrClosedPagerPipe{inner}
-	if err.Error() != "broken pipe" {
-		t.Errorf("ErrClosedPagerPipe.Error() = %q, want %q", err.Error(), "broken pipe")
+func TestSystem_PagerFromEnv(t *testing.T) {
+	t.Setenv("CLAWKER_PAGER", "custom-pager")
+	t.Setenv("PAGER", "more")
+
+	if got := System().pagerCommand; got != "custom-pager" {
+		t.Errorf("System().pagerCommand = %q, want %q", got, "custom-pager")
+	}
+}
+
+func TestStartPager_StartFailureKeepsOut(t *testing.T) {
+	// An executable file that is not a valid program: LookPath finds it,
+	// Start fails.
+	bad := filepath.Join(t.TempDir(), "bad-pager")
+	if err := os.WriteFile(bad, []byte("not a program"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ios, _, stdout, _ := Test()
+	ios.SetStdoutTTY(true)
+	ios.SetPager(bad)
+	if err := ios.StartPager(); err == nil {
+		t.Fatal("StartPager with an invalid program should return an error")
+	}
+
+	if _, err := fmt.Fprint(ios.Out, "text"); err != nil {
+		t.Fatalf("write after failed StartPager: %v", err)
+	}
+	if got := stdout.String(); got != "text" {
+		t.Errorf("stdout = %q, want %q", got, "text")
+	}
+}
+
+type errWriteCloser struct{ err error }
+
+func (w errWriteCloser) Write([]byte) (int, error) { return 0, w.err }
+func (w errWriteCloser) Close() error              { return nil }
+
+func TestPagerWriter_ClosedPagerDropsOutput(t *testing.T) {
+	for _, closedErr := range []error{syscall.EPIPE, io.ErrClosedPipe} {
+		w := &pagerWriter{errWriteCloser{closedErr}}
+		n, err := w.Write([]byte("text"))
+		if err != nil || n != 4 {
+			t.Errorf("Write with %v = (%d, %v), want (4, nil)", closedErr, n, err)
+		}
+	}
+
+	other := errors.New("disk full")
+	w := &pagerWriter{errWriteCloser{other}}
+	if _, err := w.Write([]byte("text")); !errors.Is(err, other) {
+		t.Errorf("Write with other error = %v, want %v", err, other)
 	}
 }
