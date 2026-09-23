@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: (MIT OR GPL-2.0-only)
 //
 // decision_tests.c — SYSCALL-type wrapper programs for exercising the
 // production routing-decision helpers in common.h under BPF_PROG_TEST_RUN
@@ -110,4 +110,4 @@ int test_record_udp_flow(void *ctx)
 	return 0;
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Dual MIT/GPL";

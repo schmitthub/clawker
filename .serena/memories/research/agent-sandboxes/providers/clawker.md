@@ -4,7 +4,7 @@
 
 # clawker (self-assessment, maintainer-written, grounded in repo @ main 2026-07-18)
 category: local
-Local-first Docker-based agent sandbox manager: granular egress firewall, monitoring stack, host-seamless DX | built on: containerization (Docker Engine API via whail client) | license: AGPL-3.0-or-later + dual-licensing CLA (#380; was MIT) | maturity: alpha, active development
+Local-first Docker-based agent sandbox manager: granular egress firewall, monitoring stack, host-seamless DX | built on: containerization (Docker Engine API via whail client) | license: MIT (AGPL-3.0-or-later from #380 until 2026-09; relicensed back to MIT) | maturity: alpha, active development
 
 ## A. Identity
 ### built_on
@@ -13,7 +13,7 @@ Sources: docs/architecture.mdx, docs/container-internals.mdx, pkg/whail
 ### execution_locality
 execution_locality: Local — containers on the user's Docker host; code/creds never leave machine. Remote Docker daemons technically reachable via Engine API but UNDOCUMENTED → not claimed (own evidence rules).
 ### open_source
-AGPL-3.0-or-later, dual-licensing CLA (commit c3d7517a #380). Fully self-hosted by nature.
+MIT (AGPL-3.0-or-later with a dual-licensing CLA from commit c3d7517a #380 until 2026-09). Fully self-hosted by nature.
 ### maturity
 Alpha; single-org backing; rapid iteration.
 
@@ -94,7 +94,7 @@ performance: Lightweight — container-tier (no guest kernel); no published benc
 ## I. Feasibility
 feasibility: Adoptable today — macOS/Linux + Docker; alpha maturity caveat; no Windows docs.
 ## J. Price
-Free, open source (AGPL-3.0-or-later). No hosted tier.
+Free, open source (MIT). No hosted tier.
 ## K. Extensibility
 extensibility: Yes — bundles (harnesses/stacks/monitoring extensions), plugin system, custom Dockerfile injection points, post_init/pre_run hooks.
 

@@ -12,6 +12,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [Unreleased]
 
+- **Changed:** Clawker is licensed under the MIT License again, replacing AGPL-3.0-or-later. Earlier AGPL releases are also available under the MIT License.
 - **Fixed:** Firewall certificate mounts on Linux hosts.
 
 ## [2026.9.1] - 2026-09-07

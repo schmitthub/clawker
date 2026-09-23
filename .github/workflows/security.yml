@@ -7,7 +7,7 @@ on:
         required: false
         type: boolean
         default: false
-      run_govulncheck:
+      run_osv_scanner:
         required: false
         type: boolean
         default: true
@@ -103,29 +103,39 @@ jobs:
       - name: 'Dependency Review'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
 
-  govulncheck:
-    name: govulncheck SCA
-    if: inputs.run_govulncheck
+  osv-scanner:
+    name: osv-scanner SCA
+    if: inputs.run_osv_scanner
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # govulncheck loads every Go package in the module, so the go:embed
+      # Go call analysis loads every Go package in the module, so the go:embed
       # targets and bpf2go bindings must exist on disk. The caller's build
-      # job built them once; restore them here. Do this before any tool that
-      # re-checkouts (see below).
+      # job built them once; restore them here.
       - name: Restore embedded binaries
         uses: ./.github/actions/restore-embedded-binaries
 
-      # Install and run govulncheck directly instead of using
-      # golang/govulncheck-action — that action does its own `actions/checkout`
-      # internally, which clobbers the freshly-built control plane binaries and
-      # bpf2go wrappers from the step above, causing the scan to fail with
-      # `undefined: clawkerRouteKey`. Manual install keeps the working tree
-      # intact.
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+      # Keep the version in lockstep with the osv-scanner rev in prek.toml.
+      - name: Install osv-scanner
+        run: |
+          set -euo pipefail
+          OSV_VERSION=v2.6.0
+          OSV_FILE=osv-scanner_linux_amd64
+          OSV_SHA=ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+          curl -sSfL "https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/${OSV_FILE}" -o "${OSV_FILE}"
+          echo "${OSV_SHA}  ${OSV_FILE}" | sha256sum --check
+          sudo install -m 755 "${OSV_FILE}" /usr/local/bin/osv-scanner
+          rm -f "${OSV_FILE}"
+          osv-scanner --version
 
-      - name: Run govulncheck
-        run: govulncheck ./...
+      # Fails on a known vulnerability in called code or on a dependency
+      # license outside the allowlist. Package overrides: osv-scanner.toml.
+      # Keep the arguments in lockstep with the osv-scanner hook in prek.toml.
+      - name: Run osv-scanner
+        run: >-
+          osv-scanner scan source
+          --lockfile=go.mod
+          --call-analysis=go
+          --licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0

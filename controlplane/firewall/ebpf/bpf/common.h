@@ -1,10 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: (MIT OR GPL-2.0-only)
 //
-// GPL-2.0 is required here (see clawker.c licensing note) because the BPF
+// Dual-licensed MIT or GPL-2.0 (see the clawker.c licensing note): the BPF
 // helpers invoked from files that #include this header are kernel-gated to
-// GPL-licensed programs. This header is GPL-2.0 so the programs that include
-// it satisfy that kernel requirement; the rest of the clawker repository is
-// AGPL-3.0-or-later.
+// programs with a GPL-compatible license declaration.
 //
 // common.h — Shared types, maps, and routing helpers for clawker eBPF
 // programs.
