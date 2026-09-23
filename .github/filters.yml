@@ -46,6 +46,7 @@ osv_scanner:
   - *go
   - '.github/workflows/security.yml'
   - 'osv-scanner.toml'
+  - 'prek.toml'
 
 dependency_review:
   - *ci
