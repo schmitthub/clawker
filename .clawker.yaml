@@ -315,8 +315,6 @@ security:
           - action: allow
             path: ~/repos/schmitthub/(clawker|clawker-plugin)(/.*)?
           - action: allow
-            path: /repos/schmitthub/contributor-assistant
-          - action: allow
             path: /repos/envoyproxy/
           - action: allow
             path: /repos/oraios/serena/commits/
@@ -330,8 +328,6 @@ security:
             path: /repos/cilium/cilium/
           - action: allow
             path: /repos/opensearch-project/OpenSearch-Dashboards/
-          - action: allow
-            path: /repos/contributor-assistant/github-action/
           - action: allow
             path: /repos/actions/checkout/
           - action: allow
@@ -426,8 +422,6 @@ security:
             path: /moby/moby/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
-          - action: allow
-            path: /contributor-assistant/github-action/
           - action: allow
             path: /buildpacks/spec/
           - action: allow
