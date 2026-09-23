@@ -1,0 +1,25 @@
+# osv-scanner configuration: vulnerability and license gate.
+# License data comes from deps.dev. Each override below corrects a wrong
+# deps.dev result for one version; a version bump removes the override, so the
+# new version is checked again.
+
+[[PackageOverrides]]
+ecosystem = "Go"
+name = "github.com/opencontainers/go-digest"
+version = "1.0.0"
+license.override = ["Apache-2.0"]
+reason = "Code is Apache-2.0 (LICENSE). CC-BY-SA-4.0 (LICENSE.docs) applies to documentation only."
+
+[[PackageOverrides]]
+ecosystem = "Go"
+name = "github.com/dnstap/golang-dnstap"
+version = "0.4.0"
+license.override = ["Apache-2.0"]
+reason = "LICENSE and COPYRIGHT are Apache-2.0."
+
+[[PackageOverrides]]
+ecosystem = "Go"
+name = "github.com/mattn/go-localereader"
+version = "0.0.1"
+license.override = ["MIT"]
+reason = "The module has no LICENSE file. The README declares MIT."

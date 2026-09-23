@@ -103,7 +103,6 @@ build:
       - go install golang.org/x/tools/gopls@latest
       - go install gotest.tools/gotestsum@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-      - go install golang.org/x/vuln/cmd/govulncheck@latest
       - go install github.com/matryer/moq@latest
       # Proto tools: run `make proto-tools` for the pinned buf, protoc-gen-go, and protoc-gen-go-grpc.
       # Situational: local release dry run. Enable when needed.
@@ -165,7 +164,6 @@ security:
       - .clawker.dev
       - docs.openclaw.ai
       - registry-1.docker.io
-      - vuln.go.dev
       - production.cloudflare.docker.com
       - mcp.deepwiki.com
       - mcp.context7.com
@@ -235,6 +233,27 @@ security:
       - prek.j178.dev
     rules:
       - action: allow
+        dst: api.osv.dev
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            methods:
+              - GET
+              - POST
+            path: /v1/
+        proto: https
+      - action: allow
+        dst: api.deps.dev
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            methods:
+              - POST
+            path: ~/deps_dev\.v3(alpha)?\.Insights/[A-Za-z]+
+        proto: https
+      - action: allow
         dst: github.com
         insecure_skip_tls_verify: false
         port: 22
@@ -272,6 +291,8 @@ security:
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /tekwizely/pre-commit-golang
+          - action: allow
+            path: ~/google/osv-scanner(\.git)?/(info/refs|git-upload-pack)
           - action: allow
             path: ~/addyosmani/agent-skills(/.*)?
           - action: allow
@@ -329,6 +350,10 @@ security:
             path: /repos/containerd/containerd/
           - action: allow
             path: /repos/opencontainers/runc/
+          - action: allow
+            methods:
+              - GET
+            path: ~/repos/in-toto/(in-toto-golang|attestation)(/.*)?
           - action: deny
             path: /gists
           - action: deny
@@ -393,6 +418,10 @@ security:
             path: /isovalent/ebpf-docs/
           - action: allow
             path: /torvalds/linux/
+          - action: allow
+            methods:
+              - GET
+            path: /cli/cli/
           - action: allow
             path: /moby/moby/
           - action: allow

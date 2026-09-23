@@ -1,13 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: (MIT OR GPL-2.0-only)
 //
-// Licensing note: this compilation unit is GPL-2.0 because the Linux kernel
-// gates many of the BPF helpers used here (bpf_get_current_cgroup_id,
-// bpf_map_lookup_elem, cgroup sock_addr redirection, etc.) behind a GPL
-// license declaration — setting `_license[] = "GPL"` at the bottom of this
-// file is a runtime requirement enforced by the verifier when loading on any
-// production kernel. The rest of the clawker repository is licensed under
-// AGPL-3.0-or-later. The resulting .o object file is loaded into the kernel at
-// runtime via cilium/ebpf; it is not statically linked into the Go binary.
+// Licensing note: this compilation unit is dual-licensed MIT or GPL-2.0. The
+// Linux kernel gates many of the BPF helpers used here
+// (bpf_get_current_cgroup_id, bpf_map_lookup_elem, cgroup sock_addr
+// redirection, etc.) behind a GPL-compatible license declaration. The kernel
+// accepts `_license[] = "Dual MIT/GPL"` at the bottom of this file as
+// GPL-compatible, so the verifier loads the programs, and the MIT option keeps
+// the code consistent with the MIT license of the rest of the repository.
 //
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
@@ -419,4 +418,4 @@ int clawker_sock_create(struct bpf_sock *ctx)
 	return 1;
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Dual MIT/GPL";

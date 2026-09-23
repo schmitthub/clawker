@@ -41,10 +41,12 @@ go: &go
   - '!**/LICENSE*'
   - '!**/NOTICE*'
 
-govulncheck:
+osv_scanner:
   - *ci
   - *go
   - '.github/workflows/security.yml'
+  - 'osv-scanner.toml'
+  - 'prek.toml'
 
 dependency_review:
   - *ci

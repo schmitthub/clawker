@@ -6,7 +6,7 @@
 # Scheduling: lower priority runs first; hooks sharing a priority run
 # concurrently (capped by PREK_CONCURRENT_HOOKS). go-mod-tidy mutates
 # go.mod/go.sum, so it runs alone in the "fix" tier before every scan
-# that reads module state (govulncheck, licenses, tests, lint).
+# that reads module state (osv-scanner, licenses, tests, lint).
 # licenses-check regenerates NOTICE in place on drift, so it gets its
 # own tier between the two: after tidy (it reads module state), before
 # the concurrent read-only scans (they must not race a NOTICE rewrite).
@@ -28,6 +28,19 @@ rev = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e" # frozen: v8.30.1
 [[repos.hooks]]
 id = "gitleaks"
 args = ["--baseline-path", "gitleaks-report.json"]
+priority = "scan"
+
+# Vulnerability (Go call analysis) and license allowlist gate. Package
+# overrides: osv-scanner.toml. CI mirror: security.yml.
+[[repos]]
+repo = "https://github.com/google/osv-scanner"
+rev = "e840a6e8adb14b7777c78e26cfbf6e2abc1d1fc6" # frozen: v2.6.0
+
+[[repos.hooks]]
+id = "osv-scanner"
+# prek builds the hook; use the installed Go toolchain, never a download.
+language_version = "system"
+args = ["scan", "source", "--lockfile=go.mod", "--call-analysis=go", "--licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0"]
 priority = "scan"
 
 # ── Tidy (mutates go.mod/go.sum — must precede the scan tier) ─────────────
@@ -79,16 +92,6 @@ name = "Semgrep GitHub Actions"
 entry = "semgrep scan --config p/github-actions --config .semgrep/ --error"
 language = "system"
 files = '^\.github/workflows/.*\.ya?ml$'
-pass_filenames = false
-priority = "scan"
-
-[[repos.hooks]]
-id = "govulncheck"
-name = "govulncheck SCA"
-# Use the installed toolchain for local checks; CI selects its own toolchain.
-entry = "scripts/govulncheck.sh"
-language = "system"
-always_run = true
 pass_filenames = false
 priority = "scan"
 
