@@ -789,7 +789,7 @@ changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-de
 # loads every package in the module — controlplane/manager and
 # controlplane/firewall need go:embed targets, and controlplane/firewall/ebpf
 # needs the bpf2go-generated Go wrappers to compile.
-licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	bash scripts/licenses.sh --check
 
 # ============================================================================

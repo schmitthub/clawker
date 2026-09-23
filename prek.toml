@@ -119,8 +119,9 @@ name = "License generation"
 entry = "make licenses-check"
 language = "system"
 # Embedded license texts derive from module deps AND in-repo LICENSE files
-# (vendored code), so trigger on either changing.
-files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$|^scripts/licenses\.'
+# (vendored code), so trigger on either changing. The release platform
+# list in scripts/licenses.sh mirrors .goreleaser.yaml.
+files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$|^scripts/licenses\.|^\.goreleaser\.yaml$'
 pass_filenames = false
 priority = "licenses"
 
