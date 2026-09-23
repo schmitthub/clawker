@@ -34,6 +34,7 @@ DIST_DIR := dist
 # from goreleaser's per-build-id pre-hooks. Outside dist/ so `goreleaser release
 # --clean` cannot wipe it.
 RELEASE_EMBED_STAGE := embeds
+LICENSES_EMBED := internal/cmd/licenses/embed
 
 # Test runner configuration
 # Use gotestsum if available for human-friendly output, fall back to go test
@@ -111,10 +112,12 @@ help:
 # everything it go:embeds. Editing a `.proto` retriggers codegen; editing
 # a `.c` retriggers bpf2go; editing host-side Go triggers only the Go
 # build. Collapsed from the previous `clawker → clawker-build` indirection,
-# which added a hop with no second consumer.
+# which added a hop with no second consumer. Embeds third-party license
+# texts for the target platform, as release builds do (clawker licenses).
 clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
+	bash scripts/licenses.sh $$($(GO) env GOOS) $$($(GO) env GOARCH)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
 # =============================================================================
@@ -669,6 +672,7 @@ clawker-clean:
 	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
 	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
+	rm -rf $(LICENSES_EMBED)/*/report.txt $(LICENSES_EMBED)/*/third-party
 
 # ============================================================================
 # Test Targets

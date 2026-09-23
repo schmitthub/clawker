@@ -47,8 +47,11 @@ func TestNewCmdLicenses(t *testing.T) {
 	cmd.SetArgs([]string{})
 
 	require.NoError(t, cmd.Execute())
-	// Only release builds embed license texts; a test build must hold none.
-	assert.Equal(t, licenses.Placeholder, out.String())
+	// Embedded texts exist after make clawker; a plain go test build has
+	// only the placeholder. Either way the command prints what is embedded.
+	want, err := licenses.EmbeddedContent()
+	require.NoError(t, err)
+	assert.Equal(t, want, out.String())
 }
 
 func TestContent(t *testing.T) {

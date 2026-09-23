@@ -13,10 +13,10 @@ Show the third-party license texts embedded in this build.
 
 ## Generation
 
-`scripts/licenses.sh <goos> <goarch>` writes the embed directory. goreleaser runs it as a per-build pre hook. `make licenses-check` runs `--check` for all release platforms in CI. Without generated files, the command prints a placeholder.
+`scripts/licenses.sh <goos> <goarch>` writes the embed directory. goreleaser runs it as a per-build pre hook, and `make clawker` (so also `make restart` and the install targets) runs it for the build platform. `make clawker-clean` removes the output. `make licenses-check` runs `--check` for all release platforms in CI. A build without generated files (plain `go build`, `go install`) prints a placeholder.
 
 The script adds modules that go-licenses v2.0.1 cannot classify by hand (`APACHE_OVERRIDES`). It keeps vendored licenses under `internal/` and drops only clawker's own root license files.
 
 ## Testing
 
-`licenses_test.go` covers `content` with `fstest.MapFS` (placeholder, sort order, nested modules, read errors) and the command in a test build (placeholder only). No Docker required.
+`licenses_test.go` covers `content` with `fstest.MapFS` (placeholder, sort order, nested modules, read errors) and that the command prints this build's embedded content (placeholder or generated texts). No Docker required.
