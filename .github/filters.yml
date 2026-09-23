@@ -83,7 +83,9 @@ licenses:
   - '!**/CLAUDE.md'
   - '**/LICENSE*'
   - '**/NOTICE*'
-  - 'scripts/gen-notice.sh'
+  - 'scripts/licenses.*'
+  # Release platforms and hooks; scripts/licenses.sh mirrors the list.
+  - '.goreleaser.yaml'
   - '.github/workflows/licenses.yml'
 
 docs:

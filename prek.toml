@@ -7,9 +7,9 @@
 # concurrently (capped by PREK_CONCURRENT_HOOKS). go-mod-tidy mutates
 # go.mod/go.sum, so it runs alone in the "fix" tier before every scan
 # that reads module state (osv-scanner, licenses, tests, lint).
-# licenses-check regenerates NOTICE in place on drift, so it gets its
-# own tier between the two: after tidy (it reads module state), before
-# the concurrent read-only scans (they must not race a NOTICE rewrite).
+# licenses-check can build the embedded binaries, so it gets its own
+# tier after tidy and before the unit-test build and the scans that
+# load those binaries.
 # The unit-test hook builds embedded binaries, so it must also finish
 # before the read-only scans load those binaries.
 
@@ -115,14 +115,14 @@ priority = "scan"
 
 [[repos.hooks]]
 id = "licenses-check"
-name = "NOTICE freshness"
+name = "License generation"
 entry = "make licenses-check"
 language = "system"
-# NOTICE derives from module deps AND in-repo LICENSE files
-# (vendored code), so trigger on either changing.
-files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$'
+# Embedded license texts derive from module deps AND in-repo LICENSE files
+# (vendored code), so trigger on either changing. The release platform
+# list in scripts/licenses.sh mirrors .goreleaser.yaml.
+files = '^go\.(mod|sum)$|(^|/)(LICENSE[^/]*|NOTICE[^/]*)$|^scripts/licenses\.|^\.goreleaser\.yaml$'
 pass_filenames = false
-# Mutates NOTICE on drift — must not share the concurrent scan tier.
 priority = "licenses"
 
 [[repos.hooks]]

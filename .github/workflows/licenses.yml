@@ -23,5 +23,5 @@ jobs:
       - name: Restore embedded binaries
         uses: ./.github/actions/restore-embedded-binaries
 
-      - name: Check NOTICE freshness
+      - name: Check license generation
         run: make licenses-check

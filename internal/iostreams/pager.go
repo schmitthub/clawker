@@ -1,3 +1,6 @@
+// Adapted from the GitHub CLI (https://github.com/cli/cli),
+// Copyright (c) 2019 GitHub Inc., MIT License.
+
 package iostreams
 
 import (
@@ -30,7 +33,9 @@ func getPagerCommand() string {
 	return "less -R"
 }
 
-// pagerWriter implements a WriteCloser that wraps all EPIPE errors in an ErrClosedPagerPipe type.
+// pagerWriter is a WriteCloser to the pager's stdin. When the user quits
+// the pager before the end, the pipe closes; the remaining output is
+// dropped, not reported as a write failure.
 type pagerWriter struct {
 	io.WriteCloser
 }
@@ -38,16 +43,11 @@ type pagerWriter struct {
 func (w *pagerWriter) Write(d []byte) (int, error) {
 	n, err := w.WriteCloser.Write(d)
 	if err != nil && (errors.Is(err, io.ErrClosedPipe) || isEpipeError(err)) {
-		return n, &ErrClosedPagerPipe{err}
+		return len(d), nil
 	}
 	return n, err
 }
 
 func isEpipeError(err error) bool {
 	return errors.Is(err, syscall.EPIPE)
-}
-
-// ErrClosedPagerPipe is the error returned when writing to a pager that has been closed.
-type ErrClosedPagerPipe struct {
-	error
 }

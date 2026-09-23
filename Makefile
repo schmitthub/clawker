@@ -4,7 +4,7 @@
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
         changelog-preview \
-        licenses licenses-check \
+        licenses-check \
         docs docs-check \
         pre-commit pre-commit-install \
         localenv \
@@ -34,6 +34,7 @@ DIST_DIR := dist
 # from goreleaser's per-build-id pre-hooks. Outside dist/ so `goreleaser release
 # --clean` cannot wipe it.
 RELEASE_EMBED_STAGE := embeds
+LICENSES_EMBED := internal/cmd/licenses/embed
 
 # Test runner configuration
 # Use gotestsum if available for human-friendly output, fall back to go test
@@ -73,8 +74,7 @@ help:
 	@echo "  clawker-clean           Remove Clawker build artifacts"
 	@echo ""
 	@echo "License targets:"
-	@echo "  licenses            Generate NOTICE file from go-licenses"
-	@echo "  licenses-check      Check NOTICE is up to date (CI)"
+	@echo "  licenses-check      Check license generation for all release platforms (CI)"
 	@echo ""
 	@echo "Docs targets:"
 	@echo "  docs                Generate CLI reference docs"
@@ -112,10 +112,12 @@ help:
 # everything it go:embeds. Editing a `.proto` retriggers codegen; editing
 # a `.c` retriggers bpf2go; editing host-side Go triggers only the Go
 # build. Collapsed from the previous `clawker → clawker-build` indirection,
-# which added a hop with no second consumer.
+# which added a hop with no second consumer. Embeds third-party license
+# texts for the target platform, as release builds do (clawker licenses).
 clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
+	bash scripts/licenses.sh $$($(GO) env GOOS) $$($(GO) env GOARCH)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
 # =============================================================================
@@ -670,6 +672,7 @@ clawker-clean:
 	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
 	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) $(BPFFS_DELEGATE_BINARY) $(IDMAP_MOUNT_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
+	rm -rf $(LICENSES_EMBED)/*/report.txt $(LICENSES_EMBED)/*/third-party
 
 # ============================================================================
 # Test Targets
@@ -780,28 +783,14 @@ changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-de
 # License Targets
 # ============================================================================
 
-# Generate NOTICE file with third-party license attributions.
-# Depends on the embedded control plane binaries + bpf2go bindings because
-# gen-notice.sh runs `go-licenses report ./...` which loads every package
-# in the module — controlplane/manager and controlplane/firewall
-# need go:embed targets, and controlplane/firewall/ebpf needs the
-# bpf2go-generated Go wrappers to compile.
-licenses: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
-	@echo "Generating NOTICE file..."
-	bash scripts/gen-notice.sh
-
-# Check NOTICE file is up to date (used by CI)
-licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
-	@echo "Checking NOTICE freshness..."
-	@bash scripts/gen-notice.sh
-	@if ! git diff --quiet NOTICE; then \
-		echo "" >&2; \
-		echo "ERROR: NOTICE is out of date. Run 'make licenses' and commit." >&2; \
-		echo "" >&2; \
-		git diff NOTICE; \
-		exit 1; \
-	fi
-	@echo "NOTICE is up to date."
+# Check third-party license generation for all release platforms (used by
+# CI). Release builds run scripts/licenses.sh per platform from goreleaser.
+# Depends on the embedded binaries + bpf2go bindings because go-licenses
+# loads every package in the module — controlplane/manager and
+# controlplane/firewall need go:embed targets, and controlplane/firewall/ebpf
+# needs the bpf2go-generated Go wrappers to compile.
+licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
+	bash scripts/licenses.sh --check
 
 # ============================================================================
 # Docs Targets

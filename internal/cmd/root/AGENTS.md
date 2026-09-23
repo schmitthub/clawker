@@ -26,7 +26,7 @@ Currently a no-op (`return nil`). Cobra error/usage output is silenced globally 
 
 ## Registered Commands
 
-- **Top-level:** `init` (alias for `project init`), `project`, `settings`, `plugin` (alias `skill`), `monitor`, `version`
+- **Top-level:** `init` (alias for `project init`), `project`, `settings`, `plugin` (alias `skill`), `monitor`, `licenses`, `version`
 - **Management:** `alias`, `auth`, `bundle`, `container`, `controlplane`, `firewall`, `harness`, `image`, `prompt`, `stack`, `volume`, `network`, `worktree`
 - **Hidden internal:** `hostproxy`, `bridge`
 - **User aliases:** registered last from `cfg.Aliases()` (merged across all project config layers; see below)

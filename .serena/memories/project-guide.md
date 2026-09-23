@@ -8,7 +8,7 @@ Code and command paths below start at the repository root.
 
 See `docs/cli-reference/` for auto-generated command reference.
 
-**Top-level shortcuts**: `init`, `monitor *`, `version`, plus Docker-CLI-style container/image verbs each aliasing the matching subcommand (`build`, `create`, `run`, `start`, `stop`, `restart`, `kill`, `pause`, `unpause`, `rm`, `rmi`, `ps`, `attach`, `exec`, `logs`, `cp`, `rename`, `stats`, `top`, `wait`)
+**Top-level shortcuts**: `init`, `monitor *`, `licenses`, `version`, plus Docker-CLI-style container/image verbs each aliasing the matching subcommand (`build`, `create`, `run`, `start`, `stop`, `restart`, `kill`, `pause`, `unpause`, `rm`, `rmi`, `ps`, `attach`, `exec`, `logs`, `cp`, `rename`, `stats`, `top`, `wait`)
 **Management**: `alias *`, `auth *`, `bundle *`, `harness *`, `prompt *`, `stack *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `plugin *` (alias `skill`)
 
 ## Configuration

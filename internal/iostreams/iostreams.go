@@ -1,3 +1,6 @@
+// Adapted from the GitHub CLI (https://github.com/cli/cli),
+// Copyright (c) 2019 GitHub Inc., MIT License.
+
 // Big credit to the GitHub CLI project for the IOStreams pattern and Factory design.
 package iostreams
 
@@ -116,7 +119,7 @@ func System() *IOStreams {
 		In:           os.Stdin,
 		Out:          stdout,
 		ErrOut:       stderr,
-		pagerCommand: os.Getenv("PAGER"),
+		pagerCommand: getPagerCommand(),
 		term:         &terminal,
 	}
 	io.isInputTTY = detectTTY(io.In)
@@ -413,13 +416,15 @@ func (s *IOStreams) StartPager() error {
 	if err != nil {
 		return err
 	}
-	s.Out = &fdWriteCloser{
-		fd:          s.Out.Fd(),
-		WriteCloser: &pagerWriter{pagedOut},
-	}
 	err = pagerCmd.Start()
 	if err != nil {
 		return err
+	}
+	// Swap Out only after Start succeeds, so a failed pager leaves output
+	// on the original stream.
+	s.Out = &fdWriteCloser{
+		fd:          s.Out.Fd(),
+		WriteCloser: &pagerWriter{pagedOut},
 	}
 	s.pagerCmd = pagerCmd
 	return nil
