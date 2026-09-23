@@ -13,7 +13,7 @@ Sources: docs/architecture.mdx, docs/container-internals.mdx, pkg/whail
 ### execution_locality
 execution_locality: Local — containers on the user's Docker host; code/creds never leave machine. Remote Docker daemons technically reachable via Engine API but UNDOCUMENTED → not claimed (own evidence rules).
 ### open_source
-MIT (AGPL-3.0-or-later with a dual-licensing CLA from commit c3d7517a #380 until 2026-09). Fully self-hosted by nature.
+MIT (AGPL-3.0-or-later from commit c3d7517a #380 until 2026-09). Fully self-hosted by nature.
 ### maturity
 Alpha; single-org backing; rapid iteration.
 
