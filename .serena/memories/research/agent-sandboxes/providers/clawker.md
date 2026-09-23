@@ -4,7 +4,7 @@
 
 # clawker (self-assessment, maintainer-written, grounded in repo @ main 2026-07-18)
 category: local
-Local-first Docker-based agent sandbox manager: granular egress firewall, monitoring stack, host-seamless DX | built on: containerization (Docker Engine API via whail client) | license: MIT (AGPL-3.0-or-later from #380 until 2026-09; relicensed back to MIT) | maturity: alpha, active development
+Local-first Docker-based agent sandbox manager: granular egress firewall, monitoring stack, host-seamless DX | built on: containerization (Docker Engine API via whail client) | license: MIT | maturity: alpha, active development
 
 ## A. Identity
 ### built_on
@@ -13,7 +13,7 @@ Sources: docs/architecture.mdx, docs/container-internals.mdx, pkg/whail
 ### execution_locality
 execution_locality: Local — containers on the user's Docker host; code/creds never leave machine. Remote Docker daemons technically reachable via Engine API but UNDOCUMENTED → not claimed (own evidence rules).
 ### open_source
-MIT (AGPL-3.0-or-later from commit c3d7517a #380 until 2026-09). Fully self-hosted by nature.
+MIT. Fully self-hosted by nature.
 ### maturity
 Alpha; single-org backing; rapid iteration.
 
