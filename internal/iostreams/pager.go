@@ -1,3 +1,6 @@
+// Adapted from the GitHub CLI (https://github.com/cli/cli),
+// Copyright (c) 2019 GitHub Inc., MIT License.
+
 package iostreams
 
 import (

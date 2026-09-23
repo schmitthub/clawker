@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# Adapted from the GitHub CLI (https://github.com/cli/cli),
+# Copyright (c) 2019 GitHub Inc., MIT License.
+#
 # Generate third-party license information for embedding in the binary.
 #
 # Usage:

@@ -1,3 +1,6 @@
+// Adapted from the GitHub CLI (https://github.com/cli/cli),
+// Copyright (c) 2019 GitHub Inc., MIT License.
+
 // Package licenses implements the "licenses" command. Release builds embed the
 // third-party license texts for their own platform; see scripts/licenses.sh.
 package licenses

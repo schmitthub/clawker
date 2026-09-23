@@ -1,3 +1,6 @@
+// Adapted from the GitHub CLI (https://github.com/cli/cli),
+// Copyright (c) 2019 GitHub Inc., MIT License.
+
 // Big credit to the GitHub CLI project for the IOStreams pattern and Factory design.
 package iostreams
 
