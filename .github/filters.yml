@@ -83,7 +83,7 @@ licenses:
   - '!**/CLAUDE.md'
   - '**/LICENSE*'
   - '**/NOTICE*'
-  - 'scripts/gen-notice.sh'
+  - 'scripts/licenses.*'
   - '.github/workflows/licenses.yml'
 
 docs:

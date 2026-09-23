@@ -42,6 +42,9 @@ builds:
     hooks:
       pre:
         - cmd: make stage-embeds-amd64
+        # Embeds this target's third-party license texts (clawker licenses).
+        - cmd: bash ./scripts/licenses.sh {{ .Os }} {{ .Arch }}
+          output: true
 
   - id: clawker-arm64
     main: ./cmd/clawker
@@ -64,6 +67,9 @@ builds:
     hooks:
       pre:
         - cmd: make stage-embeds-arm64
+        # Embeds this target's third-party license texts (clawker licenses).
+        - cmd: bash ./scripts/licenses.sh {{ .Os }} {{ .Arch }}
+          output: true
 
 archives:
   - id: default

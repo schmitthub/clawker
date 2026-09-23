@@ -105,7 +105,7 @@ linters:
         - map
     exhaustruct:
       allow-empty-returns: true
-      exclude:
+      exclude: &exhaustruct-exclude
         - ^net/http.Client$
         - ^net/http.Cookie$
         - ^net/http.Request$
@@ -127,6 +127,10 @@ linters:
         - ^golang.org/x/tools/go/analysis.Analyzer$
         - ^google.golang.org/protobuf/.+Options$
         - ^gopkg.in/yaml.v3.Node$
+    # v5 does not read the exhaustruct settings; share its exclude list.
+    exhaustruct_v5:
+      allow-empty-returns: true
+      ignore-patterns: *exhaustruct-exclude
     forbidigo:
       forbid:
         - msg: "AI INSTRUCTION: Do not panic. Handle the error and return it up the call stack."

@@ -1,0 +1,5 @@
+{{ range . -}}
+{{ if ne .Name "github.com/schmitthub/clawker" -}}
+{{.Name}} ({{.Version}}) - {{.LicenseName}} - {{.LicenseURL}}
+{{ end -}}
+{{ end -}}

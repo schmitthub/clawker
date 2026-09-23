@@ -37,6 +37,7 @@ Workspace modes:
 * [clawker image](clawker_image) - Manage images
 * [clawker init](clawker_init) - Initialize a new clawker project (alias for 'project init')
 * [clawker kill](clawker_kill) - Kill one or more running containers
+* [clawker licenses](clawker_licenses) - View third-party license information
 * [clawker logs](clawker_logs) - Fetch the logs of a container
 * [clawker monitor](clawker_monitor) - Manage local observability stack
 * [clawker network](clawker_network) - Manage networks

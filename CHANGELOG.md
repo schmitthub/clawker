@@ -12,6 +12,8 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [Unreleased]
 
+- **Added:** `clawker licenses` shows the license texts of third-party dependencies included in the binary. It replaces the `NOTICE` file.
+
 ## [2026.9.3] - 2026-09-23
 
 - **Changed:** Clawker is licensed under the MIT License again, replacing AGPL-3.0-or-later. Earlier AGPL releases are also available under the MIT License.

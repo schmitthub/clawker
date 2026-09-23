@@ -285,7 +285,7 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 | `settings/` | edit |
 | `skill/` | install, show, remove |
 
-**Top-level shortcuts**: `init` → `project init`, plus 20 Docker-style aliases (e.g. `build`, `run`, `start`, `ps`, `rm`, `rmi`, `exec`, `logs`, `stop`, `attach`, …) — see `internal/cmd/root/aliases.go`. Also: `generate`, `version`.
+**Top-level shortcuts**: `init` → `project init`, plus 20 Docker-style aliases (e.g. `build`, `run`, `start`, `ps`, `rm`, `rmi`, `exec`, `logs`, `stop`, `attach`, …) — see `internal/cmd/root/aliases.go`. Also: `generate`, `licenses` (embedded third-party license texts; see `internal/cmd/licenses/AGENTS.md`), `version`.
 
 **Shared packages**: `container/shared/` and `skill/shared/` contain domain orchestration logic shared across subcommands within their group.
 

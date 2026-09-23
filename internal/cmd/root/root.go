@@ -14,6 +14,7 @@ import (
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
+	licensescmd "github.com/schmitthub/clawker/internal/cmd/licenses"
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/plugin"
@@ -86,6 +87,7 @@ Workspace modes:
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
 	cmd.AddCommand(worktree.NewCmdWorktree(f))
+	cmd.AddCommand(licensescmd.NewCmdLicenses(f))
 
 	// Add hidden internal commands
 	cmd.AddCommand(hostproxycmd.NewCmdHostProxy())

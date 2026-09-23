@@ -4,7 +4,7 @@
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
         changelog-preview \
-        licenses licenses-check \
+        licenses-check \
         docs docs-check \
         pre-commit pre-commit-install \
         localenv \
@@ -73,8 +73,7 @@ help:
 	@echo "  clawker-clean           Remove Clawker build artifacts"
 	@echo ""
 	@echo "License targets:"
-	@echo "  licenses            Generate NOTICE file from go-licenses"
-	@echo "  licenses-check      Check NOTICE is up to date (CI)"
+	@echo "  licenses-check      Check license generation for all release platforms (CI)"
 	@echo ""
 	@echo "Docs targets:"
 	@echo "  docs                Generate CLI reference docs"
@@ -780,28 +779,14 @@ changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-de
 # License Targets
 # ============================================================================
 
-# Generate NOTICE file with third-party license attributions.
-# Depends on the embedded control plane binaries + bpf2go bindings because
-# gen-notice.sh runs `go-licenses report ./...` which loads every package
-# in the module — controlplane/manager and controlplane/firewall
-# need go:embed targets, and controlplane/firewall/ebpf needs the
-# bpf2go-generated Go wrappers to compile.
-licenses: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
-	@echo "Generating NOTICE file..."
-	bash scripts/gen-notice.sh
-
-# Check NOTICE file is up to date (used by CI)
+# Check third-party license generation for all release platforms (used by
+# CI). Release builds run scripts/licenses.sh per platform from goreleaser.
+# Depends on the embedded binaries + bpf2go bindings because go-licenses
+# loads every package in the module — controlplane/manager and
+# controlplane/firewall need go:embed targets, and controlplane/firewall/ebpf
+# needs the bpf2go-generated Go wrappers to compile.
 licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
-	@echo "Checking NOTICE freshness..."
-	@bash scripts/gen-notice.sh
-	@if ! git diff --quiet NOTICE; then \
-		echo "" >&2; \
-		echo "ERROR: NOTICE is out of date. Run 'make licenses' and commit." >&2; \
-		echo "" >&2; \
-		git diff NOTICE; \
-		exit 1; \
-	fi
-	@echo "NOTICE is up to date."
+	bash scripts/licenses.sh --check
 
 # ============================================================================
 # Docs Targets

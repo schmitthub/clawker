@@ -180,6 +180,7 @@
         "icon": "terminal",
         "pages": [
           "cli-reference/clawker",
+          "cli-reference/clawker_licenses",
           {
             "group": "Top-Level Shortcuts",
             "pages": [
