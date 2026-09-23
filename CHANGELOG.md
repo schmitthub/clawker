@@ -10,9 +10,9 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
-## [Unreleased]
+## [2026.9.4] - 2026-09-23
 
-- **Added:** `clawker licenses` shows the license texts of third-party dependencies included in the binary. It replaces the `NOTICE` file.
+- **Added:** `clawker licenses` shows the license texts of third-party dependencies included in the binary.
 
 ## [2026.9.3] - 2026-09-23
 
