@@ -33,7 +33,7 @@ import (
 
 // Stack lifecycle + image constants.
 const (
-	envoyImage      = "envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
+	envoyImage      = "envoyproxy/envoy:distroless-v1.40.1@sha256:6cf314259a0adde2386baafeeeb041ed37a30f6bdd935cff36cd38a1e15acab1"
 	corednsImageTag = "clawker-coredns:latest"
 
 	envoyContainerName   = consts.ContainerEnvoy
@@ -1249,7 +1249,7 @@ func (s *Stack) ensureCorednsImage(ctx context.Context) error {
 
 // corednsDockerfile pins the alpine base by digest to match the
 // equivalent image produced elsewhere in the codebase.
-const corednsDockerfile = "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\n" +
+const corednsDockerfile = "FROM alpine:3.21@sha256:bbfcd601d7cd20d35bb0b8b866ad1a8a0d107ca3e1c20870c75c5ce2c1186d30\n" +
 	"COPY coredns /usr/local/bin/coredns\n" +
 	"ENTRYPOINT [\"/usr/local/bin/coredns\"]\n"
 

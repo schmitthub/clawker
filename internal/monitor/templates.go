@@ -59,15 +59,15 @@ const (
 // All digests are multi-arch (linux/amd64 + linux/arm64) — verify with
 // `docker buildx imagetools inspect <pin>` before bumping.
 const (
-	OtelCollectorImage        = "otel/opentelemetry-collector-contrib:0.152.0@sha256:f41d7995565df3733b7568702073a9c490792f9c6ac60684fe6a4da21a313f8d"
-	PrometheusImage           = "prom/prometheus:v3.11.3@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3"
-	OpenSearchImage           = "opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c"
-	OpenSearchDashboardsImage = "opensearchproject/opensearch-dashboards:3.6.0@sha256:9fe2cbf1d82c3f66a0860ed140415692ce55de4711ed7877ab738e5da1a357c0"
+	OtelCollectorImage        = "otel/opentelemetry-collector-contrib:0.163.2@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
+	PrometheusImage           = "prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2"
+	OpenSearchImage           = "opensearchproject/opensearch:3.9.0@sha256:adfa61f85025d06b4aeb562e7e74fde7e31c437039c93c3862c17e9acebd6c7c"
+	OpenSearchDashboardsImage = "opensearchproject/opensearch-dashboards:3.9.0@sha256:4bdb8ded547ce7f4c379a10261f1b4aad58726900c215be570a7d1fe86f2a7d8"
 	// CurlImage is the throwaway shell the clawker-opensearch-bootstrap
 	// service uses to PUT index templates / ISM policies and POST saved
 	// objects against OpenSearch + Dashboards once they're healthy.
 	// curlimages/curl is Alpine-based, ships /bin/sh + curl, ~10 MB.
-	CurlImage = "curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a"
+	CurlImage = "curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.

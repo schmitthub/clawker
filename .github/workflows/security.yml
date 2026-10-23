@@ -26,7 +26,7 @@ jobs:
       # Pin version for reproducibility. Update periodically:
       #   1. Check latest: https://hub.docker.com/r/semgrep/semgrep/tags
       #   2. Update tag here AND expected version in prek.toml
-      image: semgrep/semgrep:1.156.0@sha256:a3d49dc967b8534a6a76628e50c51cbfe33eb7195dc2feab1fdc0f100852c8ef
+      image: semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
     timeout-minutes: 10
     # Dependabot PRs have limited token permissions and only change
     # go.mod/go.sum — SAST scanning is not useful on dependency changes
@@ -52,7 +52,7 @@ jobs:
 
       - name: Upload Semgrep SARIF
         if: always() && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload Gitleaks SARIF
         if: always() && hashFiles('results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: results.sarif
           category: gitleaks
@@ -121,9 +121,9 @@ jobs:
       - name: Install osv-scanner
         run: |
           set -euo pipefail
-          OSV_VERSION=v2.6.0
+          OSV_VERSION=v2.7.0
           OSV_FILE=osv-scanner_linux_amd64
-          OSV_SHA=ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+          OSV_SHA=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
           curl -sSfL "https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/${OSV_FILE}" -o "${OSV_FILE}"
           echo "${OSV_SHA}  ${OSV_FILE}" | sha256sum --check
           sudo install -m 755 "${OSV_FILE}" /usr/local/bin/osv-scanner

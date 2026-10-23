@@ -34,7 +34,7 @@ priority = "scan"
 # overrides: osv-scanner.toml. CI mirror: security.yml.
 [[repos]]
 repo = "https://github.com/google/osv-scanner"
-rev = "e840a6e8adb14b7777c78e26cfbf6e2abc1d1fc6" # frozen: v2.6.0
+rev = "bfe2f84abd2f09fe0b83ba7f6dad40d296762f40" # frozen: v2.7.0
 
 [[repos.hooks]]
 id = "osv-scanner"
@@ -57,7 +57,7 @@ priority = "fix"
 
 [[repos]]
 repo = "https://github.com/golangci/golangci-lint"
-rev = "27774aaf853a4fd21f1dd5e69439459dc1b26e68" # frozen: v2.13.2
+rev = "25c5369a93aacb8cccea0d46e1569ca4a194564d" # frozen: v2.15.0
 
 [[repos.hooks]]
 id = "golangci-lint-full"
@@ -75,7 +75,7 @@ repo = "local"
 [[repos.hooks]]
 id = "semgrep"
 name = "Semgrep SAST"
-# Expected version: 1.156.0 (must match CI image tag in security.yml)
+# Expected version: 1.182.1 (must match CI image tag in security.yml)
 entry = "semgrep scan --config p/golang --config p/security-audit --error"
 language = "system"
 types = ["go"]
