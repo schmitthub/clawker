@@ -12,7 +12,13 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [2026.10.1] - 2026-10-23
 
-- **Fixed:** The firewall validates upstream server certificates against the Mozilla root store instead of the proxy image's trust store, so certificate chains through the compromised eMudhra intermediate CAs are rejected.
+- **Security:** Hardening for the October 2026 eMudhra intermediate CA compromise. Eight eMudhra intermediates and their Sectigo cross-signs had recoverable private keys, and every root program withdrew the roots that issued them. Clawker now rejects certificate chains through those intermediates at every layer it controls:
+  - The firewall validates upstream server certificates against the current Mozilla root store, written by the control plane and updated with clawker's dependencies, instead of the proxy image's trust store. The Envoy image still trusted the withdrawn roots; verified live against the disclosure site's test hosts.
+  - The CoreDNS image is rebuilt whenever a release changes it, so existing installations receive the patched DNS image instead of the one cached at first install.
+  - Every managed image moves to a patched release: Envoy 1.40.1, Alpine 3.21 and Debian 12 bases with the withdrawn roots removed, Ubuntu 24.04, distroless static, OpenTelemetry Collector 0.163.2, Prometheus 3.15.1, OpenSearch and OpenSearch Dashboards 3.9.0, curl 8.23.0.
+  - Clawker and its embedded binaries build with Go 1.27.3, which drops the withdrawn roots from Go's fallback root bundle. Go module dependencies updated.
+  - Agent images pick up patched runtimes on rebuild: Node 22.23.4 and 24.22.1 (NSS 3.131.1 root store) and uv 0.13.5, which rejects chains through the compromised intermediates.
+  - Run `clawker build` to rebuild agent images. The control plane and firewall update on their next start.
 
 ## [2026.9.4] - 2026-09-23
 
