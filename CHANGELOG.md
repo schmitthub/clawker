@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [Unreleased]
+
+- **Fixed:** The firewall validates upstream server certificates against the Mozilla root store instead of the proxy image's trust store, so certificate chains through the compromised eMudhra intermediate CAs are rejected.
+
 ## [2026.9.4] - 2026-09-23
 
 - **Added:** `clawker licenses` shows the license texts of third-party dependencies included in the binary.

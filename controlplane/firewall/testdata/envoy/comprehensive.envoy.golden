@@ -145,7 +145,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
                 max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -339,7 +339,7 @@ static_resources:
                     validation_context:
                         trust_chain_verification: ACCEPT_UNTRUSTED
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: STATIC
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -377,7 +377,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -415,7 +415,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -454,7 +454,7 @@ static_resources:
                     validation_context:
                         trust_chain_verification: ACCEPT_UNTRUSTED
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -492,7 +492,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -521,7 +521,7 @@ static_resources:
                     validation_context:
                         trust_chain_verification: ACCEPT_UNTRUSTED
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
                 max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
@@ -550,7 +550,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
                 max_session_keys: 0
           type: ORIGINAL_DST
           typed_extension_protocol_options:
@@ -589,7 +589,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -626,7 +626,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -662,7 +662,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
           type: LOGICAL_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -721,7 +721,7 @@ static_resources:
                             - P-384
                     validation_context:
                         trusted_ca:
-                            filename: /etc/ssl/certs/ca-certificates.crt
+                            filename: /etc/envoy/certs/upstream-ca.crt
                 max_session_keys: 0
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:

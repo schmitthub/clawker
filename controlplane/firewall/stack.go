@@ -542,6 +542,9 @@ func (s *Stack) ensureConfigs() (string, error) {
 	if err = RegenerateDomainCerts(rules, certDir, caCert, caKey, s.ca.Reader()); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
+	if err = WriteUpstreamCABundle(certDir, s.ca.Reader()); err != nil {
+		return "", fmt.Errorf("writing upstream CA bundle: %w", err)
+	}
 
 	s.infraCertsReady = false
 	if s.otelCerts == nil {
