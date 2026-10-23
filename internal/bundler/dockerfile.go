@@ -95,7 +95,7 @@ const (
 	// by digest per the version-pinning policy; the digest MUST reference a
 	// multi-arch OCI image index (verify with `docker buildx imagetools
 	// inspect`).
-	SubstrateImage = "debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df"
+	SubstrateImage = "debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8"
 
 	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
 	//
@@ -106,7 +106,7 @@ const (
 	//   docker buildx imagetools inspect golang:<version>-alpine
 	// MediaType must be `application/vnd.oci.image.index.v1+json` before
 	// updating this constant. Single-platform digests break multi-arch builds.
-	DefaultGoBuilderImage = "golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
+	DefaultGoBuilderImage = "golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c"
 )
 
 // DockerfileContext contains the template data for generating a Dockerfile.

@@ -697,7 +697,7 @@ So `post_init` is an init step (one-time) and `pre_run` is a boot step (every st
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `mem:architecture` and `controlplane/firewall/AGENTS.md` for the as-built design.
+The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:<content hash>`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `mem:architecture` and `controlplane/firewall/AGENTS.md` for the as-built design.
 
 **Why this mem:architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).

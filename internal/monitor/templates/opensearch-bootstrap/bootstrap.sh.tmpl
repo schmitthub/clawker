@@ -355,4 +355,58 @@ for NDJSON in "${BOOTSTRAP_DIR}/saved-objects"/*.ndjson; do
   fi
 done
 
+# OpenSearch Dashboards 3.9 (data_views service) builds an index pattern
+# from the saved object's `fields` attribute only; 3.6 fetched the field
+# list from the index when the attribute was absent. The ndjson index
+# patterns ship without `fields` (the list comes from the live mapping,
+# never a hand-maintained copy), so without this step every visualization
+# that names a field fails with "Could not locate that index-pattern-field".
+# Each index was pre-created from its template above, so its mapped fields
+# exist before the first record. The saved-object id == index name for
+# every baked index pattern (core + unit ndjson); a pattern no active unit
+# shipped (404) is skipped. Runs after the import so an overwrite cannot
+# drop the fields again.
+META_FIELDS='meta_fields=_source&meta_fields=_id&meta_fields=_type&meta_fields=_index&meta_fields=_score'
+for tpl in "${BOOTSTRAP_DIR}/index-templates"/*.json; do
+  [ -e "${tpl}" ] || continue
+  idx=$(basename "${tpl}" .json)
+  code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/index-pattern/${idx}")
+  if [ "${code}" = "404" ]; then
+    echo "==> bootstrap: no index pattern ${idx} in workspace — skipping field list"
+    continue
+  fi
+  if [ "${code}" != "200" ]; then
+    echo "    index pattern ${idx} lookup failed: HTTP ${code}"
+    exit 1
+  fi
+  FIELDS=$(curl -fsS -H 'osd-xsrf: true' \
+    "${DASHBOARDS_URL}/w/${WS_ID}/api/index_patterns/_fields_for_wildcard?pattern=${idx}&${META_FIELDS}") || {
+    echo "    field list fetch for ${idx} failed"
+    exit 1
+  }
+  # {"fields":[...]} → the bare array, JSON-string-escaped: OSD stores the
+  # `fields` attribute as a JSON string, not a nested array.
+  FIELDS_JSON=$(printf '%s' "${FIELDS}" | sed -e 's/^{"fields":\(.*\)}$/\1/' -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+  case "${FIELDS_JSON}" in
+    '['*']') ;;
+    *)
+      echo "    unexpected _fields_for_wildcard response for ${idx}:"
+      echo "${FIELDS}"
+      exit 1
+      ;;
+  esac
+  printf '{"attributes":{"fields":"%s"}}' "${FIELDS_JSON}" > /tmp/ip_fields.json
+  code=$(curl -sS -o /tmp/ip_put -w '%{http_code}' -X PUT \
+    "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/index-pattern/${idx}" \
+    -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
+    --data-binary @/tmp/ip_fields.json)
+  if [ "${code}" != "200" ]; then
+    echo "    index pattern ${idx} field list write failed: HTTP ${code}"
+    cat /tmp/ip_put
+    exit 1
+  fi
+  echo "==> bootstrap: wrote field list into index pattern ${idx}"
+done
+
 echo "==> bootstrap: complete"

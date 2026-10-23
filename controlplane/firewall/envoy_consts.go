@@ -125,9 +125,11 @@ const (
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
 	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
 
-	// upstreamTrustedCAFile is the system CA bundle Envoy validates re-encrypted
-	// upstream TLS against (the real server's real cert — NOT the MITM CA).
-	upstreamTrustedCAFile = "/etc/ssl/certs/ca-certificates.crt"
+	// upstreamTrustedCAFile is the CP-written Mozilla root bundle Envoy validates
+	// re-encrypted upstream TLS against (the real server's real cert — NOT the
+	// MITM CA). It lives in the bind-mounted certs dir (upstreamca.go), not in
+	// the Envoy image: the image's Debian bundle lags the root program.
+	upstreamTrustedCAFile = "/etc/envoy/certs/" + UpstreamCABundleFile
 
 	// firewallBlockedBody is the response body for every clawker direct_response
 	// 403 (per-path deny, deny_all vhost). Generic and non-fingerprinting — an

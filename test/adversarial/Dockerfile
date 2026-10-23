@@ -2,7 +2,7 @@
 # Captures exfil attempts in SQLite across multiple protocols
 
 # Build stage
-FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -16,7 +16,7 @@ COPY attacker-server/main.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /attacker-server .
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget \

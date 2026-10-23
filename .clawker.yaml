@@ -37,7 +37,7 @@ build:
     root_run:
       - npm install -g wscat
       - |-
-        GH_VERSION=2.100.0 && \
+        GH_VERSION=2.103.0 && \
           ARCH=$(dpkg --print-architecture) && \
           GH_FILE="gh_${GH_VERSION}_linux_${ARCH}.tar.gz" && \
           CHECKSUMS_FILE="gh_${GH_VERSION}_checksums.txt" && \
@@ -107,7 +107,9 @@ build:
       # Proto tools: run `make proto-tools` for the pinned buf, protoc-gen-go, and protoc-gen-go-grpc.
       # Situational: local release dry run. Enable when needed.
       # go install github.com/goreleaser/goreleaser/v2@latest
-      - uv tool install semgrep
+      # Python 3.15 reports RLIM_INFINITY as 2^64-1; pysemgrep sets that/3 as the
+      # stack limit and semgrep-core segfaults (semgrep/semgrep#11979). Pin 3.14.
+      - uv tool install semgrep --python 3.14
       # Situational: Rust toolchain for the QUIC (quiche) firewall UAT client. Enable when needed.
       # curl https://sh.rustup.rs -sSf | sh -s -- -y
       - |-

@@ -1,6 +1,6 @@
 # coredns-clawker Binary
 
-Custom CoreDNS build embedding two in-tree plugins. Built as a static Linux binary by `make coredns-binary` → `controlplane/firewall/assets/coredns-clawker`, then embedded into the clawker release via `controlplane/firewall/embed_coredns.go` (`//go:embed`). At runtime, `firewall.Stack` builds the `clawker-coredns:latest` image on demand from that asset and manages its container lifecycle on `clawker-net`.
+Custom CoreDNS build embedding two in-tree plugins. Built as a static Linux binary by `make coredns-binary` → `controlplane/firewall/assets/coredns-clawker`, then embedded into the clawker release via `controlplane/firewall/embed_coredns.go` (`//go:embed`). At runtime, `firewall.Stack` builds the `clawker-coredns:<content hash>` image on demand from that asset (the tag hashes the Dockerfile and binary, so each release gets its own image) and manages its container lifecycle on `clawker-net`.
 
 This binary is **not** invoked from the host CLI. It runs only inside the CoreDNS container managed by the CP firewall stack.
 

@@ -20,6 +20,7 @@
 - Exact hosts use exact certificate handling. Wildcard HTTPS/WSS rules use the SDS path to obtain a leaf for the requested SNI, including deeper names.
 - `sds_server.go` serves allowed names from the shared `CAStore`. CP listener wiring is in `internal/controlplane/cmd.go`.
 - `controlplane/sdscerts/` owns the dedicated Envoy SDS client identity. Do not substitute the telemetry client certificate.
+- Envoy validates upstream (re-encrypted) server certificates against `upstream-ca.crt`, which CP writes into the certs directory from the Mozilla root store module (`x509roots/fallback/bundle`, `upstreamca.go`). Never point `trusted_ca` at the Envoy image's `/etc/ssl/certs/ca-certificates.crt`: that Debian bundle lags the root program (eMudhra incident, October 2026).
 - Missing SDS support must not stop unrelated CP services.
 - `ebpf/netlogger/` exports kernel egress events. Its failure must not disable enforcement.
 - Package contracts: `controlplane/firewall/AGENTS.md`, `controlplane/firewall/ebpf/AGENTS.md`, `controlplane/sdscerts/AGENTS.md`.

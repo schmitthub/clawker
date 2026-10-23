@@ -515,6 +515,11 @@ func RotateCA(certDir string, rules []config.EgressRule, reader sdscerts.FileOwn
 	if err = RegenerateDomainCerts(rules, certDir, caCert, caKey, reader); err != nil {
 		return fmt.Errorf("regenerating domain certs: %w", err)
 	}
+	// RemoveAll above took the upstream root bundle with it; Envoy's reencrypt
+	// clusters need it back before the stack reloads.
+	if err = WriteUpstreamCABundle(certDir, reader); err != nil {
+		return fmt.Errorf("regenerating upstream CA bundle: %w", err)
+	}
 
 	return nil
 }

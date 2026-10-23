@@ -10,6 +10,8 @@
 - The collector endpoint is a base URL from config. Do not concatenate per-signal endpoints in bundler code.
 - Trusted CP/Envoy/CoreDNS telemetry and agent telemetry have separate paths. Certificate provisioning packages under `controlplane/` have separate roles.
 - Live ingest, routing, and certificate access need runtime proof. Template unit tests do not establish those results.
+- Baked index patterns carry no `fields`. OpenSearch Dashboards 3.9 (data_views) reads an index pattern's field list from the saved object only and does not fetch it from the index at load time (3.6 did). Bootstrap writes each index pattern's field list from the live mapping after the saved-object import; without it every visualization that names a field fails with "Could not locate that index-pattern-field". Keep this step when the Dashboards image changes.
+- A kept OpenSearch volume carries its ISM state: the 7-day retention deletes aged indices under a running stack. Monitoring UAT after a template change starts from `monitor down --volumes`.
 - Package contract: `internal/monitor/AGENTS.md`. Runtime checks: `internal/monitor/AGENTS.md` → Runtime UAT. Detailed map and verification workflow: `.agents/skills/monitoring-checks/SKILL.md`.
 - For component resolution: `mem:bundle/core`.
 - For eBPF egress events and SDS identity separation: `mem:controlplane/firewall/core`.

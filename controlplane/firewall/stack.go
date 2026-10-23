@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,8 +35,13 @@ import (
 
 // Stack lifecycle + image constants.
 const (
-	envoyImage      = "envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
-	corednsImageTag = "clawker-coredns:latest"
+	envoyImage = "envoyproxy/envoy:distroless-v1.40.1@sha256:6cf314259a0adde2386baafeeeb041ed37a30f6bdd935cff36cd38a1e15acab1"
+	// corednsImageRepo is the repository of the CoreDNS image that Stack
+	// builds from the embedded binary. The tag is content-addressed (see
+	// corednsImageRefFor), so a release that embeds a new binary or base
+	// image gets a new image instead of the one an older release cached.
+	corednsImageRepo   = "clawker-coredns"
+	corednsImageTagLen = 12
 
 	envoyContainerName   = consts.ContainerEnvoy
 	corednsContainerName = consts.ContainerCoreDNS
@@ -98,7 +105,10 @@ const (
 // Stack is not safe for concurrent EnsureRunning + Stop calls; callers
 // serialize via their own mutex.
 type Stack struct {
-	docker    *docker.Client
+	docker *docker.Client
+	// corednsImage is the content-addressed CoreDNS image reference for
+	// this binary; used for inspect, build, and the container spec.
+	corednsImage string
 	cfg       config.Config
 	log       *logger.Logger
 	store     EgressRulesStore
@@ -214,6 +224,7 @@ func NewStack(
 	}
 	return &Stack{
 		docker: dc, cfg: cfg, log: log, store: store, ca: ca, otelCerts: otelCerts, sdsCerts: sdsCerts, idFor: idFor,
+		corednsImage:    corednsImageRefFor(corednsDockerfile, CoreDNSClawkerBinary),
 		idForUnset:      idForUnset,
 		infraCertsReady: false,
 		sdsCertsReady:   false,
@@ -541,6 +552,9 @@ func (s *Stack) ensureConfigs() (string, error) {
 
 	if err = RegenerateDomainCerts(rules, certDir, caCert, caKey, s.ca.Reader()); err != nil {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
+	}
+	if err = WriteUpstreamCABundle(certDir, s.ca.Reader()); err != nil {
+		return "", fmt.Errorf("writing upstream CA bundle: %w", err)
 	}
 
 	s.infraCertsReady = false
@@ -925,7 +939,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			s.cfg.MonitoringConfig().OtelInfraPort))
 	}
 	return containerSpec{
-		image:     corednsImageTag,
+		image:     s.corednsImage,
 		user:      "",
 		staticIP:  netInfo.CoreDNSIP,
 		networkID: netInfo.NetworkID,
@@ -1197,17 +1211,27 @@ func drainPullStream(r io.Reader, ctxMsg string) error {
 	}
 }
 
+// corednsImageRefFor returns the CoreDNS image reference for the given
+// Dockerfile and embedded binary: the repository plus a tag derived from
+// their content hash.
+func corednsImageRefFor(dockerfile string, binary []byte) string {
+	h := sha256.New()
+	h.Write([]byte(dockerfile))
+	h.Write(binary)
+	return corednsImageRepo + ":" + hex.EncodeToString(h.Sum(nil))[:corednsImageTagLen]
+}
+
 // ensureCorednsImage builds the custom CoreDNS image from the embedded
-// coredns-clawker binary if it is not already present.
+// coredns-clawker binary if the image for this binary is not already present.
 func (s *Stack) ensureCorednsImage(ctx context.Context) error {
-	if _, err := s.docker.ImageInspect(ctx, corednsImageTag); err == nil {
+	if _, err := s.docker.ImageInspect(ctx, s.corednsImage); err == nil {
 		return nil
 	} else if !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("checking %s image: %w", corednsImageTag, err)
+		return fmt.Errorf("checking %s image: %w", s.corednsImage, err)
 	}
 
 	if len(CoreDNSClawkerBinary) == 0 {
-		return fmt.Errorf("%s binary not embedded — run 'make coredns-binary' then rebuild clawker", corednsImageTag)
+		return fmt.Errorf("%s binary not embedded — run 'make coredns-binary' then rebuild clawker", corednsImageRepo)
 	}
 
 	buildCtx, err := corednsBuildContext()
@@ -1215,7 +1239,7 @@ func (s *Stack) ensureCorednsImage(ctx context.Context) error {
 		return fmt.Errorf("creating coredns build context: %w", err)
 	}
 	resp, err := s.docker.ImageBuild(ctx, buildCtx, whail.ImageBuildOptions{
-		Tags:           []string{corednsImageTag},
+		Tags:           []string{s.corednsImage},
 		Dockerfile:     "Dockerfile",
 		Remove:         true,
 		ForceRemove:    true,
@@ -1249,7 +1273,7 @@ func (s *Stack) ensureCorednsImage(ctx context.Context) error {
 
 // corednsDockerfile pins the alpine base by digest to match the
 // equivalent image produced elsewhere in the codebase.
-const corednsDockerfile = "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\n" +
+const corednsDockerfile = "FROM alpine:3.21@sha256:bbfcd601d7cd20d35bb0b8b866ad1a8a0d107ca3e1c20870c75c5ce2c1186d30\n" +
 	"COPY coredns /usr/local/bin/coredns\n" +
 	"ENTRYPOINT [\"/usr/local/bin/coredns\"]\n"
 
