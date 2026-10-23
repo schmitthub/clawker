@@ -4,7 +4,7 @@ Pipeline contract (collector routing, indices, record schema, runtime UAT): `int
 
 Emits one structured `dns.query` log record per DNS query handled by CoreDNS, exported over OTLP/gRPC + mTLS to the CP-only collector receiver. Installed as the `otel` directive in every server block of the firewall Corefile (the first directive — runs after every other plugin has produced its final rcode + answer set).
 
-Runtime owner: `controlplane/firewall.Stack` builds `clawker-coredns:latest`, manages its lifecycle, bind-mounts the mTLS material (leaf cert + key + CA) under `/etc/clawker/auth/coredns/`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.MonitoringConfig().OtelInfraPort`.
+Runtime owner: `controlplane/firewall.Stack` builds `clawker-coredns:<content hash>`, manages its lifecycle, bind-mounts the mTLS material (leaf cert + key + CA) under `/etc/clawker/auth/coredns/`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.MonitoringConfig().OtelInfraPort`.
 
 Purpose: feed the monitoring stack with a per-query log stream that includes client IP, zone, query name, qtype, rcode, answer count + answers, duration, and resolver error. The plaintext stdout `log` directive is kept alongside for `docker logs clawker-coredns` triage only — the collector does not scrape it (no filelog receiver in the OpenSearch pipeline).
 
