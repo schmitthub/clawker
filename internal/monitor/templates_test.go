@@ -293,6 +293,53 @@ monitoring:
 	}
 }
 
+// OpenSearch Dashboards 3.9 builds an index pattern from the `fields`
+// attribute of its saved object and no longer fetches the field list from
+// the index when that attribute is absent (3.6 did). The baked index
+// patterns ship without `fields`, so bootstrap must write the live field
+// list into every index pattern after the import, or every visualization
+// that names a field fails with "Could not locate that index-pattern-field".
+func TestRenderTemplate_BootstrapWritesIndexPatternFields(t *testing.T) {
+	data, err := NewMonitorTemplateData(testMonitoring(t, ""), nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
+	raw, err := OpenSearchBootstrapFS.ReadFile("templates/opensearch-bootstrap/bootstrap.sh.tmpl")
+	if err != nil {
+		t.Fatalf("read bootstrap template: %v", err)
+	}
+	result, err := RenderTemplate("bootstrap.sh", string(raw), data)
+	if err != nil {
+		t.Fatalf("RenderTemplate failed: %v", err)
+	}
+
+	importStep := strings.Index(result, "/api/saved_objects/_import?overwrite=true")
+	fieldsFetch := strings.Index(result, "/api/index_patterns/_fields_for_wildcard?pattern=")
+	// The step reads the index pattern before it writes it; the PUT is the
+	// last reference to the saved-object path.
+	fieldsWrite := strings.LastIndex(result, "/api/saved_objects/index-pattern/")
+	if importStep < 0 || fieldsFetch < 0 || fieldsWrite < 0 {
+		t.Fatalf(
+			"bootstrap.sh must import saved objects, fetch index-pattern fields, and write them: import=%d fetch=%d write=%d",
+			importStep,
+			fieldsFetch,
+			fieldsWrite,
+		)
+	}
+	if fieldsFetch < importStep || fieldsWrite < fieldsFetch {
+		t.Errorf("index-pattern field refresh must run after the saved-object import: import=%d fetch=%d write=%d",
+			importStep, fieldsFetch, fieldsWrite)
+	}
+	for _, s := range []string{
+		"/w/${WS_ID}/api/index_patterns/_fields_for_wildcard",
+		"/w/${WS_ID}/api/saved_objects/index-pattern/",
+	} {
+		if !strings.Contains(result, s) {
+			t.Errorf("index-pattern field refresh must be workspace-scoped: %q not found", s)
+		}
+	}
+}
+
 func TestNewMonitorTemplateData_OpenSearchImages(t *testing.T) {
 	mon := testMonitoring(t, `
 monitoring:

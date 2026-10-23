@@ -157,7 +157,7 @@ templates/opensearch-bootstrap/
   datasources/
     clawker_prometheus.json.tmpl       # Prometheus connector for SQL/PPL + Dashboards Metrics Analytics
   saved-objects/
-    clawker.ndjson                     # Generic saved objects (infra index patterns + Clawker Networking dashboard); one workspace-scoped _import per *.ndjson file
+    clawker.ndjson                     # Generic saved objects (infra index patterns + Clawker Networking dashboard); one workspace-scoped _import per *.ndjson file. Index patterns carry no `fields`; bootstrap writes the live field list after the import
 ```
 
 Claude Code artifacts (claude-code index template, claude-code-prompt-nest pipeline, both CC dashboards, all Explore PROMQL panels) live in the embedded floor's `claude-code` monitoring unit (`internal/bundle/assets/monitoring/claude-code/` — a peer of the harnesses/stacks floor dirs, not nested inside the claude harness) and are overlaid into this tree only when the unit is active. Index-template basenames MUST equal their index name (`index_patterns` = exactly the basename) — bootstrap.sh derives its index pre-create list from the basenames.
@@ -183,6 +183,7 @@ opensearch-node (service_healthy via /_cluster/health)     prometheus (service_s
    - POST /api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true (global; referenced by workspace settings.dataConnections)
    - POST /api/workspaces (skip-if-exists by name "Clawker"); capture workspace id from /api/workspaces/_list
    - POST /w/<wsId>/api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true) — workspace-scoped so imported SOs land with workspaces:[wsId] and are visible in the Clawker workspace UI
+   - for each pre-created index: GET /w/<wsId>/api/index_patterns/_fields_for_wildcard?pattern=<index>, then PUT /w/<wsId>/api/saved_objects/index-pattern/<index> with the result as the `fields` attribute. Dashboards 3.9 (data_views) builds an index pattern from its stored `fields` only and no longer fetches the list from the index at load time (3.6 did); the ndjson index patterns ship without `fields`, so without this write every visualization that names a field fails with "Could not locate that index-pattern-field". Saved-object id == index name for every baked index pattern; a 404 (unit not active) is skipped
    - exit 0
                                    │  (service_completed_successfully)
                                    ▼
