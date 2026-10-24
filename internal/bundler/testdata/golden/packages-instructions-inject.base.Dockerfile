@@ -102,18 +102,17 @@ RUN echo after-user-setup
 # (hook scripts, seed staging, post-init marker) copies up the image's content
 # and ownership on first use, and must stay user-writable even for a harness
 # that stages no seeds there.
-# /run/clawker (bootstrap dir, root-owned 0700 — only clawkerd-as-root reads it) and
-# /var/log/clawker (log file, root-owned — clawkerd writes the rotated log as root)
-# are pre-created so clawkerd-as-PID-1 doesn't need mkdir at boot. /var/run/clawker
-# is chowned to ${USERNAME} below so the user CMD (spawned by clawkerd with a
-# privilege drop to ${USERNAME}) can read/write runtime state alongside the ready
-# marker that clawkerd-as-root writes; the HEALTHCHECK probe itself runs as root
-# (the harness image's final USER is root) and stats the ready marker
-# regardless of ownership. Harness config-volume dirs are created in the
-# harness image, next to the blocks that use them.
-RUN mkdir -p /home/${USERNAME}/.clawker /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /workspace /run/clawker /var/log/clawker /var/run/clawker && \
+# /run/clawker (root-owned 0755; holds the root-only bootstrap dir and the ready
+# marker clawkerd-as-root writes) and /var/log/clawker (log file, root-owned —
+# clawkerd writes the rotated log as root) are pre-created so clawkerd-as-PID-1
+# doesn't need mkdir at boot. /var/run is a symlink to /run, so /run/clawker is
+# never chowned to ${USERNAME}: the user CMD has no runtime state there, and the
+# HEALTHCHECK probe runs as root (the harness image's final USER is root).
+# Harness config-volume dirs are created in the harness image, next to the
+# blocks that use them.
+RUN mkdir -p /home/${USERNAME}/.clawker /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /workspace /run/clawker /var/log/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
-    chown -R ${USERNAME}:${USERNAME} /workspace /home/${USERNAME}/.clawker /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
+    chown -R ${USERNAME}:${USERNAME} /workspace /home/${USERNAME}/.clawker /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh
 
 # Persist bash history
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
