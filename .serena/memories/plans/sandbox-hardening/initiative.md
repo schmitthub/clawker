@@ -37,7 +37,7 @@ conversation. Do not start the next task after wrap-up.
 |------|--------|-------|
 | Task 1: Remove sudo from the base image (item 6) | `complete` | Claude (2026-10-24) |
 | Task 2: Root-owned `/run/clawker` and symlink-safe root writes (item 5) | `complete` | Claude (2026-10-24) |
-| Task 3: Per-container host-proxy bypass from project config (item 4) | `in_progress` | Claude (2026-10-24) |
+| Task 3: Per-container host-proxy bypass from project config (item 4) | `complete` | Claude (2026-10-24) |
 | Task 4: `AgentService.Export` RPC, CP ingest handler, collector agent receiver (item 2, CP side) | `pending` | — |
 | Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `pending` | — |
 | Task 6: Monitoring stack off clawker-net (item 1) | `pending` | — |
@@ -54,6 +54,8 @@ Append findings that the next task needs, with the source or task number.
 - (plan) The CLI mints the agent leaf (`internal/auth/agent_cert.go`); the CLI root key never enters CP. CP holds only the infra intermediate key.
 - (plan) clawkerd has no persistent connection to CP. `clawkerd/register.go` dials for the one-time Register and closes. The Hydra assertion is single-use, so clawkerd cannot obtain a second bearer token.
 - (Task 2) `clawker-socket-server` is stdlib-only (compiled standalone in the image), so its `*at` calls use package `syscall` with local `AT_FDCWD`/`AT_SYMLINK_NOFOLLOW` consts and the file carries `//go:build linux`. `syscall.Unlinkat` on Linux has no flags argument.
+- (Task 3) `FirewallEnableRequest.host_proxy` is `optional`; every CLI path builds the request with `adminv1.NewFirewallEnableRequest(cid, cfg.SecurityConfig())` (user ruling: always send the project value), so `firewall enable --agent` applies a `clawker.yaml` edit to a running container. The CP replays the `EnrollmentStore` record only when the field is unset. Task 7 passes CP IP and ports at both enroll sites: `FirewallEnable` and `reenrollConfigFn` in `controlplane/firewall/handler.go`.
+- (Task 3) Lint runs `new-from-merge-base: main`: an empty composite literal or a sparse one in NEW lines trips `exhaustruct_v5` even with a function-level `//nolint`; use `new(T)` plus field assignment, or fill every field. Semgrep blocks `net.Listen` on `0.0.0.0` in tests.
 - (plan) CP already reaches the collector's `otlp/infra` receiver through `host.docker.internal:<OtelInfraPort>` (published on `127.0.0.1`), not over clawker-net (`controlplane/manager/cp_container.go:448-467`).
 
 ## Context for All Agents
@@ -183,14 +185,14 @@ Tests pass. Runtime: from a container whose project has `enable_host_proxy: fals
 
 ### Results and Wrap Up
 
-- Acceptance results: Not run.
-- Reviews and findings: Not reviewed.
-- Blockers and next action: None recorded.
-- Commit: Not made.
+- Acceptance results (2026-10-24): `go test ./controlplane/firewall/ ./internal/cmd/container/... ./internal/cmd/firewall/... ./api/... ./internal/controlplane/ -count=1` pass; pre-commit `make test` and `golangci-lint` pass (0 issues on touched packages). Mutation checks: removing the `enabled` gate in `resolveHostProxy`, making the sweep ignore the record, and enrolling a lane-on agent without its bypass on a resolve failure each fail a test. `go test ./test/e2e/... -run HostProxy` and the runtime curl checks NOT run (no Docker socket in the agent container); deferred to Task 8 by user ruling.
+- Changes: `admin.proto` `optional bool host_proxy`; `adminv1.NewFirewallEnableRequest`; `controlplane/firewall/enrollment.go` (+ mock, tests); handler `enrolledHostProxy`/`reenrollConfigFn`/`envoyEgressPort`/`portUint16`; `buildEnforcement` returns the store and `run()` wires `SubscribeEnrollmentEvict`; `EnableOptions`/`BypassOptions` gained `Config`; e2e `TestFirewall_HostProxyPerContainer`; AGENTS (controlplane, firewall, cmd/firewall, test), docs (`firewall.mdx`, `credentials.mdx`, `threat-model.mdx` one clause).
+- Reviews and findings: code-reviewer: `firewall enable` and bypass stop/expiry sent no value and would have stripped the lane → field made `optional` and, by user ruling, every caller sends the project value; store mutex removed (engine verbs are atomic, keys are per container); helper placement fixed. test-hunter: resolve-failure arm uncovered → `ReenrollResolveFailure_IsolatedToBypassAgents`; evict negatives were sleep-based → sentinel-ordered; added unset-field and persist-failure handler cases; e2e drops the redundant `firewall up` and reuses `fwSetup`. Kept as-is: `//nolint:ireturn` on the two store constructors and `Fields()`, the same directive the sibling stores carry under the storage contract (user to confirm).
+- Commit: `95f87576` on `feat/host-proxy-per-container` (stacked on #590).
 
 ### Handoff Prompt
 
-Continue `mem:plans/sandbox-hardening/initiative` on branch `feat/mythos-hardening`. Task 3 complete. Next: Task 4 (`AgentService.Export` and the CP ingest handler). Read the task's design memory first.
+Continue `mem:plans/sandbox-hardening/initiative` on a new stack layer above `feat/host-proxy-per-container`. Task 3 complete. Next: Task 4 (`AgentService.Export` and the CP ingest handler). Read the task's design memory first.
 
 ---
 
