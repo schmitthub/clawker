@@ -56,6 +56,16 @@ message ExportResult {}
 - Env: `internal/bundler/dockerfile.go` `OtelEndpoint` becomes the loopback URL const; `OtelCollectorURL` callers for the agent endpoint go away. `OTEL_RESOURCE_ATTRIBUTES` may still carry `project=`/`agent=` for local SDK use; CP overwrites them.
 - Tests: `httptest` against the relay with a fake `AgentServiceClient`; content-type, path, size, gzip, and error-mapping cases; loopback-only bind assertion.
 
+## As built (Task 4, 2026-10-24)
+
+- Handler placement: `controlplane/agent/export_handler.go` holds the RPC (identity + thumbprint gate, status mapping) and delegates to the new leaf package `controlplane/ingest` (decode, stamp, forward). `agent` imports `ingest` for `Identity` and `ErrMalformedBody`; `ingest` imports no CP package. Interface `agent.TelemetryIngest` + moq mock.
+- Wire as designed; `ExportMaxBodyBytes` (4 MiB) and `ExportMaxMessageBytes` (listener cap) live in `api/agent/v1/agent.go`. Handler rejects over-cap bodies with `ResourceExhausted` before any identity work.
+- User ruling: monitoring is optional and the CP must never make the agent SDK retry forever. Built as a breaker in the gateway (`TripThreshold` 3, `ProbeInterval` 1m): open = drop with a success result, one probe per interval, probe success closes it. No startup preflight; the dial is lazy. Netlogger's permanent-trip model was not copied because `monitor up` after CP boot must start flowing without a CP restart.
+- Metrics: the CP has no Prometheus registry or scrape endpoint, so `ingest.Metrics` counters (`exported`, `forward_failures`, `malformed`, `dropped` by `signal`) are unregistered like netlogger's. Identity rejections are structured log events (`agent_export_unregistered`, `agent_export_thumbprint_mismatch`, `agent_export_lookup_error`, `agent_export_peer_cert_missing`), not counters.
+- Collector: `otlp/agents` receiver with `max_recv_msg_size_mib: 8`; `logs/agents` exports to `routing/untrusted` (rename belongs to Task 6 when the untrusted receivers go). Compose publishes the port inside the existing `{{if .OtelInfraPort}}` TLS block. `resource/agent_gateway` processor as designed.
+- CP endpoint comes from `cfg.MonitoringConfig().OtelAgentIngestPort` directly (the CP reads settings.yaml); no new env var. TLS from `otelcerts.Service.LoadTLSConfig("cp")`.
+- Dashboards: no saved object pins `untrusted_otlp`; nothing to change.
+
 ## Out of scope
 
 - Any auth or scoping for the host proxy.
