@@ -11,7 +11,8 @@ Container-side scripts and binaries that communicate with the clawker host proxy
 | `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
 | `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port with dual-stack fallback |
 | `cmd/callback-forwarder/main_test.go` | Unit tests for callback-forwarder (URL building, IPv4/IPv6 fallback, error aggregation) |
-| `cmd/clawker-socket-server/main.go` | Unix socket server — creates SSH/GPG sockets, forwards via muxrpc protocol over stdin/stdout |
+| `cmd/clawker-socket-server/main.go` | Unix socket server — creates SSH/GPG sockets with symlink-safe `*at` writes, forwards via muxrpc protocol over stdin/stdout |
+| `cmd/clawker-socket-server/main_test.go` | Unit tests for the symlink-safe home-directory writes (Linux only) |
 
 ## API
 
@@ -73,6 +74,8 @@ The socket server is the container-side component of the socketbridge system. It
 4. Kills any pre-existing gpg-agent via `gpgconf --kill gpg-agent` (GPG's sanctioned mechanism — targets only the agent for the specific GNUPGHOME, no sudo needed)
 5. Forwards socket connections through muxrpc messages over stdin/stdout to the host-side bridge
 6. Logs to both stderr AND `/var/log/clawker/socket-server.log` (simple 1 MiB rotation)
+
+The binary runs as root inside the agent-owned home, so every write is symlink-safe: `resolveSocketTarget` accepts only `/home/<user>/<dir>/<file>`; `openUserDir` opens the home and the directory with `O_DIRECTORY|O_NOFOLLOW` (creating the directory 0700 with `Mkdirat` when absent) and refuses a symlink, a non-directory, a foreign owner, or group/other write bits; `userDir.writeFile` and `userDir.listenUnix` use `Fstatat`/`Unlinkat`/`Openat(O_CREAT|O_EXCL|O_NOFOLLOW)` relative to that descriptor and bind the socket through `/proc/self/fd/<dirfd>/<name>` under a `0177` umask. Ownership is always changed through a descriptor (`Fchown` on the dir and file; `O_PATH` open checked as `S_IFSOCK` then `Fchownat(AT_EMPTY_PATH)` for the socket node), never by name, so a hard link swapped in by the agent cannot redirect a chown. Any refusal fails the bridge start with the path in the log. The file is `//go:build linux` because these syscalls are Linux-only. Tests: `cmd/clawker-socket-server/main_test.go`.
 
 The host-side bridge (`internal/socketbridge`) launches this binary via `docker exec` and communicates using a binary muxrpc protocol.
 
