@@ -272,11 +272,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
+		// No WithLock: project files live in the user's repository, and a lock
+		// file next to them would have to be committed or gitignored.
 		storage.WithHeader(schemaHeader(consts.ProjectSchemaFile)),
-		// Concurrent processes write this file (project init, alias set/delete,
-		// bundle install, the store editor), so every write must take the flock
-		// around its read-modify-write cycle.
-		storage.WithLock(),
 	)
 	projectStore, err := storage.New[Project](projectOpts...)
 	if err != nil {
@@ -299,8 +297,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
 		storage.WithHeader(schemaHeader(consts.SettingsSchemaFile)),
-		// Same cross-process exposure as the project store: the CLI, the store
-		// editor, and the daemons all load and write settings.yaml.
+		// The CLI, the store editor, and the daemons all load and write
+		// settings.yaml. The file is in the config dir, not in a repository, so
+		// its lock file is harmless.
 		storage.WithLock(),
 	)
 	settingsStore, err := storage.New[Settings](settingsOpts...)

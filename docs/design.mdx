@@ -89,7 +89,7 @@ Container runtime state lives in Docker:
 - Labels (project, agent, metadata)
 - Volumes (workspace, config, history)
 
-Configuration and project registration persist in small local YAML files (project `clawker.yaml`, user `settings.yaml`, the project registry `registry.yaml`). Writes to these files are serialized with advisory file locks, so multiple Clawker instances can operate concurrently with no synchronization issues.
+Configuration and project registration persist in small local YAML files (project `clawker.yaml`, user `settings.yaml`, the project registry `registry.yaml`). Every write is atomic, so a reader never sees a partial file. Writes to `settings.yaml` and `registry.yaml` also take advisory file locks, so multiple Clawker instances can write them concurrently. Project config files take no lock, so Clawker never puts a lock file in your repository.
 
 ## Command Taxonomy
 
