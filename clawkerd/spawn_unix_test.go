@@ -432,3 +432,18 @@ func (b *lockedBuf) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+func TestTouchReadyFile_RefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	link := filepath.Join(dir, "ready")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := touchReadyFile(link); err == nil {
+		t.Fatal("touchReadyFile followed a symlink")
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink target was created: %v", err)
+	}
+}
