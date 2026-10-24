@@ -6,6 +6,19 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 )
 
+// NewFirewallEnableRequest builds the per-container enroll request every CLI
+// path sends (container start, `firewall enable`, bypass stop and expiry).
+// The project's security.enable_host_proxy rides along because the CP
+// decides the eBPF host-proxy bypass per container and cannot read
+// clawker.yaml itself. Sending it from every path makes `firewall enable`
+// the way to apply a clawker.yaml edit to a running container.
+func NewFirewallEnableRequest(containerID string, security config.SecurityConfig) *FirewallEnableRequest {
+	req := new(FirewallEnableRequest)
+	req.ContainerId = containerID
+	req.HostProxy = new(security.HostProxyEnabled())
+	return req
+}
+
 // EgressRuleToProto copies one config.EgressRule → *EgressRule. The wire and
 // config representations track identical field sets; these mappers live beside
 // the generated bindings so the gRPC types stay confined to the transport edge
