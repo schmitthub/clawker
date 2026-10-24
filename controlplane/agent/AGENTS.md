@@ -72,13 +72,15 @@ now unexported helpers behind `Start`.
 | `boot_steps.go` | `bootPlan` — the static every-start boot step list (docker-socket/pre-run) the Executor runs on each start |
 | `lister.go` | `ContainerLister` + `ListOpts` + `NewContainerLister` — Docker lookup of `purpose=agent` container IDs, used by `Start`/`DialAllRunning` |
 | `repository.go` | `AgentStore` (the `AgentEventState` worldview map) + `Repository` aggregator. `Subscribe`/`SubscribeDockerEvents` wire the stores to the agent + docker topics; `project` is the sole mutation path that folds an `AgentEvent` into the worldview |
-| `register_handler.go` | `Handler` (AgentService.Register handler) — consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row |
+| `register_handler.go` | `Handler` (the AgentService server: Register + Export) — Register consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row. Declares the `TelemetryIngest` interface (`Handler.Ingest`, nil = degraded) |
+| `export_handler.go` | `Handler.Export` — the agent telemetry lane. Reads the resolved container, captures the live peer thumbprint, compares it against the registry row (`verifyExportPeer`), then hands the body + CP-resolved `ingest.Identity` to `Handler.Ingest`. Status map: identity rejections `PermissionDenied` (uniform envelope, per-reason `event=agent_export_*`), unknown signal / undecodable body `InvalidArgument`, body over `agentv1.ExportMaxBodyBytes` `ResourceExhausted`, nil or failing gateway `Unavailable` |
 | `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabel`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver. `ErrInvalidAgentLabel` fires only on a missing/malformed `dev.clawker.agent` label; a missing `dev.clawker.project` label is the legitimate global-scope-agent signal (2-segment naming) and resolves cleanly |
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
 | `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |
 | `exec.go` | `Executor` + static `plan()` of `ShellCommand` exec steps dispatched to clawkerd over the Session. |
 | `mocks/registry_mock.go` | moq-generated `RegistryMock` (test-only file in the `agent/mocks` subpackage so dependents can import it) |
+| `mocks/telemetry_ingest_mock.go` | moq-generated `TelemetryIngestMock` for Export handler tests |
 
 ## Identity contract
 
@@ -208,12 +210,30 @@ compares only thumbprints against the row. Trust-anchor drift is
 caught upstream by `IdentityInterceptor` on the agent's next inbound
 RPC (e.g. a subsequent Register retry).
 
+## Export flow (agent telemetry lane)
+
+The agent SDK never reaches the collector. clawkerd relays each OTLP
+batch to `AgentService.Export(signal, body)`; `IdentityInterceptor`
+runs its universal gate; `Handler.Export` adds the registry thumbprint
+check (the live peer cert must be the one Register bound to this
+container — the same check the dialer makes at Hello) and forwards the
+body with the CP-resolved identity through `TelemetryIngest`
+(`controlplane/ingest.Gateway`), which overwrites `project`, `agent`,
+`container_id`, `ingest_source` on every resource and pushes to the
+collector's `otlp/agents` receiver with the CP's infra leaf. Export is
+`ScopePublic`: clawkerd spends its single-use Hydra assertion on
+Register and cannot mint a second token; mTLS + the interceptor + the
+thumbprint check are the gate. The agent listener caps messages at
+`agentv1.ExportMaxMessageBytes`.
+
 ## Method scopes + interceptor
 
 - `agentv1.AgentMethodScopes()` (in `api/agent/v1`, beside the proto
   bindings) maps `/clawker.agent.v1.AgentService/Register` →
-  `agentv1.ScopeSelfRegister`. AuthInterceptor on the agent
-  listener fails closed on unmapped methods.
+  `agentv1.ScopeSelfRegister` and `/Export` → `consts.ScopePublic`.
+  AuthInterceptor on the agent listener fails closed on unmapped
+  methods; `TestAgentMethodScopes_CoversAllRPCs` pins the map to the
+  service descriptor.
 - `IdentityInterceptor` runs a universal three-stage gate on every
   AgentService RPC (no opt-out — applies to Register too):
   1. **Universal CN pin** — `leaf.Subject.CommonName` must equal
@@ -236,7 +256,9 @@ RPC (e.g. a subsequent Register retry).
 
 ## Imports
 
-**Uses**: `internal/auth` (AgentFullName, NewAgentName,
+**Uses**: `controlplane/ingest` (`Identity`, `ErrMalformedBody` — the
+telemetry gateway contract; ingest never imports this package),
+`internal/auth` (AgentFullName, NewAgentName,
 NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert),
 `internal/consts` (Network, LabelAgent/Project/Purpose,
 ContainerClawkerd),
@@ -257,6 +279,10 @@ on adminServer for ListAgents).
 
 - `Registry` — moq-generated `RegistryMock` in `mocks/registry_mock.go`
   (test-only, lives in the `agent` package itself).
+- `TelemetryIngest` — moq-generated `TelemetryIngestMock` in
+  `mocks/telemetry_ingest_mock.go`; `export_handler_test.go` builds a
+  registered-container fixture (leaf + matching registry row) with the
+  same helpers the Register tests use.
 - `ContainerByPeerIP` — hand-rolled `fakePeerLookup` in
   `identity_interceptor_test.go`; the Register handler's tests stub
   the resolved container via `WithResolvedContainer` directly.
