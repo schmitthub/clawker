@@ -124,13 +124,13 @@ build:
           echo "$SHA /tmp/websocat" | sha256sum -c - && \
           install -m 755 /tmp/websocat /$HOME/.local/bin/websocat && \
           rm -f /tmp/websocat
+      - gh extension install github/gh-stack
   packages:
     - git
     - curl
     - ripgrep
     - less
     - procps
-    - sudo
     - fzf
     - zsh
     - man-db

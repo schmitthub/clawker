@@ -612,7 +612,7 @@ func (g *ProjectGenerator) GetBuildContext() string {
 // build.packages entries duplicating the floor are filtered out.
 func isBasePackage(pkg string) bool {
 	switch pkg {
-	case "less", "git", "procps", "sudo", "fzf",
+	case "less", "git", "procps", "fzf",
 		"zsh", "man-db", "unzip", "gnupg2", "openssh-client",
 		"gcc", "libc6-dev", "make",
 		"iproute2", "dnsutils",
