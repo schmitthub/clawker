@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.10.2] - 2026-10-24
+
+- **Fixed:** Project config files are no longer locked on write, so no `.lock` files are created in your repository.
+
 ## [2026.10.1] - 2026-10-23
 
 - **Security:** Hardening for the October 2026 eMudhra intermediate CA compromise. Eight eMudhra intermediates and their Sectigo cross-signs had recoverable private keys, and every root program withdrew the roots that issued them. Clawker now rejects certificate chains through those intermediates at every layer it controls:
