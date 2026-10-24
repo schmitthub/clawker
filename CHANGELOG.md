@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.10.3] - 2026-10-24
+
+- **Fixed:** Worktrees are now created correctly in repositories that set `remote.pushDefault`. Before, `clawker run --worktree` and `clawker worktree add` failed with "reference name escapes the reference storage".
+
 ## [2026.10.2] - 2026-10-24
 
 - **Fixed:** Project config files are no longer locked on write, so no `.lock` files are created in your repository.
