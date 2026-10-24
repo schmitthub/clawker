@@ -44,6 +44,12 @@ services:
       # client cert chained through the infra intermediate CA.
       - "127.0.0.1:{{.OtelInfraPort}}:{{.OtelInfraPort}}"
 {{- end}}
+{{- if .OtelAgentIngestPort}}
+      # Agent telemetry receiver — host loopback only. The CP gateway
+      # pushes via host.docker.internal:<port> with its infra leaf; the
+      # same mTLS gate as the infra receiver refuses agents.
+      - "127.0.0.1:{{.OtelAgentIngestPort}}:{{.OtelAgentIngestPort}}"
+{{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
