@@ -455,7 +455,7 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall prune` | Reset the rule store to what config defines: remove every rule, then re-sync the harness floor + project rules. The store is shared across projects — other projects' rules are removed too and come back on their next `refresh` or container start (`--all` removes everything and re-syncs nothing; prompts unless `--yes`) |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
-| `clawker firewall enable --agent AGENT` | Re-enroll a container in the firewall's per-container routing (BPF programs stay attached; idempotent) |
+| `clawker firewall enable --agent AGENT` | Re-enroll a container in the firewall's per-container routing with the project's current `security.enable_host_proxy` (BPF programs stay attached; idempotent) |
 | `clawker firewall disable --agent AGENT` | Remove a container from the firewall's per-container routing (BPF programs stay attached; fast re-enable via `enable`) |
 | `clawker firewall bypass` | Temporary unrestricted egress (eBPF bypass flag + timed re-enable) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |

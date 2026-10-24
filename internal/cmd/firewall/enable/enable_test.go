@@ -13,6 +13,8 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -25,6 +27,7 @@ func newTestFactory(t *testing.T) *cmdutil.Factory {
 	//nolint:exhaustruct // factory wires only the fields the enable command reads
 	return &cmdutil.Factory{
 		IOStreams:      ios,
+		Config:         func() (config.Config, error) { return configmocks.NewBlankConfig(), nil },
 		ProjectManager: projectManagerFor(""),
 		Logger: func() (*logger.Logger, error) {
 			return logger.Nop(), nil
@@ -129,8 +132,10 @@ func TestEnableRun(t *testing.T) {
 		name            string
 		agent           string
 		projectName     string
+		projectYAML     string
 		rpcErr          error
 		wantContainerID string
+		wantHostProxy   bool
 		wantErrContains string
 		wantStdout      string
 	}{
@@ -139,12 +144,25 @@ func TestEnableRun(t *testing.T) {
 			agent:           "dev",
 			projectName:     "acme",
 			wantContainerID: "clawker.acme.dev",
+			wantHostProxy:   true,
+			wantStdout:      "Firewall enabled for agent dev",
+		},
+		{
+			name:            "sends the project's disabled host proxy",
+			agent:           "dev",
+			projectName:     "acme",
+			projectYAML:     `security: { enable_host_proxy: false }`,
+			rpcErr:          nil,
+			wantContainerID: "clawker.acme.dev",
+			wantHostProxy:   false,
+			wantErrContains: "",
 			wantStdout:      "Firewall enabled for agent dev",
 		},
 		{
 			name:            "enables outside a project",
 			agent:           "dev",
 			wantContainerID: "clawker.dev",
+			wantHostProxy:   true,
 			wantStdout:      "Firewall enabled for agent dev",
 		},
 		{
@@ -152,6 +170,7 @@ func TestEnableRun(t *testing.T) {
 			agent:           "dev",
 			rpcErr:          rpcErr,
 			wantContainerID: "clawker.dev",
+			wantHostProxy:   true,
 			wantErrContains: "enabling firewall for dev",
 		},
 	}
@@ -161,7 +180,10 @@ func TestEnableRun(t *testing.T) {
 			ios, _, stdout, _ := iostreams.Test()
 			client := enableClient(tt.rpcErr)
 			opts := &EnableOptions{
-				IOStreams:      ios,
+				IOStreams: ios,
+				Config: func() (config.Config, error) {
+					return configmocks.NewFromString(tt.projectYAML, ""), nil
+				},
 				ProjectManager: projectManagerFor(tt.projectName),
 				AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 					return client, nil
@@ -181,6 +203,8 @@ func TestEnableRun(t *testing.T) {
 			calls := client.FirewallEnableCalls()
 			require.Len(t, calls, 1)
 			assert.Equal(t, tt.wantContainerID, calls[0].In.GetContainerId())
+			require.NotNil(t, calls[0].In.HostProxy, "firewall enable must send the project's host-proxy value")
+			assert.Equal(t, tt.wantHostProxy, calls[0].In.GetHostProxy())
 		})
 	}
 }

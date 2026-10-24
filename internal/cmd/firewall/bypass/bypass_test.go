@@ -14,6 +14,8 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -26,6 +28,7 @@ func newTestFactory(t *testing.T) *cmdutil.Factory {
 	//nolint:exhaustruct // factory wires only the fields the bypass command reads
 	return &cmdutil.Factory{
 		IOStreams:      ios,
+		Config:         func() (config.Config, error) { return configmocks.NewBlankConfig(), nil },
 		ProjectManager: projectManagerFor(""),
 		Logger: func() (*logger.Logger, error) {
 			return logger.Nop(), nil
@@ -184,6 +187,7 @@ func TestNewCmdBypass(t *testing.T) {
 type bypassRunCase struct {
 	name               string
 	stop               bool
+	projectYAML        string
 	duration           time.Duration
 	projectName        string
 	bypassErr          error
@@ -191,6 +195,7 @@ type bypassRunCase struct {
 	wantContainerID    string
 	wantBypassCalls    int
 	wantEnableCalls    int
+	wantHostProxy      bool
 	wantTimeoutSeconds uint32
 	wantStdout         string
 	wantErrOut         string
@@ -223,6 +228,8 @@ func (tc bypassRunCase) assertCalls(t *testing.T, client *adminv1mocks.AdminServ
 
 	if tc.wantEnableCalls > 0 {
 		assert.Equal(t, tc.wantContainerID, enableCalls[0].In.GetContainerId())
+		require.NotNil(t, enableCalls[0].In.HostProxy, "a re-enable must send the project's host-proxy value")
+		assert.Equal(t, tc.wantHostProxy, enableCalls[0].In.GetHostProxy())
 	}
 	if tc.wantBypassCalls > 0 {
 		assert.Equal(t, tc.wantContainerID, bypassCalls[0].In.GetContainerId())
@@ -248,7 +255,25 @@ func TestBypassRun(t *testing.T) {
 			projectName:     "acme",
 			wantContainerID: "clawker.acme.dev",
 			wantEnableCalls: 1,
+			wantHostProxy:   true,
 			wantStdout:      "Bypass stopped for agent dev",
+		},
+		{
+			name:               "stop sends the project's disabled host proxy",
+			stop:               true,
+			projectName:        "acme",
+			projectYAML:        `security: { enable_host_proxy: false }`,
+			duration:           0,
+			bypassErr:          nil,
+			enableErr:          nil,
+			wantContainerID:    "clawker.acme.dev",
+			wantBypassCalls:    0,
+			wantEnableCalls:    1,
+			wantHostProxy:      false,
+			wantTimeoutSeconds: 0,
+			wantStdout:         "Bypass stopped for agent dev",
+			wantErrOut:         "",
+			wantErrContains:    "",
 		},
 		{
 			name:            "stop surfaces rpc failure",
@@ -256,6 +281,7 @@ func TestBypassRun(t *testing.T) {
 			enableErr:       enableErr,
 			wantContainerID: "clawker.dev",
 			wantEnableCalls: 1,
+			wantHostProxy:   true,
 			wantErrContains: "stopping bypass for dev",
 		},
 		{
@@ -284,7 +310,10 @@ func TestBypassRun(t *testing.T) {
 			client := bypassMockClient(tt.bypassErr, tt.enableErr)
 			//nolint:exhaustruct // TUI is unused by bypassRun's non-interactive paths
 			opts := &BypassOptions{
-				IOStreams:      ios,
+				IOStreams: ios,
+				Config: func() (config.Config, error) {
+					return configmocks.NewFromString(tt.projectYAML, ""), nil
+				},
 				ProjectManager: projectManagerFor(tt.projectName),
 				AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 					return client, nil
