@@ -10,7 +10,40 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
+
+// TestNewFirewallEnableRequest pins the one request builder every enroll
+// path shares: the project's host-proxy value is always SET on the wire
+// (an absent field means "replay the stored record" to the CP), and the
+// SecurityConfig default (unset = enabled) is honored.
+func TestNewFirewallEnableRequest(t *testing.T) {
+	cases := []struct {
+		name     string
+		security config.SecurityConfig
+		want     bool
+	}{
+		{
+			name:     "disabled",
+			security: configmocks.SecurityConfig(func(s *config.SecurityConfig) { s.EnableHostProxy = new(false) }),
+			want:     false,
+		},
+		{
+			name:     "enabled",
+			security: configmocks.SecurityConfig(func(s *config.SecurityConfig) { s.EnableHostProxy = new(true) }),
+			want:     true,
+		},
+		{name: "unset defaults to enabled", security: configmocks.SecurityConfig(), want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := NewFirewallEnableRequest("ctr-1", tc.security)
+			assert.Equal(t, "ctr-1", req.GetContainerId())
+			require.NotNil(t, req.HostProxy, "the value must be set on the wire, never left for the CP to guess")
+			assert.Equal(t, tc.want, req.GetHostProxy())
+		})
+	}
+}
 
 // TestProtoRulesRoundTrip pins representative rule shapes (path rules, port
 // ranges, mixed protos) through the proto round-trip. Field-completeness is

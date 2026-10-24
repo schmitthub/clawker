@@ -899,7 +899,7 @@ func buildIdentityAllocator(cfg config.Config) (*fwhandler.IdentityAllocator, er
 // joins its error into retErr so the on-failure restart policy investigates a
 // partial teardown rather than silently blessing it.
 //
-//nolint:nonamedreturns // 8-value return with per-arm partial results — the names document which handles are live on each failure arm
+//nolint:nonamedreturns // 9-value return with per-arm partial results — the names document which handles are live on each failure arm
 func buildEnforcement(
 	ctx context.Context,
 	cfg config.Config,
@@ -914,6 +914,7 @@ func buildEnforcement(
 	stack *fwhandler.Stack,
 	ebpfMgr *ebpf.Manager,
 	identityAlloc *fwhandler.IdentityAllocator,
+	enrollments fwhandler.EnrollmentStore,
 	cleanup func() error,
 	err error,
 ) {
@@ -924,7 +925,7 @@ func buildEnforcement(
 	// docker context) names the wrong side of the mount in here.
 	dockerCli, err = docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}
 	cleanup = func() error { dockerCli.Close(); return nil }
 
@@ -933,7 +934,7 @@ func buildEnforcement(
 	// hierarchy discovery (cached parent) for rootless daemons.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return dockerCli, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+		return dockerCli, nil, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
@@ -943,7 +944,7 @@ func buildEnforcement(
 	// event=otelcerts_unavailable in bootLogging.
 	rulesStore, err = fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return dockerCli, containerResolver, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+		return dockerCli, containerResolver, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
 	}
 	// Domain leaves are read by the Envoy sibling, which the stack runs as
 	// consts.EnvoyUID — the same reader identity sdscerts provisions for.
@@ -952,18 +953,29 @@ func buildEnforcement(
 		sdscerts.FileOwner{UID: consts.EnvoyUID, GID: consts.EnvoyGID},
 	)
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, cleanup, fmt.Errorf("CA store: %w", err)
+		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, nil, cleanup, fmt.Errorf(
+			"CA store: %w", err,
+		)
 	}
 	// Sticky route-identity allocator (pre-SetReady startup gate on corruption).
 	//nolint:contextcheck // the identity table lives in internal/storage, whose lock/write API carries no context
 	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
-		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, nil, cleanup, err
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, nil, nil, cleanup, err
+	}
+	// Per-container enrollment records (host-proxy bypass pushed by the CLI
+	// at FirewallEnable, replayed by the re-enrollment sweep). Beside the
+	// identity table; a table that no longer decodes is a startup gate.
+	enrollments, err = fwhandler.NewEnrollmentStore(cfg)
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, nil, cleanup, fmt.Errorf(
+			"enrollment store: %w", err,
+		)
 	}
 	stack, err = fwhandler.NewStack(
 		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
 	)
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, cleanup, fmt.Errorf(
+		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, enrollments, cleanup, fmt.Errorf(
 			"firewall stack: %w", err,
 		)
 	}
@@ -975,7 +987,7 @@ func buildEnforcement(
 	// now and covers every arm.
 	ebpfMgr = ebpf.NewManager(log)
 	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
-	return dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+	return dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enrollments, cleanup, nil
 }
 
 // bpffsHandoffSocketPath places the handoff socket in the firewall data
@@ -1127,6 +1139,7 @@ type grpcStackDeps struct {
 	rulesStore        fwhandler.EgressRulesStore
 	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
+	enrollments       fwhandler.EnrollmentStore
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	agentPeerLookup   *agent.MobyPeerLookup
@@ -1174,6 +1187,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Queue:         actionQueue,
 		EnrolledTopic: d.enrolledTopic,
 		Identity:      d.identityAlloc,
+		Enrollments:   d.enrollments,
 		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
 	})
 	if err != nil {
@@ -1575,7 +1589,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		sdsCerts = sdsSvc
 	}
 
-	dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
+	dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enrollments, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
 		cfg,
 		log,
@@ -1609,6 +1623,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
+	// A destroyed container's enrollment record is dropped on the same
+	// docker event the agent registry evicts on.
+	fwhandler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic, enrollments, log)
+
 	// agent registry (sqlite) + peer lookup + lister + worldview
 	// Repository with its two subscriptions wired — see buildAgentInfra.
 	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(log, dockerCli, cfg, agentTopic, dockerTopic)
@@ -1628,6 +1646,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		rulesStore:        rulesStore,
 		caStore:           caStore,
 		identityAlloc:     identityAlloc,
+		enrollments:       enrollments,
 		containerResolver: containerResolver,
 		agentReg:          agentReg,
 		agentPeerLookup:   agentPeerLookup,

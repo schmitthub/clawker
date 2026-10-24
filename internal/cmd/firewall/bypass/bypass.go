@@ -11,6 +11,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -33,6 +34,7 @@ const (
 type BypassOptions struct {
 	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
+	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	Agent          string
@@ -47,6 +49,7 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 	opts := &BypassOptions{
 		IOStreams:      f.IOStreams,
 		TUI:            f.TUI,
+		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		AdminClient:    f.AdminClient,
 	}
@@ -142,6 +145,14 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return err
 	}
 
+	// Every re-enable sends the project's host-proxy value, read once here
+	// so the stop, Ctrl+C, and expiry paths all carry the same decision.
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	security := cfg.SecurityConfig()
+
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
@@ -149,7 +160,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 
 	// --stop: re-enable enforcement immediately by calling Enable.
 	if opts.Stop {
-		return stopBypass(ctx, opts, client, containerName)
+		return stopBypass(ctx, opts, client, containerName, security)
 	}
 
 	if startErr := startBypass(ctx, opts, client, containerName); startErr != nil {
@@ -174,7 +185,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 
 	if result.Interrupted {
 		//nolint:contextcheck // the signal handler already cancelled ctx; this cleanup must still run
-		return stopBypassAfterInterrupt(opts, containerName)
+		return stopBypassAfterInterrupt(opts, containerName, security)
 	}
 
 	if result.Detached {
@@ -185,7 +196,7 @@ func bypassRun(ctx context.Context, opts *BypassOptions) error {
 		return nil
 	}
 
-	return reEnableAfterExpiry(ctx, opts, containerName)
+	return reEnableAfterExpiry(ctx, opts, containerName, security)
 }
 
 // resolveContainerName maps the --agent value to the container ref the CP
@@ -214,13 +225,14 @@ func stopBypass(
 	opts *BypassOptions,
 	client adminv1.AdminServiceClient,
 	containerName string,
+	security config.SecurityConfig,
 ) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	if _, err := shared.CallWithSpinner(ctx, ios, fmt.Sprintf("Stopping bypass for %s...", opts.Agent),
 		func(rpcCtx context.Context) (*adminv1.FirewallEnableResult, error) {
-			return client.FirewallEnable(rpcCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName})
+			return client.FirewallEnable(rpcCtx, adminv1.NewFirewallEnableRequest(containerName, security))
 		}); err != nil {
 		//nolint:wrapcheck // WrapRPCError already carries the header plus per-sentinel remediation
 		return shared.WrapRPCError(fmt.Sprintf("stopping bypass for %s", opts.Agent), err)
@@ -286,7 +298,7 @@ func runCountdown(opts *BypassOptions) BypassDashboardResult {
 // top of this run is potentially hours old on a long `--duration` bypass —
 // calling FirewallEnable on a stuck conn would leave enforcement off until the
 // CP dead-man timer eventually fires, defeating the point of Ctrl+C.
-func stopBypassAfterInterrupt(opts *BypassOptions, containerName string) error {
+func stopBypassAfterInterrupt(opts *BypassOptions, containerName string, security config.SecurityConfig) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -299,7 +311,7 @@ func stopBypassAfterInterrupt(opts *BypassOptions, containerName string) error {
 	}
 	if _, rpcErr := enableClient.FirewallEnable(
 		enableCtx,
-		&adminv1.FirewallEnableRequest{ContainerId: containerName},
+		adminv1.NewFirewallEnableRequest(containerName, security),
 	); rpcErr != nil {
 		//nolint:wrapcheck // WrapRPCError already carries the header plus per-sentinel remediation
 		return shared.WrapRPCError(fmt.Sprintf("stopping bypass for %s", opts.Agent), rpcErr)
@@ -313,7 +325,12 @@ func stopBypassAfterInterrupt(opts *BypassOptions, containerName string) error {
 // drops the in-memory timer and leaves enforcement off silently. Defensive
 // Enable is cheap — FirewallEnable is idempotent — and closes that gap. Re-fetch the
 // admin client so the Factory closure can rebuild a stale grpc.ClientConn.
-func reEnableAfterExpiry(ctx context.Context, opts *BypassOptions, containerName string) error {
+func reEnableAfterExpiry(
+	ctx context.Context,
+	opts *BypassOptions,
+	containerName string,
+	security config.SecurityConfig,
+) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -329,7 +346,7 @@ func reEnableAfterExpiry(ctx context.Context, opts *BypassOptions, containerName
 	}
 	if _, rpcErr := expireClient.FirewallEnable(
 		expireCtx,
-		&adminv1.FirewallEnableRequest{ContainerId: containerName},
+		adminv1.NewFirewallEnableRequest(containerName, security),
 	); rpcErr != nil {
 		//nolint:wrapcheck // WrapRPCError already carries the header plus per-sentinel remediation
 		return shared.WrapRPCError(fmt.Sprintf("re-enabling firewall for %s after bypass", opts.Agent), rpcErr)
