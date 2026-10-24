@@ -20,8 +20,8 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
-	github.com/go-git/go-git/v6 v6.0.0-alpha.5
+	github.com/go-git/go-billy/v6 v6.0.0-beta.1
+	github.com/go-git/go-git/v6 v6.0.0-beta.1
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/gofrs/flock v0.13.1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
@@ -64,7 +64,7 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/Microsoft/go-winio v0.6.3 // indirect
-	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+	github.com/ProtonMail/go-crypto v1.5.2 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/apparentlymart/go-cidr v1.1.1 // indirect
@@ -117,7 +117,6 @@ require (
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -137,7 +136,7 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pires/go-proxyproto v0.15.0 // indirect
-	github.com/pjbgf/sha1cd v0.6.0 // indirect
+	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect

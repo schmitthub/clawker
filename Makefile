@@ -629,7 +629,7 @@ clawker-lint: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegat
 		golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not installed, skipping..."; \
-		echo "(tip: install with: brew install golangci-lint)"; \
+		echo "(tip: install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)"; \
 	fi
 
 # Run staticcheck
