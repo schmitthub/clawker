@@ -210,7 +210,7 @@ Rules are keyed by `dst:proto:port`. When a key already exists in the store, the
 
 **You can:**
 - Read and write files in the workspace
-- Run shell commands, install packages (with `sudo` if needed)
+- Run shell commands. Package installation needs the image to provide the tool: the project adds packages through `build.packages`; there is no `sudo`
 - Use git (credentials and signing are forwarded from the host)
 - Access whitelisted network destinations
 - Access any network destination during an active bypass
