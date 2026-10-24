@@ -21,6 +21,152 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Signal names which OTLP collector service request the body encodes.
+type Signal int32
+
+const (
+	Signal_SIGNAL_UNSPECIFIED Signal = 0
+	Signal_SIGNAL_LOGS        Signal = 1
+	Signal_SIGNAL_METRICS     Signal = 2
+	Signal_SIGNAL_TRACES      Signal = 3
+)
+
+// Enum value maps for Signal.
+var (
+	Signal_name = map[int32]string{
+		0: "SIGNAL_UNSPECIFIED",
+		1: "SIGNAL_LOGS",
+		2: "SIGNAL_METRICS",
+		3: "SIGNAL_TRACES",
+	}
+	Signal_value = map[string]int32{
+		"SIGNAL_UNSPECIFIED": 0,
+		"SIGNAL_LOGS":        1,
+		"SIGNAL_METRICS":     2,
+		"SIGNAL_TRACES":      3,
+	}
+)
+
+func (x Signal) Enum() *Signal {
+	p := new(Signal)
+	*p = x
+	return p
+}
+
+func (x Signal) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Signal) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_v1_agent_proto_enumTypes[0].Descriptor()
+}
+
+func (Signal) Type() protoreflect.EnumType {
+	return &file_agent_v1_agent_proto_enumTypes[0]
+}
+
+func (x Signal) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Signal.Descriptor instead.
+func (Signal) EnumDescriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
+}
+
+// ExportRequest carries one serialized Export<Signal>ServiceRequest, the
+// http/protobuf payload exactly as the SDK sent it to the loopback relay.
+type ExportRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signal        Signal                 `protobuf:"varint,1,opt,name=signal,proto3,enum=clawker.agent.v1.Signal" json:"signal,omitempty"`
+	Body          []byte                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExportRequest) Reset() {
+	*x = ExportRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExportRequest) ProtoMessage() {}
+
+func (x *ExportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExportRequest.ProtoReflect.Descriptor instead.
+func (*ExportRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ExportRequest) GetSignal() Signal {
+	if x != nil {
+		return x.Signal
+	}
+	return Signal_SIGNAL_UNSPECIFIED
+}
+
+func (x *ExportRequest) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+// ExportResult is the success response. Empty — the act of returning
+// without error is the signal; the relay answers the SDK with an empty
+// Export<Signal>ServiceResponse.
+type ExportResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExportResult) Reset() {
+	*x = ExportResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExportResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExportResult) ProtoMessage() {}
+
+func (x *ExportResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExportResult.ProtoReflect.Descriptor instead.
+func (*ExportResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+}
+
 // RegisterRequest carries the human-readable identity claim. The
 // agent_name and project are cross-checked against:
 //   - the peer cert's canonical CN (clawker.<project>.<agent>)
@@ -41,7 +187,7 @@ type RegisterRequest struct {
 
 func (x *RegisterRequest) Reset() {
 	*x = RegisterRequest{}
-	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	mi := &file_agent_v1_agent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -53,7 +199,7 @@ func (x *RegisterRequest) String() string {
 func (*RegisterRequest) ProtoMessage() {}
 
 func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[0]
+	mi := &file_agent_v1_agent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -66,7 +212,7 @@ func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
 func (*RegisterRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RegisterRequest) GetAgentName() string {
@@ -93,7 +239,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -105,7 +251,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[1]
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -118,21 +264,31 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
 }
 
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"J\n" +
+	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"U\n" +
+	"\rExportRequest\x120\n" +
+	"\x06signal\x18\x01 \x01(\x0e2\x18.clawker.agent.v1.SignalR\x06signal\x12\x12\n" +
+	"\x04body\x18\x02 \x01(\fR\x04body\"\x0e\n" +
+	"\fExportResult\"J\n" +
 	"\x0fRegisterRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\"\t\n" +
-	"\aWelcome2X\n" +
+	"\aWelcome*X\n" +
+	"\x06Signal\x12\x16\n" +
+	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x0f\n" +
+	"\vSIGNAL_LOGS\x10\x01\x12\x12\n" +
+	"\x0eSIGNAL_METRICS\x10\x02\x12\x11\n" +
+	"\rSIGNAL_TRACES\x10\x032\xa3\x01\n" +
 	"\fAgentService\x12H\n" +
-	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.WelcomeB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
+	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.Welcome\x12I\n" +
+	"\x06Export\x12\x1f.clawker.agent.v1.ExportRequest\x1a\x1e.clawker.agent.v1.ExportResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -146,19 +302,26 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_agent_v1_agent_proto_rawDescData
 }
 
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(*RegisterRequest)(nil), // 0: clawker.agent.v1.RegisterRequest
-	(*Welcome)(nil),         // 1: clawker.agent.v1.Welcome
+	(Signal)(0),             // 0: clawker.agent.v1.Signal
+	(*ExportRequest)(nil),   // 1: clawker.agent.v1.ExportRequest
+	(*ExportResult)(nil),    // 2: clawker.agent.v1.ExportResult
+	(*RegisterRequest)(nil), // 3: clawker.agent.v1.RegisterRequest
+	(*Welcome)(nil),         // 4: clawker.agent.v1.Welcome
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	0, // 0: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
-	1, // 1: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0, // 0: clawker.agent.v1.ExportRequest.signal:type_name -> clawker.agent.v1.Signal
+	3, // 1: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
+	1, // 2: clawker.agent.v1.AgentService.Export:input_type -> clawker.agent.v1.ExportRequest
+	4, // 3: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
+	2, // 4: clawker.agent.v1.AgentService.Export:output_type -> clawker.agent.v1.ExportResult
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -171,13 +334,14 @@ func file_agent_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   2,
+			NumEnums:      1,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_agent_v1_agent_proto_goTypes,
 		DependencyIndexes: file_agent_v1_agent_proto_depIdxs,
+		EnumInfos:         file_agent_v1_agent_proto_enumTypes,
 		MessageInfos:      file_agent_v1_agent_proto_msgTypes,
 	}.Build()
 	File_agent_v1_agent_proto = out.File

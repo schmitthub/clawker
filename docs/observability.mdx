@@ -109,6 +109,8 @@ netlogger emits on the **trusted infra lane** — the same OTLP/gRPC + mTLS path
 - Endpoint: the collector's `otlp/infra` receiver on `OtelInfraPort` (not the unauth'd `otel-collector:4317` agent lane).
 - The OTLP endpoint **must** be `https://` (or bare host:port). A plaintext `http://` endpoint is rejected at boot — pushing infra telemetry over plaintext would smuggle records onto the agent-lane receiver, defeating the trust-lane separation.
 
+The control plane also forwards agent telemetry to the collector on this lane (its own `otlp/agents` receiver, `ingest_source=cp_gateway`); it overwrites the `project`, `agent`, and `container_id` resource attributes with the identity it verified against the agent registry. When the monitoring stack is down the control plane drops those batches after three failed forwards and probes once a minute, so telemetry resumes when the stack comes up.
+
 Agent containers cannot forge `service.name=ebpf-egress` records onto the trusted index — they don't hold a leaf chained through the infra intermediate, so the receiver's TLS handshake fails the chain check. The strict-directive promise (every field on every record, no discretion) only delivers if the records actually originate from the CP — the mTLS boundary is what makes that promise enforceable.
 
 ## Configuration
