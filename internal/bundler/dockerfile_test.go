@@ -702,11 +702,29 @@ func TestFilterBasePackages(t *testing.T) {
 		"floor packages dropped; non-floor survivors keep declaration order")
 
 	// An all-floor list filters down to nothing.
-	assert.Empty(t, filterBasePackages([]string{"less", "procps", "sudo"}),
+	assert.Empty(t, filterBasePackages([]string{"less", "procps", "zsh"}),
 		"a list of only floor packages filters to empty")
 
 	// An all-non-floor list passes through unchanged, order preserved.
 	assert.Equal(t, []string{"ripgrep", "bat", "fd-find"},
 		filterBasePackages([]string{"ripgrep", "bat", "fd-find"}),
 		"non-floor packages pass through verbatim, in order")
+}
+
+// TestGenerateBase_NoSudo locks the platform ruling that sudo is not part of
+// the base image: the rendered base installs no sudo package, and a project
+// that opts in through build.packages renders an install line (which also
+// proves the floor filter no longer drops it). It goes red if sudo returns to
+// the template or the floor filter.
+func TestGenerateBase_NoSudo(t *testing.T) {
+	base, err := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), t.TempDir()).GenerateBase()
+	require.NoError(t, err)
+	assert.NotContains(t, string(base), "sudo", "base image must not install sudo")
+
+	optIn, err := newTestProjectGenerator(testConfig(t, minimalProjectYAML()+`
+build:
+  packages: ["sudo"]
+`), t.TempDir()).GenerateBase()
+	require.NoError(t, err)
+	assert.Contains(t, string(optIn), "    sudo \\\n", "a user build.packages entry renders an install line")
 }
