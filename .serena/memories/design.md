@@ -327,7 +327,7 @@ cfg.SettingsStore().Write()
 
 Write semantics: `Set(key, value)` grafts the encoded value into the in-memory node tree and marks the key dirty. `Write()` persists dirty fields — routes each by provenance, grafts into the destination file's own re-read node tree, encodes, and atomically writes per file (temp+fsync+rename).
 
-Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
+Project config files (`clawker.yaml`, `clawker.local.yaml`) take NO flock: they live in the user's repository, and a `.lock` sibling would have to be committed or gitignored. Concurrent writes to one project file are last-writer-wins. `settings.yaml` and the registry use flock (`WithLock`); their lock files stay in the clawker config/data dirs.
 
 #### Package Ownership
 

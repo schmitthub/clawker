@@ -541,6 +541,25 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	assert.Equal(t, "persisted-editor", cfg2.AgentConfig().Editor)
 }
 
+// Project config files live in the user's repository. A write must not leave a
+// lock file next to them: the user would have to commit or gitignore it.
+func TestWriteProject_leavesNoLockFile(t *testing.T) {
+	env := newProjectEnv(t)
+	env.writeProject(t, "agent:\n  editor: vim\n")
+	env.writeLocal(t, "agent:\n  visual: code\n")
+
+	cfg := env.load(t)
+	require.NoError(t, cfg.ProjectStore().Set([]string{"agent", "editor"}, "nano"))
+	require.NoError(t, cfg.ProjectStore().Set([]string{"agent", "visual"}, "zed"))
+	require.NoError(t, cfg.ProjectStore().Write())
+
+	reloaded := env.load(t)
+	assert.Equal(t, "nano", reloaded.AgentConfig().Editor)
+	assert.Equal(t, "zed", reloaded.AgentConfig().Visual)
+	assert.NoFileExists(t, env.projectPath()+".lock")
+	assert.NoFileExists(t, env.localPath()+".lock")
+}
+
 func TestWriteSettings_persistsToFile(t *testing.T) {
 	base := t.TempDir()
 	configDir := filepath.Join(base, "config")
