@@ -27,6 +27,14 @@ Part of `mem:plans/sandbox-hardening/initiative` (Task 3).
 - Host e2e: two projects, one disabled; after enable and after a CP restart, the eBPF config map for the disabled container has `host_proxy_ip == 0`.
 - Runtime from the disabled container with another enabled agent running: `curl http://host.docker.internal:<daemon port>/` is refused.
 
+## As built (Task 3, 2026-10-24)
+
+- Store: `controlplane/firewall/enrollment.go`, schema `containers: {<cid>: {host_proxy: bool}}` in `consts.FirewallEnrollmentsFile` (`enrollments.yaml`). Interface `HostProxy(cid) (enabled, found, err)`, `SetHostProxy`, `Remove`; impl mutex serializes each stage+write pair (RPC goroutine vs evict subscriber). Constructed in `buildEnforcement`, handed to `HandlerDeps.Enrollments`.
+- Eviction: `firewall.SubscribeEnrollmentEvict(watcherCtx, dockerTopic, store, log)` in `run()` right after `buildTopics`; destroy only.
+- Handler: nil store → `FirewallEnable` `codes.Internal`; the sweep logs `event=firewall_enrollments_unavailable`. `reenrollConfigFn` resolves `host.docker.internal` at most once per sweep and only when a record needs it, so a host without that name still re-enrolls lane-off agents. `envoyEgressPort`/`portUint16` replace the unchecked `uint16(...)` conversions.
+- Wire: `host_proxy` is `optional bool`. User ruling (2026-10-24): every CLI path sends the project's value, through `adminv1.NewFirewallEnableRequest(cid, cfg.SecurityConfig())` (container start, `firewall enable`, bypass stop/Ctrl+C/expiry; `EnableOptions`/`BypassOptions` gained `Config`). So `firewall enable --agent` applies a `clawker.yaml` edit to a running container. An unset field (a caller without project config) replays the stored record, never strips the lane.
+- E2E: `TestFirewall_HostProxyPerContainer` uses a stub HTTP server on the configured daemon port (settings `host_proxy.daemon.port`) with the mock host-proxy manager; one project toggled between runs; `controlplane down/up` + `firewall up` for the replay check.
+
 ## Out of scope
 
 - Any auth, scoping, or per-request checks in the host proxy daemon. Enabled means full grant.

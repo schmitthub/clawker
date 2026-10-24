@@ -24,6 +24,7 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
 // testCgroupPath is the synthetic path the test resolver hands back for
@@ -128,12 +129,18 @@ func newTestHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock, resolver Cont
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
 	h, err := NewHandler(HandlerDeps{
-		EBPF:     mock,
-		Stack:    &fakeStack{},
-		Cfg:      testConfig(),
-		Resolver: resolver,
-		Log:      logger.Nop(),
-		Queue:    q,
+		EBPF:          mock,
+		Stack:         new(fakeStack),
+		Store:         nil,
+		Cfg:           testConfig(),
+		Resolver:      resolver,
+		Log:           logger.Nop(),
+		Queue:         q,
+		EnrolledTopic: nil,
+		CA:            nil,
+		Identity:      nil,
+		ListAgents:    nil,
+		Enrollments:   testEnrollmentStore(t),
 	})
 	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
@@ -141,6 +148,19 @@ func newTestHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock, resolver Cont
 	}
 	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
 	return h
+}
+
+// testEnrollmentStore returns a file-backed enrollment store in an isolated
+// firewall data dir. The in-memory seam cannot write, and FirewallEnable
+// persists a record before it enrolls, so handler tests need the real thing.
+func testEnrollmentStore(t *testing.T) *enrollmentStoreImpl {
+	t.Helper()
+	store, err := storage.New[EnrollmentFile](
+		storage.WithFilenames(consts.FirewallEnrollmentsFile),
+		storage.WithPaths(t.TempDir()),
+	)
+	require.NoError(t, err)
+	return newEnrollmentStoreImpl(store)
 }
 
 // noopMock returns an ebpf mock with all methods set to no-op success.
@@ -223,6 +243,7 @@ func TestHandler_FirewallEnable_Success(t *testing.T) {
 
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-1",
+		HostProxy:   new(true),
 	})
 	if err != nil {
 		t.Fatalf("FirewallEnable returned error: %v", err)
@@ -230,17 +251,181 @@ func TestHandler_FirewallEnable_Success(t *testing.T) {
 	if got := len(mock.InstallCalls()); got != 1 {
 		t.Fatalf("Install called %d times, want 1", got)
 	}
-	// Assert the BPF container_config was derived from stack+cfg, not
-	// the request. testNetInfo seeds 172.20.0.0/16 with gateway .1;
-	// testConfig() pins EnvoyEgressPort=10000 and the handler's
-	// resolveHostFn pins hostProxyIp=192.168.65.254.
+	// Assert the BPF container_config was derived from stack+cfg+request.
+	// testNetInfo seeds 172.20.0.0/16 with gateway .1; testConfig() pins
+	// EnvoyEgressPort=10000 and the daemon port default 18374; the
+	// handler's resolveHostFn pins hostProxyIp=192.168.65.254.
 	got := mock.InstallCalls()[0].Cfg
 	if got.EgressPort != 10000 {
 		t.Errorf("EgressPort = %d, want 10000 (from cfg)", got.EgressPort)
 	}
-	if got.HostProxyPort == 0 {
-		t.Errorf("HostProxyPort = 0, want cfg default (host proxy enabled by default)")
+	assert.Equal(t, uint16(18374), got.HostProxyPort, "host proxy port from cfg when the request enables the lane")
+	assert.NotZero(t, got.HostProxyIp, "host proxy ip resolved when the request enables the lane")
+
+	// The record the restart replay reads was persisted.
+	enabled, found, err := h.enrollments.HostProxy("ctr-1")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.True(t, enabled)
+}
+
+// TestHandler_FirewallEnable_HostProxyDisabled_NoBypass pins the fix for
+// the host-level default leaking into every project: a request carrying
+// host_proxy=false enrolls with no bypass route (zero ip + port) and never
+// touches the resolver, whatever CP's own config says.
+func TestHandler_FirewallEnable_HostProxyDisabled_NoBypass(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(t, mock, nil)
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		t.Fatal("resolver must not run when the project disabled the host proxy")
+		return nil, nil
 	}
+
+	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+		HostProxy:   new(false),
+	})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 1)
+	got := mock.InstallCalls()[0].Cfg
+	assert.Zero(t, got.HostProxyIp, "no bypass ip for a project with the host proxy disabled")
+	assert.Zero(t, got.HostProxyPort, "no bypass port for a project with the host proxy disabled")
+
+	enabled, found, err := h.enrollments.HostProxy("ctr-1")
+	require.NoError(t, err)
+	assert.True(t, found, "the disabled value is persisted too, so a restart replays it")
+	assert.False(t, enabled)
+}
+
+// TestHandler_FirewallEnable_OverwritesRecord: a container re-enabled after
+// its project flipped the setting carries the new value.
+func TestHandler_FirewallEnable_OverwritesRecord(t *testing.T) {
+	mock := noopMock()
+	h := newTestHandler(t, mock, nil)
+
+	for _, want := range []bool{true, false, true} {
+		_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+			ContainerId: "ctr-1",
+			HostProxy:   new(want),
+		})
+		require.NoError(t, err)
+		enabled, found, err := h.enrollments.HostProxy("ctr-1")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, want, enabled)
+		calls := mock.InstallCalls()
+		assert.Equal(t, want, calls[len(calls)-1].Cfg.HostProxyPort != 0)
+	}
+}
+
+// TestHandler_FirewallEnable_UnsetReplaysRecord pins the wire contract for
+// callers that send no host_proxy value: the stored record decides, the
+// record is left untouched, and a container with no record gets no bypass.
+// A handler that read an unset field as true would hand every re-enabled
+// container a bypass.
+func TestHandler_FirewallEnable_UnsetReplaysRecord(t *testing.T) {
+	cases := []struct {
+		name       string
+		seed       *bool
+		wantBypass bool
+	}{
+		{"record true replays the bypass", new(true), true},
+		{"record false replays no bypass", new(false), false},
+		{"no record fails closed", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := noopMock()
+			h := newTestHandler(t, mock, nil)
+			if tc.seed != nil {
+				require.NoError(t, h.enrollments.SetHostProxy("ctr-1", *tc.seed))
+			}
+
+			_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+				ContainerId: "ctr-1",
+				HostProxy:   nil,
+			})
+			require.NoError(t, err)
+			require.Len(t, mock.InstallCalls(), 1)
+			got := mock.InstallCalls()[0].Cfg
+			assert.Equal(t, tc.wantBypass, got.HostProxyIp != 0, "bypass ip")
+			assert.Equal(t, tc.wantBypass, got.HostProxyPort != 0, "bypass port")
+
+			enabled, found, err := h.enrollments.HostProxy("ctr-1")
+			require.NoError(t, err)
+			assert.Equal(t, tc.seed != nil, found, "an unset request must not create a record")
+			if tc.seed != nil {
+				assert.Equal(t, *tc.seed, enabled, "an unset request must not change the record")
+			}
+		})
+	}
+}
+
+// TestHandler_FirewallEnable_PersistFailure_AbortsEnroll: the record is the
+// only thing a restarted CP replays, so an enroll whose record did not
+// reach disk must not happen. The in-memory store seam has no write path,
+// which is exactly the failure shape.
+func TestHandler_FirewallEnable_PersistFailure_AbortsEnroll(t *testing.T) {
+	mock := noopMock()
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	store, err := NewEnrollmentStoreFromString("")
+	require.NoError(t, err)
+	h, err := NewHandler(HandlerDeps{
+		EBPF:          mock,
+		Stack:         new(fakeStack),
+		Store:         nil,
+		Cfg:           testConfig(),
+		Resolver:      nopResolver,
+		Log:           nil,
+		Queue:         q,
+		EnrolledTopic: nil,
+		CA:            nil,
+		Identity:      nil,
+		ListAgents:    nil,
+		Enrollments:   store,
+	})
+	require.NoError(t, err)
+	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
+
+	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+		HostProxy:   new(true),
+	})
+	assertCode(t, err, codes.Internal)
+	assert.Empty(t, mock.InstallCalls(), "no enroll when the record could not be persisted")
+}
+
+// TestHandler_FirewallEnable_NoEnrollmentStore_Internal: a handler without
+// the store is a wiring fault and must fail loud instead of enrolling a
+// container whose record can never be replayed.
+func TestHandler_FirewallEnable_NoEnrollmentStore_Internal(t *testing.T) {
+	mock := noopMock()
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h, err := NewHandler(HandlerDeps{
+		EBPF:          mock,
+		Stack:         new(fakeStack),
+		Store:         nil,
+		Cfg:           testConfig(),
+		Resolver:      nopResolver,
+		Log:           nil,
+		Queue:         q,
+		EnrolledTopic: nil,
+		CA:            nil,
+		Identity:      nil,
+		ListAgents:    nil,
+		Enrollments:   nil,
+	})
+	require.NoError(t, err)
+	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
+
+	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+		HostProxy:   new(true),
+	})
+	assertCode(t, err, codes.Internal)
+	assert.Empty(t, mock.InstallCalls())
 }
 
 func TestHandler_FirewallEnable_EmptyContainerID(t *testing.T) {
@@ -281,6 +466,7 @@ func TestHandler_FirewallEnable_HostProxyResolveError_PropagatesInternal(t *test
 	}
 	_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
 		ContainerId: "ctr-1",
+		HostProxy:   new(true),
 	})
 	assertCode(t, err, codes.Internal)
 	if got := len(mock.InstallCalls()); got != 0 {
@@ -717,6 +903,148 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 	}
 	assert.Equal(t, "agent-A", gotEnrolls[111])
 	assert.Equal(t, "agent-B", gotEnrolls[222])
+}
+
+// TestHandler_FirewallInit_ReenrollReplaysEnrollment pins the restart
+// replay: the per-container record decides the bypass, never CP's own
+// config. agent-A enrolled with the lane on, agent-B with it off, agent-C
+// has no record (enrolled by an older CP, or the file was lost) and fails
+// closed. host.docker.internal is resolved once, only because some record
+// needs it.
+func TestHandler_FirewallInit_ReenrollReplaysEnrollment(t *testing.T) {
+	stack := new(fakeStack)
+	stack.statusResult.Running = true
+	mock := noopMock()
+	agents := []string{"agent-A", "agent-B", "agent-C"}
+	cgroupPaths := map[string]string{
+		"agent-A": "/test/cgroup/agent-A",
+		"agent-B": "/test/cgroup/agent-B",
+		"agent-C": "/test/cgroup/agent-C",
+	}
+	cgroupIDs := map[string]uint64{"agent-A": 111, "agent-B": 222, "agent-C": 333}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		return ref, cgroupPaths[ref], true, nil
+	}
+
+	store := testEnrollmentStore(t)
+	require.NoError(t, store.SetHostProxy("agent-A", true))
+	require.NoError(t, store.SetHostProxy("agent-B", false))
+
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h, err := NewHandler(HandlerDeps{
+		EBPF:          mock,
+		Stack:         stack,
+		Store:         nil,
+		Cfg:           testConfig(),
+		Resolver:      resolver,
+		Log:           logger.Nop(),
+		Queue:         q,
+		EnrolledTopic: nil,
+		CA:            nil,
+		Identity:      nil,
+		ListAgents:    func(_ context.Context) ([]string, error) { return agents, nil },
+		Enrollments:   store,
+	})
+	require.NoError(t, err)
+	resolves := 0
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		resolves++
+		return []string{"192.168.65.254"}, nil
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		for cid, p := range cgroupPaths {
+			if p == path {
+				return cgroupIDs[cid], nil
+			}
+		}
+		return 0, errors.New("unknown cgroup path " + path)
+	}
+
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 3, "every agent must be re-enrolled")
+
+	byCgroup := map[uint64]ebpf.BPFContainerConfig{}
+	for _, c := range mock.InstallCalls() {
+		byCgroup[c.CgroupID] = c.Cfg
+	}
+	assert.NotZero(t, byCgroup[111].HostProxyIp, "agent-A record=true replays the bypass")
+	assert.Equal(t, uint16(18374), byCgroup[111].HostProxyPort)
+	assert.Zero(t, byCgroup[222].HostProxyIp, "agent-B record=false replays no bypass")
+	assert.Zero(t, byCgroup[222].HostProxyPort)
+	assert.Zero(t, byCgroup[333].HostProxyIp, "agent-C has no record: fail closed")
+	assert.Zero(t, byCgroup[333].HostProxyPort)
+	assert.Equal(t, 1, resolves, "host.docker.internal resolved once for the sweep")
+}
+
+// TestHandler_FirewallInit_ReenrollResolveFailure_IsolatedToBypassAgents:
+// when host.docker.internal does not resolve, only the agents whose record
+// enables the lane are skipped (and logged); agents that need no bypass are
+// still re-enrolled, with no bypass, and the lookup runs once, not per
+// agent. A sweep that enrolled a lane-on agent without its bypass on a
+// resolve failure would silently drop that project's host-proxy lane.
+func TestHandler_FirewallInit_ReenrollResolveFailure_IsolatedToBypassAgents(t *testing.T) {
+	stack := new(fakeStack)
+	stack.statusResult.Running = true
+	mock := noopMock()
+	cgroupPaths := map[string]string{
+		"agent-A": "/test/cgroup/agent-A",
+		"agent-B": "/test/cgroup/agent-B",
+		"agent-C": "/test/cgroup/agent-C",
+	}
+	cgroupIDs := map[string]uint64{"agent-A": 111, "agent-B": 222, "agent-C": 333}
+	resolver := func(_ context.Context, ref string) (string, string, bool, error) {
+		return ref, cgroupPaths[ref], true, nil
+	}
+	store := testEnrollmentStore(t)
+	require.NoError(t, store.SetHostProxy("agent-A", true))
+	require.NoError(t, store.SetHostProxy("agent-B", false))
+
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+	h, err := NewHandler(HandlerDeps{
+		EBPF:          mock,
+		Stack:         stack,
+		Store:         nil,
+		Cfg:           testConfig(),
+		Resolver:      resolver,
+		Log:           logger.Nop(),
+		Queue:         q,
+		EnrolledTopic: nil,
+		CA:            nil,
+		Identity:      nil,
+		ListAgents: func(_ context.Context) ([]string, error) {
+			return []string{"agent-A", "agent-B", "agent-C"}, nil
+		},
+		Enrollments: store,
+	})
+	require.NoError(t, err)
+	resolves := 0
+	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+		resolves++
+		return nil, errors.New("no such host")
+	}
+	h.cgroupIDFn = func(path string) (uint64, error) {
+		for cid, p := range cgroupPaths {
+			if p == path {
+				return cgroupIDs[cid], nil
+			}
+		}
+		return 0, errors.New("unknown cgroup path " + path)
+	}
+
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 2, "the lane-on agent is skipped; the others are enrolled")
+	gotIDs := make([]uint64, 0, len(mock.InstallCalls()))
+	for _, c := range mock.InstallCalls() {
+		gotIDs = append(gotIDs, c.CgroupID)
+		assert.Zero(t, c.Cfg.HostProxyIp)
+		assert.Zero(t, c.Cfg.HostProxyPort)
+	}
+	assert.ElementsMatch(t, []uint64{222, 333}, gotIDs)
+	assert.Equal(t, 1, resolves, "one failed lookup per sweep, not one per agent")
 }
 
 // TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure verifies
