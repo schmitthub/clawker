@@ -115,8 +115,7 @@ Tests pass. The grep returns only host-side rootless-helper mentions (troublesho
 - Acceptance results (2026-10-24): `go test ./internal/bundler/... -count=1` pass; `make test` pass; `golangci-lint run --config .golangci.yml ./internal/bundler/...` 0 issues. Grep: `sudo` remains only in plugin `troubleshooting.md` and `known-issues.md` (host-side rootless helpers). Golden files regenerated (`TestGenerate_Golden`, `TestGenerate_QualifiedStackGolden`). Runtime check (`which sudo` exits 1 in a rebuilt image) NOT run: no Docker socket in the agent container; host check pending.
 - Changes beyond the removal list: `docs/custom-images.mdx` floor list and `docs/container-internals.mdx` user line no longer claim sudo. New test `TestGenerateBase_NoSudo`; `TestFilterBasePackages` all-floor case uses `zsh` instead of `sudo`.
 - Reviews and findings: test-hunter: one low finding (redundant `isBasePackage("sudo")` assertion) fixed by deletion; one info kept (`NotContains` lock survives `GOLDEN_UPDATE=1`).
-- Open decision for the user: the repository's own `.clawker.yaml` lists `sudo` under `build.packages`, so the clawker dev container still installs it (user policy under the ruling). Not changed.
-- Commit: see git log on `feat/mythos-hardening`. Plugin reference edits (`Dockerfile.base.tmpl`, `sample-go.yaml`) are committed on a `clawker-plugin` branch; the submodule pointer bump waits for that PR to merge.
+- Commit: `c705fcf7` (removal), `fa7d5a20` (repo `.clawker.yaml` drops sudo, user ruling), `7e2103b3` (plugin pointer → 2026.10.1, clawker-plugin#9 merged). PR #589 = bottom of a `gh stack` on `main`; later tasks go on top with `gh stack add <branch>` from `feat/mythos-hardening`.
 
 ### Handoff Prompt
 
