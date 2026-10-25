@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/monitor/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -20,7 +19,6 @@ import (
 
 type UpOptions struct {
 	IOStreams     *iostreams.IOStreams
-	Client        func(context.Context) (*docker.Client, error)
 	Config        func() (config.Config, error)
 	Logger        func() (*logger.Logger, error)
 	BundleManager func() (*bundle.Manager, error)
@@ -31,7 +29,6 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
 		IOStreams:     f.IOStreams,
-		Client:        f.Client,
 		Config:        f.Config,
 		Logger:        f.Logger,
 		BundleManager: f.BundleManager,
@@ -91,8 +88,6 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	networkName := cfg.ClawkerNetwork()
-
 	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
@@ -128,16 +123,6 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	if err != nil {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}
-
-	client, err := opts.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create Docker client: %w", err)
-	}
-	//nolint:exhaustruct // Name is the only required field; the embedded moby NetworkCreateOptions is optional and omitted at every EnsureNetwork call site.
-	if _, err = client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{Name: networkName}); err != nil {
-		return fmt.Errorf("failed to ensure Docker network '%s': %w", networkName, err)
-	}
-	log.Debug().Str("network", networkName).Msg("network ready")
 
 	if composeErr := shared.ComposeUp(ctx, ios, log, composePath, opts.Detach); composeErr != nil {
 		return fmt.Errorf("failed to start monitoring stack: %w", composeErr)

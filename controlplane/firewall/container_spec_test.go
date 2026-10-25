@@ -231,3 +231,29 @@ func assertNoBindTarget(t *testing.T, mounts []mount.Mount, target string) {
 		}
 	}
 }
+
+// TestContainerSpecs_InfraTelemetryTargetsHostGateway pins the trusted
+// telemetry path: the monitoring stack lives off the agent network, so
+// Envoy and CoreDNS reach the collector's infra receiver through the host
+// gateway name, the same address the control plane dials. Both sibling
+// specs carry the extra-hosts entry that makes the name resolve on Linux
+// daemons, and the CoreDNS otel plugin endpoint names it.
+func TestContainerSpecs_InfraTelemetryTargetsHostGateway(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
+	overrideHostPathsForTest(t, consts.DataDir())
+
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
+	s.infraCertsReady = true
+	var netInfo NetworkInfo
+	netInfo.NetworkID = "net-test"
+	netInfo.EnvoyIP = "172.20.0.2"
+	netInfo.CoreDNSIP = "172.20.0.3"
+
+	envoy := s.envoyContainerSpec(&netInfo)
+	coredns := s.corednsContainerSpec(&netInfo)
+	require.Equal(t, []string{hostGatewayExtraHost}, envoy.extraHosts)
+	require.Equal(t, []string{hostGatewayExtraHost}, coredns.extraHosts)
+	require.Contains(t, coredns.env, consts.EnvCoreDNSOtelEndpoint+"="+consts.DockerHostInternal+":4319")
+}

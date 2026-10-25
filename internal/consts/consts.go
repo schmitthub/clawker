@@ -304,8 +304,8 @@ const (
 	// (host-proxy bypass) the CLI pushes on FirewallEnable. CP-owned state,
 	// never user-edited.
 	FirewallEnrollmentsFile = "enrollments.yaml"
-	EnvoyConfigFile     = "envoy.yaml"
-	Corefile            = "Corefile"
+	EnvoyConfigFile         = "envoy.yaml"
+	Corefile                = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
@@ -1471,13 +1471,4 @@ func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(Proj
 // HealthURL builds an HTTP health probe URL from host + port + path.
 func HealthURL(host string, port int, path string) string {
 	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)) + path
-}
-
-// ServiceURL builds an http(s)://host:port URL.
-func ServiceURL(host string, port int, https bool) string {
-	scheme := "http"
-	if https {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(port)))
 }

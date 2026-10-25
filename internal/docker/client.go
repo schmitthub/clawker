@@ -124,7 +124,9 @@ func (c *Client) Close() error {
 }
 
 // IsMonitoringActive checks if the clawker monitoring stack is running.
-// It looks for the otel-collector container on the clawker network.
+// It looks for a running otel-collector container. The stack lives on
+// its own compose network, never the clawker network, so the container's
+// network membership is not part of the check.
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	f := whail.Filters{}.Add("name", consts.MonitoringServiceOtelCollector).Add("status", "running")
 	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
@@ -134,20 +136,11 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 		c.log.Debug().Err(err).Msg("failed to check monitoring status")
 		return false
 	}
-
-	// Check if any otel-collector container is running on the clawker network
-	for _, ctr := range result.Items {
-		if ctr.NetworkSettings != nil {
-			for netName := range ctr.NetworkSettings.Networks {
-				if netName == c.cfg.ClawkerNetwork() {
-					c.log.Debug().Msg("monitoring stack detected as active")
-					return true
-				}
-			}
-		}
+	active := len(result.Items) > 0
+	if active {
+		c.log.Debug().Msg("monitoring stack detected as active")
 	}
-
-	return false
+	return active
 }
 
 // ImageExists checks if a managed image exists locally.

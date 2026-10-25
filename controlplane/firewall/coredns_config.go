@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Upstream DNS servers: Cloudflare malware-blocking resolvers.
@@ -97,19 +96,16 @@ func GenerateCorefile(
 	var b strings.Builder
 
 	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
-	// CoreDNS runs on the clawker network, so its 127.0.0.11 can resolve container names
-	// and host.docker.internal for all containers on the same network.
-	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
-	// They are reserved — egress rules matching these names are skipped from the
+	// CoreDNS runs on the clawker network, so its 127.0.0.11 can resolve
+	// host.docker.internal for all containers on the same network.
+	// This zone ensures Docker networking works when resolv.conf points to CoreDNS.
+	// It is reserved — egress rules matching the name are skipped from the
 	// per-domain zones to avoid duplicate zone definitions that crash CoreDNS.
 	//
-	// Monitoring hostnames live in [consts.MonitoringServiceHostnames] so the
-	// compose template and this list cannot drift — rename one and the other
-	// follows by construction.
-	internalHosts := append(
-		[]string{"docker.internal"}, // covers Docker magic hostnames incl. the host gateway name
-		consts.MonitoringServiceHostnames...,
-	)
+	// No monitoring service name is forwarded: the monitoring stack lives off
+	// the agent network, so a forward zone for one of its names would resolve
+	// nothing and would advertise a service agents must never reach.
+	internalHosts := []string{"docker.internal"} // covers Docker magic hostnames incl. the host gateway name
 
 	// Reserved zones — internal hosts get their own zones forwarding to Docker DNS.
 	// Egress rules matching these names are skipped to avoid duplicate CoreDNS zones.

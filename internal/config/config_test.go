@@ -800,21 +800,3 @@ func TestProjectInit_WritesOnlyWhatItSet(t *testing.T) {
 	assert.Equal(t, "vim", agent.Visual,
 		"the user-level value survives — not overridden by an empty string")
 }
-
-func TestOtelCollectorURL(t *testing.T) {
-	// Default port → otel-collector:4318. Asserting the literal shape
-	// here is the only direct coverage; consumers (bundler) assert the
-	// rendered Dockerfile contains cfg.OtelCollectorURL(), which is
-	// self-validating without a literal anchor.
-	cfg, err := NewBlankConfig()
-	require.NoError(t, err)
-	assert.Equal(t, "http://otel-collector:4318", cfg.OtelCollectorURL())
-
-	// Overridden port flows through.
-	cfg2, err := NewFromString("", `
-monitoring:
-  otel_collector_port: 9999
-`)
-	require.NoError(t, err)
-	assert.Equal(t, "http://otel-collector:9999", cfg2.OtelCollectorURL())
-}

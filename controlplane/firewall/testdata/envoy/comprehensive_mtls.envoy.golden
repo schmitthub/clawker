@@ -164,7 +164,7 @@ static_resources:
                     - endpoint:
                         address:
                             socket_address:
-                                address: otel-collector
+                                address: host.docker.internal
                                 port_value: 4319
           name: otel_collector_als
           transport_socket:
@@ -180,11 +180,11 @@ static_resources:
                     validation_context:
                         match_typed_subject_alt_names:
                             - matcher:
-                                exact: otel-collector
+                                exact: host.docker.internal
                               san_type: DNS
                         trusted_ca:
                             filename: /etc/envoy/otel-tls/ca.pem
-                sni: otel-collector
+                sni: host.docker.internal
           type: STRICT_DNS
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:

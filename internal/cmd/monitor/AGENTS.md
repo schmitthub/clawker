@@ -44,7 +44,6 @@ Scaffolds the BASE stack config files (`compose.yaml`, `otel-config.yaml`, `prom
 ```go
 type UpOptions struct {
     IOStreams     *iostreams.IOStreams
-    Client        func(context.Context) (*docker.Client, error)
     Config        func() (config.Config, error)
     Logger        func() (*logger.Logger, error)
     BundleManager func() (*bundle.Manager, error)
@@ -53,14 +52,13 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
 ```
 
-Starts monitoring stack via Docker Compose. Bring-up ONLY: when every long-lived service is already running (`shared.StackRunning`) it short-circuits with an already-up notice pointing at `monitor reload` — no render, no seed, no ledger write. Otherwise it ensures the clawker network exists and brings the stack up. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. On a PARTIAL bring-up (collector alive, another service down) `up` never restarts the running collector — when the rendered otel-config bytes changed it warns and points at `monitor reload`. Flags: `--detach` (default: true).
+Starts monitoring stack via Docker Compose. Bring-up ONLY: when every long-lived service is already running (`shared.StackRunning`) it short-circuits with an already-up notice pointing at `monitor reload` — no render, no seed, no ledger write. Otherwise it brings the stack up on the compose project's own network (the stack never joins the clawker agent network). The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. On a PARTIAL bring-up (collector alive, another service down) `up` never restarts the running collector — when the rendered otel-config bytes changed it warns and points at `monitor reload`. Flags: `--detach` (default: true).
 
 ### monitor reload
 
 ```go
 type ReloadOptions struct {
     IOStreams     *iostreams.IOStreams
-    Client        func(context.Context) (*docker.Client, error)
     Config        func() (config.Config, error)
     Logger        func() (*logger.Logger, error)
     BundleManager func() (*bundle.Manager, error)
@@ -111,4 +109,4 @@ Shows monitoring stack status (running/stopped), container details, and service 
 
 ## Config Access Pattern
 
-Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, in-cluster service URLs via `cfg.OpenSearchURL()` / `cfg.OpenSearchDashboardsURL()` / `cfg.PrometheusURL()` (zero-arg; returns clawker network hostnames for in-network consumers). Host-facing URLs printed to the user are formatted as `http://localhost:<port>` directly from `cfg.MonitoringConfig()` ports.
+Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`. Host-facing URLs printed to the user are formatted as `http://localhost:<port>` directly from `cfg.MonitoringConfig()` ports.
