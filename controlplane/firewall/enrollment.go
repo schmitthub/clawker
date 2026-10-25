@@ -11,7 +11,6 @@ import (
 	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -183,13 +182,13 @@ func (s *enrollmentStoreImpl) restore(containerID string, prev, found bool) erro
 // SubscribeEnrollmentEvict removes a container's enrollment record on the
 // docker container/destroy event, the same event the agent registry evicts
 // on. Stop, die, and kill do not evict: the container still exists and a
-// later start must replay its record. A failed removal is logged and the
-// record stays until the next destroy or a later FirewallEnable overwrite.
-func SubscribeEnrollmentEvict(
+// later start must replay its record. The removal runs on the ActionQueue,
+// the record's only writer, so it cannot interleave with a FirewallEnable
+// for the same container. A failed removal is logged and the record stays
+// until the next destroy or a later FirewallEnable overwrite.
+func (h *Handler) SubscribeEnrollmentEvict(
 	ctx context.Context,
 	topic *pubsub.Topic[dockerevents.DockerEvent],
-	store EnrollmentStore,
-	log *logger.Logger,
 ) {
 	topic.Subscribe(func(evt pubsub.Event[dockerevents.DockerEvent]) {
 		if ctx.Err() != nil {
@@ -203,8 +202,17 @@ func SubscribeEnrollmentEvict(
 		if cid == "" {
 			return
 		}
-		if err := store.Remove(cid); err != nil {
-			log.Warn().Err(err).Str("container_id", cid).
+		_, err := h.submit(ActionEvict, func(_ context.Context) (any, error) {
+			return nil, h.enrollments.Remove(cid)
+		})
+		switch {
+		case err == nil:
+			return
+		case errors.Is(err, ErrQueueClosed):
+			h.log.Info().Str("container_id", cid).
+				Msg("firewall: enrollment evict-on-destroy skipped; queue closed (CP shutting down)")
+		default:
+			h.log.Warn().Err(err).Str("container_id", cid).
 				Str("event", "firewall_enrollment_evict_failed").
 				Msg("firewall: enrollment evict-on-destroy failed; record persists until the next destroy")
 		}
