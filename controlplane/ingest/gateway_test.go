@@ -1,6 +1,7 @@
 package ingest_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -29,7 +30,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/controlplane/ingest"
@@ -662,27 +665,82 @@ func TestGateway_BatchRejectedByThisBatchDoesNotTrip(t *testing.T) {
 	assert.Equal(t, 1, rec.logCount(), "breaker still closed: the batch is forwarded, not dropped")
 }
 
-// TestGateway_ResourceCountCap: the wire cap bounds bytes, not objects.
-// A batch over the Resource* entry cap is refused before decode with
-// ErrBatchTooLarge and never reaches the collector; a batch at the cap
-// is forwarded.
-func TestGateway_ResourceCountCap(t *testing.T) {
+// TestGateway_MessageBudget: the wire cap bounds bytes, not objects.
+// Every nested message is counted on the wire before decode; a batch
+// over the budget is refused with ErrBatchTooLarge and never reaches the
+// collector, and a batch at the budget is forwarded.
+func TestGateway_MessageBudget(t *testing.T) {
 	pki := newTestPKI(t)
 	rec := new(recorder)
 	opts := gatewayOptions(pki, startCollector(t, pki, rec))
-	opts.MaxResources = 3
+	// One logsBody resource is four messages: ResourceLogs, Resource,
+	// ScopeLogs, LogRecord.
+	opts.MaxMessages = 12
 	gw := newGateway(t, opts)
 	id := wantIdentity()
 
-	atCap := logsBody(t, resource(), resource(), resource())
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, atCap, id))
+	atBudget := logsBody(t, resource(), resource(), resource())
+	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, atBudget, id))
 	assert.Equal(t, 1, rec.logCount())
 
-	overCap := logsBody(t, resource(), resource(), resource(), resource())
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, overCap, id)
+	overBudget := logsBody(t, resource(), resource(), resource(), resource())
+	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, overBudget, id)
 	require.ErrorIs(t, err, ingest.ErrBatchTooLarge)
-	assert.Equal(t, 1, rec.logCount(), "over-cap batch never forwarded")
+	assert.Equal(t, 1, rec.logCount(), "over-budget batch never forwarded")
 	assert.Equal(t, 1, counter(t, gw.Metrics.Rejected, "logs"))
+}
+
+// TestGateway_NestedEmptyRecordsRejected: one resource holding empty
+// LogRecords costs two wire bytes per record, so a body far under the
+// transport cap would decode into one struct per record. The default
+// budget refuses it before decode.
+func TestGateway_NestedEmptyRecordsRejected(t *testing.T) {
+	pki := newTestPKI(t)
+	rec := new(recorder)
+	gw := newGateway(t, gatewayOptions(pki, startCollector(t, pki, rec)))
+
+	body := emptyLogRecordsBody(200_000)
+	require.Less(t, len(body), 1<<20)
+	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, wantIdentity())
+	require.ErrorIs(t, err, ingest.ErrBatchTooLarge)
+	assert.Equal(t, 0, rec.logCount())
+	assert.Equal(t, 1, counter(t, gw.Metrics.Rejected, "logs"))
+}
+
+// TestGateway_DeepNestingRejected: attribute values nest through
+// kvlists without a schema bound. Nesting past the decoder's recursion
+// limit is a malformed body, refused before decode.
+func TestGateway_DeepNestingRejected(t *testing.T) {
+	pki := newTestPKI(t)
+	rec := new(recorder)
+	gw := newGateway(t, gatewayOptions(pki, startCollector(t, pki, rec)))
+
+	attr := kv("leaf", "x")
+	for range protowire.DefaultRecursionLimit {
+		list := new(commonv1.KeyValueList)
+		list.Values = []*commonv1.KeyValue{attr}
+		v := new(commonv1.AnyValue)
+		v.Value = &commonv1.AnyValue_KvlistValue{KvlistValue: list}
+		attr = new(commonv1.KeyValue)
+		attr.Key = "nest"
+		attr.Value = v
+	}
+	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, logsBody(t, resource(attr)), wantIdentity())
+	require.ErrorIs(t, err, ingest.ErrMalformedBody)
+	assert.Equal(t, 0, rec.logCount())
+}
+
+// emptyLogRecordsBody is an ExportLogsServiceRequest with one resource
+// and one scope holding n empty LogRecords, written on the wire so the
+// test does not allocate n structs.
+func emptyLogRecordsBody(n int) []byte {
+	field := func(m proto.Message, name string) []byte {
+		num := m.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name)).Number()
+		return protowire.AppendTag(nil, num, protowire.BytesType)
+	}
+	emptyRecord := protowire.AppendVarint(field(new(logsv1.ScopeLogs), "log_records"), 0)
+	scope := protowire.AppendBytes(field(new(logsv1.ResourceLogs), "scope_logs"), bytes.Repeat(emptyRecord, n))
+	return protowire.AppendBytes(field(new(collogs.ExportLogsServiceRequest), "resource_logs"), scope)
 }
 
 // TestGateway_ConcurrencyCap: with every slot taken the gateway answers
