@@ -733,32 +733,29 @@ func ReadJWK() (json.RawMessage, error) {
 // Two extra certs gate the monitoring stack's CP-only OTLP receiver:
 //
 //   - otel-server.{pem,key}: presented by the otel-collector container
-//     on its infra and agent-gateway receivers. SANs cover the names
-//     the trusted senders use to dial (host.docker.internal, localhost,
-//     127.0.0.1) so a single cert works across Linux native (where
-//     host.docker.internal resolves to the bridge gateway) and Docker
-//     Desktop.
+//     on its infra and agent-gateway receivers. SANs cover the name
+//     the trusted senders dial on the telemetry network (otel-collector)
+//     plus localhost and 127.0.0.1 for host-side tools.
 //
 //   - cp-client.{pem,key}: presented by clawkercp when pushing OTLP.
 //     Subject "clawkercp" so the receiver can audit which client is
 //     pushing in case future scoping is added.
 //
-// Agents on the clawker network cannot reach the receiver because they lack
-// any cert signed by the CLI CA — the TLS handshake fails before any
-// data is accepted. No BPF rule needed; auth is the boundary.
+// Agents cannot reach the receiver: they never join the telemetry network,
+// and they hold no infra-chained cert, so the TLS handshake would fail
+// before any data is accepted.
 
 // otelServerSANs lists every name a trusted peer might dial. Hoisted
 // out of the mint path so the on-disk cert can be checked against the
 // current SAN list at every CP start and re-minted when the list grows.
 //
-//   - host.docker.internal: every trusted sender (CP, Envoy ALS, the
-//     CoreDNS OTel plugin) dials the collector's host-side 127.0.0.1
-//     publish through this name and pins its SNI to it. The monitoring
-//     stack is not on the agent network, so no sender uses the compose
-//     service name.
+//   - otel-collector: every trusted sender (CP, CP gateway, Envoy ALS,
+//     the CoreDNS OTel plugin) dials the collector by its service name on
+//     the internal telemetry network and pins its SNI to it. The
+//     monitoring stack is not on the agent network.
 //   - localhost / 127.0.0.1: host-side debug, future tools.
 func otelServerSANs() ([]string, []net.IP) {
-	return []string{consts.DockerHostInternal, "localhost"}, []net.IP{net.ParseIP(consts.Localhost)}
+	return []string{consts.MonitoringServiceOtelCollector, "localhost"}, []net.IP{net.ParseIP(consts.Localhost)}
 }
 
 // otelServerCertSANsCurrent reports whether the cert at certPath already

@@ -1173,8 +1173,8 @@ type grpcStackDeps struct {
 // belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
 // buildOtelGateway constructs the agent telemetry gateway the ExportTelemetry RPC
 // forwards through: one mTLS client connection to the collector's
-// otlp/agents receiver at host.docker.internal:<OtelAgentIngestPort>,
-// presenting the same infra leaf the CP's own log bridge uses. The dial
+// otlp/agents receiver at otel-collector:<OtelAgentIngestPort> over the
+// internal telemetry network, presenting the same infra leaf the CP's own log bridge uses. The dial
 // is lazy, so a monitoring stack that is not running never delays boot.
 //
 // Degrade contract (§3.4): a missing issuer or a constructor failure
@@ -1205,7 +1205,7 @@ func buildOtelGateway(
 		return nil, noop
 	}
 	endpoint := net.JoinHostPort(
-		consts.DockerHostInternal,
+		consts.MonitoringServiceOtelCollector,
 		strconv.Itoa(int(cfg.MonitoringConfig().OtelAgentIngestPort)),
 	)
 	gw, err := otelgateway.New(otelgateway.Options{

@@ -9,12 +9,12 @@ import (
 // and therefore the hostname its container registers under on the
 // monitoring stack's own compose network. The stack never joins the
 // agent network and CoreDNS forwards none of these names: agent
-// telemetry reaches the collector through the control plane gateway,
-// and trusted senders (CP, Envoy, CoreDNS) dial the collector's
-// host-loopback publish at [DockerHostInternal]. The names matter only
-// inside the compose project (the Prometheus scrape target, the
-// OpenSearch exporters, the one-shot bootstrap container) and for the
-// CLI's container-running detection. The bootstrap container has no
+// telemetry reaches the collector through the control plane gateway.
+// The collector also joins [TelemetryNetwork], where the trusted senders
+// (CP, Envoy, CoreDNS) dial it by [MonitoringServiceOtelCollector]. The
+// other names matter only inside the compose project (the Prometheus
+// scrape target, the OpenSearch exporters, the one-shot bootstrap
+// container) and for the CLI's container-running detection. The bootstrap container has no
 // constant here: it dials opensearch-node and opensearch-dashboards once
 // per stack lifecycle.
 const (

@@ -3,6 +3,7 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"path/filepath"
 	"strconv"
@@ -89,12 +90,10 @@ type CPContainerConfig struct {
 	// RestartPolicy is the Docker restart policy for the container.
 	RestartPolicy container.RestartPolicy
 	// ExtraHosts adds /etc/hosts entries inside the CP container.
-	// Used to map host.docker.internal → host-gateway so the daemon
-	// can reach host-loopback-bound services (currently the OTEL
-	// collector OTLP/gRPC receiver on OtelInfraPort). Agent containers
-	// cannot reach the same address because the BPF firewall redirects
-	// gateway traffic for non-hostproxy ports to Envoy; the CP is
-	// exempt because it owns container_map and is never enrolled.
+	// Used to map host.docker.internal → host-gateway so the firewall
+	// handler can resolve the host-proxy address for per-container
+	// bypass enrollment. Telemetry does not use it: the CP reaches the
+	// collector over the telemetry network.
 	ExtraHosts []string
 }
 
@@ -445,12 +444,11 @@ func resolveBPFFSSource() (string, error) {
 // the OTEL bridge against the CP-only mTLS-gated receiver on the
 // monitoring stack.
 //
-// Endpoint: https://host.docker.internal:<OtelInfraPort>. CP is exempt
-// from the BPF firewall (not enrolled in container_map) and has
-// host.docker.internal mapped via ExtraHosts, so the dial reaches the
-// host-loopback-bound docker port forwarder. Agents on the clawker network
-// cannot present a CLI-signed client cert and so the receiver rejects
-// their TLS handshake — the gate is crypto, not network.
+// Endpoint: https://otel-collector:<OtelInfraPort>. The CP joins the
+// internal telemetry network, where Docker's embedded DNS resolves the
+// collector's service name. Agents never join that network, and they
+// cannot present an infra-chained client cert, so the receiver is closed
+// to them both by network and by crypto.
 //
 // Transport is OTLP/gRPC: the CP wires otlploggrpc in-process (see
 // cmd/clawkercp/clawkercp.go::otelOptionsFromEnv) and the collector's
@@ -464,7 +462,10 @@ func resolveBPFFSSource() (string, error) {
 // that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.MonitoringConfig()
-	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
+	endpoint := "https://" + net.JoinHostPort(
+		consts.MonitoringServiceOtelCollector,
+		strconv.Itoa(int(mon.OtelInfraPort)),
+	)
 	return []string{
 		consts.EnvOTLPEndpoint + "=" + endpoint,
 		// mTLS material is NOT injected via env. The CP-side exporter

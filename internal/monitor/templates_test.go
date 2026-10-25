@@ -7,6 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -182,8 +186,6 @@ docker:
 	for _, hostBind := range []string{
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelGRPCPort, data.OtelGRPCPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelCollectorPort, data.OtelCollectorPort),
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelInfraPort, data.OtelInfraPort),
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelAgentIngestPort, data.OtelAgentIngestPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.PrometheusPort, data.PrometheusPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchPort, data.OpenSearchPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
@@ -213,14 +215,41 @@ docker:
 		}
 	}
 
-	// The stack lives on its own compose network. No service joins the
-	// agent network, so an agent container cannot reach any monitoring
-	// service by name or by address.
-	for _, absent := range []string{"clawker-net", "networks:"} {
-		if strings.Contains(result, absent) {
-			t.Errorf("compose.yaml must not contain %q: monitoring services stay off the agent network", absent)
+	// The mTLS receivers have no host sender: the control plane, Envoy,
+	// and CoreDNS reach them over the telemetry network, so they are not
+	// published on the host at all.
+	for _, port := range []int{data.OtelInfraPort, data.OtelAgentIngestPort} {
+		if strings.Contains(result, fmt.Sprintf(":%d:%d", port, port)) {
+			t.Errorf("compose.yaml publishes mTLS receiver port %d on the host", port)
 		}
 	}
+
+	// No service joins the agent network. Only the collector joins the
+	// telemetry network, which the control plane creates as an internal
+	// network, so the compose file must reference it as external.
+	if strings.Contains(result, consts.Network) {
+		t.Errorf("compose.yaml must not contain %q: monitoring services stay off the agent network", consts.Network)
+	}
+	var doc struct {
+		Services map[string]struct {
+			Networks []string `yaml:"networks"`
+		} `yaml:"services"`
+		Networks map[string]struct {
+			External bool   `yaml:"external"`
+			Name     string `yaml:"name"`
+		} `yaml:"networks"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(result), &doc))
+	for name, svc := range doc.Services {
+		if name == data.OtelCollectorService {
+			assert.ElementsMatch(t, []string{"default", "telemetry"}, svc.Networks, "collector networks")
+			continue
+		}
+		assert.Empty(t, svc.Networks, "service %s must stay on the default compose network", name)
+	}
+	require.Contains(t, doc.Networks, "telemetry")
+	assert.True(t, doc.Networks["telemetry"].External, "telemetry network is created outside compose")
+	assert.Equal(t, consts.TelemetryNetwork, doc.Networks["telemetry"].Name)
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {

@@ -38,7 +38,7 @@ var errorHandlerOnce sync.Once
 // receiver and infra emitters must not cross over.
 type OtelClientOptions struct {
 	// Endpoint is host:port; otlploggrpc.WithEndpoint accepts no
-	// scheme. Example: "host.docker.internal:4319".
+	// scheme. Example: "otel-collector:4319".
 	Endpoint string
 
 	// TLSConfig pins both the client leaf (via GetClientCertificate)

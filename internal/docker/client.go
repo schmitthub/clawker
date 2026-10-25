@@ -143,6 +143,23 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	return active
 }
 
+// EnsureTelemetryNetwork creates the trusted telemetry network when it is
+// absent and returns its ID. The control plane, Envoy, CoreDNS, and the
+// otel-collector join it; agent containers never do. It is internal, so a
+// member gains no outbound route through it. The control plane bootstrap,
+// the firewall stack, and the monitor commands all call this one helper,
+// so every creator makes the same network whichever runs first.
+func (c *Client) EnsureTelemetryNetwork(ctx context.Context) (string, error) {
+	var opts whail.EnsureNetworkOptions
+	opts.Name = consts.TelemetryNetwork
+	opts.Internal = true
+	id, err := c.EnsureNetwork(ctx, opts)
+	if err != nil {
+		return "", fmt.Errorf("ensure %s network: %w", consts.TelemetryNetwork, err)
+	}
+	return id, nil
+}
+
 // ImageExists checks if a managed image exists locally.
 // Returns true if the image exists and is managed, false if not found or unmanaged.
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {

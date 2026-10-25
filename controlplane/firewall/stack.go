@@ -489,8 +489,8 @@ func (s *Stack) discoverOrEmpty() NetworkInfo {
 
 // --- Internal helpers ---
 
-// ensureNetworkAndDiscover creates the clawker network if missing and returns the
-// discovered topology. The CLI is the primary owner of network creation;
+// ensureNetworkAndDiscover creates the clawker and telemetry networks if
+// missing and returns the discovered clawker network topology. The CLI is the primary owner of network creation;
 // the defensive guard here protects against a stale CP image that starts
 // before bootstrap has run EnsureNetwork host-side.
 func (s *Stack) ensureNetworkAndDiscover(ctx context.Context) (*NetworkInfo, error) {
@@ -498,6 +498,9 @@ func (s *Stack) ensureNetworkAndDiscover(ctx context.Context) (*NetworkInfo, err
 		Name: s.cfg.ClawkerNetwork(),
 	}); err != nil {
 		return nil, fmt.Errorf("ensure clawker-net: %w", err)
+	}
+	if _, err := s.docker.EnsureTelemetryNetwork(ctx); err != nil {
+		return nil, fmt.Errorf("firewall stack: %w", err)
 	}
 	netInfo, err := DiscoverNetwork(ctx, s.docker, s.cfg)
 	if err != nil {
@@ -774,13 +777,6 @@ func (s *Stack) envoyPorts() EnvoyPorts {
 	}
 }
 
-// hostGatewayExtraHost is the /etc/hosts entry that makes
-// consts.DockerHostInternal resolve inside a sibling container on a
-// Linux daemon (Docker Desktop resolves it on its own). Envoy and
-// CoreDNS dial the collector's infra receiver through it, the same way
-// the CP container does (controlplane/manager/cp_container.go).
-const hostGatewayExtraHost = consts.DockerHostInternal + ":host-gateway"
-
 // containerSpec captures the subset of container creation inputs Stack
 // actually varies between Envoy and CoreDNS — everything else (managed
 // label, network attachment) is derived from config + netInfo inside
@@ -795,8 +791,6 @@ type containerSpec struct {
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string
-	// extraHosts carries /etc/hosts entries (HostConfig.ExtraHosts).
-	extraHosts []string
 	// labels carries the state-encoding labels that distinguish drift-
 	// significant create-time options (today: labelInfraCertsReady).
 	// Compared by ensureContainer / reloadContainer to decide whether
@@ -874,12 +868,11 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 		})
 	}
 	return containerSpec{
-		image:      envoyImage,
-		user:       strconv.Itoa(consts.EnvoyUID) + ":" + strconv.Itoa(consts.EnvoyGID),
-		staticIP:   netInfo.EnvoyIP,
-		networkID:  netInfo.NetworkID,
-		mounts:     mounts,
-		extraHosts: []string{hostGatewayExtraHost},
+		image:     envoyImage,
+		user:      strconv.Itoa(consts.EnvoyUID) + ":" + strconv.Itoa(consts.EnvoyGID),
+		staticIP:  netInfo.EnvoyIP,
+		networkID: netInfo.NetworkID,
+		mounts:    mounts,
 		// Publish the dedicated health listener — NOT the TLS egress port.
 		// Publishing TLS would install NAT rules that masquerade the source
 		// IP of DNAT'd inter-container traffic.
@@ -905,9 +898,9 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	//
 	// CoreDNS log shipping: the custom `otel` plugin (cmd/coredns-clawker
 	// /plugins/otel) emits one OTLP log record per query over mTLS to
-	// the infra receiver at host.docker.internal:OtelInfraPort (the
-	// collector's host-loopback publish; the monitoring stack is not on
-	// the agent network). CLAWKER_COREDNS_OTEL_ENDPOINT in container env wires
+	// the infra receiver at otel-collector:OtelInfraPort over the
+	// telemetry network (the monitoring stack is not on the agent
+	// network). CLAWKER_COREDNS_OTEL_ENDPOINT in container env wires
 	// the plugin to the receiver; the cert + key + CA bind-mount at
 	// /etc/clawker/auth/coredns/ matches the plugin's hardcoded
 	// defaults (see plugins/otel/setup.go). Gated on infraCertsReady so
@@ -946,18 +939,17 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// to TLS via the client cert config it loads from the bind-mounted
 		// paths below.
 		env = append(env, fmt.Sprintf(consts.EnvCoreDNSOtelEndpoint+"=%s:%d",
-			consts.DockerHostInternal,
+			consts.MonitoringServiceOtelCollector,
 			s.cfg.MonitoringConfig().OtelInfraPort))
 	}
 	return containerSpec{
-		image:      s.corednsImage,
-		user:       "",
-		staticIP:   netInfo.CoreDNSIP,
-		networkID:  netInfo.NetworkID,
-		cmd:        []string{"-conf", "/etc/coredns/Corefile"},
-		mounts:     mounts,
-		env:        env,
-		extraHosts: []string{hostGatewayExtraHost},
+		image:     s.corednsImage,
+		user:      "",
+		staticIP:  netInfo.CoreDNSIP,
+		networkID: netInfo.NetworkID,
+		cmd:       []string{"-conf", "/etc/coredns/Corefile"},
+		mounts:    mounts,
+		env:       env,
 		portBindings: network.PortMap{
 			network.MustParsePort(fmt.Sprintf("%d/tcp", healthPort)): {
 				{HostPort: strconv.Itoa(healthPort)},
@@ -1068,6 +1060,10 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 				NetworkID:  spec.networkID,
 				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
 			},
+			// The trusted telemetry lane to the collector's mTLS
+			// receivers. Dynamic address: nothing dials the siblings
+			// on this network.
+			consts.TelemetryNetwork: new(network.EndpointSettings),
 		},
 	}
 	containerCfg := &container.Config{Image: spec.image, Cmd: spec.cmd, Env: spec.env}
@@ -1077,7 +1073,6 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		Mounts:        spec.mounts,
 		PortBindings:  spec.portBindings,
 		CapAdd:        spec.capAdd,
-		ExtraHosts:    spec.extraHosts,
 	}
 
 	extraLabels := whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}}

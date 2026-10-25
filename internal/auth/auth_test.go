@@ -324,16 +324,14 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	})
 	require.NoError(t, err, "OTEL server cert must be signed by CLI CA")
 	assert.Equal(t, "clawker-otel-collector", cert.Subject.CommonName)
-	// SANs cover both Linux native (host.docker.internal → bridge) and
-	// Docker Desktop. Both must verify or CP→collector dial breaks on
-	// one of the platforms.
-	// Every trusted sender (CP, Envoy ALS, the CoreDNS otel plugin) dials
-	// host.docker.internal and pins its SNI to that name.
-	assert.Contains(t, cert.DNSNames, "host.docker.internal")
+	// Every trusted sender (CP, CP gateway, Envoy ALS, the CoreDNS otel
+	// plugin) dials the collector by service name on the telemetry network
+	// and pins its SNI to that name.
+	assert.Contains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)
 	assert.Contains(t, cert.DNSNames, "localhost")
-	// The collector's compose service name is not a dial target: the
-	// stack lives off the agent network and nothing resolves that name.
-	assert.NotContains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)
+	// No sender dials the host gateway any more: on a native Linux daemon
+	// that name is the bridge IP, where the collector publishes nothing.
+	assert.NotContains(t, cert.DNSNames, consts.DockerHostInternal)
 }
 
 // Tests that ensureOtelServerCert re-mints when the on-disk cert is
@@ -348,7 +346,7 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 	require.NoError(t, err)
 
 	// Overwrite the cert with one that has a strict subset of the
-	// current SAN list (drops "host.docker.internal"). Reuse the CA so
+	// current SAN list (drops "otel-collector"). Reuse the CA so
 	// chain verification still works; only the SANs differ.
 	caCert, caKey, err := loadCA()
 	require.NoError(t, err)
@@ -376,7 +374,7 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 	staleBlock, _ := pem.Decode(stalePEM)
 	staleCert, err := x509.ParseCertificate(staleBlock.Bytes)
 	require.NoError(t, err)
-	require.NotContains(t, staleCert.DNSNames, consts.DockerHostInternal)
+	require.NotContains(t, staleCert.DNSNames, consts.MonitoringServiceOtelCollector)
 
 	require.NoError(t, ensureOtelServerCert())
 
@@ -385,7 +383,7 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 	freshBlock, _ := pem.Decode(freshPEM)
 	freshCert, err := x509.ParseCertificate(freshBlock.Bytes)
 	require.NoError(t, err)
-	assert.Contains(t, freshCert.DNSNames, consts.DockerHostInternal,
+	assert.Contains(t, freshCert.DNSNames, consts.MonitoringServiceOtelCollector,
 		"stale cert with missing SAN must be re-minted")
 }
 

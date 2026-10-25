@@ -560,11 +560,11 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // only emits it when als.MTLS is true; infra services must never push OTLP
 // across the untrusted lane.
 //
-// STRICT_DNS resolves the host gateway name (consts.DockerHostInternal,
-// an /etc/hosts entry on the Envoy container) on every refresh: the
-// monitoring stack is not on the agent network, so the collector's infra
-// receiver is reached through its host-loopback publish, the same path the
-// CP uses. h2 is required because OTLP/gRPC runs on HTTP/2. The upstream
+// STRICT_DNS resolves the collector's service name
+// (consts.MonitoringServiceOtelCollector) through Docker's embedded DNS on
+// every refresh: Envoy and the collector share the internal telemetry
+// network, the same lane the CP uses, while the monitoring stack stays off
+// the agent network. h2 is required because OTLP/gRPC runs on HTTP/2. The upstream
 // TLS context loads the leaf+intermediate chain bind-mounted at
 // /etc/envoy/otel-tls/client.{pem,key} and validates the collector's server
 // cert against the CLI root CA. SNI is set to that same name so Envoy
@@ -574,7 +574,7 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // CLI-root-chained leaf (a future infra service) can't impersonate the
 // collector for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
-	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.DockerHostInternal, als.Port,
+	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port,
 		infraClientTLS{cert: envoyOtelTLSCertFile, key: envoyOtelTLSKeyFile, ca: envoyOtelTLSCAFile})
 }
 
