@@ -560,18 +560,21 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // only emits it when als.MTLS is true; infra services must never push OTLP
 // across the untrusted lane.
 //
-// STRICT_DNS resolves the collector's clawker network DNS name
-// (consts.MonitoringServiceOtelCollector) on every refresh; h2 is
-// required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
-// leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
-// and validates the collector's server cert against the CLI root CA.
-// SNI is set to that same service name so Envoy presents the expected hostname
-// in the ClientHello, and match_typed_subject_alt_names pins the upstream cert
-// to that SAN — defense-in-depth on top of the CLI-root trust boundary so a different
-// CLI-root-chained leaf (a future infra service) can't impersonate the collector
-// for this cluster.
+// STRICT_DNS resolves the host gateway name (consts.DockerHostInternal,
+// an /etc/hosts entry on the Envoy container) on every refresh: the
+// monitoring stack is not on the agent network, so the collector's infra
+// receiver is reached through its host-loopback publish, the same path the
+// CP uses. h2 is required because OTLP/gRPC runs on HTTP/2. The upstream
+// TLS context loads the leaf+intermediate chain bind-mounted at
+// /etc/envoy/otel-tls/client.{pem,key} and validates the collector's server
+// cert against the CLI root CA. SNI is set to that same name so Envoy
+// presents the expected hostname in the ClientHello, and
+// match_typed_subject_alt_names pins the upstream cert to that SAN —
+// defense-in-depth on top of the CLI-root trust boundary so a different
+// CLI-root-chained leaf (a future infra service) can't impersonate the
+// collector for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
-	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port,
+	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.DockerHostInternal, als.Port,
 		infraClientTLS{cert: envoyOtelTLSCertFile, key: envoyOtelTLSKeyFile, ca: envoyOtelTLSCAFile})
 }
 

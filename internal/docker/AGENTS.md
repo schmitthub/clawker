@@ -67,7 +67,7 @@ type Container struct {
 
 | Method | Signature |
 |--------|-----------|
-| `IsMonitoringActive` | `(ctx context.Context) bool` — checks for otel-collector on the clawker network |
+| `IsMonitoringActive` | `(ctx context.Context) bool` — true when a running `otel-collector` container exists (the stack lives on its own compose network, so no network check) |
 | `ListContainers` | `(ctx context.Context, includeAll bool) ([]Container, error)` — all managed containers |
 | `ListContainersByProject` | `(ctx context.Context, project string, includeAll bool) ([]Container, error)` — project-scoped |
 | `FindContainerByAgent` | `(ctx context.Context, project, agent string) (string, *container.Summary, error)` — returns (name, summary, err); not-found = `(name, nil, nil)` |

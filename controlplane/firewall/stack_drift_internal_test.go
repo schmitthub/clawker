@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -186,4 +187,31 @@ func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStack_ensureContainer_PassesExtraHosts pins the create-time wiring of
+// containerSpec.extraHosts into HostConfig.ExtraHosts: without it the
+// host-gateway entry the specs carry never reaches the daemon, and the
+// siblings cannot resolve the collector's host-loopback publish on a
+// Linux daemon.
+func TestStack_ensureContainer_PassesExtraHosts(t *testing.T) {
+	fake, s, _ := newDriftFixture(t)
+	fake.SetupContainerList() // no sibling yet: create path
+
+	var got []string
+	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		got = opts.HostConfig.ExtraHosts
+		var res client.ContainerCreateResult
+		res.ID = dockermocks.FakeContainerID
+		return res, nil
+	}
+
+	var spec containerSpec
+	spec.image = "img:test"
+	spec.staticIP = "172.20.0.2"
+	spec.networkID = "net-test"
+	spec.labels = s.driftLabels()
+	spec.extraHosts = []string{hostGatewayExtraHost}
+	require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
+	assert.Equal(t, []string{hostGatewayExtraHost}, got)
 }
