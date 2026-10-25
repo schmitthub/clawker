@@ -10,11 +10,14 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/stretchr/testify/require"
 )
 
 func TestParseContainers(t *testing.T) {
@@ -419,4 +422,36 @@ func TestIsMonitoringActive(t *testing.T) {
 		return moby.ContainerListResult{}, errors.New("daemon unreachable")
 	}
 	require.False(t, client.IsMonitoringActive(ctx), "a list failure reports the stack as down")
+}
+
+// TestEnsureTelemetryNetwork pins the shape of the trusted telemetry
+// network: a managed, internal network with the fixed name the monitoring
+// compose file joins as external. Internal keeps it free of an outbound
+// route, so joining it adds no egress path to the control plane, Envoy,
+// or CoreDNS.
+func TestEnsureTelemetryNetwork(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
+	fake := whailtest.NewFakeAPIClient()
+	client := new(Client)
+	client.Engine = clawkerEngine(cfg, fake)
+	client.log = logger.Nop()
+
+	fake.NetworkInspectFn = func(_ context.Context, _ string, _ moby.NetworkInspectOptions) (moby.NetworkInspectResult, error) {
+		return moby.NetworkInspectResult{}, nil // no managed label: absent
+	}
+	var gotName string
+	var gotOpts moby.NetworkCreateOptions
+	fake.NetworkCreateFn = func(_ context.Context, name string, opts moby.NetworkCreateOptions) (moby.NetworkCreateResult, error) {
+		gotName, gotOpts = name, opts
+		var res moby.NetworkCreateResult
+		res.ID = "telemetry-id"
+		return res, nil
+	}
+
+	id, err := client.EnsureTelemetryNetwork(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "telemetry-id", id)
+	assert.Equal(t, consts.TelemetryNetwork, gotName)
+	assert.True(t, gotOpts.Internal, "telemetry network must be internal")
+	assert.Equal(t, "true", gotOpts.Labels["dev.clawker.managed"])
 }

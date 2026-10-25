@@ -18,7 +18,7 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 
 ## Architecture
 
-The monitoring stack runs as four long-lived Docker Compose services on their own Compose network, plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
+The monitoring stack runs as four long-lived Docker Compose services on their own Compose network (the collector also joins an internal telemetry network), plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
 
 ```
 Claude Code (in container)                Control plane (host)
@@ -40,17 +40,17 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
-| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC), 4320 (control-plane gateway) | Routes telemetry to backends. Agent telemetry arrives on the control-plane gateway receiver with `project`, `agent`, and `container_id` set from the agent's verified identity (`ingest_source=cp_gateway`) |
+| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC), 4320 (control-plane gateway, not published on the host) | Routes telemetry to backends. Agent telemetry arrives on the control-plane gateway receiver with `project`, `agent`, and `container_id` set from the agent's verified identity (`ingest_source=cp_gateway`) |
 | **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawkercp` (clawkercp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs), `clawker-ebpf-egress` (eBPF per-decision egress events) log indices, plus the `traces`/`clawker` (SS4O) trace index |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 | **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs after OpenSearch + Prometheus are reachable, before the collector starts; applies templates, ISM, datasource, workspace, saved objects, then exits |
 
-All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the stack's own Compose network; none of them joins the `clawker-net` agent network, and every published port binds `127.0.0.1`. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
+All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the stack's own Compose network; none of them joins the `clawker-net` agent network, and every published port binds `127.0.0.1`. The collector also joins an internal telemetry network. Only clawker's control plane and firewall containers join that network; agents never join it. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
 
 ### Service Hostnames
 
-The monitoring services have fixed, stable hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) that resolve only inside the stack's own Compose network. Agent containers cannot resolve or reach any of them: agent telemetry reaches the collector through the control plane, and the firewall's DNS forwards no monitoring hostname. The control plane, Envoy, and CoreDNS deliver their own telemetry to the collector's host-loopback receiver through `host.docker.internal`.
+The monitoring services have fixed, stable hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) that resolve only inside the stack's own Compose network. Agent containers cannot resolve or reach any of them: agent telemetry reaches the collector through the control plane, and the firewall's DNS forwards no monitoring hostname. The control plane, Envoy, and CoreDNS deliver their own telemetry to `otel-collector` over the internal telemetry network.
 
 ### How Agents Connect
 

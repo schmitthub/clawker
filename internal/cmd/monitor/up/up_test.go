@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -14,6 +15,7 @@ func TestNewCmdUp(t *testing.T) {
 	f := &cmdutil.Factory{
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		Client:    func(context.Context) (*docker.Client, error) { return new(docker.Client), nil },
 	}
 
 	var gotOpts *UpOptions
@@ -36,6 +38,9 @@ func TestNewCmdUp(t *testing.T) {
 	}
 	if !gotOpts.Detach {
 		t.Error("expected Detach to default to true")
+	}
+	if gotOpts.Client == nil {
+		t.Error("expected Client to be set from factory: up ensures the telemetry network")
 	}
 }
 

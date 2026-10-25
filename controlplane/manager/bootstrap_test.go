@@ -278,6 +278,30 @@ func TestEnsureRunning_ForwardsSecurityOptToHostConfig(t *testing.T) {
 		"createCPContainer must forward cpConfig.SecurityOpt into HostConfig")
 }
 
+// TestEnsureRunning_JoinsTelemetryNetwork pins the CP's second network
+// endpoint. The CP reaches the collector's mTLS receivers by service name
+// on the internal telemetry network; on a native Linux daemon the old
+// host-gateway path reached nothing, because the collector publishes
+// only on host loopback.
+func TestEnsureRunning_JoinsTelemetryNetwork(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	var endpoints map[string]*network.EndpointSettings
+	f.docker.FakeAPI.ContainerCreateFn = func(_ context.Context, opts mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		endpoints = opts.NetworkingConfig.EndpointsConfig
+		var res mobyclient.ContainerCreateResult
+		res.ID = "cp-id"
+		return res, nil
+	}
+
+	require.NoError(t, ensureRunning(t.Context(), f.ensureOpts()))
+	require.Contains(t, endpoints, consts.Network)
+	require.NotNil(t, endpoints[consts.Network].IPAMConfig, "clawker-net endpoint keeps the static CP address")
+	require.Contains(t, endpoints, consts.TelemetryNetwork)
+	assert.Nil(t, endpoints[consts.TelemetryNetwork].IPAMConfig, "telemetry endpoint takes a dynamic address")
+}
+
 func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 	f := newBootstrapFixture(t)
 

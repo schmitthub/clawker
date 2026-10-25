@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -189,18 +190,17 @@ func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
 	}
 }
 
-// TestStack_ensureContainer_PassesExtraHosts pins the create-time wiring of
-// containerSpec.extraHosts into HostConfig.ExtraHosts: without it the
-// host-gateway entry the specs carry never reaches the daemon, and the
-// siblings cannot resolve the collector's host-loopback publish on a
-// Linux daemon.
-func TestStack_ensureContainer_PassesExtraHosts(t *testing.T) {
+// TestStack_ensureContainer_JoinsTelemetryNetwork pins the create-time
+// network attachment: each sibling joins the clawker network at its static
+// IP and the telemetry network with a dynamic address. Without the second
+// endpoint Envoy and CoreDNS cannot resolve or reach the collector.
+func TestStack_ensureContainer_JoinsTelemetryNetwork(t *testing.T) {
 	fake, s, _ := newDriftFixture(t)
 	fake.SetupContainerList() // no sibling yet: create path
 
-	var got []string
+	var got map[string]*network.EndpointSettings
 	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
-		got = opts.HostConfig.ExtraHosts
+		got = opts.NetworkingConfig.EndpointsConfig
 		var res client.ContainerCreateResult
 		res.ID = dockermocks.FakeContainerID
 		return res, nil
@@ -211,7 +211,9 @@ func TestStack_ensureContainer_PassesExtraHosts(t *testing.T) {
 	spec.staticIP = "172.20.0.2"
 	spec.networkID = "net-test"
 	spec.labels = s.driftLabels()
-	spec.extraHosts = []string{hostGatewayExtraHost}
 	require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
-	assert.Equal(t, []string{hostGatewayExtraHost}, got)
+	require.Contains(t, got, consts.Network)
+	assert.Equal(t, "172.20.0.2", got[consts.Network].IPAMConfig.IPv4Address.String())
+	require.Contains(t, got, consts.TelemetryNetwork)
+	assert.Nil(t, got[consts.TelemetryNetwork].IPAMConfig, "telemetry endpoint takes a dynamic address")
 }

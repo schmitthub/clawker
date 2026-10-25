@@ -460,10 +460,9 @@ func TestCPContainer_OtelClientCertMounts(t *testing.T) {
 }
 
 // TestCPContainer_ExtraHostsHostGateway — host.docker.internal is
-// always remapped via host-gateway. CP relies on it to reach the
-// host-loopback OTLP receiver; agent containers cannot use the same
-// route because the BPF firewall redirects gateway traffic for
-// non-hostproxy ports to Envoy (CP is exempt).
+// always remapped via host-gateway. The firewall handler resolves the
+// name from the CP's network namespace to build the per-container
+// host-proxy bypass address.
 func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
@@ -516,6 +515,11 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	for k, found := range wantPresent {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
+	// The endpoint names the collector on the telemetry network, never
+	// host.docker.internal: on a native Linux daemon that name is the
+	// bridge IP, where the collector publishes nothing.
+	assert.Contains(t, cpConfig.Env, fmt.Sprintf("OTEL_EXPORTER_OTLP_ENDPOINT=https://%s:%d",
+		consts.MonitoringServiceOtelCollector, cfg.MonitoringConfig().OtelInfraPort))
 }
 
 // TestCPContainer_SecurityOpt_AppArmorUnconfined pins the
