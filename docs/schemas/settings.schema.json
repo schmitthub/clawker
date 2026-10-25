@@ -262,7 +262,7 @@
         },
         "prometheus_metrics_port": {
           "default": 8889,
-          "description": "In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)",
+          "description": "In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over the monitoring stack's compose network; not host-published — no localhost binding, no host port-conflict check needed)",
           "title": "Prometheus Metrics Port",
           "type": "integer"
         },

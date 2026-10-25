@@ -184,15 +184,6 @@ var _ config.Config = &ConfigMock{}
 //			MonitoringConfigFunc: func() config.MonitoringConfig {
 //				panic("mock out the MonitoringConfig method")
 //			},
-//			OpenSearchDashboardsURLFunc: func() string {
-//				panic("mock out the OpenSearchDashboardsURL method")
-//			},
-//			OpenSearchURLFunc: func() string {
-//				panic("mock out the OpenSearchURL method")
-//			},
-//			OtelCollectorURLFunc: func() string {
-//				panic("mock out the OtelCollectorURL method")
-//			},
 //			PidsSubdirFunc: func() (string, error) {
 //				panic("mock out the PidsSubdir method")
 //			},
@@ -216,9 +207,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			ProjectStoreFunc: func() *storage.Store[config.Project] {
 //				panic("mock out the ProjectStore method")
-//			},
-//			PrometheusURLFunc: func() string {
-//				panic("mock out the PrometheusURL method")
 //			},
 //			PurposeAgentFunc: func() string {
 //				panic("mock out the PurposeAgent method")
@@ -422,15 +410,6 @@ type ConfigMock struct {
 	// MonitoringConfigFunc mocks the MonitoringConfig method.
 	MonitoringConfigFunc func() config.MonitoringConfig
 
-	// OpenSearchDashboardsURLFunc mocks the OpenSearchDashboardsURL method.
-	OpenSearchDashboardsURLFunc func() string
-
-	// OpenSearchURLFunc mocks the OpenSearchURL method.
-	OpenSearchURLFunc func() string
-
-	// OtelCollectorURLFunc mocks the OtelCollectorURL method.
-	OtelCollectorURLFunc func() string
-
 	// PidsSubdirFunc mocks the PidsSubdir method.
 	PidsSubdirFunc func() (string, error)
 
@@ -454,9 +433,6 @@ type ConfigMock struct {
 
 	// ProjectStoreFunc mocks the ProjectStore method.
 	ProjectStoreFunc func() *storage.Store[config.Project]
-
-	// PrometheusURLFunc mocks the PrometheusURL method.
-	PrometheusURLFunc func() string
 
 	// PurposeAgentFunc mocks the PurposeAgent method.
 	PurposeAgentFunc func() string
@@ -659,15 +635,6 @@ type ConfigMock struct {
 		// MonitoringConfig holds details about calls to the MonitoringConfig method.
 		MonitoringConfig []struct {
 		}
-		// OpenSearchDashboardsURL holds details about calls to the OpenSearchDashboardsURL method.
-		OpenSearchDashboardsURL []struct {
-		}
-		// OpenSearchURL holds details about calls to the OpenSearchURL method.
-		OpenSearchURL []struct {
-		}
-		// OtelCollectorURL holds details about calls to the OtelCollectorURL method.
-		OtelCollectorURL []struct {
-		}
 		// PidsSubdir holds details about calls to the PidsSubdir method.
 		PidsSubdir []struct {
 		}
@@ -695,9 +662,6 @@ type ConfigMock struct {
 		}
 		// ProjectStore holds details about calls to the ProjectStore method.
 		ProjectStore []struct {
-		}
-		// PrometheusURL holds details about calls to the PrometheusURL method.
-		PrometheusURL []struct {
 		}
 		// PurposeAgent holds details about calls to the PurposeAgent method.
 		PurposeAgent []struct {
@@ -730,83 +694,79 @@ type ConfigMock struct {
 		WorkspaceDefaultMode []struct {
 		}
 	}
-	lockAgentConfig             sync.RWMutex
-	lockAliases                 sync.RWMutex
-	lockBridgePIDFilePath       sync.RWMutex
-	lockBridgesSubdir           sync.RWMutex
-	lockBuildConfig             sync.RWMutex
-	lockBuildSubdir             sync.RWMutex
-	lockBundleDeclarations      sync.RWMutex
-	lockCPIPLastOctet           sync.RWMutex
-	lockClawkerIgnoreName       sync.RWMutex
-	lockClawkerNetwork          sync.RWMutex
-	lockConfigDirEnvVar         sync.RWMutex
-	lockContainerGID            sync.RWMutex
-	lockContainerUID            sync.RWMutex
-	lockControlPlaneSettings    sync.RWMutex
-	lockCoreDNSHealthHostPort   sync.RWMutex
-	lockCoreDNSHealthPath       sync.RWMutex
-	lockCoreDNSIPLastOctet      sync.RWMutex
-	lockDataDirEnvVar           sync.RWMutex
-	lockDockerHost              sync.RWMutex
-	lockDomain                  sync.RWMutex
-	lockEgressRulesFileName     sync.RWMutex
-	lockEngineLabelPrefix       sync.RWMutex
-	lockEngineManagedLabel      sync.RWMutex
-	lockEnvoyEgressPort         sync.RWMutex
-	lockEnvoyHealthHostPort     sync.RWMutex
-	lockEnvoyHealthPort         sync.RWMutex
-	lockEnvoyIPLastOctet        sync.RWMutex
-	lockEnvoyTCPPortBase        sync.RWMutex
-	lockEnvoyUDPPortBase        sync.RWMutex
-	lockFirewallCertSubdir      sync.RWMutex
-	lockFirewallDataSubdir      sync.RWMutex
-	lockFirewallEnabled         sync.RWMutex
-	lockHarnessConfigFor        sync.RWMutex
-	lockHostProxyConfig         sync.RWMutex
-	lockHostProxyLogFilePath    sync.RWMutex
-	lockHostProxyPIDFilePath    sync.RWMutex
-	lockLabelAgent              sync.RWMutex
-	lockLabelCreated            sync.RWMutex
-	lockLabelDomain             sync.RWMutex
-	lockLabelE2ETest            sync.RWMutex
-	lockLabelImage              sync.RWMutex
-	lockLabelManaged            sync.RWMutex
-	lockLabelPrefix             sync.RWMutex
-	lockLabelProject            sync.RWMutex
-	lockLabelPurpose            sync.RWMutex
-	lockLabelTest               sync.RWMutex
-	lockLabelTestName           sync.RWMutex
-	lockLabelVersion            sync.RWMutex
-	lockLabelWorkdir            sync.RWMutex
-	lockLoggingConfig           sync.RWMutex
-	lockLogsSubdir              sync.RWMutex
-	lockManagedLabelValue       sync.RWMutex
-	lockMonitorExtensions       sync.RWMutex
-	lockMonitorSubdir           sync.RWMutex
-	lockMonitoringConfig        sync.RWMutex
-	lockOpenSearchDashboardsURL sync.RWMutex
-	lockOpenSearchURL           sync.RWMutex
-	lockOtelCollectorURL        sync.RWMutex
-	lockPidsSubdir              sync.RWMutex
-	lockPostInitFor             sync.RWMutex
-	lockPreRunFor               sync.RWMutex
-	lockProjectConfigFileName   sync.RWMutex
-	lockProjectEgressRules      sync.RWMutex
-	lockProjectName             sync.RWMutex
-	lockProjectRoot             sync.RWMutex
-	lockProjectStore            sync.RWMutex
-	lockPrometheusURL           sync.RWMutex
-	lockPurposeAgent            sync.RWMutex
-	lockPurposeFirewall         sync.RWMutex
-	lockPurposeMonitoring       sync.RWMutex
-	lockSecurityConfig          sync.RWMutex
-	lockSettingsFileName        sync.RWMutex
-	lockSettingsStore           sync.RWMutex
-	lockShareSubdir             sync.RWMutex
-	lockStateDirEnvVar          sync.RWMutex
-	lockTestRepoDirEnvVar       sync.RWMutex
-	lockWorkspaceDefaultMode    sync.RWMutex
+	lockAgentConfig           sync.RWMutex
+	lockAliases               sync.RWMutex
+	lockBridgePIDFilePath     sync.RWMutex
+	lockBridgesSubdir         sync.RWMutex
+	lockBuildConfig           sync.RWMutex
+	lockBuildSubdir           sync.RWMutex
+	lockBundleDeclarations    sync.RWMutex
+	lockCPIPLastOctet         sync.RWMutex
+	lockClawkerIgnoreName     sync.RWMutex
+	lockClawkerNetwork        sync.RWMutex
+	lockConfigDirEnvVar       sync.RWMutex
+	lockContainerGID          sync.RWMutex
+	lockContainerUID          sync.RWMutex
+	lockControlPlaneSettings  sync.RWMutex
+	lockCoreDNSHealthHostPort sync.RWMutex
+	lockCoreDNSHealthPath     sync.RWMutex
+	lockCoreDNSIPLastOctet    sync.RWMutex
+	lockDataDirEnvVar         sync.RWMutex
+	lockDockerHost            sync.RWMutex
+	lockDomain                sync.RWMutex
+	lockEgressRulesFileName   sync.RWMutex
+	lockEngineLabelPrefix     sync.RWMutex
+	lockEngineManagedLabel    sync.RWMutex
+	lockEnvoyEgressPort       sync.RWMutex
+	lockEnvoyHealthHostPort   sync.RWMutex
+	lockEnvoyHealthPort       sync.RWMutex
+	lockEnvoyIPLastOctet      sync.RWMutex
+	lockEnvoyTCPPortBase      sync.RWMutex
+	lockEnvoyUDPPortBase      sync.RWMutex
+	lockFirewallCertSubdir    sync.RWMutex
+	lockFirewallDataSubdir    sync.RWMutex
+	lockFirewallEnabled       sync.RWMutex
+	lockHarnessConfigFor      sync.RWMutex
+	lockHostProxyConfig       sync.RWMutex
+	lockHostProxyLogFilePath  sync.RWMutex
+	lockHostProxyPIDFilePath  sync.RWMutex
+	lockLabelAgent            sync.RWMutex
+	lockLabelCreated          sync.RWMutex
+	lockLabelDomain           sync.RWMutex
+	lockLabelE2ETest          sync.RWMutex
+	lockLabelImage            sync.RWMutex
+	lockLabelManaged          sync.RWMutex
+	lockLabelPrefix           sync.RWMutex
+	lockLabelProject          sync.RWMutex
+	lockLabelPurpose          sync.RWMutex
+	lockLabelTest             sync.RWMutex
+	lockLabelTestName         sync.RWMutex
+	lockLabelVersion          sync.RWMutex
+	lockLabelWorkdir          sync.RWMutex
+	lockLoggingConfig         sync.RWMutex
+	lockLogsSubdir            sync.RWMutex
+	lockManagedLabelValue     sync.RWMutex
+	lockMonitorExtensions     sync.RWMutex
+	lockMonitorSubdir         sync.RWMutex
+	lockMonitoringConfig      sync.RWMutex
+	lockPidsSubdir            sync.RWMutex
+	lockPostInitFor           sync.RWMutex
+	lockPreRunFor             sync.RWMutex
+	lockProjectConfigFileName sync.RWMutex
+	lockProjectEgressRules    sync.RWMutex
+	lockProjectName           sync.RWMutex
+	lockProjectRoot           sync.RWMutex
+	lockProjectStore          sync.RWMutex
+	lockPurposeAgent          sync.RWMutex
+	lockPurposeFirewall       sync.RWMutex
+	lockPurposeMonitoring     sync.RWMutex
+	lockSecurityConfig        sync.RWMutex
+	lockSettingsFileName      sync.RWMutex
+	lockSettingsStore         sync.RWMutex
+	lockShareSubdir           sync.RWMutex
+	lockStateDirEnvVar        sync.RWMutex
+	lockTestRepoDirEnvVar     sync.RWMutex
+	lockWorkspaceDefaultMode  sync.RWMutex
 }
 
 // AgentConfig calls AgentConfigFunc.
@@ -2304,87 +2264,6 @@ func (mock *ConfigMock) MonitoringConfigCalls() []struct {
 	return calls
 }
 
-// OpenSearchDashboardsURL calls OpenSearchDashboardsURLFunc.
-func (mock *ConfigMock) OpenSearchDashboardsURL() string {
-	if mock.OpenSearchDashboardsURLFunc == nil {
-		panic("ConfigMock.OpenSearchDashboardsURLFunc: method is nil but Config.OpenSearchDashboardsURL was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockOpenSearchDashboardsURL.Lock()
-	mock.calls.OpenSearchDashboardsURL = append(mock.calls.OpenSearchDashboardsURL, callInfo)
-	mock.lockOpenSearchDashboardsURL.Unlock()
-	return mock.OpenSearchDashboardsURLFunc()
-}
-
-// OpenSearchDashboardsURLCalls gets all the calls that were made to OpenSearchDashboardsURL.
-// Check the length with:
-//
-//	len(mockedConfig.OpenSearchDashboardsURLCalls())
-func (mock *ConfigMock) OpenSearchDashboardsURLCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockOpenSearchDashboardsURL.RLock()
-	calls = mock.calls.OpenSearchDashboardsURL
-	mock.lockOpenSearchDashboardsURL.RUnlock()
-	return calls
-}
-
-// OpenSearchURL calls OpenSearchURLFunc.
-func (mock *ConfigMock) OpenSearchURL() string {
-	if mock.OpenSearchURLFunc == nil {
-		panic("ConfigMock.OpenSearchURLFunc: method is nil but Config.OpenSearchURL was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockOpenSearchURL.Lock()
-	mock.calls.OpenSearchURL = append(mock.calls.OpenSearchURL, callInfo)
-	mock.lockOpenSearchURL.Unlock()
-	return mock.OpenSearchURLFunc()
-}
-
-// OpenSearchURLCalls gets all the calls that were made to OpenSearchURL.
-// Check the length with:
-//
-//	len(mockedConfig.OpenSearchURLCalls())
-func (mock *ConfigMock) OpenSearchURLCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockOpenSearchURL.RLock()
-	calls = mock.calls.OpenSearchURL
-	mock.lockOpenSearchURL.RUnlock()
-	return calls
-}
-
-// OtelCollectorURL calls OtelCollectorURLFunc.
-func (mock *ConfigMock) OtelCollectorURL() string {
-	if mock.OtelCollectorURLFunc == nil {
-		panic("ConfigMock.OtelCollectorURLFunc: method is nil but Config.OtelCollectorURL was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockOtelCollectorURL.Lock()
-	mock.calls.OtelCollectorURL = append(mock.calls.OtelCollectorURL, callInfo)
-	mock.lockOtelCollectorURL.Unlock()
-	return mock.OtelCollectorURLFunc()
-}
-
-// OtelCollectorURLCalls gets all the calls that were made to OtelCollectorURL.
-// Check the length with:
-//
-//	len(mockedConfig.OtelCollectorURLCalls())
-func (mock *ConfigMock) OtelCollectorURLCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockOtelCollectorURL.RLock()
-	calls = mock.calls.OtelCollectorURL
-	mock.lockOtelCollectorURL.RUnlock()
-	return calls
-}
-
 // PidsSubdir calls PidsSubdirFunc.
 func (mock *ConfigMock) PidsSubdir() (string, error) {
 	if mock.PidsSubdirFunc == nil {
@@ -2608,33 +2487,6 @@ func (mock *ConfigMock) ProjectStoreCalls() []struct {
 	mock.lockProjectStore.RLock()
 	calls = mock.calls.ProjectStore
 	mock.lockProjectStore.RUnlock()
-	return calls
-}
-
-// PrometheusURL calls PrometheusURLFunc.
-func (mock *ConfigMock) PrometheusURL() string {
-	if mock.PrometheusURLFunc == nil {
-		panic("ConfigMock.PrometheusURLFunc: method is nil but Config.PrometheusURL was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockPrometheusURL.Lock()
-	mock.calls.PrometheusURL = append(mock.calls.PrometheusURL, callInfo)
-	mock.lockPrometheusURL.Unlock()
-	return mock.PrometheusURLFunc()
-}
-
-// PrometheusURLCalls gets all the calls that were made to PrometheusURL.
-// Check the length with:
-//
-//	len(mockedConfig.PrometheusURLCalls())
-func (mock *ConfigMock) PrometheusURLCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockPrometheusURL.RLock()
-	calls = mock.calls.PrometheusURL
-	mock.lockPrometheusURL.RUnlock()
 	return calls
 }
 

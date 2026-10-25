@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/monitor/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -23,7 +22,6 @@ import (
 
 type ReloadOptions struct {
 	IOStreams     *iostreams.IOStreams
-	Client        func(context.Context) (*docker.Client, error)
 	Config        func() (config.Config, error)
 	Logger        func() (*logger.Logger, error)
 	BundleManager func() (*bundle.Manager, error)
@@ -32,7 +30,6 @@ type ReloadOptions struct {
 func NewCmdReload(f *cmdutil.Factory, runF func(context.Context, *ReloadOptions) error) *cobra.Command {
 	opts := &ReloadOptions{
 		IOStreams:     f.IOStreams,
-		Client:        f.Client,
 		Config:        f.Config,
 		Logger:        f.Logger,
 		BundleManager: f.BundleManager,
@@ -82,8 +79,6 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	networkName := cfg.ClawkerNetwork()
-
 	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
@@ -93,15 +88,6 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 	cwdUnits, _, err := shared.PrepareStack(cfg, monitorDir)
 	if err != nil {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
-	}
-
-	client, err := opts.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create Docker client: %w", err)
-	}
-	//nolint:exhaustruct // Name is the only required field; the embedded moby NetworkCreateOptions is optional and omitted at every EnsureNetwork call site.
-	if _, err = client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{Name: networkName}); err != nil {
-		return fmt.Errorf("failed to ensure Docker network '%s': %w", networkName, err)
 	}
 
 	// Reload IS the disruptive apply: remove the collector unconditionally so

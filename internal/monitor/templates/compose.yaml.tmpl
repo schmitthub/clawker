@@ -1,3 +1,7 @@
+# The stack runs on the compose project's own network. No service joins
+# the agent network: agents reach the collector only through the control
+# plane gateway, and every host publish below binds 127.0.0.1.
+#
 # Default log rotation for monitoring services. Caps Docker json-file
 # growth from the otel-collector debug exporter and any chatty service.
 x-default-logging: &default-logging
@@ -27,21 +31,22 @@ services:
       - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro
 {{- end}}
     ports:
-      # Untrusted receivers — host loopback only. Agent containers
-      # push via clawker-net DNS (`{{.OtelCollectorService}}:<port>`) which
-      # doesn't need a host publish at all; the publish exists solely
-      # for host-side senders (clawker CLI) which dial localhost via
+      # Unauthenticated receivers — host loopback only. The host CLI is
+      # their only sender; it dials localhost via
       # Settings.Monitoring.OtelCollectorHost (default `localhost`).
-      # Binding to 0.0.0.0 would expose the unauth'd plaintext OTLP
-      # ingestion to anything routable on the LAN.
+      # Agent containers never reach them: their telemetry goes through
+      # the control plane to the gateway receiver below, and no
+      # monitoring service joins the agent network. Binding to 0.0.0.0
+      # would expose the plaintext OTLP ingestion to anything routable
+      # on the LAN.
       - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
       - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
 {{- if .OtelInfraPort}}
-      # CP-only receiver — host loopback only. clawkercp pushes via
-      # host.docker.internal:<port>. Agents trying the same address are
-      # rejected by BPF (gateway:non-hostproxy → Envoy → reset);
-      # additionally, mTLS would refuse them because they have no
-      # client cert chained through the infra intermediate CA.
+      # Infra receiver — host loopback only. clawkercp, Envoy, and
+      # CoreDNS push via host.docker.internal:<port>. Agents trying the
+      # same address are rejected by BPF (gateway:non-hostproxy → Envoy
+      # → reset); additionally, mTLS would refuse them because they have
+      # no client cert chained through the infra intermediate CA.
       - "127.0.0.1:{{.OtelInfraPort}}:{{.OtelInfraPort}}"
 {{- end}}
 {{- if .OtelAgentIngestPort}}
@@ -72,8 +77,6 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
     logging: *default-logging
 
   {{.PrometheusService}}:
@@ -103,8 +106,6 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
     logging: *default-logging
 
   # One-shot bootstrap that preconfigures OpenSearch + Dashboards on
@@ -150,8 +151,6 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
     logging: *default-logging
 
   {{.OpenSearchNodeService}}:
@@ -195,8 +194,6 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
     logging: *default-logging
 
   {{.OpenSearchDashboardsService}}:
@@ -236,8 +233,6 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
     logging: *default-logging
 
 volumes:
@@ -249,7 +244,3 @@ volumes:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-
-networks:
-  clawker-net:
-    external: true  # Created by clawker start/run, shared by all clawker services
