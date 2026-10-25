@@ -394,6 +394,18 @@ func TestHandler_FirewallEnable_PersistFailure_AbortsEnroll(t *testing.T) {
 	})
 	assertCode(t, err, codes.Internal)
 	assert.Empty(t, mock.InstallCalls(), "no enroll when the record could not be persisted")
+
+	// A later enable with no value replays the record. The failed grant was
+	// never committed, so the replay must not install the bypass.
+	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+		ContainerId: "ctr-1",
+		HostProxy:   nil,
+	})
+	require.NoError(t, err)
+	require.Len(t, mock.InstallCalls(), 1)
+	got := mock.InstallCalls()[0].Cfg
+	assert.Zero(t, got.HostProxyIp, "replay after a failed persist must not install the bypass")
+	assert.Zero(t, got.HostProxyPort, "replay after a failed persist must not install the bypass")
 }
 
 // TestHandler_FirewallEnable_NoEnrollmentStore_Internal: a handler without
