@@ -30,5 +30,5 @@ Daemon lifecycle detail (boot sequence, spawn lifecycle, listener, resilience co
 
 | File | Purpose |
 |------|---------|
-| `cmd.go` | `Main()` + `run()` + the exit-code/log consts (`logsDir`, `logFilename`, `shutdownGrace`, `exitCodeConfig`) |
+| `cmd.go` | `Main()` + `run()` + the exit-code/log consts (`logsDir`, `logFilename`, `shutdownGrace`, `relayShutdownGrace`, `exitCodeConfig`). After the listener starts, `run` calls `daemon.StartTelemetryRelay` (nil on degrade, `event=otlp_relay_unavailable`) and defers its `Shutdown` with `context.WithoutCancel(ctx)` so the exit grace survives the cancelled signal context |
 | `cmd_test.go` | `run()` fails fast with `exitCodeConfig` when `CLAWKER_AGENT` is unset |
