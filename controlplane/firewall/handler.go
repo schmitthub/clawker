@@ -489,6 +489,23 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		Msg("firewall ebpf: re-enroll complete")
 }
 
+// enrollHostProxy decides a container's host-proxy bypass for an enable.
+// Container start sends the project's value: it is persisted before the
+// enroll so a CP restart between the two replays the same decision. Every
+// start overwrites the record, so a config change takes effect at the next
+// container start. A re-enable of an already enrolled container (firewall
+// enable, bypass stop or expiry) sends no value and replays the stored
+// record; no record means no bypass. Runs on the ActionQueue only.
+func (h *Handler) enrollHostProxy(cid string, requested *bool) (bool, error) {
+	if requested == nil {
+		return h.enrolledHostProxy(cid), nil
+	}
+	if err := h.enrollments.SetHostProxy(cid, *requested); err != nil {
+		return false, fmt.Errorf("firewall enable: persist enrollment: %w", err)
+	}
+	return *requested, nil
+}
+
 // enrolledHostProxy reads the persisted host-proxy value for a container,
 // for the re-enrollment sweep and for a FirewallEnable that carries no
 // value. No record, no store, or a read failure all mean no bypass: the
@@ -634,10 +651,10 @@ func removeGeneratedConfigs() error {
 // --- Per-container enforcement ---
 
 // FirewallEnable enrolls a container. Pre-Submit resolves container_id →
-// cgroup_path and builds the BPF container_config from CP-side state
-// (network discovery, host-proxy resolution, egress port); the queued
-// closure installs the resulting config via ebpf.Install and cancels any
-// pending bypass timer.
+// cgroup_path and reads the network and egress port. The queued closure
+// persists or replays the enrollment record, resolves the host proxy the
+// record grants, builds the BPF container_config, installs it via
+// ebpf.Install, and cancels any pending bypass timer.
 func (h *Handler) FirewallEnable(
 	ctx context.Context,
 	req *adminv1.FirewallEnableRequest,
@@ -658,52 +675,41 @@ func (h *Handler) FirewallEnable(
 		return nil, err
 	}
 
-	// Container start sends the project's value: persist it before the
-	// enroll so a CP restart between the two replays the same decision.
-	// Every start overwrites the record, so a config change takes effect
-	// at the next container start. A re-enable of an already enrolled
-	// container (firewall enable, bypass stop or expiry) sends no value
-	// and replays the stored record; no record means no bypass.
-	var hostProxy bool
-	if req.HostProxy != nil {
-		hostProxy = req.GetHostProxy()
-		if setErr := h.enrollments.SetHostProxy(cid, hostProxy); setErr != nil {
-			return nil, status.Errorf(codes.Internal, "firewall enable: persist enrollment: %v", setErr)
-		}
-	} else {
-		hostProxy = h.enrolledHostProxy(cid)
-	}
-
 	netInfo, err := h.stack.NetworkInfo(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "firewall enable: discover network: %v", err)
-	}
-
-	hostProxyIP, hostProxyPort, err := h.resolveHostProxy(ctx, hostProxy)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "firewall enable: resolve host proxy: %v", err)
 	}
 	egressPort, err := h.envoyEgressPort()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "firewall enable: %v", err)
 	}
 
-	bpfCfg, err := ebpf.NewContainerConfig(
-		netInfo.EnvoyIP,
-		netInfo.CoreDNSIP,
-		netInfo.Gateway.String(),
-		netInfo.CIDR,
-		hostProxyIP,
-		hostProxyPort,
-		egressPort,
-	)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "firewall enable: build container config: %v", err)
-	}
-
+	// The record and the policy built from it change together on the
+	// queue, the record's only writer: a concurrent enable for the same
+	// container cannot persist one value and install the other.
 	_, err = h.submit(ActionEnable, func(_ context.Context) (any, error) {
-		if err := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); err != nil {
-			return nil, fmt.Errorf("install: %w", err)
+		hostProxy, enrollErr := h.enrollHostProxy(cid, req.HostProxy)
+		if enrollErr != nil {
+			return nil, enrollErr
+		}
+		hostProxyIP, hostProxyPort, resolveErr := h.resolveHostProxy(ctx, hostProxy)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("firewall enable: resolve host proxy: %w", resolveErr)
+		}
+		bpfCfg, cfgErr := ebpf.NewContainerConfig(
+			netInfo.EnvoyIP,
+			netInfo.CoreDNSIP,
+			netInfo.Gateway.String(),
+			netInfo.CIDR,
+			hostProxyIP,
+			hostProxyPort,
+			egressPort,
+		)
+		if cfgErr != nil {
+			return nil, fmt.Errorf("firewall enable: build container config: %w", cfgErr)
+		}
+		if installErr := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); installErr != nil {
+			return nil, fmt.Errorf("install: %w", installErr)
 		}
 		// Mid-bypass Enable must cancel the dead-man timer so it does
 		// not fire a redundant Enable on an already-correct state.
