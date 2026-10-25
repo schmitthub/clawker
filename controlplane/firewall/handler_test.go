@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	mobyevents "github.com/moby/moby/api/types/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/dockerevents"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
@@ -357,6 +360,99 @@ func TestHandler_FirewallEnable_UnsetReplaysRecord(t *testing.T) {
 			if tc.seed != nil {
 				assert.Equal(t, *tc.seed, enabled, "an unset request must not change the record")
 			}
+		})
+	}
+}
+
+// TestHandler_FirewallEnable_ConcurrentEnablesSerialize: two enables for one
+// container must not interleave, or the record and the installed policy come
+// from different requests. The first request turns the bypass on and blocks
+// in the host lookup; the second turns it off. The second may not write its
+// record or install until the first is done, so the last install matches the
+// stored record.
+func TestHandler_FirewallEnable_ConcurrentEnablesSerialize(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := noopMock()
+		h := newTestHandler(t, mock, nil)
+		release := make(chan struct{})
+		h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
+			<-release
+			return []string{"192.168.65.254"}, nil
+		}
+		enable := func(on bool, done chan<- error) {
+			_, err := h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
+				ContainerId: "ctr-1",
+				HostProxy:   new(on),
+			})
+			done <- err
+		}
+
+		first, second := make(chan error, 1), make(chan error, 1)
+		go enable(true, first)
+		synctest.Wait()
+		go enable(false, second)
+		synctest.Wait()
+		close(release)
+		require.NoError(t, <-first)
+		require.NoError(t, <-second)
+
+		calls := mock.InstallCalls()
+		require.Len(t, calls, 2)
+		assert.Zero(t, calls[1].Cfg.HostProxyPort, "the last install comes from the last request: no bypass")
+		enabled, found, err := h.enrollments.HostProxy("ctr-1")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.False(t, enabled, "the record comes from the last request")
+	})
+}
+
+// TestHandler_SubscribeEnrollmentEvict pins the eviction filter and its
+// writer: container/destroy removes the record; stop/die/kill leave it,
+// because a stopped container can be started again and its record must
+// still replay. The removal runs on the ActionQueue, the record's only
+// writer, so a closed queue leaves the record in place.
+func TestHandler_SubscribeEnrollmentEvict(t *testing.T) {
+	cases := []struct {
+		name        string
+		eventType   mobyevents.Type
+		action      mobyevents.Action
+		closeQueue  bool
+		wantEvicted bool
+	}{
+		{"destroy evicts", mobyevents.ContainerEventType, mobyevents.ActionDestroy, false, true},
+		{"stop does not evict", mobyevents.ContainerEventType, mobyevents.ActionStop, false, false},
+		{"die does not evict", mobyevents.ContainerEventType, mobyevents.ActionDie, false, false},
+		{"image destroy does not evict", mobyevents.ImageEventType, mobyevents.ActionDestroy, false, false},
+		{"closed queue does not evict", mobyevents.ContainerEventType, mobyevents.ActionDestroy, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newTestHandler(t, noopMock(), nil)
+				const cid = "ctr-target"
+				require.NoError(t, h.enrollments.SetHostProxy(cid, true))
+
+				topic, err := pubsub.NewTopic[dockerevents.DockerEvent](logger.Nop())
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = topic.Close() })
+				h.SubscribeEnrollmentEvict(t.Context(), topic)
+				if tc.closeQueue {
+					require.NoError(t, h.queue.Close())
+				}
+
+				var msg mobyevents.Message
+				msg.Type = tc.eventType
+				msg.Action = tc.action
+				msg.Actor.ID = cid
+				var evt pubsub.Event[dockerevents.DockerEvent]
+				evt.Payload = dockerevents.DockerEvent{Message: msg}
+				require.True(t, topic.Publish(evt))
+				synctest.Wait()
+
+				_, found, err := h.enrollments.HostProxy(cid)
+				require.NoError(t, err)
+				assert.Equal(t, !tc.wantEvicted, found, "record after a %s/%s event", tc.eventType, tc.action)
+			})
 		})
 	}
 }

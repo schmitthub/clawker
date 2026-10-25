@@ -1623,10 +1623,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// A destroyed container's enrollment record is dropped on the same
-	// docker event the agent registry evicts on.
-	fwhandler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic, enrollments, log)
-
 	// agent registry (sqlite) + peer lookup + lister + worldview
 	// Repository with its two subscriptions wired — see buildAgentInfra.
 	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(log, dockerCli, cfg, agentTopic, dockerTopic)
@@ -1663,6 +1659,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 	defer grpcCleanup()
+
+	// A destroyed container's enrollment record is dropped on the same
+	// docker event the agent registry evicts on. The removal runs on the
+	// handler's ActionQueue, so the subscription waits for the handler; the
+	// docker watcher starts later, so no destroy event is missed.
+	handler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic)
 
 	// The admin listener socket is already bound, so the /healthz grpc-admin
 	// probe's dial would succeed from here on regardless of whether anything
