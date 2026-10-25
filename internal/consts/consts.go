@@ -477,6 +477,10 @@ const (
 const (
 	// Network is the shared Docker bridge network name.
 	Network = "clawker-net"
+	// TelemetryNetwork is the internal Docker network that carries trusted
+	// telemetry from the control plane, Envoy, and CoreDNS to the
+	// otel-collector. Agent containers never join it.
+	TelemetryNetwork = "clawker-telemetry"
 )
 
 // Well-known addresses.
