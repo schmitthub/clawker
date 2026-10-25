@@ -13,6 +13,7 @@
 - `clawkerd/spawn_unix.go` owns child startup, process groups, reaping, and exit state.
 - Repeated `AgentReady` must not start a second child or hide a failed first start.
 - Initialization state and child-running state are distinct. Session reconnects must preserve both.
+- clawkerd serves the agent's OTLP/HTTP endpoint on loopback (`consts.AgentOTLPRelayAddr`, `clawkerd/otlp_relay.go`) and carries each batch to `AgentService.Export` over its leaf. The relay is optional: it degrades to nil (`event=otlp_relay_unavailable`) and maps CP verdicts to HTTP (503+Retry-After retryable, 403 identity, 400/413 client fault, 500 other). Design and deviations: `mem:plans/sandbox-hardening/cp-otlp-gateway/design`.
 - For CP identity and session trust: `mem:controlplane/agent/core`.
 
 ## Attach and cleanup
