@@ -261,3 +261,45 @@ func TestResolveSocketTarget(t *testing.T) {
 		t.Error("unknown user accepted")
 	}
 }
+
+func TestOpenUserDir_RefusesForeignOwnedChild(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to create a directory owned by another uid")
+	}
+	const uid, gid = 1000, 1000
+	home := t.TempDir()
+	if err := os.Chown(home, uid, gid); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".ssh")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "id_ed25519"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openUserDir(home, ".ssh", uid, gid); err == nil {
+		t.Fatal("root-owned .ssh accepted")
+	}
+	var st syscall.Stat_t
+	if err := syscall.Stat(dir, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Uid != 0 {
+		t.Fatalf(".ssh chowned to uid %d; a foreign-owned directory must keep its owner", st.Uid)
+	}
+}
+
+func TestUserDir_RequireEmpty(t *testing.T) {
+	home, uid, gid := newTestHome(t)
+	d := mustOpenUserDir(t, home, ".gnupg", uid, gid)
+	if err := d.requireEmpty(); err != nil {
+		t.Fatalf("empty dir refused: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gnupg", "pubring.kbx"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.requireEmpty(); err == nil {
+		t.Fatal("non-empty dir accepted")
+	}
+}
