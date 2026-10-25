@@ -227,7 +227,9 @@ func openDirNoFollow(dirFd int, name, path string) (int, error) {
 }
 
 // openUserDir opens home/name for the user uid, creating it 0700 when absent.
-// Neither home nor name may be a symlink, and both must be owned by uid.
+// Neither home nor name may be a symlink, and both must be owned by uid. Only
+// a directory this call created is chowned: an existing directory that uid
+// does not own is refused, never taken over.
 func openUserDir(home, name string, uid, gid int) (*userDir, error) {
 	homeFd, err := openDirNoFollow(atFDCWD, home, home)
 	if err != nil {
@@ -238,22 +240,24 @@ func openUserDir(home, name string, uid, gid int) (*userDir, error) {
 		return nil, err
 	}
 	path := home + "/" + name
+	created := false
 	fd, err := openDirNoFollow(homeFd, name, path)
 	if errors.Is(err, syscall.ENOENT) {
 		if err = syscall.Mkdirat(homeFd, name, userDirMode); err != nil {
 			return nil, fmt.Errorf("mkdir %s: %w", path, err)
 		}
+		created = true
 		fd, err = openDirNoFollow(homeFd, name, path)
 	}
 	if err != nil {
 		return nil, err
 	}
 	d := &userDir{fd: fd, path: path, uid: uid, gid: gid}
-	// Chown through the descriptor: a chown by name could be redirected to a
-	// hard link the agent swapped in after the open.
-	if err = syscall.Fchown(fd, uid, gid); err != nil {
-		_ = d.Close()
-		return nil, fmt.Errorf("chown %s: %w", path, err)
+	if created {
+		if err = d.adoptCreated(); err != nil {
+			_ = d.Close()
+			return nil, err
+		}
 	}
 	if err = checkOwnedDir(fd, path, uid); err != nil {
 		_ = d.Close()
@@ -268,6 +272,41 @@ func (d *userDir) Close() error {
 		return fmt.Errorf("close %s: %w", d.path, err)
 	}
 	return nil
+}
+
+// adoptCreated gives a directory that openUserDir just created to the user.
+// The user owns home and can rename an entry into its place between the mkdir
+// and the open, so the directory must be empty: chowning an empty directory
+// discloses nothing. The chown goes through the descriptor because a chown by
+// name could be redirected to an entry swapped in after the open.
+func (d *userDir) adoptCreated() error {
+	if err := d.requireEmpty(); err != nil {
+		return err
+	}
+	if err := syscall.Fchown(d.fd, d.uid, d.gid); err != nil {
+		return fmt.Errorf("chown %s: %w", d.path, err)
+	}
+	return nil
+}
+
+// requireEmpty refuses a directory that holds any entry. It reads through a
+// new open file description of the same directory, so the read neither
+// closes d.fd nor shares its directory offset.
+func (d *userDir) requireEmpty() error {
+	fd, err := syscall.Openat(d.fd, ".", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", d.path, err)
+	}
+	f := os.NewFile(uintptr(fd), d.path)
+	defer f.Close()
+	names, err := f.Readdirnames(1)
+	switch {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err != nil:
+		return fmt.Errorf("read %s: %w", d.path, err)
+	}
+	return fmt.Errorf("refusing %s: not empty (holds %s)", d.path, names[0])
 }
 
 // prepareEntry inspects name under the directory without following symlinks.
