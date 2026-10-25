@@ -39,7 +39,7 @@ conversation. Do not start the next task after wrap-up.
 | Task 2: Root-owned `/run/clawker` and symlink-safe root writes (item 5) | `complete` | Claude (2026-10-24) |
 | Task 3: Per-container host-proxy bypass from project config (item 4) | `complete` | Claude (2026-10-24) |
 | Task 4: `AgentService.Export` RPC, CP ingest handler, collector agent receiver (item 2, CP side) | `complete` | Claude (2026-10-24) |
-| Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `pending` | — |
+| Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `complete` | Claude (2026-10-25) |
 | Task 6: Monitoring stack off clawker-net (item 1) | `pending` | — |
 | Task 7: eBPF intra-subnet allowlist (item 3) | `pending` | — |
 | Task 8: In-container runtime UAT of all items | `pending` | — |
@@ -257,14 +257,15 @@ Tests pass. Runtime, with `clawker monitor up` and a rebuilt harness image: `doc
 
 ### Results and Wrap Up
 
-- Acceptance results: Not run.
-- Reviews and findings: Not reviewed.
-- Blockers and next action: None recorded.
-- Commit: Not made.
+- Acceptance results (2026-10-25): `go test ./clawkerd/ ./internal/clawkerd/ ./internal/bundler/... ./internal/consts/ -count=1 -race` pass; `golangci-lint` 0 issues on the four packages; semgrep (`p/golang p/security-audit`) clean on the new files; bundler golden files regenerated (`GOLDEN_UPDATE=1`). Mutation checks: removing `Retry-After`, the `PermissionDenied` mapping, or the content-type check each fail a test; removing the gzip `LimitReader` does not (the post-read length check also rejects; the reader limit is a memory bound only). Runtime checks (`docker inspect` env shows the loopback endpoint; `claude-code` records carry CP values with `OTEL_RESOURCE_ATTRIBUTES=project=evil,agent=evil` set) NOT run; deferred to Task 8 by user ruling.
+- Built: `clawkerd/otlp_relay.go` (`StartTelemetryRelay` nil-degrade orchestrator, `OTLPRelay` loopback OTLP/HTTP receiver → unary `AgentService.Export` on a lazy `grpc.NewClient` with the bootstrap leaf and no bearer, `relayHTTPStatus`, once-per-minute rejection log) + `otlp_relay_internal_test.go`; `internal/clawkerd/cmd.go` starts the relay after the listener and defers `Shutdown(context.WithoutCancel(ctx), relayShutdownGrace)`; `consts.AgentOTLPRelayAddr` (`127.0.0.1:4318`) and `AgentOTLPRelayURL`; `internal/bundler/dockerfile.go` `OtelEndpoint` = the relay URL (collector port no longer reaches the agent env; `TestBuildContext_CustomMonitoringEndpoints` locks it); harness template comments; docs (`monitoring.mdx`, `observability.mdx`), agent prompt telemetry bullets, AGENTS (`clawkerd`, `internal/clawkerd`, `internal/bundler`, `internal/monitor`); plugin reference `monitoring.md` in clawker-plugin#11 (calver 2026.10.3, pointer bump after merge).
+- Deviations from the design memory: no "after RegisterDone" gate (a restarted container skips Register on a registry hit, so the gate would block forever; the CP answers `PermissionDenied` → 403 and the user CMD spawns only after `AgentReady`); no OTLP proto import in clawkerd (an empty response message is zero bytes); fallback status is 500 not 502 (the Node OTLP exporter retries 429/502/503/504). `OtelCollectorURL` and the env builder's exporter-`none` override stay for Task 6.
+- Reviews and findings (2026-10-25): code-reviewer: 502 fallback was retried by the SDK against the stated intent → 500; shutdown ordering, exit bound (≤2 s after the child), gzip/MaxBytesReader interplay, and the CP status mapping confirmed. test-hunter: redundant `/` path row dropped, `Canceled` and `Unauthenticated` rows added (each `||` operand now deletable only with a failing test), identity-encoding happy case added, rejection log now asserted through `reject` with a captured logger (event names + once-per-interval), duplicate endpoint assertions removed from `TestBuildContext_DefaultMonitoring`.
+- Commit: `c6f955fe` on `feat/clawkerd-otlp-relay`; PR #596 (stacked on #594, gh stack #591).
 
 ### Handoff Prompt
 
-Continue `mem:plans/sandbox-hardening/initiative` on branch `feat/mythos-hardening`. Task 5 complete. Next: Task 6 (monitoring stack off clawker-net). Read the task's design memory first.
+Continue `mem:plans/sandbox-hardening/initiative` on a new stack layer above `feat/clawkerd-otlp-relay`. Task 5 complete. Next: Task 6 (monitoring stack off clawker-net). Read the task's design memory first; it also removes `OtelCollectorURL` for the agent path and changes the env builder's collector-running detection (`internal/docker/env.go`) now that the agent exports to the clawkerd relay, and adds the agent-lane routing connector recorded under Task 4.
 
 ---
 

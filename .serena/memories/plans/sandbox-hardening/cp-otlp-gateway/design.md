@@ -66,6 +66,14 @@ message ExportResult {}
 - CP endpoint comes from `cfg.MonitoringConfig().OtelAgentIngestPort` directly (the CP reads settings.yaml); no new env var. TLS from `otelcerts.Service.LoadTLSConfig("cp")`.
 - Dashboards: no saved object pins `untrusted_otlp`; nothing to change.
 
+## As built (Task 5, 2026-10-25)
+
+- `clawkerd/otlp_relay.go`: `StartTelemetryRelay(ctx, boot, agentAddr, listenAddr, log) *OTLPRelay` (nil = degraded, `event=otlp_relay_unavailable`; nil-safe `Shutdown(ctx, grace)`), `dialAgentService` (reuses `buildDialTLSConfig`, lazy `grpc.NewClient`, no bearer), `OTLPRelay.ServeHTTP` (POST `/v1/{logs,metrics,traces}`, `application/x-protobuf`, gzip decoded with the cap applied to the decoded size, `http.MaxBytesReader` at `ExportMaxBodyBytes`), `relayHTTPStatus` (503+Retry-After for `Unavailable`/`DeadlineExceeded`/`Canceled`, 403 for `PermissionDenied`/`Unauthenticated`, 400 `InvalidArgument`, 413 `ResourceExhausted`, 500 otherwise; the Node OTLP exporter retries 429/502/503/504 only, so 502 would have retried CP-side faults), rejection log rate-limited to one line per minute. No OTLP proto import in clawkerd: a 200 carries an empty body (an empty `Export<Signal>ServiceResponse` serializes to zero bytes).
+- Start order deviation: no "after RegisterDone" gate. A restarted container skips Register (registry hit at Hello), so the gate would block forever. The CP answers `PermissionDenied` (→ 403) for an unregistered peer, and the user CMD only spawns after `AgentReady`, which follows Register, so early batches do not occur in practice.
+- Listen address `consts.AgentOTLPRelayAddr` = `127.0.0.1:4318`; harness env `consts.AgentOTLPRelayURL` replaces `cfg.OtelCollectorURL()` in `internal/bundler/dockerfile.go`. `OtelCollectorURL` stays for Task 6's removal (host CLI still uses it).
+- The env builder (`internal/docker/env.go`) still sets the exporters to `none` when the collector container is not on clawker-net; Task 6 changes that detection when the collector leaves the network.
+- Relay shutdown: `internal/clawkerd/cmd.go` defers `relay.Shutdown(context.WithoutCancel(ctx), relayShutdownGrace)` so the 2 s grace survives the cancelled signal context.
+
 ## Out of scope
 
 - Any auth or scoping for the host proxy.
