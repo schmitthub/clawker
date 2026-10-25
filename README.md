@@ -42,7 +42,7 @@
 - **Host proxy service** sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with your harness (`claude`, `codex`) or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before the harness launches, letting you set up MCPs, etc.
-- **Dedicated Docker network** `clawker-net` that all containers run in
+- **Dedicated Docker network** `clawker-net` that all containers run in; inside it an agent can reach only the firewall and the control plane, never another agent
 - **L4-L7 firewall stack** enabled by default — eBPF cgroup programs attached from outside the container get a verdict on every outbound TCP, UDP, and raw socket. Unlisted domains never resolve (custom CoreDNS, NXDOMAIN). Allowed traffic goes through Envoy: TLS terminated with per-domain MITM certificates for path- and method-level rules on HTTPS, WebSocket, and HTTP/3; raw TCP, SSH, and UDP pinned to the host each rule names. Deny by default at every layer. IPv4 and IPv4-mapped IPv6 are routed; native IPv6 is denied.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names.

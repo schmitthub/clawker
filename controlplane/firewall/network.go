@@ -16,6 +16,7 @@ type NetworkInfo struct {
 	Subnet    netip.Prefix
 	EnvoyIP   string
 	CoreDNSIP string
+	CPIP      string // the control plane's own address, same last-octet scheme as the CP container
 	CIDR      string
 }
 
@@ -57,6 +58,13 @@ func DiscoverNetwork(ctx context.Context, dc *docker.Client, cfg config.Config) 
 	if err := validateInSubnet(corednsIP, subnet, "coredns"); err != nil {
 		return nil, err
 	}
+	cpIP, err := ComputeStaticIP(gateway, cfg.CPIPLastOctet())
+	if err != nil {
+		return nil, fmt.Errorf("computing cp IP: %w", err)
+	}
+	if err = validateInSubnet(cpIP, subnet, "cp"); err != nil {
+		return nil, err
+	}
 
 	return &NetworkInfo{
 		NetworkID: result.Network.ID,
@@ -64,6 +72,7 @@ func DiscoverNetwork(ctx context.Context, dc *docker.Client, cfg config.Config) 
 		Subnet:    subnet,
 		EnvoyIP:   envoyIP.String(),
 		CoreDNSIP: corednsIP.String(),
+		CPIP:      cpIP.String(),
 		CIDR:      subnet.String(),
 	}, nil
 }
