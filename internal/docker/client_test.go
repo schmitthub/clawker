@@ -381,3 +381,42 @@ func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
 	}
 	whailtest.AssertCalled(t, fake, "ImageBuild")
 }
+
+// TestIsMonitoringActive pins the detection contract: a running
+// otel-collector container means the stack is up, whatever network it
+// joins. The stack lives off the agent network, so a network check would
+// report an active stack as down.
+func TestIsMonitoringActive(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
+	fake := whailtest.NewFakeAPIClient()
+	client := new(Client)
+	client.Engine = clawkerEngine(cfg, fake)
+	client.log = logger.Nop()
+	ctx := context.Background()
+
+	// The daemon applies the filters, so the fake cannot model a stopped
+	// or differently named container: the request itself must carry the
+	// name and running-state filters.
+	var collector container.Summary
+	collector.Names = []string{"/otel-collector"}
+	collector.State = container.StateRunning
+	var listOpts moby.ContainerListOptions
+	fake.ContainerListFn = func(_ context.Context, opts moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		listOpts = opts
+		return moby.ContainerListResult{Items: []container.Summary{collector}}, nil
+	}
+	require.True(t, client.IsMonitoringActive(ctx), "running collector with no agent-network membership is active")
+	require.False(t, listOpts.All, "only running containers are listed")
+	require.True(t, listOpts.Filters["name"]["otel-collector"], "name filter carries the collector service name")
+	require.True(t, listOpts.Filters["status"]["running"], "status filter carries running")
+
+	fake.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		return moby.ContainerListResult{}, nil
+	}
+	require.False(t, client.IsMonitoringActive(ctx), "no collector container means the stack is down")
+
+	fake.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		return moby.ContainerListResult{}, errors.New("daemon unreachable")
+	}
+	require.False(t, client.IsMonitoringActive(ctx), "a list failure reports the stack as down")
+}

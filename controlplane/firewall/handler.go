@@ -1041,10 +1041,10 @@ func (h *Handler) FirewallListRules(
 }
 
 // reservedHosts is the internal-host prefix shared by every resolvable-domain
-// path: docker.internal plus the monitoring service hostnames CoreDNS forwards
-// out of band. CoreDNS serves these regardless of the rule set.
+// path: docker.internal, which CoreDNS forwards out of band regardless of the
+// rule set.
 func (h *Handler) reservedHosts() []string {
-	return append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+	return []string{"docker.internal"}
 }
 
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
@@ -1376,7 +1376,7 @@ func (h *Handler) syncIdentities() error {
 			Msg("firewall: no identity allocator wired; routes and dnsbpf directives will be empty (fail closed)")
 		return nil
 	}
-	dsts := make([]string, 0, len(rules)+len(consts.MonitoringServiceHostnames)+1)
+	dsts := make([]string, 0, len(rules)+1)
 	for _, r := range rules {
 		dsts = append(dsts, r.Dst)
 	}

@@ -1,12 +1,13 @@
 receivers:
-  # Untrusted OTLP ingress for agent containers (harness SDK telemetry)
-  # + host CLI (clawker-cli). No client auth — anyone reachable on
-  # clawker-net or the host loopback can push. Records are dispatched
-  # by routing/untrusted, which forwards only service.name=clawker-cli
-  # plus the service names declared by ACTIVE monitoring units to their
-  # respective indices; every other service.name (including spoofed
-  # envoy/coredns/clawkercp) is dropped at routing. The
-  # resource/untrusted_otlp processor stamps
+  # Untrusted OTLP ingress for the host CLI (clawker-cli). No client
+  # auth — anything on the host loopback can push; the compose publish
+  # binds 127.0.0.1 and no monitoring service joins the agent network,
+  # so agent containers never reach it (their telemetry arrives on
+  # otlp/agents below). Records are dispatched by routing/untrusted,
+  # which forwards only service.name=clawker-cli plus the service names
+  # declared by ACTIVE monitoring units to their respective indices;
+  # every other service.name (including spoofed envoy/coredns/clawkercp)
+  # is dropped at routing. The resource/untrusted_otlp processor stamps
   # ingest_source=untrusted_otlp on all records from this receiver so
   # dashboards can separate forgeable, sender-declared records from
   # provenance-stamped ones.
@@ -18,10 +19,10 @@ receivers:
         endpoint: 0.0.0.0:4318
   # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
   # inside the container; the published mapping in compose.yaml binds
-  # the host port to 127.0.0.1 only. Agents on clawker-net can reach
-  # this port over the docker network, but the TLS handshake rejects
-  # any peer whose client cert chain does not validate against the
-  # infra intermediate CA — only CP and infra services (envoy/coredns,
+  # the host port to 127.0.0.1 only, and every trusted sender (CP,
+  # Envoy, CoreDNS) dials host.docker.internal:<port>. The TLS handshake
+  # rejects any peer whose client cert chain does not validate against
+  # the infra intermediate CA — only CP and infra services (envoy/coredns,
   # cp) hold leaves signed by that intermediate.
   #
   # Trust anchor is the infra intermediate CA, NOT the CLI root. Agent
@@ -410,8 +411,8 @@ connectors:
   spanmetrics:
   # Route untrusted (plaintext OTLP) records. Only clawker-cli and
   # active monitoring units' declared service names reach their
-  # indices. An agent crafting
-  # `service.name=envoy`/`coredns`/`clawkercp` from the unauth'd
+  # indices. A sender crafting
+  # `service.name=envoy`/`coredns`/`clawkercp` on the unauth'd
   # port CANNOT reach the trusted indices — there is no such route
   # off this connector. default_pipelines catches any other
   # service.name (e.g. SDK default `unknown_service`, a misconfigured
@@ -452,7 +453,7 @@ connectors:
 
 service:
   pipelines:
-    # Untrusted traces — agent-pushed spans. resource/untrusted_otlp
+    # Untrusted traces — host-CLI-pushed spans. resource/untrusted_otlp
     # stamps every record so dashboards can separate forgeable
     # sender-declared spans from trusted-lane spans (currently none,
     # but the pattern extends cleanly when a trusted span source is
@@ -462,7 +463,7 @@ service:
       processors: [memory_limiter, resource/untrusted_otlp, batch]
       exporters: [opensearch/traces, spanmetrics, debug]
     # Untrusted metrics — anything arriving on the unauth'd otlp
-    # receiver. transform/metrics copies project/agent resource attrs
+    # receiver (the host CLI). transform/metrics copies project/agent resource attrs
     # to datapoint labels; ingest_source=untrusted_otlp is stamped
     # first so the forgeable labels are always paired with the
     # provenance marker.
@@ -471,11 +472,12 @@ service:
       processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
     # CP gateway lane — agent telemetry with a CP-stamped identity.
-    # Traces and metrics take the same exporters as the agent-facing
-    # pipelines above; logs enter the same service.name routing so each
-    # active monitoring unit's lane keeps its index. The records differ
-    # from the untrusted lane only in provenance: project / agent /
-    # container_id are the CP's values and ingest_source=cp_gateway.
+    # Traces and metrics take the same exporters as the host CLI
+    # pipelines above; logs enter routing/agents so each active
+    # monitoring unit's lane keeps its index while the clawker-cli index
+    # stays out of reach. The records differ from the untrusted lane
+    # only in provenance: project / agent / container_id are the CP's
+    # values and ingest_source=cp_gateway.
     traces/agents:
       receivers: [otlp/agents]
       processors: [memory_limiter, resource/agent_gateway, batch]
@@ -487,7 +489,7 @@ service:
     logs/agents:
       receivers: [otlp/agents]
       processors: [memory_limiter, resource/agent_gateway, batch]
-      exporters: [routing/untrusted]
+      exporters: [debug]
     # Trusted metrics — collector self-scrape and spanmetrics-derived
     # RED metrics. All sourced locally; no sender-declared resource
     # attrs to defend.
@@ -507,12 +509,12 @@ service:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
-    # Quarantine for untrusted records whose service.name matches no
-    # route (no active unit claims it, not clawker-cli). Stdout-only
-    # (debug); never indexed
-    # because the lane is unauthenticated and the records are
-    # forgeable. Operator can grep `docker logs clawker-otel-collector`
-    # for the dropped record to spot a misconfigured sender.
+    # Quarantine for untrusted and gateway-lane records whose
+    # service.name matches no route (no active unit claims it, not
+    # clawker-cli on the untrusted lane). Stdout-only (debug); never
+    # indexed because the records are sender-declared. Operator can grep
+    # `docker logs clawker-otel-collector` for the dropped record to
+    # spot a misconfigured sender.
     logs/untrusted_unrouted:
       receivers: [routing/untrusted]
       processors: [memory_limiter]

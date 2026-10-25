@@ -5,50 +5,24 @@ import (
 	"strings"
 )
 
-// Monitoring stack service names. Each value is the hostname its
-// container registers under on the clawker network (compose service key →
-// Docker DNS). A subset — see [MonitoringServiceHostnames] — is
-// forwarded by CoreDNS to Docker's embedded resolver so agent
-// containers can dial the OTEL collector and Prometheus when the
-// firewall is in front of them. OpenSearch and OpenSearch Dashboards
-// are intentionally NOT forwarded: agents push telemetry through the
-// collector and never address those services directly. Renaming a
-// service here propagates to both the compose template and the
-// firewall plane without further edits.
+// Monitoring stack service names. Each value is the compose service key
+// and therefore the hostname its container registers under on the
+// monitoring stack's own compose network. The stack never joins the
+// agent network and CoreDNS forwards none of these names: agent
+// telemetry reaches the collector through the control plane gateway,
+// and trusted senders (CP, Envoy, CoreDNS) dial the collector's
+// host-loopback publish at [DockerHostInternal]. The names matter only
+// inside the compose project (the Prometheus scrape target, the
+// OpenSearch exporters, the one-shot bootstrap container) and for the
+// CLI's container-running detection. The bootstrap container has no
+// constant here: it dials opensearch-node and opensearch-dashboards once
+// per stack lifecycle.
 const (
 	MonitoringServiceOtelCollector        = "otel-collector"
 	MonitoringServicePrometheus           = "prometheus"
 	MonitoringServiceOpenSearchNode       = "opensearch-node"
 	MonitoringServiceOpenSearchDashboards = "opensearch-dashboards"
 )
-
-// MonitoringServiceHostnames lists the internal monitoring hostnames
-// CoreDNS must rewire to Docker's embedded DNS (127.0.0.11). Consumed
-// by:
-//   - internal/controlplane/firewall/coredns_config.go (internalHosts)
-//
-// internal/monitor/templates.go renders compose YAML for all monitoring
-// services (opensearch-node, opensearch-dashboards, otel-collector,
-// prometheus, plus the one-shot clawker-opensearch-bootstrap) from the
-// individual MonitoringService* constants directly, not from this slice
-// — do NOT add OpenSearch hostnames here to "make compose work"; doing
-// so only widens CoreDNS forwarding for no reason.
-//
-// Scope: only services agent containers legitimately need to dial.
-// otel-collector is the OTLP push target for Claude Code + clawkercp.
-// prometheus is included for workflows that scrape it from agent code.
-// opensearch-node + opensearch-dashboards are deliberately omitted —
-// agents push telemetry through the collector and never query/write
-// the indices directly. Containers on the clawker network that DO need those
-// (the collector, the dashboards UI, the one-shot bootstrap container)
-// reach them via Docker's embedded resolver without going through
-// CoreDNS. The bootstrap container has no constant in this file either
-// — it dials opensearch-node:9200 + opensearch-dashboards:5601 once
-// per stack lifecycle and is never reached from an agent container.
-var MonitoringServiceHostnames = []string{
-	MonitoringServiceOtelCollector,
-	MonitoringServicePrometheus,
-}
 
 // ResolveOTLPEndpoint reads the standard OTLP endpoint env vars (the
 // logs-signal override [EnvOTLPLogsEndpoint] taking precedence over the

@@ -180,6 +180,8 @@ docker:
 	// metrics to whatever network the host is on. If you change this
 	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelGRPCPort, data.OtelGRPCPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelCollectorPort, data.OtelCollectorPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelInfraPort, data.OtelInfraPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelAgentIngestPort, data.OtelAgentIngestPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.PrometheusPort, data.PrometheusPort),
@@ -191,6 +193,32 @@ docker:
 				"compose.yaml missing loopback bind %q — sensitive port must not be exposed on all interfaces",
 				hostBind,
 			)
+		}
+	}
+
+	// Every published port is a loopback publish: a `- "<port>:<port>"`
+	// entry without the 127.0.0.1 prefix exposes the service on every
+	// host interface.
+	inPorts := false
+	for line := range strings.SplitSeq(result, "\n") {
+		entry := strings.TrimSpace(line)
+		switch {
+		case entry == "ports:":
+			inPorts = true
+		case entry == "" || strings.HasPrefix(entry, "#"):
+		case !strings.HasPrefix(entry, "-"):
+			inPorts = false
+		case inPorts && !strings.HasPrefix(entry, `- "`+consts.Localhost+":"):
+			t.Errorf("compose.yaml publishes %s without a loopback bind", entry)
+		}
+	}
+
+	// The stack lives on its own compose network. No service joins the
+	// agent network, so an agent container cannot reach any monitoring
+	// service by name or by address.
+	for _, absent := range []string{"clawker-net", "networks:"} {
+		if strings.Contains(result, absent) {
+			t.Errorf("compose.yaml must not contain %q: monitoring services stay off the agent network", absent)
 		}
 	}
 }
@@ -273,10 +301,20 @@ monitoring:
 		}
 	}
 
+	// Only the host CLI lane routes service.name=clawker-cli. The gateway
+	// connector carries no such route, so an agent that declares that
+	// name cannot land records in the clawker-cli index.
+	if got := strings.Count(result, `== "clawker-cli"`); got != 1 {
+		t.Errorf("otel-config.yaml routes clawker-cli %d times, want exactly 1 (routing/untrusted only)", got)
+	}
+
 	// Zero active units → zero unit lanes anywhere in the collector
-	// config. Unmatched service names (any inactive unit's traffic)
-	// fall to the debug-only unrouted pipeline.
-	for _, absent := range []string{"claude-code", "logs/unit_"} {
+	// config, and no routing/agents connector (the collector rejects an
+	// empty routing table); the gateway log pipeline exports to debug.
+	// Unmatched service names (any inactive unit's traffic) fall to the
+	// debug-only unrouted pipeline. The with-lanes shape is locked by the
+	// otel-config goldens and assertCollectorGraph.
+	for _, absent := range []string{"claude-code", "logs/unit_", "routing/agents:", "[routing/agents]"} {
 		if strings.Contains(result, absent) {
 			t.Errorf("otel-config.yaml with no active units should not contain %q", absent)
 		}

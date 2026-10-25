@@ -868,9 +868,13 @@ func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	wantDsts := make([]string, 0, 5+len(consts.MonitoringServiceHostnames))
-	wantDsts = append(wantDsts, "github.com", "example.com", "45.79.112.203", "blocked.test", "docker.internal")
-	wantDsts = append(wantDsts, consts.MonitoringServiceHostnames...)
+	wantDsts := []string{"github.com", "example.com", "45.79.112.203", "blocked.test", "docker.internal"}
+	// The monitoring stack is off the agent network: its service names
+	// are not reserved hosts and get no route identity.
+	for _, name := range []string{consts.MonitoringServiceOtelCollector, consts.MonitoringServicePrometheus} {
+		_, ok := h.identity.IdentityFor(name)
+		assert.Falsef(t, ok, "monitoring name %q must not get a route identity", name)
+	}
 
 	snap := h.identity.Snapshot()
 	byDst := make(map[string]ebpf.RouteIdentity, len(snap))

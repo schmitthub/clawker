@@ -94,7 +94,7 @@ type MonitorTemplateData struct {
 	// OpenSearch JVM heap (MB) for both -Xms and -Xmx.
 	OpenSearchHeapMB int
 
-	// Service hostnames on the clawker network (compose service keys + cross-service
+	// Service hostnames on the monitoring compose network (compose service keys + cross-service
 	// references). Mirror consts.MonitoringService*.
 	OtelCollectorService        string
 	PrometheusService           string
@@ -139,6 +139,13 @@ type MonitorTemplateData struct {
 	// untrusted_unrouted debug pipeline.
 	Units []UnitRouting
 
+	// HasUnitRoutes reports whether any seeded unit declares a log lane.
+	// The routing/agents connector carries only unit lanes, and the
+	// collector refuses an empty routing table, so the template emits
+	// the connector (and the gateway log pipeline's export into it)
+	// only when this is true.
+	HasUnitRoutes bool
+
 	// ISMIndexPatternsJSON is the shared retention policy's
 	// ism_template.index_patterns value: the infra indices plus every
 	// seeded default-retention unit lane index, JSON-encoded Go-side so
@@ -162,6 +169,7 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 	}
 	return MonitorTemplateData{
 		Units:                       routings,
+		HasUnitRoutes:               hasUnitRoutes(routings),
 		ISMIndexPatternsJSON:        ismPatterns,
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
@@ -421,4 +429,16 @@ func scanNDJSONIDs(destDir, rel, provenance string, claim func(typ, id, provenan
 		}
 	}
 	return nil
+}
+
+// hasUnitRoutes reports whether at least one unit lane exists. Every lane
+// carries at least one service name (the unit loader rejects an empty
+// list), so one lane is one routing-table row.
+func hasUnitRoutes(routings []UnitRouting) bool {
+	for _, r := range routings {
+		if len(r.Lanes) > 0 {
+			return true
+		}
+	}
+	return false
 }
