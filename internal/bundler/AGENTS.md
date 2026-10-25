@@ -159,7 +159,7 @@ type DockerfileContext struct {
     ManagedPrompt *ManagedPromptContext  // build-time managed-prompt COPY target; nil when the harness manifest declares no managed_prompt
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
-    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the claude bundle fragment (not context fields).
+    OtelEndpoint string  // consts.AgentOTLPRelayURL (clawkerd loopback relay), base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the claude bundle fragment (not context fields).
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
     HasFirewallCA bool; GoBuilderImage string
@@ -255,7 +255,7 @@ type ArgInstruction struct { Name, Default string }
 
 ### OTEL Endpoint Composition
 
-Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelEndpoint` is populated by callers from `cfg.OtelCollectorURL()` (see `internal/config/consts.go`) and wired into the container as `OTEL_EXPORTER_OTLP_ENDPOINT`. The OTel SDK appends `/v1/metrics`, `/v1/logs`, and `/v1/traces` per signal, matching the collector's OTLP HTTP receiver. Single base covers every signal — no per-signal endpoint vars. Defaults to the otel-collector so Prometheus retains metric metadata for OpenSearch Dashboards (Prometheus' `/api/v1/metadata` excludes OTLP-ingested series). Direct OTLP push to Prometheus' native receiver remains supported as an alternate endpoint (saves a hop, trades metadata). Never hand-concatenate host + port + path in bundler code — add the accessor to config and read it.
+Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelEndpoint` is `consts.AgentOTLPRelayURL`, the loopback OTLP/HTTP relay clawkerd serves inside the container, wired in as `OTEL_EXPORTER_OTLP_ENDPOINT`. The OTel SDK appends `/v1/metrics`, `/v1/logs`, and `/v1/traces` per signal; the relay serves the same paths and carries each batch to the control plane, which forwards to the collector's `otlp/agents` receiver. Single base covers every signal — no per-signal endpoint vars. The collector port never reaches the agent env (`TestBuildContext_CustomMonitoringEndpoints`). Never hand-concatenate host + port + path in bundler code — read the const or a config accessor.
 
 ### Constants and Embedded Assets
 
