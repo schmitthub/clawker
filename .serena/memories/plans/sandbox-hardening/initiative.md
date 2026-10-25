@@ -41,7 +41,7 @@ conversation. Do not start the next task after wrap-up.
 | Task 4: `AgentService.Export` RPC, CP ingest handler, collector agent receiver (item 2, CP side) | `complete` | Claude (2026-10-24) |
 | Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `complete` | Claude (2026-10-25) |
 | Task 6: Monitoring stack off clawker-net (item 1) | `complete` | Claude (2026-10-25) |
-| Task 7: eBPF intra-subnet allowlist (item 3) | `pending` | — |
+| Task 7: eBPF intra-subnet allowlist (item 3) | `complete` | Claude (2026-10-25) |
 | Task 8: In-container runtime UAT of all items | `pending` | — |
 
 Statuses: `pending`, `in_progress`, `blocked`, `complete`.
@@ -61,6 +61,10 @@ Append findings that the next task needs, with the source or task number.
 - (Task 6) The collector rejects an empty `routing` connector table at start; a connector whose rows all come from optional units must be gated on a Go-side bool (`HasUnitRoutes`). A byte golden does not catch this; `assertCollectorGraph` (`internal/monitor/units_test.go`) checks every golden's graph, and the pinned collector image's `validate` is the authoritative check (Docker is available in this agent container: `docker run --rm -v <golden>:/c.yaml:ro <OtelCollectorImage> validate --config /c.yaml`).
 - (Task 6) Envoy's c-ares STRICT_DNS resolver reads `/etc/hosts`, so `HostConfig.ExtraHosts: host.docker.internal:host-gateway` is enough for a sibling to dial the host-loopback publish (verified with the pinned Envoy image). Task 7 keeps Envoy and CoreDNS off the eBPF allowlist question: only agent cgroups carry the programs.
 - (Task 6) After Task 6 nothing on clawker-net except Envoy, CoreDNS, and the CP serves agents, so Task 7's allowlist is exactly those three plus loopback.
+- (Task 7) `is_in_subnet` includes the gateway, so the old gateway-lockdown branch after the subnet early-return was dead code; it is gone and gateway traffic is a kernel deny. `host.docker.internal` can resolve inside the subnet (daemon `host-gateway-ip`), so the host-proxy bypass is checked before the allowlist.
+- (Task 7) A `container_map` value-size change is a CP-upgrade hazard: `Load()`'s stale-link sweep must probe the OLD pinned map with `LookupBytes`; a typed `Lookup` into the new struct errors on the size mismatch, sweeps every live link, and leaves agents unenforced until the re-enroll sweep (`liveCgroupIDs`, `TestLiveCgroupIDs_LayoutIndependent`).
+- (Task 7) Privileged BPF tests run from this agent container: `CGO_ENABLED=0 go test -c -o <pkg>/.x.test ./<pkg>/` then `docker run --rm --privileged -e PRIVILEGED_TESTS=1 -v /Users/andrew/Code/clawker/<pkg>/.x.test:/x.test:ro ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b /x.test -test.v` (the workspace path is the host path). `make ebpf` runs natively here (clang 14 + libbpf headers present).
+- (Task 7) `bpftest` scratch configs must set every `container_config` field a row dials (a zero `gateway_ip` made the gateway rows vacuous); off-subnet rows must expect a route, not a deny, to prove the mask scope.
 
 ## Context for All Agents
 
@@ -332,14 +336,15 @@ Tests pass. Runtime from an agent shell: `nc -zv -w2 <other-agent-ip> 22` and `n
 
 ### Results and Wrap Up
 
-- Acceptance results: Not run.
-- Reviews and findings: Not reviewed.
-- Blockers and next action: None recorded.
-- Commit: Not made.
+- Acceptance results (2026-10-25): `make ebpf` regenerated both binding sets natively; `go test ./controlplane/firewall/... ./controlplane/manager/ ./internal/controlplane/ -count=1` pass; pre-commit `make test`, golangci-lint (full), semgrep pass; `golangci-lint` 0 issues on `controlplane/firewall/...` and `test/e2e`. Privileged BPF prog-run tests (`TestProgRun_AllowedInternal`, `TestProgRun_DecideSendmsg_IntraSubnet`) and `TestLiveCgroupIDs_LayoutIndependent` PASS under `docker run --privileged` with the compiled test binaries. Mutation checks: a typed `Lookup` in `liveCgroupIDs` fails the 28-byte case; a resurrected gateway allow or a mask over-match fails the bpftest rows. `go test ./test/e2e/... -run Firewall` and the in-container `nc`/bash probes NOT run (host only); deferred to Task 8 by user ruling.
+- Built: `allowed_internal` + in-subnet `V_DENY` in `decide_connect`/`decide_sendmsg` (`bpf/common.h`); `container_config` + `cp_ip`/`cp_agent_port`/`cp_hydra_port` (36 bytes, `_Static_assert`, `TestContainerConfig_SizeMatchesABI`); `ebpf.ContainerConfigParams` + `NewContainerConfig(p)`; `NetworkInfo.CPIP`; `Handler.containerConfig` for both enroll sites (range-checked `AgentPort`/`HydraPublicPort`); `liveCgroupIDs` with `LookupBytes`; break-glass `enable` JSON keys camelCase + cp fields; `bpftest` wrappers `test_allowed_internal`/`test_decide_sendmsg` (+ `in_gateway_ip` and the config inputs in `test_scratch`); e2e `TestFirewall_IntraSubnetAllowlist` (listener positive control, bash `/dev/tcp`+`/dev/udp` probes, CP 7444/4444 open, 7080 closed, DNS via `api.anthropic.com`) replaces `TestFirewall_IntraNetworkBypass`; firewall-uat skill probe table; docs (`firewall`, `threat-model`), README, AGENTS (`controlplane/firewall`, `ebpf`, `ebpf/cmd`, `test`, `test/adversarial`); memories `design` §7.2, `controlplane/firewall/core`, this design's "As built".
+- Deviations from the design memory: host-proxy bypass moved BEFORE the subnet allowlist and the gateway-lockdown branch deleted (dead code: `is_in_subnet` includes the gateway); gateway traffic is now a kernel deny, not a rewrite to Envoy. `NewContainerConfig` takes a params struct instead of three more positional args.
+- Reviews and findings (2026-10-25): code-reviewer: (a) CRITICAL — the stale-link sweep's typed `Lookup` against the old 28-byte pinned map would have swept every live agent's links on CP upgrade (fail-open until re-enroll) → `liveCgroupIDs` with `LookupBytes` + test; (b) the "Linux host gateway is in-subnet" rationale was overstated (default engine resolves `host-gateway` to docker0, off-subnet) → comments/docs/memories reworded, code kept; confirmed: decision order, IPv4-mapped v6, UDP EPERM, `recvmsg4` untouched, no reachable path to other agents / CP 7080/7443/7445, no CP-path panic. Noted, not in scope: `enter_enforced` passes uid 0 through, so a root process in an agent skips the allowlist (sudo is gone since Task 1). test-hunter: gateway rows vacuous (zero `gateway_ip`) → scratch config carries it; off-subnet row re-pinned the route-miss deny → now expects a route rewrite; e2e lacked a positive control for the listener → unmanaged busybox `wget` readiness probe; redundant rows trimmed; reenroll assertions as subtests. Not covered: the host-proxy-before-allowlist ordering in `decide_connect` needs a `bpf_sock_addr` ctx (only the host e2e `TestFirewall_HostProxy*` reach it, and only when the proxy IP is in-subnet).
+- Commit: `03c09ce4` on `feat/ebpf-intra-subnet-allowlist` (stacked on #597, gh stack #591). No plugin reference change needed. Plugin pointer already at 2026.10.4 (`c8fc7b2b` on `feat/monitoring-off-net`, clawker-plugin#12 merged).
 
 ### Handoff Prompt
 
-Continue `mem:plans/sandbox-hardening/initiative` on branch `feat/mythos-hardening`. Task 7 complete. Next: Task 8 (in-container runtime UAT of all items). No design memory; use the acceptance list in the initiative.
+Continue `mem:plans/sandbox-hardening/initiative`. Task 7 complete. Next: Task 8 (runtime UAT of all items) on a new layer above `feat/ebpf-intra-subnet-allowlist` (`gh stack add feat/sandbox-hardening-uat`). The runtime checks need the host CLI and Docker (`clawker build`, `monitor up`, two agents, `go test ./test/e2e/... -run Firewall`); they cannot run from inside an agent container, so the user drives the host commands and reports outputs, or runs the session on the host. No design memory; use the acceptance lists in this initiative and the firewall-uat skill probe table.
 
 ---
 
