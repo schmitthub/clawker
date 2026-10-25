@@ -54,6 +54,9 @@ type ContainerConfig struct {
 	HostProxyIP   uint32 // Host proxy resolved IP (network byte order)
 	HostProxyPort uint16 // Host proxy port (host byte order)
 	EgressPort    uint16 // Envoy egress listener port (host byte order)
+	CPIP          uint32 // Control-plane static IP (network byte order)
+	CPAgentPort   uint16 // CP AgentService port (host byte order)
+	CPHydraPort   uint16 // CP Hydra public port (host byte order)
 }
 
 // RouteIdentity is a userspace-allocated route identity — the key that ties

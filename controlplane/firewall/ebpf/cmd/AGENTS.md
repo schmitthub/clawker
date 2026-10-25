@@ -18,7 +18,7 @@ Do **not** wire new consumers to it. Adding new call sites is a signal that the 
 | Subcommand | Args | Purpose |
 |---|---|---|
 | `init` | — | `Manager.Load()` — parse embedded ELF, pin maps + programs to `/sys/fs/bpf/clawker/`, and clean up stale links. Calling it again re-runs `cleanupStaleLinks()` which removes links for dead cgroups while preserving enforcement on live containers. Only run during disaster recovery when the CP is down and you need to re-pin. (In normal operation the CP calls `Manager.Load()` directly; it does not exec this binary.) |
-| `enable` | `<cgroupPath> <configJSON>` | Manual container enrollment. Populates `container_map[cgroupID]` and attaches programs. |
+| `enable` | `<cgroupPath> <configJSON>` | Manual container enrollment. Populates `container_map[cgroupID]` and attaches programs. JSON keys (camelCase): `envoyIp`, `corednsIp`, `gatewayIp`, `cidr`, `hostProxyIp`, `hostProxyPort`, `egressPort`, `cpIp`, `cpAgentPort`, `cpHydraPort` (`cpIp` required — it is the in-subnet allowlist's CP row). |
 | `disable` | `<cgroupPath>` | Detach programs, delete `container_map` entry, clear bypass flag. |
 | `bypass` | `<cgroupPath>` | Set `bypass_map[cgroupID] = 1`. |
 | `unbypass` | `<cgroupPath>` | Clear the bypass flag. |

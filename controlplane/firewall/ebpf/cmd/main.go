@@ -32,15 +32,19 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// enableArgs is the JSON payload for the enable command.
+// enableArgs is the JSON payload for the enable command (camelCase keys,
+// decoded case-insensitively by encoding/json).
 type enableArgs struct {
-	EnvoyIP       string `json:"envoy_ip"`
-	CoreDNSIP     string `json:"coredns_ip"`
-	GatewayIP     string `json:"gateway_ip"`
+	EnvoyIP       string `json:"envoyIp"`
+	CoreDNSIP     string `json:"corednsIp"`
+	GatewayIP     string `json:"gatewayIp"`
 	CIDR          string `json:"cidr"`
-	HostProxyIP   string `json:"host_proxy_ip"`
-	HostProxyPort uint16 `json:"host_proxy_port"`
-	EgressPort    uint16 `json:"egress_port"`
+	HostProxyIP   string `json:"hostProxyIp"`
+	HostProxyPort uint16 `json:"hostProxyPort"`
+	EgressPort    uint16 `json:"egressPort"`
+	CPIP          string `json:"cpIp"`
+	CPAgentPort   uint16 `json:"cpAgentPort"`
+	CPHydraPort   uint16 `json:"cpHydraPort"`
 }
 
 func main() {
@@ -112,10 +116,18 @@ func runEnable(log *logger.Logger, cgroupPath, configJSON string) {
 		fatal("enable", fmt.Errorf("parsing config JSON: %w", err))
 	}
 
-	cfg, err := clawkerebpf.NewContainerConfig(
-		args.EnvoyIP, args.CoreDNSIP, args.GatewayIP, args.CIDR,
-		args.HostProxyIP, args.HostProxyPort, args.EgressPort,
-	)
+	cfg, err := clawkerebpf.NewContainerConfig(clawkerebpf.ContainerConfigParams{
+		EnvoyIP:       args.EnvoyIP,
+		CoreDNSIP:     args.CoreDNSIP,
+		GatewayIP:     args.GatewayIP,
+		CIDR:          args.CIDR,
+		HostProxyIP:   args.HostProxyIP,
+		HostProxyPort: args.HostProxyPort,
+		EgressPort:    args.EgressPort,
+		CPIP:          args.CPIP,
+		CPAgentPort:   args.CPAgentPort,
+		CPHydraPort:   args.CPHydraPort,
+	})
 	if err != nil {
 		fatal("enable", err)
 	}
@@ -291,6 +303,9 @@ func runDump(log *logger.Logger, cgroupPath string) {
 		fmt.Printf("  host_proxy_ip=%s host_proxy_port=%d egress_port=%d\n",
 			clawkerebpf.Uint32ToIP(cfg.HostProxyIp),
 			cfg.HostProxyPort, cfg.EgressPort)
+		fmt.Printf("  cp_ip=%s cp_agent_port=%d cp_hydra_port=%d\n",
+			clawkerebpf.Uint32ToIP(cfg.CpIp),
+			cfg.CpAgentPort, cfg.CpHydraPort)
 	}
 }
 
@@ -378,6 +393,9 @@ func runDumpContainers(log *logger.Logger, asJSON bool) {
 		fmt.Printf("    host_proxy_ip=%s host_proxy_port=%d egress_port=%d\n",
 			clawkerebpf.Uint32ToIP(c.HostProxyIP),
 			c.HostProxyPort, c.EgressPort)
+		fmt.Printf("    cp_ip=%s cp_agent_port=%d cp_hydra_port=%d\n",
+			clawkerebpf.Uint32ToIP(c.CPIP),
+			c.CPAgentPort, c.CPHydraPort)
 	}
 }
 

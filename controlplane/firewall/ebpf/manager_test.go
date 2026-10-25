@@ -3,8 +3,10 @@ package ebpf
 import (
 	"encoding/binary"
 	"errors"
+	"net"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,6 +16,89 @@ import (
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// TestContainerConfig_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct container_config) == 36). The struct is
+// the container_map value; a size drift between the C program and the
+// bpf2go mirror makes Load() discard the pinned map as schema-mismatched
+// and every enrolled agent loses its config.
+func TestContainerConfig_SizeMatchesABI(t *testing.T) {
+	var cfg clawkerContainerConfig
+	if got := binary.Size(cfg); got != 36 {
+		t.Fatalf("binary.Size(clawkerContainerConfig{}) = %d, want 36", got)
+	}
+}
+
+// TestNewContainerConfig_ControlPlaneFields: the intra-subnet allowlist
+// needs the CP address and the two agent-facing CP ports in the map
+// value. A config without them would deny Register and Export for every
+// agent, so a missing or malformed CP IP is an error, not a zero field.
+func TestNewContainerConfig_ControlPlaneFields(t *testing.T) {
+	params := ContainerConfigParams{
+		EnvoyIP:       "172.20.0.200",
+		CoreDNSIP:     "172.20.0.201",
+		GatewayIP:     "172.20.0.1",
+		CIDR:          "172.20.0.0/16",
+		HostProxyIP:   "",
+		HostProxyPort: 0,
+		EgressPort:    10000,
+		CPIP:          "172.20.0.202",
+		CPAgentPort:   7444,
+		CPHydraPort:   4444,
+	}
+	cfg, err := NewContainerConfig(params)
+	if err != nil {
+		t.Fatalf("NewContainerConfig: %v", err)
+	}
+	if want := IPToUint32(net.ParseIP("172.20.0.202")); cfg.CpIp != want {
+		t.Errorf("CpIp = %d, want %d", cfg.CpIp, want)
+	}
+	if cfg.CpAgentPort != 7444 || cfg.CpHydraPort != 4444 {
+		t.Errorf("CP ports = %d/%d, want 7444/4444", cfg.CpAgentPort, cfg.CpHydraPort)
+	}
+	if cfg.HostProxyIp != 0 || cfg.HostProxyPort != 0 {
+		t.Errorf("host proxy must stay zero when the lane is off: %d/%d", cfg.HostProxyIp, cfg.HostProxyPort)
+	}
+
+	params.CPIP = ""
+	if _, badErr := NewContainerConfig(params); badErr == nil {
+		t.Error("empty CPIP: want error, got nil")
+	}
+}
+
+// TestLiveCgroupIDs_LayoutIndependent: the stale-link sweep in Load()
+// reads the previous CP's pinned container_map. When the value layout has
+// grown since that CP (a container_config field was appended), a typed
+// Lookup fails and every live agent would be swept as dead, so presence
+// must be checked against the map's own value size. Both the old (28
+// byte) and the current layout must report the seeded cgroup live.
+func TestLiveCgroupIDs_LayoutIndependent(t *testing.T) {
+	t.Parallel()
+	requireBPF(t)
+	var current clawkerContainerConfig
+	for _, valueSize := range []int{28, binary.Size(current)} {
+		t.Run(strconv.Itoa(valueSize), func(t *testing.T) {
+			t.Parallel()
+			spec := new(ebpf.MapSpec)
+			spec.Type = ebpf.Hash
+			spec.KeySize = 8
+			spec.ValueSize = uint32(valueSize)
+			spec.MaxEntries = 4
+			m, err := ebpf.NewMap(spec)
+			if err != nil {
+				t.Fatalf("create map: %v", err)
+			}
+			defer m.Close()
+			if putErr := m.Put(uint64(11), make([]byte, valueSize)); putErr != nil {
+				t.Fatalf("seed: %v", putErr)
+			}
+			live := liveCgroupIDs(m, map[uint64]bool{11: true, 22: true})
+			if !live[11] || live[22] {
+				t.Fatalf("live = %v; want {11:true}", live)
+			}
+		})
+	}
+}
 
 // TestEgressEvent_SizeMatchesABI mirrors the C-side
 // _Static_assert(sizeof(struct egress_event) == 48) on the Go side. If
