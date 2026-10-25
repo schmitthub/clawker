@@ -51,6 +51,11 @@ const logFilename = "clawkerd.log"
 // not race docker's own SIGKILL.
 const shutdownGrace = 10 * time.Second
 
+// relayShutdownGrace bounds the wait for in-flight telemetry forwards
+// at exit. The user CMD has already exited, so only a batch the SDK
+// flushed on its way out can still be in flight.
+const relayShutdownGrace = 2 * time.Second
+
 // exitCodeConfig is returned for deterministic pre-spawn config
 // failures (missing required env, /etc/passwd parse fails, malformed
 // bootstrap material). Distinct from the generic exit-1 transient
@@ -239,7 +244,16 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	}
 
-	clawkerdSrv, err := daemon.StartClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit, spawn)
+	clawkerdSrv, err := daemon.StartClawkerdListener(
+		boot,
+		register,
+		spawnEntry,
+		onListenerFatal,
+		log,
+		progress,
+		requestExit,
+		spawn,
+	)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic
@@ -252,6 +266,17 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 		return code, fmt.Errorf("start clawkerd listener: %w", err)
 	}
+
+	// Agent telemetry relay: the SDK exports to this loopback OTLP/HTTP
+	// listener and clawkerd carries each batch to AgentService.Export
+	// over its leaf. Optional subsystem: a missing CP address or bad
+	// material degrades to nil (event=otlp_relay_unavailable) and the
+	// daemon continues. Stopped after the child exits (the child is the
+	// only client) with a short grace for in-flight forwards.
+	relay := daemon.StartTelemetryRelay(
+		ctx, boot, os.Getenv(consts.EnvClawkerdAgentAddr), consts.AgentOTLPRelayAddr, log,
+	)
+	defer relay.Shutdown(context.WithoutCancel(ctx), relayShutdownGrace)
 
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 

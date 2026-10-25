@@ -158,7 +158,9 @@ RUN if [ -s "$HOME/.nvm/nvm.sh" ]; then \
 # CP's generic seed-apply init step places the manifest seeds (statusline,
 # .config.json onboarding bypass, settings.json) here on first boot.
 ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
-# Telemetry: pre-configured for otel-collector on clawker-net (requires 'clawker monitor up').
+# Telemetry: the SDK exports to clawkerd's loopback OTLP/HTTP relay; clawkerd
+# carries each batch to the control plane, which stamps the verified identity
+# and forwards to the collector (requires 'clawker monitor up').
 # 'monitor up' also provisions OpenSearch indices + Dashboards via the
 # clawker-opensearch-bootstrap one-shot service before the collector starts,
 # so records land in templated (not dynamically-mapped) indices.
@@ -173,8 +175,8 @@ ENV OTEL_METRICS_EXPORTER=otlp
 ENV OTEL_LOGS_EXPORTER=otlp
 ENV OTEL_TRACES_EXPORTER=otlp
 # Single base endpoint; OTel SDK appends /v1/metrics, /v1/logs, /v1/traces
-# per signal. Collector OTLP/HTTP receiver listens on the standard paths.
-ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+# per signal. The clawkerd relay serves the standard paths on loopback.
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 ENV OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
 ENV OTEL_METRICS_INCLUDE_SESSION_ID=true
 ENV OTEL_LOGS_EXPORT_INTERVAL=5000
