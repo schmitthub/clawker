@@ -1,6 +1,8 @@
 # The stack runs on the compose project's own network. No service joins
 # the agent network: agents reach the collector only through the control
-# plane gateway, and every host publish below binds 127.0.0.1.
+# plane gateway, and every host publish below binds 127.0.0.1. The
+# collector alone also joins the internal telemetry network, where the
+# control plane, Envoy, and CoreDNS reach its mTLS receivers.
 #
 # Default log rotation for monitoring services. Caps Docker json-file
 # growth from the otel-collector debug exporter and any chatty service.
@@ -35,26 +37,13 @@ services:
       # their only sender; it dials localhost via
       # Settings.Monitoring.OtelCollectorHost (default `localhost`).
       # Agent containers never reach them: their telemetry goes through
-      # the control plane to the gateway receiver below, and no
+      # the control plane to the gateway receiver on the telemetry
+      # network, and no
       # monitoring service joins the agent network. Binding to 0.0.0.0
       # would expose the plaintext OTLP ingestion to anything routable
       # on the LAN.
       - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
       - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
-{{- if .OtelInfraPort}}
-      # Infra receiver — host loopback only. clawkercp, Envoy, and
-      # CoreDNS push via host.docker.internal:<port>. Agents trying the
-      # same address are rejected by BPF (gateway:non-hostproxy → Envoy
-      # → reset); additionally, mTLS would refuse them because they have
-      # no client cert chained through the infra intermediate CA.
-      - "127.0.0.1:{{.OtelInfraPort}}:{{.OtelInfraPort}}"
-{{- end}}
-{{- if .OtelAgentIngestPort}}
-      # Agent telemetry receiver — host loopback only. The CP gateway
-      # pushes via host.docker.internal:<port> with its infra leaf; the
-      # same mTLS gate as the infra receiver refuses agents.
-      - "127.0.0.1:{{.OtelAgentIngestPort}}:{{.OtelAgentIngestPort}}"
-{{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -77,6 +66,13 @@ services:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
+    # default carries the host publishes and the OpenSearch/Prometheus
+    # exporters. telemetry carries the mTLS receivers (infra + agent
+    # gateway): they have no host publish, so only members of that
+    # network can reach them.
+    networks:
+      - default
+      - telemetry
     logging: *default-logging
 
   {{.PrometheusService}}:
@@ -244,3 +240,10 @@ volumes:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
+
+networks:
+  telemetry:
+    # Created as an internal network by the control plane bootstrap and
+    # by `monitor up`/`reload` before compose runs; compose only joins it.
+    external: true
+    name: {{.TelemetryNetwork}}

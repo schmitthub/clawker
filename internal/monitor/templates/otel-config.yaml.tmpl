@@ -18,9 +18,9 @@ receivers:
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
   # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
-  # inside the container; the published mapping in compose.yaml binds
-  # the host port to 127.0.0.1 only, and every trusted sender (CP,
-  # Envoy, CoreDNS) dials host.docker.internal:<port>. The TLS handshake
+  # inside the container with no host publish; every trusted sender (CP,
+  # Envoy, CoreDNS) dials otel-collector:<port> over the internal
+  # telemetry network that agents never join. The TLS handshake
   # rejects any peer whose client cert chain does not validate against
   # the infra intermediate CA — only CP and infra services (envoy/coredns,
   # cp) hold leaves signed by that intermediate.

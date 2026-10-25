@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/monitor/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -19,6 +20,7 @@ import (
 
 type UpOptions struct {
 	IOStreams     *iostreams.IOStreams
+	Client        func(context.Context) (*docker.Client, error)
 	Config        func() (config.Config, error)
 	Logger        func() (*logger.Logger, error)
 	BundleManager func() (*bundle.Manager, error)
@@ -29,6 +31,7 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
 		IOStreams:     f.IOStreams,
+		Client:        f.Client,
 		Config:        f.Config,
 		Logger:        f.Logger,
 		BundleManager: f.BundleManager,
@@ -121,6 +124,16 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	collectorWasRunning := shared.CollectorRunning(ctx, composePath)
 	cwdUnits, render, err := shared.PrepareStack(cfg, monitorDir)
 	if err != nil {
+		return fmt.Errorf("prepare monitoring stack: %w", err)
+	}
+
+	// The collector joins the telemetry network as external, so it must
+	// exist before compose runs, even when the control plane has not.
+	client, err := opts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %w", err)
+	}
+	if _, err = client.EnsureTelemetryNetwork(ctx); err != nil {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}
 

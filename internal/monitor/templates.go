@@ -101,6 +101,11 @@ type MonitorTemplateData struct {
 	OpenSearchNodeService       string
 	OpenSearchDashboardsService string
 
+	// TelemetryNetwork is the external internal-only network the collector
+	// joins so the control plane, Envoy, and CoreDNS reach its mTLS
+	// receivers. Mirrors consts.TelemetryNetwork.
+	TelemetryNetwork string
+
 	// Host-side paths for CLI-issued mTLS material that gates the
 	// trusted otlp/infra receiver. Populated unconditionally by
 	// `monitor init` from internal/consts after EnsureAuthMaterial
@@ -184,6 +189,7 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 		PrometheusService:           consts.MonitoringServicePrometheus,
 		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
 		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
+		TelemetryNetwork:            consts.TelemetryNetwork,
 		OtelCollectorImage:          OtelCollectorImage,
 		PrometheusImage:             PrometheusImage,
 		OpenSearchImage:             OpenSearchImage,
