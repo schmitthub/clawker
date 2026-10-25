@@ -119,6 +119,25 @@ func TestGitManager_DeleteBranch(t *testing.T) {
 		assert.True(t, exists, "current branch should not be deleted")
 	})
 
+	t.Run("removes tracking config when remote.pushDefault is set", func(t *testing.T) {
+		m := gittest.NewInMemoryGitManager(t, "/test/repo")
+		repo := m.Repository()
+		cfg, err := repo.Config()
+		require.NoError(t, err)
+		cfg.Raw.Section("remote").SetOption("pushDefault", "origin")
+		require.NoError(t, repo.SetConfig(cfg))
+		createMergedBranch(t, repo, "feature-tracked")
+		require.NoError(t, m.SetBranchUpstream("feature-tracked", "origin", "feature-tracked"))
+
+		require.NoError(t, m.DeleteBranch("feature-tracked"))
+
+		_, err = repo.Branch("feature-tracked")
+		require.ErrorIs(t, err, gogit.ErrBranchNotFound, "tracking config should be deleted")
+		cfg, err = repo.Config()
+		require.NoError(t, err)
+		assert.Equal(t, "origin", cfg.Raw.Section("remote").Option("pushDefault"))
+	})
+
 	t.Run("branch with no config", func(t *testing.T) {
 		m := gittest.NewInMemoryGitManager(t, "/test/repo")
 		repo := m.Repository()

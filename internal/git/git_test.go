@@ -1379,6 +1379,32 @@ func TestGitManager_SetupWorktree_RemoteTrackingDWIM(t *testing.T) {
 		assert.ErrorIs(t, err, gogit.ErrBranchNotFound, "no upstream config when noTrack is set")
 	})
 
+	t.Run("remote.pushDefault in the bare remote section is not a remote", func(t *testing.T) {
+		fx := newRepoWithRemote(t)
+		cfg, err := fx.mgr.repo.Config()
+		require.NoError(t, err)
+		cfg.Raw.Section("remote").SetOption("pushDefault", "origin")
+		require.NoError(t, fx.mgr.repo.SetConfig(cfg))
+		provider := newFakeWorktreeDirProvider(t)
+
+		path, err := fx.mgr.SetupWorktree(provider, fx.remoteBranch, "", false)
+		require.NoError(t, err)
+
+		wtMgr, err := fx.mgr.Worktrees()
+		require.NoError(t, err)
+		wtRepo, err := wtMgr.Open(path)
+		require.NoError(t, err)
+		head, err := wtRepo.Head()
+		require.NoError(t, err)
+
+		assert.Equal(t, fx.remoteTip, head.Hash())
+		assertUpstream(t, fx.mgr, fx.remoteBranch, "origin", fx.remoteBranch)
+		cfg, err = fx.mgr.repo.Config()
+		require.NoError(t, err)
+		assert.Equal(t, "origin", cfg.Raw.Section("remote").Option("pushDefault"),
+			"tracking write must keep remote.pushDefault")
+	})
+
 	t.Run("no matching remote falls back to a new branch from HEAD", func(t *testing.T) {
 		fx := newRepoWithRemote(t)
 		provider := newFakeWorktreeDirProvider(t)

@@ -24,6 +24,7 @@ Facade shape:
 - `GitManager` is the entry point; access sub-managers via `Worktrees()`.
 - Wrap go-git errors with context. Use the `ErrNotRepository` sentinel for non-git directories and support `errors.Is()`.
 - `WorktreeDirProvider` is the contract with `internal/project`. Adding a method requires a coordinated change to `internal/project.flatWorktreeDirProvider`.
+- Read repository config through `GitManager.config()`. Do not use `repo.Config()`, `repo.Remotes()`, `repo.CreateBranch()`, or `repo.DeleteBranch()` to list remotes or write config. go-git reads keys of the bare `[remote]` section (for example `remote.pushDefault`) as a remote with an empty name. That remote makes a `refs/remotes//<branch>` lookup fail, and config validation then rejects every write. `config()` removes that remote; the section keys stay in `cfg.Raw`, so writes keep them.
 
 ## Exported API
 

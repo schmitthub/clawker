@@ -224,7 +224,11 @@ func TestCheckHostSSHAgent(t *testing.T) {
 	})
 
 	t.Run("live agent socket", func(t *testing.T) {
-		sockPath := filepath.Join(t.TempDir(), "agent.sock")
+		// t.TempDir() adds the test name to the path. On macOS the absolute
+		// path is longer than the 104-byte unix socket limit, so use a
+		// relative path from inside the directory.
+		t.Chdir(t.TempDir())
+		sockPath := "agent.sock"
 		ln, err := net.Listen("unix", sockPath)
 		require.NoError(t, err)
 		t.Cleanup(func() {

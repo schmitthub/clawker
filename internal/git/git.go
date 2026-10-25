@@ -613,15 +613,14 @@ func (g *GitManager) BranchExists(branch string) (bool, error) {
 // error so callers fall back to creating a new local branch from HEAD — exactly
 // as native git does.
 func (g *GitManager) ResolveRemoteTrackingBranch(branch string) (remote string, hash plumbing.Hash, found bool, err error) {
-	remotes, err := g.repo.Remotes()
+	cfg, err := g.config()
 	if err != nil {
 		return "", plumbing.ZeroHash, false, fmt.Errorf("listing remotes: %w", err)
 	}
 
 	hashes := make(map[string]plumbing.Hash)
 	var matched []string
-	for _, r := range remotes {
-		name := r.Config().Name
+	for name := range cfg.Remotes {
 		ref, refErr := g.repo.Reference(plumbing.NewRemoteReferenceName(name, branch), true)
 		if refErr != nil {
 			if errors.Is(refErr, plumbing.ErrReferenceNotFound) {
@@ -664,25 +663,10 @@ func (g *GitManager) ResolveRemoteTrackingBranch(branch string) (remote string, 
 // section (e.g. left behind by a plumbing-level branch deletion, or user-set
 // keys such as branch.<name>.rebase for a branch that doesn't exist yet) is
 // updated in place, preserving its unrelated keys, rather than rejected.
+// config.Branch retains unknown keys in its raw subsection, so only
+// remote/merge change.
 func (g *GitManager) SetBranchUpstream(localBranch, remote, remoteBranch string) error {
-	merge := plumbing.NewBranchReferenceName(remoteBranch)
-	err := g.repo.CreateBranch(&gogitconfig.Branch{
-		Name:   localBranch,
-		Remote: remote,
-		Merge:  merge,
-	})
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, gogit.ErrBranchExists) {
-		return fmt.Errorf("writing tracking config for %q: %w", localBranch, err)
-	}
-
-	// A branch.<localBranch> config section already exists. go-git's
-	// CreateBranch is create-only, but `git branch --set-upstream-to` updates
-	// the section in place — do the same. config.Branch retains unknown keys
-	// in its raw subsection, so only remote/merge change.
-	cfg, err := g.repo.Config()
+	cfg, err := g.config()
 	if err != nil {
 		return fmt.Errorf("reading config to update tracking for %q: %w", localBranch, err)
 	}
@@ -692,11 +676,25 @@ func (g *GitManager) SetBranchUpstream(localBranch, remote, remoteBranch string)
 		cfg.Branches[localBranch] = b
 	}
 	b.Remote = remote
-	b.Merge = merge
+	b.Merge = plumbing.NewBranchReferenceName(remoteBranch)
 	if err := g.repo.SetConfig(cfg); err != nil {
-		return fmt.Errorf("updating tracking config for %q: %w", localBranch, err)
+		return fmt.Errorf("writing tracking config for %q: %w", localBranch, err)
 	}
 	return nil
+}
+
+// config returns the repository config without the phantom remote that go-git
+// makes from the bare [remote] section. go-git reads keys such as
+// remote.pushDefault as a remote with an empty name, and its config validation
+// then rejects every write. Git has no such remote. The bare section's keys
+// stay in cfg.Raw, so a write keeps them.
+func (g *GitManager) config() (*gogitconfig.Config, error) {
+	cfg, err := g.repo.Config()
+	if err != nil {
+		return nil, fmt.Errorf("reading repository config: %w", err)
+	}
+	delete(cfg.Remotes, "")
+	return cfg, nil
 }
 
 // splitRemoteBranch splits a ref like "origin/feature/foo" into its remote
@@ -782,10 +780,16 @@ func (g *GitManager) DeleteBranch(branch string) error {
 	}
 
 	// 5. Delete the config (tracking info) — may not exist for non-tracking branches
-	if err := g.repo.DeleteBranch(branch); err != nil {
-		if !errors.Is(err, gogit.ErrBranchNotFound) {
-			return fmt.Errorf("branch ref deleted but config cleanup failed: %w", err)
-		}
+	cfg, err := g.config()
+	if err != nil {
+		return fmt.Errorf("branch ref deleted but config cleanup failed: %w", err)
+	}
+	if _, ok := cfg.Branches[branch]; !ok {
+		return nil
+	}
+	delete(cfg.Branches, branch)
+	if err = g.repo.SetConfig(cfg); err != nil {
+		return fmt.Errorf("branch ref deleted but config cleanup failed: %w", err)
 	}
 
 	return nil
