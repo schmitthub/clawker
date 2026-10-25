@@ -172,8 +172,10 @@ C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
 ## Transport-routing UAT (raw TCP / raw UDP / QUIC)
 
 Behavioral tests for the eBPF→Envoy transport routing of opaque `tcp`/`udp`
-egress rules. Same rule as all egress UAT: **clawker-net is not Envoy-routed**,
-so the dst must be the **public ngrok edge**, never the C2's clawker-net IP.
+egress rules. Same rule as all egress UAT: **clawker-net is an eBPF allowlist**
+(Envoy, CoreDNS:53, CP agent + Hydra ports only), so the dst must be the
+**public ngrok edge**, never the C2's clawker-net IP — that one is denied in
+the kernel.
 Route projection is **FQDN-only** (IP dsts have no `dns_cache` entry to key the
 `route_map` lookup), so rules must target a hostname.
 

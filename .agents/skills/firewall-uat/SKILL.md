@@ -56,14 +56,29 @@ reach the firewall. Disable the sandbox for probe commands (Claude Code:
 | `ssh -Tv` → `Authenticated to <host> ([<EnvoyIP>]:<port>)` | shows the **Envoy hop** + the dedicated-listener port (`TCPPortBase+idx`, one per opaque host) |
 | access log `response_code:0` + `response_flags:DC` + `response_code_details:downstream_remote_disconnect` | **client** disconnected before the response — NOT a block (`action:allowed`). Normal `uv`/`pip`/`npm` h2 stream-cancel churn. |
 
-**clawker-net is NOT an egress-test surface.** Intra-net traffic (a sibling
-container's clawker-net IP — e.g. the C2's) is INTENTIONALLY open, not redirected
-to Envoy; hitting it bypasses the firewall by design and false-positives a
-leak / confused-deputy. An egress-attack test needs a **PUBLIC** dst (through
-Envoy), e.g. the C2's ngrok edge — never its clawker-net IP. Confused-deputy's
-structural defense is config-verifiable instead: FQDN flows are all
-`LOGICAL_DNS`/DFP, ZERO `ORIGINAL_DST`/`use_original_dst` (those appear only for
-IP/CIDR rules, the range-validated carve-out).
+**clawker-net is an allowlist, not an egress-test surface.** The eBPF
+programs deny every in-subnet destination in the kernel (EPERM on `connect()`
+/ `sendto()`) except Envoy (any port), CoreDNS on 53, and the CP on its agent
+(7444) and Hydra (4444) ports. A sibling container's clawker-net IP (e.g. the
+C2's) is therefore unreachable; an egress-attack test needs a **PUBLIC** dst
+(through Envoy), e.g. the C2's ngrok edge. Confused-deputy's structural
+defense is config-verifiable: FQDN flows are all `LOGICAL_DNS`/DFP, ZERO
+`ORIGINAL_DST`/`use_original_dst` (those appear only for IP/CIDR rules, the
+range-validated carve-out).
+
+Intra-subnet probes (`nc` is absent; bash's `/dev/tcp` and `/dev/udp` do a
+real `connect()`, so a denial is the kernel's `Permission denied`, never a
+missing listener). Get the IPs from the host with `docker inspect -f
+'{{(index .NetworkSettings.Networks "clawker-net").IPAddress}}' <container>`:
+
+| probe | expect |
+|---|---|
+| `timeout 3 bash -c 'exec 3<>/dev/tcp/<other-agent-ip>/22'` | `Permission denied` |
+| `timeout 3 bash -c 'echo x > /dev/udp/<other-agent-ip>/9'` | `Permission denied` |
+| `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/7444'` | exit 0 (connects) |
+| `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/4444'` | exit 0 (connects) |
+| `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/7080'` | `Permission denied` |
+| `getent hosts host.docker.internal` | resolves (CoreDNS lane intact) |
 
 **SSH routing is special — banner is the only proof.** Any real SSH server
 completes a valid handshake, so a misroute ("everything funneled to host X")

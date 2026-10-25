@@ -78,16 +78,22 @@
 // ---------------------------------------------------------------------------
 
 // Per-container network configuration. Populated by eBPF Manager on Enable().
+// Field order is the container_map value layout; append new fields at the
+// end and keep the Go mirror (bpf2go) plus the size assert in step.
 struct container_config {
 	__u32 envoy_ip;        // Envoy static IP (network byte order)
 	__u32 coredns_ip;      // CoreDNS static IP (network byte order)
-	__u32 gateway_ip;      // clawker-net gateway IP (network byte order)
+	__u32 gateway_ip;      // clawker-net gateway IP (network byte order; dump only, the programs deny it as in-subnet)
 	__u32 net_addr;        // clawker-net network address (network byte order)
 	__u32 net_mask;        // clawker-net subnet mask (network byte order)
 	__u32 host_proxy_ip;   // Host proxy IP (network byte order)
 	__u16 host_proxy_port; // Host proxy port (host byte order)
 	__u16 egress_port;     // Envoy egress listener port (host byte order)
+	__u32 cp_ip;           // Control-plane static IP (network byte order)
+	__u16 cp_agent_port;   // CP AgentService port: Register + Export (host byte order)
+	__u16 cp_hydra_port;   // CP Hydra public port: clawkerd assertion exchange (host byte order)
 };
+_Static_assert(sizeof(struct container_config) == 36, "container_config must stay 36 bytes");
 
 // dns_entry.source values. Precedence: SEED > DNS. A SEED entry is written by
 // SyncRoutes for an IP-literal rule and owned by its reconcile lifecycle; the
@@ -428,6 +434,32 @@ static __always_inline bool is_loopback(__u32 ip)
 static __always_inline bool is_in_subnet(__u32 ip, __u32 net_addr, __u32 net_mask)
 {
 	return (ip & net_mask) == net_addr;
+}
+
+// allowed_internal: the clawker-net allowlist, shared by decide_connect and
+// decide_sendmsg so the TCP and UDP verdicts cannot drift. Everything else
+// inside the subnet is denied: other agents, the gateway, and every CP
+// port an agent has no business on (admin, health, SDS).
+//
+//   envoy_ip   any port — per-route listener ports are dynamic; Envoy admin
+//                         is loopback-only inside its own container
+//   coredns_ip 53       — already rewritten by the DNS branch; kept so a
+//                         direct dial to the CoreDNS address stays allowed
+//   cp_ip      agent    — Register + Export (mTLS, identity-gated)
+//   cp_ip      hydra    — clawkerd's one-time assertion exchange
+//
+// dst_port is host byte order, IPs are network byte order.
+static __always_inline bool allowed_internal(const struct container_config *cfg,
+					     __u32 dst_ip, __u16 dst_port)
+{
+	if (dst_ip == cfg->envoy_ip)
+		return true;
+	if (dst_ip == cfg->coredns_ip && dst_port == DNS_PORT)
+		return true;
+	if (dst_ip == cfg->cp_ip &&
+	    (dst_port == cfg->cp_agent_port || dst_port == cfg->cp_hydra_port))
+		return true;
+	return false;
 }
 
 // is_ipv6_loopback: ::1
@@ -856,25 +888,20 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	if (is_loopback(dst_ip))
 		return r;
 
-	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
-		return r;
-
+	// Host-proxy bypass (per-container lane, zero when the project has it
+	// off). Checked before the subnet allowlist: host.docker.internal can
+	// resolve inside the subnet (daemon host-gateway-ip, engine variants).
 	if (cfg->host_proxy_ip != 0 &&
 	    dst_ip == cfg->host_proxy_ip && dst_port == cfg->host_proxy_port)
 		return r;
 
-	// Gateway lockdown: redirect traffic aimed directly at the clawker-net
-	// gateway through Envoy's egress listener so SNI inspection runs.
-	// Metric is ACTION_DENY because from the user's perspective the
-	// direct-to-gateway path is blocked, even though we return 1 and let
-	// Envoy emit the actual refusal upstream.
-	if (dst_ip == cfg->gateway_ip) {
-		if (cfg->host_proxy_port != 0 && dst_port == cfg->host_proxy_port)
+	// Intra-subnet allowlist. The gateway is inside the subnet too, so a
+	// direct dial to any other host port is denied here in the kernel.
+	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask)) {
+		if (allowed_internal(cfg, dst_ip, dst_port))
 			return r;
-		r.verdict      = V_REWRITE;
-		r.new_ip       = cfg->envoy_ip;
-		r.new_port_nbo = bpf_htons(cfg->egress_port);
 		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		r.verdict = V_DENY;
 		return r;
 	}
 
@@ -938,7 +965,7 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 
 // decide_sendmsg is the UDP-only counterpart to decide_connect for sendmsg4 and
 // the IPv4-mapped branch of sendmsg6 — i.e. UNCONNECTED UDP. DNS redirect,
-// loopback/subnet pass-through, per-domain route, else deny.
+// loopback pass-through, subnet allowlist, per-domain route, else deny.
 //
 // Per-domain routing mirrors decide_connect's SOCK_DGRAM branch (dns_cache →
 // route_map(SOCK_DGRAM) → dedicated/QUIC listener). The difference vs a
@@ -967,8 +994,15 @@ decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
 	if (is_loopback(dst_ip))
 		return r;
 
-	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
+	// Intra-subnet allowlist, same table as decide_connect. No host-proxy
+	// lane here: the proxy is TCP only.
+	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask)) {
+		if (allowed_internal(cfg, dst_ip, dst_port))
+			return r;
+		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		r.verdict = V_DENY;
 		return r;
+	}
 
 	// Non-DNS UDP: per-domain routing. On a hit, record the original dst for
 	// the recvmsg4 reverse-rewrite, then redirect; on a miss, fail closed.

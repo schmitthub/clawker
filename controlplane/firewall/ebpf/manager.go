@@ -298,12 +298,7 @@ func (m *Manager) cleanupStaleLinks() {
 	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, ContainerMapName), nil)
 	if err == nil {
 		defer containerMap.Close()
-		for id := range cgroupIDs {
-			var val clawkerContainerConfig
-			if err := containerMap.Lookup(id, &val); err == nil {
-				liveIDs[id] = true
-			}
-		}
+		liveIDs = liveCgroupIDs(containerMap, cgroupIDs)
 	}
 	// If container_map doesn't exist (first boot), all links are stale.
 
@@ -592,6 +587,23 @@ type cgroupAttachment struct {
 	name string
 	prog *ebpf.Program
 	typ  ebpf.AttachType
+}
+
+// liveCgroupIDs returns the subset of ids present in containerMap. The
+// map is the PREVIOUS CP's pinned container_map, whose value layout may
+// be older than this binary's struct, so presence is checked with
+// LookupBytes (sized from the map's own ValueSize). A typed Lookup into
+// the current struct fails on a size change and would report every live
+// agent as dead: its links would be unpinned and the agent would run
+// unenforced until the re-enroll sweep.
+func liveCgroupIDs(containerMap *ebpf.Map, ids map[uint64]bool) map[uint64]bool {
+	live := make(map[uint64]bool, len(ids))
+	for id := range ids {
+		if b, err := containerMap.LookupBytes(id); err == nil && b != nil {
+			live[id] = true
+		}
+	}
+	return live
 }
 
 // cgroupAttachments is the single source of truth for the set of cgroup BPF
@@ -1213,6 +1225,9 @@ func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
 				HostProxyIP:   cfg.HostProxyIp,
 				HostProxyPort: cfg.HostProxyPort,
 				EgressPort:    cfg.EgressPort,
+				CPIP:          cfg.CpIp,
+				CPAgentPort:   cfg.CpAgentPort,
+				CPHydraPort:   cfg.CpHydraPort,
 			},
 		})
 	}
@@ -1287,26 +1302,48 @@ type Route struct {
 // than providing the protection itself.
 const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
+// ContainerConfigParams are the inputs of NewContainerConfig. IPs are
+// dotted strings; ports are host byte order. HostProxyIP empty with
+// HostProxyPort zero means the host-proxy lane is off for this container.
+type ContainerConfigParams struct {
+	EnvoyIP       string
+	CoreDNSIP     string
+	GatewayIP     string
+	CIDR          string
+	HostProxyIP   string
+	HostProxyPort uint16
+	EgressPort    uint16
+	// CPIP and the two ports are the only control-plane endpoints an agent
+	// may dial inside the subnet (Register + Export, and the Hydra token
+	// endpoint). CPIP is required: without it every agent would be cut
+	// off from the CP.
+	CPIP        string
+	CPAgentPort uint16
+	CPHydraPort uint16
+}
+
 // NewContainerConfig builds a BPF container_config from network parameters.
-func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
-	hostProxyIP string, hostProxyPort, egressPort uint16,
-) (clawkerContainerConfig, error) {
-	netAddr, netMask, err := CIDRToAddrMask(cidr)
+func NewContainerConfig(p ContainerConfigParams) (clawkerContainerConfig, error) {
+	netAddr, netMask, err := CIDRToAddrMask(p.CIDR)
 	if err != nil {
-		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", cidr, err)
+		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", p.CIDR, err)
 	}
 
-	envoy, err := parseIP(envoyIP)
+	envoy, err := parseIP(p.EnvoyIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("envoyIP: %w", err)
 	}
-	coredns, err := parseIP(corednsIP)
+	coredns, err := parseIP(p.CoreDNSIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("corednsIP: %w", err)
 	}
-	gateway, err := parseIP(gatewayIP)
+	gateway, err := parseIP(p.GatewayIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("gatewayIP: %w", err)
+	}
+	cp, err := parseIP(p.CPIP)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("cpIP: %w", err)
 	}
 
 	cfg := clawkerContainerConfig{
@@ -1315,13 +1352,16 @@ func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
 		GatewayIp:     IPToUint32(gateway),
 		NetAddr:       netAddr,
 		NetMask:       netMask,
-		HostProxyPort: hostProxyPort,
-		EgressPort:    egressPort,
+		HostProxyPort: p.HostProxyPort,
+		EgressPort:    p.EgressPort,
+		CpIp:          IPToUint32(cp),
+		CpAgentPort:   p.CPAgentPort,
+		CpHydraPort:   p.CPHydraPort,
 	}
-	if hostProxyIP != "" {
-		hp, err := parseIP(hostProxyIP)
-		if err != nil {
-			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", err)
+	if p.HostProxyIP != "" {
+		hp, hpErr := parseIP(p.HostProxyIP)
+		if hpErr != nil {
+			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", hpErr)
 		}
 		cfg.HostProxyIp = IPToUint32(hp)
 	}
