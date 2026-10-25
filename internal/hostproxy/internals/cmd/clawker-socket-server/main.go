@@ -136,11 +136,12 @@ type Forwarder struct {
 	stdout   *bufio.Writer
 }
 
-// Linux openat(2) constants that package syscall does not export.
+// Linux openat(2) constants that package syscall does not export on every
+// architecture. The values are the same on amd64 and arm64.
 const (
-	atFDCWD           = -0x64  // AT_FDCWD
-	atSymlinkNoFollow = 0x100  // AT_SYMLINK_NOFOLLOW
-	atEmptyPath       = 0x1000 // AT_EMPTY_PATH
+	atFDCWD     = -0x64    // AT_FDCWD
+	atEmptyPath = 0x1000   // AT_EMPTY_PATH
+	oPath       = 0x200000 // O_PATH
 )
 
 // Modes for entries this root process creates in the agent's home.
@@ -274,13 +275,12 @@ func (d *userDir) Close() error {
 // existing entry is refused.
 func (d *userDir) prepareEntry(name string, want uint32) error {
 	path := d.path + "/" + name
-	var st syscall.Stat_t
-	err := syscall.Fstatat(d.fd, name, &st, atSymlinkNoFollow)
+	st, err := d.lstat(name)
 	switch {
 	case errors.Is(err, syscall.ENOENT):
 		return nil
 	case err != nil:
-		return fmt.Errorf("stat %s: %w", path, err)
+		return err
 	}
 	if st.Mode&syscall.S_IFMT != want {
 		return fmt.Errorf("refusing %s: existing entry has mode %o", path, st.Mode&syscall.S_IFMT)
@@ -289,6 +289,24 @@ func (d *userDir) prepareEntry(name string, want uint32) error {
 		return fmt.Errorf("unlink %s: %w", path, err)
 	}
 	return nil
+}
+
+// lstat returns the status of name under the directory without following a
+// symlink. An O_PATH|O_NOFOLLOW descriptor refers to the entry itself, so
+// fstat on it reports a symlink as a symlink. Package syscall has no fstatat
+// on amd64.
+func (d *userDir) lstat(name string) (syscall.Stat_t, error) {
+	path := d.path + "/" + name
+	var st syscall.Stat_t
+	fd, err := syscall.Openat(d.fd, name, oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return st, fmt.Errorf("stat %s: %w", path, err)
+	}
+	defer syscall.Close(fd)
+	if err = syscall.Fstat(fd, &st); err != nil {
+		return st, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return st, nil
 }
 
 // writeFile replaces the regular file name with data, mode 0600, owned by the
@@ -325,7 +343,7 @@ func (d *userDir) writeFile(name string, data []byte) error {
 // another socket node.
 func (d *userDir) chownSocketNode(name string) error {
 	path := d.path + "/" + name
-	fd, err := syscall.Openat(d.fd, name, syscall.O_PATH|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	fd, err := syscall.Openat(d.fd, name, oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
