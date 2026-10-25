@@ -119,27 +119,63 @@ func (s *enrollmentStoreImpl) HostProxy(containerID string) (bool, bool, error) 
 	return entry.HostProxy, true, nil
 }
 
-// SetHostProxy implements EnrollmentStore.
+// SetHostProxy implements EnrollmentStore. A failed Write restores the
+// earlier record in memory: the replay sweep reads the in-memory table, and
+// the next successful Write for any container persists every staged change,
+// so a value that did not reach disk must not stay staged.
 func (s *enrollmentStoreImpl) SetHostProxy(containerID string, enabled bool) error {
-	if err := s.Set([]string{enrollmentContainersField, containerID}, EnrollmentEntry{HostProxy: enabled}); err != nil {
-		return fmt.Errorf("firewall: updating enrollment for %s: %w", containerID, err)
+	prev, found, err := s.HostProxy(containerID)
+	if err != nil {
+		return err
 	}
-	if err := s.Write(); err != nil {
-		return fmt.Errorf("firewall: writing enrollment table: %w", err)
+	entry := EnrollmentEntry{HostProxy: enabled}
+	if setErr := s.Set([]string{enrollmentContainersField, containerID}, entry); setErr != nil {
+		return fmt.Errorf("firewall: updating enrollment for %s: %w", containerID, setErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return errors.Join(
+			fmt.Errorf("firewall: writing enrollment table: %w", writeErr),
+			s.restore(containerID, prev, found),
+		)
 	}
 	return nil
 }
 
-// Remove implements EnrollmentStore.
+// Remove implements EnrollmentStore. A failed Write restores the record in
+// memory, as SetHostProxy does.
 func (s *enrollmentStoreImpl) Remove(containerID string) error {
-	if err := s.Store.Remove(enrollmentContainersField, containerID); err != nil {
-		if errors.Is(err, storage.ErrKeyNotFound) {
-			return nil
-		}
-		return fmt.Errorf("firewall: removing enrollment for %s: %w", containerID, err)
+	prev, found, err := s.HostProxy(containerID)
+	if err != nil {
+		return err
 	}
-	if err := s.Write(); err != nil {
-		return fmt.Errorf("firewall: writing enrollment table: %w", err)
+	if !found {
+		return nil
+	}
+	if rmErr := s.Store.Remove(enrollmentContainersField, containerID); rmErr != nil {
+		return fmt.Errorf("firewall: removing enrollment for %s: %w", containerID, rmErr)
+	}
+	if writeErr := s.Write(); writeErr != nil {
+		return errors.Join(
+			fmt.Errorf("firewall: writing enrollment table: %w", writeErr),
+			s.restore(containerID, prev, true),
+		)
+	}
+	return nil
+}
+
+// restore puts a container's record back to its value before a failed
+// Write: the earlier entry when one existed, else no entry. The restore is
+// staged like any change, so the next successful Write persists the value
+// that is already on disk.
+func (s *enrollmentStoreImpl) restore(containerID string, prev, found bool) error {
+	var err error
+	if found {
+		err = s.Set([]string{enrollmentContainersField, containerID}, EnrollmentEntry{HostProxy: prev})
+	} else if err = s.Store.Remove(enrollmentContainersField, containerID); errors.Is(err, storage.ErrKeyNotFound) {
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("firewall: restoring enrollment for %s after a failed write: %w", containerID, err)
 	}
 	return nil
 }
