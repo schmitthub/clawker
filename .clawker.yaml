@@ -256,6 +256,17 @@ security:
             path: ~/deps_dev\.v3(alpha)?\.Insights/[A-Za-z]+
         proto: https
       - action: allow
+        dst: results-receiver.actions.githubusercontent.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            methods:
+              - GET
+              - HEAD
+            path: /rest/runs/
+        proto: https
+      - action: allow
         dst: github.com
         insecure_skip_tls_verify: false
         port: 22
