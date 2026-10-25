@@ -5,6 +5,7 @@
 - `internal/bundler.EgressRules` composes harness-required rules with project rules. CLI callers send them through AdminService.
 - Mutations pass through the firewall action queue. Do not bypass its serialized reconciliation.
 - The host-proxy eBPF bypass is per container. The CLI sends the project's `enable_host_proxy` on `FirewallEnable`; the CP persists it in the `EnrollmentStore` (`enrollments.yaml`, beside the identity table) and replays it on restart. No record means no bypass. CP's own config never decides it: `clawker.yaml` is not visible to the CP. Every enrollment write (the enable write and the destroy evict) runs on the ActionQueue with the install it decides; the store carries no lock.
+- clawker-net is an eBPF allowlist, not an open subnet. `allowed_internal` (`ebpf/bpf/common.h`) admits Envoy on any port, CoreDNS on 53, and the CP on `AgentPort` and `HydraPublicPort`; every other in-subnet destination is denied in the kernel. The CP address and the two ports travel in `container_config` (`cp_ip`, `cp_agent_port`, `cp_hydra_port`), built by `Handler.containerConfig` for both enroll sites from `NetworkInfo.CPIP` (`consts.CPIPLastOctet`) and `ControlPlaneSettings`. The host-proxy bypass is checked before the allowlist (`host.docker.internal` can resolve in-subnet on some daemons). `Load()` checks the old pinned `container_map` with `LookupBytes` so a value-layout change never sweeps live agents' links.
 
 ## Rules and identity
 
