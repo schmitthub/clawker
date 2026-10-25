@@ -452,7 +452,14 @@ func TestFirewall_Status(t *testing.T) {
 	assert.Positive(t, status.RuleCount, "harness floor rules should be present")
 }
 
-func TestFirewall_IntraNetworkBypass(t *testing.T) {
+// TestFirewall_IntraSubnetAllowlist proves the eBPF in-subnet allowlist: a
+// managed agent reaches only Envoy, CoreDNS on 53, and the control plane
+// on its agent and Hydra ports. Another container on clawker-net is denied
+// on TCP and UDP, the CP health port is denied, and DNS plus allowed
+// egress still work. Every probe runs in one container through bash's
+// /dev/tcp and /dev/udp so a denial is the kernel's EPERM on connect(),
+// never a missing listener.
+func TestFirewall_IntraSubnetAllowlist(t *testing.T) {
 	h := newFirewallHarness(t)
 	ctx := context.Background()
 
@@ -461,7 +468,8 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 	require.NoError(t, bootRes.Err, "boot container failed\nstdout: %s\nstderr: %s",
 		bootRes.Stdout, bootRes.Stderr)
 
-	// Start a simple HTTP listener on the clawker network — no firewall rule for this service.
+	// A listener on clawker-net stands in for another agent: it answers on
+	// 8080, so a refused connect can only be the firewall.
 	listenerName := fmt.Sprintf("clawker-test-listener-%d", time.Now().UnixNano())
 	//nolint:gosec // args are test-controlled
 	startCmd := exec.CommandContext(ctx, "docker", "run", "-d",
@@ -474,36 +482,57 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 	t.Cleanup(func() {
 		_ = exec.CommandContext(context.Background(), "docker", "rm", "-f", listenerName).Run()
 	})
+	listenerIP := clawkerNetIP(t, listenerName)
+	cpIP := clawkerNetIP(t, consts.ContainerCP)
+	t.Logf("listener IP: %s, cp IP: %s", listenerIP, cpIP)
 
-	// Get the listener's IP on the clawker network.
-	//nolint:gosec // args are test-controlled
-	ipOut, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		`{{(index .NetworkSettings.Networks "`+consts.Network+`").IPAddress}}`,
-		listenerName).Output()
-	require.NoError(t, err, "inspect listener IP failed")
-	listenerIP := strings.TrimSpace(string(ipOut))
-	require.NotEmpty(t, listenerIP, "listener should have an IP on clawker-net")
-	t.Logf("listener IP: %s", listenerIP)
+	// Positive control: an unmanaged container on clawker-net reaches the
+	// listener, so a closed probe below can only be the eBPF verdict.
+	require.Eventually(t, func() bool {
+		out, probeErr := exec.CommandContext(ctx, "docker", "run", "--rm",
+			"--network", consts.Network, "busybox",
+			"wget", "-qO-", "-T", "2", "http://"+net.JoinHostPort(listenerIP, "8080")+"/").Output()
+		return probeErr == nil && strings.TrimSpace(string(out)) == "OK"
+	}, 20*time.Second, time.Second, "listener never answered an unmanaged container")
 
-	// Wait for httpd to start.
-	time.Sleep(1 * time.Second)
-
-	// Agent container can reach intra-network service via CIDR bypass (no firewall rule).
-	connectRes := h.RunInContainer("intra-net-test",
-		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
-		"-o", "/dev/null", "-w", "%{http_code}",
-		"http://"+net.JoinHostPort(listenerIP, "8080")+"/")
-
-	require.NoError(t, connectRes.Err,
-		"intra-network should succeed via CIDR bypass\nstdout: %s\nstderr: %s",
-		connectRes.Stdout, connectRes.Stderr)
-	assert.Contains(t, connectRes.Stdout, "200",
-		"should get HTTP 200 from listener on clawker-net")
+	script := `
+probe() { local name=$1; shift; if timeout 3 bash -c "$*" 2>/dev/null; then echo "$name=open"; else echo "$name=closed"; fi; }
+probe other-tcp "exec 3<>/dev/tcp/` + listenerIP + `/8080"
+probe other-udp "echo x > /dev/udp/` + listenerIP + `/9"
+probe cp-agent "exec 3<>/dev/tcp/` + cpIP + `/7444"
+probe cp-hydra "exec 3<>/dev/tcp/` + cpIP + `/4444"
+probe cp-health "exec 3<>/dev/tcp/` + cpIP + `/7080"
+probe dns "getent hosts api.anthropic.com >/dev/null"
+`
+	res := h.RunInContainer("intra-net-test", "bash", "-c", script)
+	require.NoError(t, res.Err, "probe script failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	for _, want := range []string{
+		"other-tcp=closed",
+		"other-udp=closed",
+		"cp-agent=open",
+		"cp-hydra=open",
+		"cp-health=closed",
+		"dns=open",
+	} {
+		assert.Contains(t, res.Stdout, want, "probe results:\n%s", res.Stdout)
+	}
 
 	// Sanity: external domain still blocked by firewall.
 	blockedRes := h.RunInContainer("intra-net-test",
 		"curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedRes.Err, "external domain should still be blocked")
+}
+
+// clawkerNetIP returns a container's address on clawker-net.
+func clawkerNetIP(t *testing.T, container string) string {
+	t.Helper()
+	out, err := exec.CommandContext(context.Background(), "docker", "inspect", "-f",
+		`{{(index .NetworkSettings.Networks "`+consts.Network+`").IPAddress}}`,
+		container).Output()
+	require.NoError(t, err, "inspect %s IP failed", container)
+	ip := strings.TrimSpace(string(out))
+	require.NotEmpty(t, ip, "%s should have an IP on clawker-net", container)
+	return ip
 }
 
 func TestFirewall_HostProxyReachable(t *testing.T) {

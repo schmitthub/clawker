@@ -551,19 +551,7 @@ func (h *Handler) reenrollConfigFn(
 		proxyPort   uint16
 		resolveErr  error
 		buildConfig = func(ip string, port uint16) (ebpf.BPFContainerConfig, error) {
-			egressPort, err := h.envoyEgressPort()
-			if err != nil {
-				return ebpf.BPFContainerConfig{}, err
-			}
-			return ebpf.NewContainerConfig(
-				netInfo.EnvoyIP,
-				netInfo.CoreDNSIP,
-				netInfo.Gateway.String(),
-				netInfo.CIDR,
-				ip,
-				port,
-				egressPort,
-			)
+			return h.containerConfig(netInfo, ip, port)
 		}
 	)
 	return func(hostProxy bool) (ebpf.BPFContainerConfig, error) {
@@ -651,7 +639,7 @@ func removeGeneratedConfigs() error {
 // --- Per-container enforcement ---
 
 // FirewallEnable enrolls a container. Pre-Submit resolves container_id →
-// cgroup_path and reads the network and egress port. The queued closure
+// cgroup_path and reads the network. The queued closure
 // persists or replays the enrollment record, resolves the host proxy the
 // record grants, builds the BPF container_config, installs it via
 // ebpf.Install, and cancels any pending bypass timer.
@@ -679,10 +667,6 @@ func (h *Handler) FirewallEnable(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "firewall enable: discover network: %v", err)
 	}
-	egressPort, err := h.envoyEgressPort()
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "firewall enable: %v", err)
-	}
 
 	// The record and the policy built from it change together on the
 	// queue, the record's only writer: a concurrent enable for the same
@@ -696,17 +680,9 @@ func (h *Handler) FirewallEnable(
 		if resolveErr != nil {
 			return nil, fmt.Errorf("firewall enable: resolve host proxy: %w", resolveErr)
 		}
-		bpfCfg, cfgErr := ebpf.NewContainerConfig(
-			netInfo.EnvoyIP,
-			netInfo.CoreDNSIP,
-			netInfo.Gateway.String(),
-			netInfo.CIDR,
-			hostProxyIP,
-			hostProxyPort,
-			egressPort,
-		)
+		bpfCfg, cfgErr := h.containerConfig(netInfo, hostProxyIP, hostProxyPort)
 		if cfgErr != nil {
-			return nil, fmt.Errorf("firewall enable: build container config: %w", cfgErr)
+			return nil, fmt.Errorf("firewall enable: %w", cfgErr)
 		}
 		if installErr := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); installErr != nil {
 			return nil, fmt.Errorf("install: %w", installErr)
@@ -1494,10 +1470,44 @@ func (h *Handler) resolveHostProxy(ctx context.Context, enabled bool) (string, u
 	return ip, port, nil
 }
 
-// envoyEgressPort is the Envoy egress listener port as the BPF config
-// carries it. The config holds it as an int, so the conversion is checked.
-func (h *Handler) envoyEgressPort() (uint16, error) {
-	return portUint16("envoy egress port", h.cfg.EnvoyEgressPort())
+// containerConfig builds the BPF container_config for one agent: the
+// firewall addresses from the network info, the per-container host-proxy
+// lane (empty + zero when off), and the control-plane endpoints the
+// intra-subnet allowlist admits. Both enroll sites (FirewallEnable and
+// the restart sweep) go through here so neither can drop a field. The
+// config holds ports as ints, so every conversion is range-checked.
+func (h *Handler) containerConfig(
+	netInfo *NetworkInfo, hostProxyIP string, hostProxyPort uint16,
+) (ebpf.BPFContainerConfig, error) {
+	egressPort, err := portUint16("envoy egress port", h.cfg.EnvoyEgressPort())
+	if err != nil {
+		return ebpf.BPFContainerConfig{}, err
+	}
+	cp := h.cfg.ControlPlaneSettings()
+	agentPort, err := portUint16("cp agent port", cp.AgentPort)
+	if err != nil {
+		return ebpf.BPFContainerConfig{}, err
+	}
+	hydraPort, err := portUint16("cp hydra public port", cp.HydraPublicPort)
+	if err != nil {
+		return ebpf.BPFContainerConfig{}, err
+	}
+	cfg, err := ebpf.NewContainerConfig(ebpf.ContainerConfigParams{
+		EnvoyIP:       netInfo.EnvoyIP,
+		CoreDNSIP:     netInfo.CoreDNSIP,
+		GatewayIP:     netInfo.Gateway.String(),
+		CIDR:          netInfo.CIDR,
+		HostProxyIP:   hostProxyIP,
+		HostProxyPort: hostProxyPort,
+		EgressPort:    egressPort,
+		CPIP:          netInfo.CPIP,
+		CPAgentPort:   agentPort,
+		CPHydraPort:   hydraPort,
+	})
+	if err != nil {
+		return ebpf.BPFContainerConfig{}, fmt.Errorf("build container config: %w", err)
+	}
+	return cfg, nil
 }
 
 // portUint16 converts a configured port to the BPF wire width, rejecting an

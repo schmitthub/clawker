@@ -249,3 +249,14 @@ func TestStack_Reload_NoOpWhenStackDown(t *testing.T) {
 	// No restart should have been dispatched.
 	assert.NotContains(t, f.fake.FakeAPI.Calls, "ContainerRestart")
 }
+
+// TestStack_NetworkInfo_ControlPlaneIP: the intra-subnet allowlist enrolls
+// every agent with the CP's clawker-net address, so DiscoverNetwork must
+// derive it with the same last-octet scheme the CP container itself uses
+// (consts.CPIPLastOctet) and validate it against the subnet.
+func TestStack_NetworkInfo_ControlPlaneIP(t *testing.T) {
+	fx := newStackFixture(t)
+	info, err := fx.stack.NetworkInfo(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "172.20.0.202", info.CPIP)
+}

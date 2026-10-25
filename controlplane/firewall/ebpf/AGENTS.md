@@ -127,20 +127,40 @@ const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix // /sys/fs/bpf/cla
 
 type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
 type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
-type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
+type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy, CP IP + agent/Hydra ports */ }
+type ContainerConfigParams struct { /* NewContainerConfig inputs: the same fields as dotted IPs + host-order ports; CPIP is required */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
 func Uint32ToIP(uint32) net.IP
 func IPToBytes16(net.IP) [16]uint8                          // converts to EgressEvent.DstIp slot (IPv4 in first 4 bytes, IPv6 fills all 16)
 func CIDRToAddrMask(cidr string) (addr, mask uint32, err error)
-func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr, hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error)
+func NewContainerConfig(p ContainerConfigParams) (clawkerContainerConfig, error)
 func CgroupPath(containerID string) string                  // /sys/fs/cgroup/system.slice/docker-<id>.scope
 func CgroupID(cgroupPath string) (uint64, error)            // validated against path-injection, returns inode
 func Supported() error                                       // checks cgroup v2 available
 ```
 
+## Decision chain (connect4 / sendmsg4 and their IPv4-mapped v6 twins)
+
+`decide_connect` and `decide_sendmsg` in `bpf/common.h` share one order: Envoy
+loop-prevention mark → DNS rewrite to CoreDNS → loopback pass-through →
+(connect only) per-container host-proxy bypass → **in-subnet allowlist** →
+per-domain route lookup → Envoy catch-all (TCP) or deny (UDP). The allowlist
+is `allowed_internal`: inside `net_addr/net_mask` only `envoy_ip` (any port),
+`coredns_ip:53`, and `cp_ip` on `cp_agent_port` or `cp_hydra_port` pass;
+every other in-subnet destination (another agent, the gateway, CP
+admin/health/SDS) returns `V_DENY` with an `ACTION_DENY` metric and an
+`EGRESS_VERDICT_DENIED` event. The host-proxy bypass runs before the
+allowlist because `host.docker.internal` can resolve inside the subnet (a
+daemon with `host-gateway-ip` set, some engine variants). `gateway_ip` is carried for dumps only.
+`bpftest` runs the production helpers under `BPF_PROG_TEST_RUN`
+(`TestProgRun_AllowedInternal`, `TestProgRun_DecideSendmsg_IntraSubnet`);
+`make test-bpf` on a privileged host, or the compiled test binary under
+`docker run --privileged` from a dev container.
+
 ## Invariants
 
+- `struct container_config` is 36 bytes (`_Static_assert` + `TestContainerConfig_SizeMatchesABI`). Append new fields at the end. After an upgrade that changes the value size, `Load()` keeps the links of every cgroup present in the OLD pinned `container_map` (`liveCgroupIDs` checks presence with `LookupBytes`, sized from the map itself, never a typed `Lookup` into the new struct), so the previous programs keep enforcing against the old map until the `FirewallInit` sweep re-installs each agent; the schema check then replaces the pinned map. `TestLiveCgroupIDs_LayoutIndependent` guards this.
 - Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
