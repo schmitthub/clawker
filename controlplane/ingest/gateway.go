@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -63,21 +64,19 @@ const (
 	defaultForwardTimeout = 10 * time.Second
 	defaultTripThreshold  = 3
 	defaultProbeInterval  = time.Minute
-	// defaultMaxResources bounds the repeated Resource* entries one batch
-	// may carry. The wire cap bounds bytes, not objects: a capped body of
-	// empty entries decodes into millions of structs. Counted on the wire
-	// before decode.
-	defaultMaxResources = 1000
+	// defaultMaxMessages bounds the nested messages one batch may carry.
+	// The wire cap bounds bytes, not objects: an empty message costs two
+	// wire bytes, so a capped body of empty entries decodes into millions
+	// of structs. Counted on the wire before decode. A full SDK batch
+	// (512 records with about 25 attributes each) is about 26,000.
+	defaultMaxMessages = 100_000
 	// defaultMaxConcurrent bounds in-flight Ingest calls per CP process
 	// so decode and stamp memory stays proportional to a small constant,
 	// not to the number of agent connections.
 	defaultMaxConcurrent = 8
 	// maxForwardBytes is the stamped batch size the collector accepts
 	// (otlp/agents max_recv_msg_size_mib: 8).
-	maxForwardBytes = 8 << 20
-	// resourceListField is field 1 in every Export<Signal>ServiceRequest
-	// (resource_logs, resource_metrics, resource_spans).
-	resourceListField  = protowire.Number(1)
+	maxForwardBytes    = 8 << 20
 	metricsSubsystem   = "agent_ingest"
 	metricsSignalLabel = "signal"
 	signalLogs         = "logs"
@@ -93,7 +92,7 @@ var (
 	ErrMalformedBody = errors.New("ingest: body does not decode as the named signal")
 	// ErrUnknownSignal reports a signal outside logs, metrics, traces.
 	ErrUnknownSignal = errors.New("ingest: unknown signal")
-	// ErrBatchTooLarge reports a batch over the resource-count cap or a
+	// ErrBatchTooLarge reports a batch over the message budget or a
 	// stamped batch over the collector's message cap. The RPC handler
 	// maps it to ResourceExhausted.
 	ErrBatchTooLarge = errors.New("ingest: batch over the size cap")
@@ -129,8 +128,8 @@ type Options struct {
 	// to test the collector. Zero means one minute. Must exceed
 	// ForwardTimeout so two probes never overlap.
 	ProbeInterval time.Duration
-	// MaxResources caps the Resource* entries per batch. Zero means 1000.
-	MaxResources int
+	// MaxMessages caps the nested messages per batch. Zero means 100,000.
+	MaxMessages int
 	// MaxConcurrent caps in-flight Ingest calls. Zero means 8.
 	MaxConcurrent int
 }
@@ -183,8 +182,8 @@ type Gateway struct {
 	timeout time.Duration
 	log     *logger.Logger
 	breaker breaker
-	// maxResources is the per-batch Resource* entry cap.
-	maxResources int
+	// maxMessages is the per-batch nested message budget.
+	maxMessages int
 	// slots is the concurrency semaphore; a full channel rejects with
 	// ErrBusy instead of queueing RPC goroutines.
 	slots chan struct{}
@@ -285,16 +284,16 @@ func New(opts Options) (*Gateway, error) {
 	if interval <= timeout {
 		return nil, fmt.Errorf("ingest: ProbeInterval %s must exceed ForwardTimeout %s", interval, timeout)
 	}
-	maxResources := opts.MaxResources
-	if maxResources == 0 {
-		maxResources = defaultMaxResources
+	maxMessages := opts.MaxMessages
+	if maxMessages == 0 {
+		maxMessages = defaultMaxMessages
 	}
 	maxConcurrent := opts.MaxConcurrent
 	if maxConcurrent == 0 {
 		maxConcurrent = defaultMaxConcurrent
 	}
 	g := new(Gateway)
-	g.maxResources = maxResources
+	g.maxMessages = maxMessages
 	g.slots = make(chan struct{}, maxConcurrent)
 	g.conn = conn
 	g.logs = collogs.NewLogsServiceClient(conn)
@@ -327,7 +326,7 @@ func (g *Gateway) Ingest(ctx context.Context, signal agentv1.Signal, body []byte
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownSignal, signal)
 	}
-	release, err := g.admit(name, body)
+	release, err := g.admit(signal, name, body)
 	if err != nil {
 		return err
 	}
@@ -362,17 +361,17 @@ func (g *Gateway) Ingest(ctx context.Context, signal agentv1.Signal, body []byte
 	return nil
 }
 
-// admit applies the pre-decode caps: the wire-level resource count and
+// admit applies the pre-decode caps: the wire-level message budget and
 // the concurrency slot. The returned release frees the slot.
-func (g *Gateway) admit(name string, body []byte) (func(), error) {
-	count, err := countTopLevelField(body, resourceListField)
+func (g *Gateway) admit(signal agentv1.Signal, name string, body []byte) (func(), error) {
+	count, err := countRequestMessages(signal, body, g.maxMessages)
 	if err != nil {
 		g.Metrics.Malformed.WithLabelValues(name).Inc()
 		return nil, fmt.Errorf("%w: %s: %w", ErrMalformedBody, name, err)
 	}
-	if count > g.maxResources {
+	if count > g.maxMessages {
 		g.Metrics.Rejected.WithLabelValues(name).Inc()
-		return nil, fmt.Errorf("%w: %d resources, cap %d", ErrBatchTooLarge, count, g.maxResources)
+		return nil, fmt.Errorf("%w: over %d messages", ErrBatchTooLarge, g.maxMessages)
 	}
 	select {
 	case g.slots <- struct{}{}:
@@ -416,12 +415,36 @@ func (g *Gateway) onForwardFailure(parent context.Context, name string, sendErr 
 	return sendErr
 }
 
-// countTopLevelField walks the wire format and counts the occurrences
-// of one top-level field without decoding anything. A malformed wire
-// sequence is an error.
-func countTopLevelField(body []byte, want protowire.Number) (int, error) {
+// countRequestMessages counts the nested messages of a signal's export
+// request on the wire; see countMessages.
+func countRequestMessages(signal agentv1.Signal, body []byte, limit int) (int, error) {
+	var req proto.Message
+	switch signal {
+	case agentv1.Signal_SIGNAL_LOGS:
+		req = new(collogs.ExportLogsServiceRequest)
+	case agentv1.Signal_SIGNAL_METRICS:
+		req = new(colmetrics.ExportMetricsServiceRequest)
+	case agentv1.Signal_SIGNAL_TRACES:
+		req = new(coltrace.ExportTraceServiceRequest)
+	case agentv1.Signal_SIGNAL_UNSPECIFIED:
+		return 0, fmt.Errorf("%w: %s", ErrUnknownSignal, signal)
+	default:
+		return 0, fmt.Errorf("%w: %s", ErrUnknownSignal, signal)
+	}
+	return countMessages(body, req.ProtoReflect().Descriptor(), limit, 0)
+}
+
+// countMessages walks the wire format of a desc message and counts its
+// nested messages without decoding anything. It returns once the count
+// passes limit, so the walk costs at most limit+1 messages. Scalar
+// fields and fields desc does not name are skipped. A malformed wire
+// sequence, or nesting past the decoder's recursion limit, is an error.
+func countMessages(body []byte, desc protoreflect.MessageDescriptor, limit, depth int) (int, error) {
+	if depth > protowire.DefaultRecursionLimit {
+		return 0, errors.New("nesting over the recursion limit")
+	}
 	count := 0
-	for len(body) > 0 {
+	for len(body) > 0 && count <= limit {
 		num, typ, n := protowire.ConsumeTag(body)
 		if n < 0 {
 			return 0, fmt.Errorf("wire tag: %w", protowire.ParseError(n))
@@ -431,12 +454,27 @@ func countTopLevelField(body []byte, want protowire.Number) (int, error) {
 		if n < 0 {
 			return 0, fmt.Errorf("wire field %d: %w", num, protowire.ParseError(n))
 		}
+		value := body[:n]
 		body = body[n:]
-		if num == want {
-			count++
+		field := desc.Fields().ByNumber(num)
+		if !isMessageField(field, typ) {
+			continue
 		}
+		// ConsumeFieldValue validated the length prefix.
+		sub, _ := protowire.ConsumeBytes(value)
+		nested, err := countMessages(sub, field.Message(), limit-count-1, depth+1)
+		if err != nil {
+			return 0, err
+		}
+		count += 1 + nested
 	}
 	return count, nil
+}
+
+// isMessageField reports whether a wire field of type typ holds a
+// nested message of the schema field.
+func isMessageField(field protoreflect.FieldDescriptor, typ protowire.Type) bool {
+	return typ == protowire.BytesType && field != nil && field.Kind() == protoreflect.MessageKind
 }
 
 // collectorAway reports whether a forward failure says the collector

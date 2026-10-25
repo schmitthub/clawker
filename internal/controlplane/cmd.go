@@ -1215,7 +1215,7 @@ func buildAgentIngest(
 		ForwardTimeout: 0,
 		TripThreshold:  0,
 		ProbeInterval:  0,
-		MaxResources:   0,
+		MaxMessages:    0,
 		MaxConcurrent:  0,
 	})
 	if err != nil {
