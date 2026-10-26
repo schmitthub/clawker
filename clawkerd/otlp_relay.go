@@ -49,11 +49,13 @@ const (
 
 // exportClient is the slice of AgentServiceClient the relay needs.
 type exportClient interface {
-	Export(ctx context.Context, in *agentv1.ExportRequest, opts ...grpc.CallOption) (*agentv1.ExportResult, error)
+	ExportTelemetry(
+		ctx context.Context, in *agentv1.ExportTelemetryRequest, opts ...grpc.CallOption,
+	) (*agentv1.ExportTelemetryResult, error)
 }
 
 // OTLPRelay is the loopback OTLP/HTTP receiver the agent SDK exports
-// to. Each batch is carried unchanged to AgentService.Export over
+// to. Each batch is carried unchanged to AgentService.ExportTelemetry over
 // clawkerd's mTLS leaf; the CP verifies the peer, stamps identity, and
 // forwards to the collector. The relay holds no identity logic: it maps
 // the CP verdict onto HTTP so the SDK retries only what can succeed
@@ -104,8 +106,8 @@ func StartTelemetryRelay(
 	return relay
 }
 
-// dialAgentService opens the process-lifetime Export connection. Same
-// TLS material as Register, no bearer credentials: Export is public
+// dialAgentService opens the process-lifetime ExportTelemetry connection. Same
+// TLS material as Register, no bearer credentials: ExportTelemetry is public
 // scope behind mTLS plus the CP's identity gate.
 func dialAgentService(boot *bootstrap, addr string) (*grpc.ClientConn, error) {
 	dialTLS, err := buildDialTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
@@ -201,7 +203,8 @@ func (r *OTLPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx, cancel := context.WithTimeout(req.Context(), relayExportTimeout)
 	defer cancel()
-	if _, err := r.client.Export(ctx, &agentv1.ExportRequest{Signal: signal, Body: body}); err != nil {
+	exportReq := &agentv1.ExportTelemetryRequest{Signal: signal, Body: body}
+	if _, err := r.client.ExportTelemetry(ctx, exportReq); err != nil {
 		r.reject(w, signal, err)
 		return
 	}
@@ -223,12 +226,12 @@ func signalForPath(path string) agentv1.Signal {
 	}
 }
 
-// readRelayBody reads at most ExportMaxBodyBytes, decoding gzip when
+// readRelayBody reads at most ExportTelemetryMaxBodyBytes, decoding gzip when
 // declared. The cap applies to the decoded size so a small compressed
 // body cannot expand past what the CP listener accepts. A non-zero
 // return code is the HTTP status to answer with.
 func readRelayBody(w http.ResponseWriter, req *http.Request) ([]byte, int) {
-	var rd io.Reader = http.MaxBytesReader(w, req.Body, agentv1.ExportMaxBodyBytes)
+	var rd io.Reader = http.MaxBytesReader(w, req.Body, agentv1.ExportTelemetryMaxBodyBytes)
 	switch req.Header.Get("Content-Encoding") {
 	case "", "identity":
 	case "gzip":
@@ -236,14 +239,14 @@ func readRelayBody(w http.ResponseWriter, req *http.Request) ([]byte, int) {
 		if err != nil {
 			return nil, http.StatusBadRequest
 		}
-		rd = io.LimitReader(gz, agentv1.ExportMaxBodyBytes+1)
+		rd = io.LimitReader(gz, agentv1.ExportTelemetryMaxBodyBytes+1)
 	default:
 		return nil, http.StatusUnsupportedMediaType
 	}
 	body, err := io.ReadAll(rd)
 	var tooLarge *http.MaxBytesError
 	switch {
-	case errors.As(err, &tooLarge), len(body) > agentv1.ExportMaxBodyBytes:
+	case errors.As(err, &tooLarge), len(body) > agentv1.ExportTelemetryMaxBodyBytes:
 		return nil, http.StatusRequestEntityTooLarge
 	case err != nil:
 		return nil, http.StatusBadRequest
