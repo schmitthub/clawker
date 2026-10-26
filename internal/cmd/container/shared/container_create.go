@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,9 @@ const (
 	seccompProfileDefault = "builtin"
 	// seccompProfileUnconfined is a special profile name for an "unconfined" seccomp profile.
 	seccompProfileUnconfined = "unconfined"
+	// noNewPrivilegesOpt is the --security-opt key that sets the kernel
+	// no_new_privs flag. Clawker sets it on every container by default.
+	noNewPrivilegesOpt = "no-new-privileges"
 
 	// The --attach vocabulary: the three standard streams a container may be
 	// attached to. Shared by the flag validator and the attach-mode resolver.
@@ -684,14 +688,19 @@ func (opts *ContainerCreateOptions) applySecurityOptions(
 	if opts.Privileged {
 		hostCfg.Privileged = true
 	}
-	if len(opts.SecurityOpt) == 0 {
-		return nil
-	}
 	securityOpts, err := parseSecurityOpts(opts.SecurityOpt)
 	if err != nil {
 		return err
 	}
 	securityOpts, maskedPaths, readonlyPaths := parseSystemPaths(securityOpts)
+	// Default no-new-privileges: setuid binaries in the image cannot raise
+	// the agent's privileges. A user --security-opt no-new-privileges
+	// setting (true or false) replaces the default.
+	if !slices.ContainsFunc(securityOpts, func(o string) bool {
+		return strings.HasPrefix(o, noNewPrivilegesOpt)
+	}) {
+		securityOpts = append(slices.Clip(securityOpts), noNewPrivilegesOpt)
+	}
 	hostCfg.SecurityOpt = securityOpts
 	if maskedPaths != nil {
 		hostCfg.MaskedPaths = maskedPaths
@@ -1078,10 +1087,10 @@ func (opts *ContainerCreateOptions) ValidateFlags() error {
 func parseSecurityOpts(securityOpts []string) ([]string, error) {
 	for key, opt := range securityOpts {
 		k, v, ok := strings.Cut(opt, "=")
-		if !ok && k != "no-new-privileges" {
+		if !ok && k != noNewPrivilegesOpt {
 			k, v, ok = strings.Cut(opt, ":")
 		}
-		if (!ok || v == "") && k != "no-new-privileges" {
+		if (!ok || v == "") && k != noNewPrivilegesOpt {
 			return securityOpts, fmt.Errorf("invalid --security-opt: %q", opt)
 		}
 		if k == "seccomp" {
