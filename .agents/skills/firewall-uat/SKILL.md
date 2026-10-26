@@ -79,6 +79,7 @@ missing listener). Get the IPs from the host with `docker inspect -f
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/4444'` | exit 0 (connects) |
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/7080'` | `Permission denied` |
 | `getent hosts host.docker.internal` | resolves (CoreDNS lane intact) |
+| `dig +tcp @127.0.0.11 -p <port of the 0B00007F listener in /proc/net/tcp> example.com` | `no servers could be reached` (Docker resolver denied; NOERROR = DNS bypass) |
 
 **SSH routing is special — banner is the only proof.** Any real SSH server
 completes a valid handshake, so a misroute ("everything funneled to host X")

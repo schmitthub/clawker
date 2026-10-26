@@ -753,6 +753,34 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 	assert.NotNil(t, blockedRes.Err, "non-whitelisted domain should not resolve")
 }
 
+// TestFirewall_DockerDNSDirectPortDenied proves an agent cannot reach Docker's
+// embedded resolver on its real port. Docker DNATs 127.0.0.11:53 to a random
+// port inside the container network namespace, and that resolver forwards
+// queries to public upstreams from outside the agent's eBPF. The port 53
+// redirect sends normal DNS to CoreDNS; a direct dial to the random port must
+// be denied, else it is an upstream resolver that bypasses CoreDNS NXDOMAIN.
+func TestFirewall_DockerDNSDirectPortDenied(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	script := `
+h=""
+while read -r _ local _ st _; do
+  case "$local" in 0B00007F:*) if [ "$st" = 0A ]; then h=${local#*:}; break; fi ;; esac
+done < /proc/net/tcp
+if [ -z "$h" ]; then echo port=none; exit 0; fi
+port=$((16#$h))
+echo port=$port
+if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.11/$port" 2>/dev/null; then echo direct=open; else echo direct=closed; fi
+if getent hosts api.anthropic.com >/dev/null; then echo dns=open; else echo dns=closed; fi
+`
+	res := h.RunInContainer("docker-dns-direct", "bash", "-c", script)
+	require.NoError(t, res.Err, "probe script failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	require.NotContains(t, res.Stdout, "port=none",
+		"Docker embedded DNS listener not found in /proc/net/tcp")
+	assert.Contains(t, res.Stdout, "direct=closed", "probe results:\n%s", res.Stdout)
+	assert.Contains(t, res.Stdout, "dns=open", "probe results:\n%s", res.Stdout)
+}
+
 // TestFirewall_ExactAllowBlocksSubdomain is the regression test for the DNS
 // subtree exfiltration fix. CoreDNS zones are suffix-authoritative, so before
 // the fix an exact allow rule (X) forwarded the entire *.X subtree upstream —
