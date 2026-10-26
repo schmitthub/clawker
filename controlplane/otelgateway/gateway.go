@@ -1,5 +1,5 @@
-// Package ingest is the CP's OTLP gateway for agent telemetry. clawkerd
-// relays the agent SDK's batches to AgentService.Export; the agent
+// Package otelgateway is the CP's OTLP gateway for agent telemetry. clawkerd
+// relays the agent SDK's batches to AgentService.ExportTelemetry; the agent
 // package resolves and verifies the peer, then hands the serialized body
 // and the resolved identity here. The gateway decodes the body by
 // signal, replaces the identity resource attributes on every resource
@@ -15,7 +15,7 @@
 //
 // The package holds no identity logic and does not import the agent
 // package: Identity is plain values the caller already verified.
-package ingest
+package otelgateway
 
 import (
 	"context"
@@ -70,14 +70,14 @@ const (
 	// of structs. Counted on the wire before decode. A full SDK batch
 	// (512 records with about 25 attributes each) is about 26,000.
 	defaultMaxMessages = 100_000
-	// defaultMaxConcurrent bounds in-flight Ingest calls per CP process
+	// defaultMaxConcurrent bounds in-flight Forward calls per CP process
 	// so decode and stamp memory stays proportional to a small constant,
 	// not to the number of agent connections.
 	defaultMaxConcurrent = 8
 	// maxForwardBytes is the stamped batch size the collector accepts
 	// (otlp/agents max_recv_msg_size_mib: 8).
 	maxForwardBytes    = 8 << 20
-	metricsSubsystem   = "agent_ingest"
+	metricsSubsystem   = "otel_gateway"
 	metricsSignalLabel = "signal"
 	signalLogs         = "logs"
 	signalMetrics      = "metrics"
@@ -89,16 +89,16 @@ const (
 var (
 	// ErrMalformedBody reports a body that does not decode as the named
 	// signal's export request. The RPC handler maps it to InvalidArgument.
-	ErrMalformedBody = errors.New("ingest: body does not decode as the named signal")
+	ErrMalformedBody = errors.New("otelgateway: body does not decode as the named signal")
 	// ErrUnknownSignal reports a signal outside logs, metrics, traces.
-	ErrUnknownSignal = errors.New("ingest: unknown signal")
+	ErrUnknownSignal = errors.New("otelgateway: unknown signal")
 	// ErrBatchTooLarge reports a batch over the message budget or a
 	// stamped batch over the collector's message cap. The RPC handler
 	// maps it to ResourceExhausted.
-	ErrBatchTooLarge = errors.New("ingest: batch over the size cap")
+	ErrBatchTooLarge = errors.New("otelgateway: batch over the size cap")
 	// ErrBusy reports that the concurrency cap is reached. The RPC
 	// handler maps it to Unavailable so the relay retries.
-	ErrBusy = errors.New("ingest: too many batches in flight")
+	ErrBusy = errors.New("otelgateway: too many batches in flight")
 )
 
 // Identity is the CP-resolved provenance stamped onto every resource in
@@ -130,7 +130,7 @@ type Options struct {
 	ProbeInterval time.Duration
 	// MaxMessages caps the nested messages per batch. Zero means 100,000.
 	MaxMessages int
-	// MaxConcurrent caps in-flight Ingest calls. Zero means 8.
+	// MaxConcurrent caps in-flight Forward calls. Zero means 8.
 	MaxConcurrent int
 }
 
@@ -257,17 +257,17 @@ func (b *breaker) failure(now time.Time) (bool, bool) {
 func New(opts Options) (*Gateway, error) {
 	switch {
 	case opts.Endpoint == "":
-		return nil, errors.New("ingest: Endpoint required")
+		return nil, errors.New("otelgateway: Endpoint required")
 	case opts.TLSConfig == nil:
-		return nil, errors.New("ingest: TLSConfig required")
+		return nil, errors.New("otelgateway: TLSConfig required")
 	case opts.Log == nil:
-		return nil, errors.New("ingest: Log required")
+		return nil, errors.New("otelgateway: Log required")
 	}
 	conn, err := grpc.NewClient(opts.Endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(opts.TLSConfig)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("ingest: collector client %s: %w", opts.Endpoint, err)
+		return nil, fmt.Errorf("otelgateway: collector client %s: %w", opts.Endpoint, err)
 	}
 	timeout := opts.ForwardTimeout
 	if timeout == 0 {
@@ -282,7 +282,7 @@ func New(opts Options) (*Gateway, error) {
 		interval = defaultProbeInterval
 	}
 	if interval <= timeout {
-		return nil, fmt.Errorf("ingest: ProbeInterval %s must exceed ForwardTimeout %s", interval, timeout)
+		return nil, fmt.Errorf("otelgateway: ProbeInterval %s must exceed ForwardTimeout %s", interval, timeout)
 	}
 	maxMessages := opts.MaxMessages
 	if maxMessages == 0 {
@@ -310,18 +310,18 @@ func New(opts Options) (*Gateway, error) {
 // Close releases the collector connection.
 func (g *Gateway) Close() error {
 	if err := g.conn.Close(); err != nil {
-		return fmt.Errorf("ingest: close collector client: %w", err)
+		return fmt.Errorf("otelgateway: close collector client: %w", err)
 	}
 	return nil
 }
 
-// Ingest decodes body as the named signal, stamps id onto every resource,
+// Forward decodes body as the named signal, stamps id onto every resource,
 // and forwards the batch. ErrMalformedBody, ErrUnknownSignal, and
 // ErrBatchTooLarge are client faults; ErrBusy asks the relay to retry.
 // Any other error is a forward failure while the breaker is closed; with
 // the breaker open the batch is dropped and nil is returned so the SDK
 // does not retry against a collector that is away.
-func (g *Gateway) Ingest(ctx context.Context, signal agentv1.Signal, body []byte, id Identity) error {
+func (g *Gateway) Forward(ctx context.Context, signal agentv1.Signal, body []byte, id Identity) error {
 	name, ok := signalName(signal)
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownSignal, signal)
@@ -354,7 +354,7 @@ func (g *Gateway) Ingest(ctx context.Context, signal agentv1.Signal, body []byte
 	g.Metrics.Exported.WithLabelValues(name).Inc()
 	if g.breaker.success() {
 		g.log.Info().
-			Str("event", "agent_ingest_recovered").
+			Str("event", "otel_gateway_recovered").
 			Str("signal", name).
 			Msg("collector answered a probe; agent telemetry forwarding resumed")
 	}
@@ -391,7 +391,7 @@ func (g *Gateway) onForwardFailure(parent context.Context, name string, sendErr 
 		// A rejection of this one batch (or the caller leaving) says
 		// nothing about the collector; the breaker is untouched.
 		g.log.Debug().Err(sendErr).
-			Str("event", "agent_ingest_forward_failed").
+			Str("event", "otel_gateway_forward_failed").
 			Str("signal", name).
 			Msg("collector rejected an agent telemetry batch")
 		return sendErr
@@ -399,7 +399,7 @@ func (g *Gateway) onForwardFailure(parent context.Context, name string, sendErr 
 	open, tripped := g.breaker.failure(time.Now())
 	if tripped {
 		g.log.Warn().Err(sendErr).
-			Str("event", "agent_ingest_tripped").
+			Str("event", "otel_gateway_tripped").
 			Str("signal", name).
 			Dur("probe_interval", g.breaker.interval).
 			Msg("collector unreachable; dropping agent telemetry and probing on an interval until it answers")
@@ -409,7 +409,7 @@ func (g *Gateway) onForwardFailure(parent context.Context, name string, sendErr 
 		return nil
 	}
 	g.log.Debug().Err(sendErr).
-		Str("event", "agent_ingest_forward_failed").
+		Str("event", "otel_gateway_forward_failed").
 		Str("signal", name).
 		Msg("collector did not accept an agent telemetry batch")
 	return sendErr
@@ -537,7 +537,7 @@ func prepareBatch[Req proto.Message, R any](
 	return func(ctx context.Context) error {
 		rejected, msg, err := export(ctx)
 		if err != nil {
-			return fmt.Errorf("ingest: forward %s: %w", name, err)
+			return fmt.Errorf("otelgateway: forward %s: %w", name, err)
 		}
 		g.logPartial(name, rejected, msg)
 		return nil
@@ -642,7 +642,7 @@ func (g *Gateway) logPartial(signal string, rejected int64, msg string) {
 		return
 	}
 	g.log.Warn().
-		Str("event", "agent_ingest_partial_success").
+		Str("event", "otel_gateway_partial_success").
 		Str("signal", signal).
 		Int64("rejected", rejected).
 		Str("collector_message", msg).

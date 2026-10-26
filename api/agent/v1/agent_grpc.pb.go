@@ -19,8 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName = "/clawker.agent.v1.AgentService/Register"
-	AgentService_Export_FullMethodName   = "/clawker.agent.v1.AgentService/Export"
+	AgentService_Register_FullMethodName        = "/clawker.agent.v1.AgentService/Register"
+	AgentService_ExportTelemetry_FullMethodName = "/clawker.agent.v1.AgentService/ExportTelemetry"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -31,7 +31,7 @@ const (
 // agent listener on the clawker network. Register is the
 // one-time-per-container provenance handshake CP triggers via a
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
-// Export is the agent telemetry lane: clawkerd relays the agent's OTLP
+// ExportTelemetry is the agent telemetry lane: clawkerd relays the agent's OTLP
 // batches here and the CP stamps provenance before it forwards them to
 // the collector.
 //
@@ -67,7 +67,7 @@ type AgentServiceClient interface {
 	// mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
 	// InvalidArgument (malformed identity fields).
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*Welcome, error)
-	// Export relays one OTLP batch from the agent's SDK to the collector
+	// ExportTelemetry relays one OTLP batch from the agent's SDK to the collector
 	// through the CP. clawkerd's loopback receiver accepts the SDK's
 	// http/protobuf POST and forwards the serialized body unchanged; the
 	// CP resolves the peer to a registered container, overwrites the
@@ -82,7 +82,7 @@ type AgentServiceClient interface {
 	// body does not decode), ResourceExhausted (body over the cap),
 	// Unavailable (collector forward failed; the relay answers the SDK
 	// with a retryable status).
-	Export(ctx context.Context, in *ExportRequest, opts ...grpc.CallOption) (*ExportResult, error)
+	ExportTelemetry(ctx context.Context, in *ExportTelemetryRequest, opts ...grpc.CallOption) (*ExportTelemetryResult, error)
 }
 
 type agentServiceClient struct {
@@ -103,10 +103,10 @@ func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, 
 	return out, nil
 }
 
-func (c *agentServiceClient) Export(ctx context.Context, in *ExportRequest, opts ...grpc.CallOption) (*ExportResult, error) {
+func (c *agentServiceClient) ExportTelemetry(ctx context.Context, in *ExportTelemetryRequest, opts ...grpc.CallOption) (*ExportTelemetryResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExportResult)
-	err := c.cc.Invoke(ctx, AgentService_Export_FullMethodName, in, out, cOpts...)
+	out := new(ExportTelemetryResult)
+	err := c.cc.Invoke(ctx, AgentService_ExportTelemetry_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (c *agentServiceClient) Export(ctx context.Context, in *ExportRequest, opts
 // agent listener on the clawker network. Register is the
 // one-time-per-container provenance handshake CP triggers via a
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
-// Export is the agent telemetry lane: clawkerd relays the agent's OTLP
+// ExportTelemetry is the agent telemetry lane: clawkerd relays the agent's OTLP
 // batches here and the CP stamps provenance before it forwards them to
 // the collector.
 //
@@ -157,7 +157,7 @@ type AgentServiceServer interface {
 	// mismatch, peer-IP mismatch, label mismatch, thumbprint replay) or
 	// InvalidArgument (malformed identity fields).
 	Register(context.Context, *RegisterRequest) (*Welcome, error)
-	// Export relays one OTLP batch from the agent's SDK to the collector
+	// ExportTelemetry relays one OTLP batch from the agent's SDK to the collector
 	// through the CP. clawkerd's loopback receiver accepts the SDK's
 	// http/protobuf POST and forwards the serialized body unchanged; the
 	// CP resolves the peer to a registered container, overwrites the
@@ -172,7 +172,7 @@ type AgentServiceServer interface {
 	// body does not decode), ResourceExhausted (body over the cap),
 	// Unavailable (collector forward failed; the relay answers the SDK
 	// with a retryable status).
-	Export(context.Context, *ExportRequest) (*ExportResult, error)
+	ExportTelemetry(context.Context, *ExportTelemetryRequest) (*ExportTelemetryResult, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -186,8 +186,8 @@ type UnimplementedAgentServiceServer struct{}
 func (UnimplementedAgentServiceServer) Register(context.Context, *RegisterRequest) (*Welcome, error) {
 	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
 }
-func (UnimplementedAgentServiceServer) Export(context.Context, *ExportRequest) (*ExportResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method Export not implemented")
+func (UnimplementedAgentServiceServer) ExportTelemetry(context.Context, *ExportTelemetryRequest) (*ExportTelemetryResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExportTelemetry not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -228,20 +228,20 @@ func _AgentService_Register_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AgentService_Export_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExportRequest)
+func _AgentService_ExportTelemetry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExportTelemetryRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AgentServiceServer).Export(ctx, in)
+		return srv.(AgentServiceServer).ExportTelemetry(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AgentService_Export_FullMethodName,
+		FullMethod: AgentService_ExportTelemetry_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentServiceServer).Export(ctx, req.(*ExportRequest))
+		return srv.(AgentServiceServer).ExportTelemetry(ctx, req.(*ExportTelemetryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -258,8 +258,8 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AgentService_Register_Handler,
 		},
 		{
-			MethodName: "Export",
-			Handler:    _AgentService_Export_Handler,
+			MethodName: "ExportTelemetry",
+			Handler:    _AgentService_ExportTelemetry_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

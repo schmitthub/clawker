@@ -12,7 +12,7 @@
 - The AgentService identity interceptor uses the peer IP to find the container, reads its labels, and checks the certificate identity against that independent source.
 - A missing project label is a valid global agent. A missing or malformed agent label is not.
 - Registry rows bind the certificate thumbprint to the container ID. Do not use certificate claims alone as container identity.
-- `AgentService.Export` is the agent telemetry lane (public scope; clawkerd cannot mint a second bearer). `Handler.Export` adds the registry thumbprint check, then forwards through `controlplane/ingest.Gateway`, which overwrites `project`/`agent`/`container_id`/`ingest_source` with CP-resolved values and pushes to the collector's `otlp/agents` receiver with the `cp` infra leaf. The gateway degrades to nil (`event=agent_ingest_unavailable`) and carries a breaker because monitoring is optional (3 failures → silent drop, probe each minute, auto-recover). `agent` imports `ingest`; `ingest` never imports `agent`.
+- `AgentService.ExportTelemetry` is the agent telemetry lane (public scope; clawkerd cannot mint a second bearer). `Handler.ExportTelemetry` adds the registry thumbprint check, then forwards through `controlplane/otelgateway.Gateway`, which overwrites `project`/`agent`/`container_id`/`ingest_source` with CP-resolved values and pushes to the collector's `otlp/agents` receiver with the `cp` infra leaf. The gateway degrades to nil (`event=otel_gateway_unavailable`) and carries a breaker because monitoring is optional (3 failures → silent drop, probe each minute, auto-recover). `agent` imports `otelgateway`; `otelgateway` never imports `agent`.
 - Keep declared registry data, Docker observations, and session reports distinct.
 
 ## Startup and proof
