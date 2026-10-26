@@ -885,6 +885,16 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 		return r;
 	}
 
+	// Docker's embedded resolver also listens on a random port at
+	// 127.0.0.11 and forwards to public upstreams from outside this
+	// program. Port 53 went to CoreDNS above; deny every other port, else
+	// it is an upstream resolver that bypasses CoreDNS NXDOMAIN.
+	if (dst_ip == bpf_htonl(DOCKER_EMBEDDED_DNS)) {
+		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		r.verdict = V_DENY;
+		return r;
+	}
+
 	if (is_loopback(dst_ip))
 		return r;
 
@@ -988,6 +998,13 @@ decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
 		r.verdict      = V_REWRITE;
 		r.new_ip       = cfg->coredns_ip;
 		r.new_port_nbo = bpf_htons(DNS_PORT);
+		return r;
+	}
+
+	// Same Docker resolver deny as decide_connect.
+	if (dst_ip == bpf_htonl(DOCKER_EMBEDDED_DNS)) {
+		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		r.verdict = V_DENY;
 		return r;
 	}
 
