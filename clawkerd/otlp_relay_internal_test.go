@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -186,6 +187,31 @@ func TestOTLPRelay_BodyAtCapAccepted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	require.Len(t, fake.requests(), 1)
 	assert.Len(t, fake.requests()[0].GetBody(), agentv1.ExportMaxBodyBytes)
+}
+
+// TestOTLPRelay_StalledUploadClosed: a client that sends the headers and
+// part of the body, then stops, must not hold the connection (a PID1
+// goroutine and its body buffer) past the read timeout.
+func TestOTLPRelay_StalledUploadClosed(t *testing.T) {
+	t.Parallel()
+	fake := new(fakeExport)
+	base := newTestRelay(t, fake)
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", strings.TrimPrefix(base, "http://"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if cerr := conn.Close(); cerr != nil {
+			t.Logf("close stalled conn: %v", cerr)
+		}
+	})
+	_, err = io.WriteString(conn, "POST /v1/logs HTTP/1.1\r\nHost: relay\r\n"+
+		"Content-Type: "+otlpContentType+"\r\nContent-Length: 1024\r\n\r\n0123456789")
+	require.NoError(t, err)
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(relayReadTimeout+5*time.Second)))
+	_, err = io.Copy(io.Discard, conn)
+	require.NotErrorIs(t, err, os.ErrDeadlineExceeded, "relay kept the stalled upload open")
+	assert.Empty(t, fake.requests())
 }
 
 // TestOTLPRelay_Encodings: identity passes through, a gzip body is

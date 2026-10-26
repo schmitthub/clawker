@@ -40,6 +40,11 @@ const (
 	// relayReadHeaderTimeout bounds a loopback client that opens a
 	// connection and never sends headers.
 	relayReadHeaderTimeout = 5 * time.Second
+	// relayReadTimeout bounds the whole request read, so a loopback
+	// client that sends headers and then stalls the body cannot hold a
+	// PID1 goroutine and its body buffer. With IdleTimeout unset it also
+	// bounds idle keep-alive connections.
+	relayReadTimeout = 10 * time.Second
 )
 
 // exportClient is the slice of AgentServiceClient the relay needs.
@@ -134,6 +139,7 @@ func newOTLPRelay(ctx context.Context, listenAddr string, client exportClient, l
 	srv := new(http.Server)
 	srv.Handler = r
 	srv.ReadHeaderTimeout = relayReadHeaderTimeout
+	srv.ReadTimeout = relayReadTimeout
 	r.srv = srv
 	go func() {
 		defer recoverGoroutine(log, "otlp_relay_serve", nil)
