@@ -127,12 +127,38 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 build:
   packages:
     - iputils-ping
+    - python3
 `)
 
 	// ICMP must be blocked to prevent ICMP tunneling (ptunnel, icmpsh).
 	// ping sends ICMP echo requests — should fail with the DROP rule in place.
 	res := h.RunInContainer("firewall-icmp", "ping", "-c", "1", "-W", "3", "8.8.8.8")
 	assert.NotNil(t, res.Err, "ping should fail — ICMP must be blocked to prevent tunneling")
+
+	// ping connect()s its socket, which connect4 denies. An unconnected ICMP
+	// datagram socket (ping_group_range lets any uid open one) sends with
+	// sendto(), which no sendmsg hook sees, so sock_create must deny it.
+	script := `
+import socket, struct
+def csum(b):
+    s = sum(struct.unpack("!%dH" % (len(b) // 2), b))
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+    return ~s & 0xffff
+pkt = struct.pack("!BBHHH", 8, 0, 0, 0x1234, 1) + b"clawkerprobe"
+pkt = pkt[:2] + struct.pack("!H", csum(pkt)) + pkt[4:]
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
+    s.settimeout(3)
+    s.sendto(pkt, ("8.8.8.8", 0))
+    s.recvfrom(1024)
+    print("icmp-dgram=open")
+except OSError as e:
+    print("icmp-dgram=closed", e)
+`
+	dgramRes := h.RunInContainer("firewall-icmp", "python3", "-c", script)
+	require.NoError(t, dgramRes.Err, "probe failed\nstdout: %s\nstderr: %s", dgramRes.Stdout, dgramRes.Stderr)
+	assert.Contains(t, dgramRes.Stdout, "icmp-dgram=closed", "probe results:\n%s", dgramRes.Stdout)
 }
 
 // TestFirewall_Bypass exercises the full `firewall bypass` surface in one

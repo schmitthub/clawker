@@ -25,6 +25,8 @@
 #include <stdbool.h>
 #include <linux/types.h>
 #include <linux/bpf.h>
+#include <linux/in.h>
+#include <linux/in6.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 

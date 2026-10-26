@@ -384,7 +384,7 @@ int clawker_getpeername6(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 5: cgroup/sock_create — Raw socket blocking
+// Program 5: cgroup/sock_create — raw and ping socket blocking
 // ---------------------------------------------------------------------------
 // sock_create uses struct bpf_sock, not bpf_sock_addr. It can't share the
 // routing helpers but it still uses enter_enforced — bpf_get_current_* calls
@@ -408,7 +408,12 @@ int clawker_sock_create(struct bpf_sock *ctx)
 		return 1;
 	}
 
-	if (ctx->type == SOCK_RAW) {
+	// Ping sockets (SOCK_DGRAM + ICMP; ping_group_range lets any uid open
+	// one) send with sendto() through ping_v4_sendmsg, which no sendmsg
+	// hook sees, so an unconnected one is an ICMP tunnel. Deny at create.
+	if (ctx->type == SOCK_RAW ||
+	    (ctx->type == SOCK_DGRAM &&
+	     (ctx->protocol == IPPROTO_ICMP || ctx->protocol == IPPROTO_ICMPV6))) {
 		metric_inc(cgroup_id, 0, 0, ACTION_DENY);
 		submit_event_nodst(cgroup_id, (__u8)ctx->type,
 				   EGRESS_VERDICT_DENIED);
