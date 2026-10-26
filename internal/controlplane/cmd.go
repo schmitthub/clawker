@@ -1173,7 +1173,7 @@ type grpcStackDeps struct {
 // belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
 // buildOtelGateway constructs the agent telemetry gateway the ExportTelemetry RPC
 // forwards through: one mTLS client connection to the collector's
-// otlp/agents receiver at otel-collector:<OtelAgentIngestPort> over the
+// otlp/agents receiver at otel-collector:<MonitoringOtelAgentIngestPort> over the
 // internal telemetry network, presenting the same infra leaf the CP's own log bridge uses. The dial
 // is lazy, so a monitoring stack that is not running never delays boot.
 //
@@ -1183,7 +1183,6 @@ type grpcStackDeps struct {
 // answers Unavailable and the clawkerd relay retries. The returned
 // cleanup is always callable.
 func buildOtelGateway(
-	cfg config.Config,
 	otelCertsSvc *otelcerts.Service,
 	log *logger.Logger,
 ) (*otelgateway.Gateway, func()) {
@@ -1205,7 +1204,7 @@ func buildOtelGateway(
 	}
 	endpoint := net.JoinHostPort(
 		consts.MonitoringServiceOtelCollector,
-		strconv.Itoa(int(cfg.MonitoringConfig().OtelAgentIngestPort)),
+		strconv.Itoa(consts.MonitoringOtelAgentIngestPort),
 	)
 	gw, err := otelgateway.New(otelgateway.Options{
 		Endpoint:       endpoint,
@@ -1724,7 +1723,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// agent telemetry gateway (AgentService.ExportTelemetry → collector agent
 	// receiver). Degrades to nil with event=otel_gateway_unavailable; the
 	// deferred close runs after the gRPC servers stop (LIFO).
-	gw, gatewayCleanup := buildOtelGateway(cfg, otelCertsSvc, log)
+	gw, gatewayCleanup := buildOtelGateway(otelCertsSvc, log)
 	defer gatewayCleanup()
 	// Box only a live gateway: a typed-nil *Gateway would pass the
 	// handler's nil check and panic on dispatch.

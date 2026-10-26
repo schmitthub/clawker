@@ -472,9 +472,8 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
 }
 
-// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_infra_port
-// is non-zero (default), the OTLP endpoint env var lands in the
-// container config. The transport-specific env vars
+// TestCPContainer_OtelLogsEnv_Emitted — the OTLP endpoint env var lands
+// in the container config. The transport-specific env vars
 // (OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT with
 // the /v1/logs HTTP path) are deliberately absent: the CP wires
 // otlploggrpc in-process and the collector's otlp/infra receiver only
@@ -519,7 +518,7 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	// host.docker.internal: on a native Linux daemon that name is the
 	// bridge IP, where the collector publishes nothing.
 	assert.Contains(t, cpConfig.Env, fmt.Sprintf("OTEL_EXPORTER_OTLP_ENDPOINT=https://%s:%d",
-		consts.MonitoringServiceOtelCollector, cfg.MonitoringConfig().OtelInfraPort))
+		consts.MonitoringServiceOtelCollector, consts.MonitoringOtelInfraPort))
 }
 
 // TestCPContainer_SecurityOpt_AppArmorUnconfined pins the

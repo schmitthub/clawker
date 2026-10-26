@@ -230,12 +230,6 @@
           "title": "OpenSearch Port",
           "type": "integer"
         },
-        "otel_agent_ingest_port": {
-          "default": 4320,
-          "description": "Port the OTel collector listens on for agent telemetry forwarded by the control plane",
-          "title": "OTEL Agent Ingest Port",
-          "type": "integer"
-        },
         "otel_collector_host": {
           "default": "localhost",
           "description": "Hostname for reaching the collector from the host",
@@ -252,12 +246,6 @@
           "default": 4317,
           "description": "Host port for the OTEL gRPC receiver",
           "title": "OTEL gRPC Port",
-          "type": "integer"
-        },
-        "otel_infra_port": {
-          "default": 4319,
-          "description": "Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS)",
-          "title": "OTEL Infra Port",
           "type": "integer"
         },
         "prometheus_metrics_port": {

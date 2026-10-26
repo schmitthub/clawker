@@ -84,8 +84,8 @@ type MonitorTemplateData struct {
 	// together.
 	OtelCollectorPort        int
 	OtelGRPCPort             int // independent of HTTP port
-	OtelInfraPort            int // mTLS-gated host-loopback receiver for trusted infra push (clawkercp + firewall Envoy + CoreDNS)
-	OtelAgentIngestPort      int // mTLS-gated host-loopback receiver for agent telemetry the CP gateway forwards (same infra client CA)
+	OtelInfraPort            int // consts.MonitoringOtelInfraPort: mTLS receiver on the telemetry network for trusted infra push (clawkercp + firewall Envoy + CoreDNS)
+	OtelAgentIngestPort      int // consts.MonitoringOtelAgentIngestPort: mTLS receiver on the telemetry network for agent telemetry the CP gateway forwards (same infra client CA)
 	PrometheusPort           int
 	PrometheusMetricsPort    int
 	OpenSearchPort           int
@@ -114,10 +114,7 @@ type MonitorTemplateData struct {
 	// `{{ if }}` gate. Degradation is sender-side only: when an infra
 	// sender (CP / Envoy / CoreDNS) lacks a valid client cert it stays
 	// off this lane (see internal/monitor/CLAUDE.md "Trusted block
-	// conditionality"). compose.yaml.tmpl gates the bind mounts + port
-	// publish on OtelInfraPort, so a zero port suppresses the host-side
-	// wiring even though the receiver block is still emitted into
-	// otel-config.
+	// conditionality").
 	OtelServerCertHostPath string
 	OtelServerKeyHostPath  string
 	OtelCAHostPath         string
@@ -178,8 +175,8 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 		ISMIndexPatternsJSON:        ismPatterns,
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
-		OtelInfraPort:               int(mon.OtelInfraPort),
-		OtelAgentIngestPort:         int(mon.OtelAgentIngestPort),
+		OtelInfraPort:               consts.MonitoringOtelInfraPort,
+		OtelAgentIngestPort:         consts.MonitoringOtelAgentIngestPort,
 		PrometheusPort:              mon.PrometheusPort,
 		PrometheusMetricsPort:       mon.PrometheusMetricsPort,
 		OpenSearchPort:              mon.OpenSearchPort,

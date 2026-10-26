@@ -24,14 +24,12 @@ services:
     restart: unless-stopped
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
-{{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs
       # to ones the CLI signed (currently just clawkercp).
       - {{.OtelServerCertHostPath}}:/etc/otel/tls/server.pem:ro
       - {{.OtelServerKeyHostPath}}:/etc/otel/tls/server.key:ro
       - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro
-{{- end}}
     ports:
       # Unauthenticated receivers — host loopback only. The host CLI is
       # their only sender; it dials localhost via
