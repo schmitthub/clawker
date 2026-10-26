@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -93,7 +95,9 @@ func (m *Manager) Load() error {
 	// Clean up links to dead cgroups. Pinned links keep old programs alive
 	// and attached — for dead cgroups this is a resource leak; for live
 	// cgroups it's load-bearing enforcement that must survive CP restarts.
-	m.cleanupStaleLinks()
+	if _, err := m.cleanupStaleLinks(); err != nil {
+		m.log.Warn().Err(err).Msg("ebpf: stale link sweep skipped")
+	}
 
 	spec, err := loadClawker()
 	if err != nil {
@@ -232,10 +236,9 @@ func (m *Manager) OpenPinned() error {
 }
 
 // CleanupAllLinks removes ALL pinned link files from the pin directory.
-// Called by the daemon ONLY when no agent containers remain and the daemon
-// is shutting down — this ensures the next container start gets a clean
-// slate. Must NOT be called on health check failure, signal shutdown, or
-// CP restart, because agent containers may still be running with active
+// Called ONLY through FlushAll, when the operator turns the firewall off.
+// Must NOT be called on health check failure, signal shutdown, or CP
+// restart, because agent containers may still be running with active
 // enforcement.
 func (m *Manager) CleanupAllLinks() {
 	entries, err := os.ReadDir(m.pinPath)
@@ -264,36 +267,30 @@ func (m *Manager) CleanupAllLinks() {
 // upgrade that changes the value layout, that map is empty until the
 // FirewallInit sweep re-enrolls each agent; a sweep keyed on it would unpin
 // the links of live agents when a bringup fails before the re-enroll.
-func (m *Manager) cleanupStaleLinks() {
+//
+// It returns the cgroup IDs of the links it keeps. An error means the pin
+// directory could not be read, so the live set is unknown.
+func (m *Manager) cleanupStaleLinks() (map[uint64]struct{}, error) {
 	entries, err := os.ReadDir(m.pinPath)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("ebpf: reading pin directory %s: %w", m.pinPath, err)
 	}
 
+	live := make(map[uint64]struct{})
 	kept, cleaned := 0, 0
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "link_") {
 			continue
 		}
-		pin := filepath.Join(m.pinPath, e.Name())
-		l, lerr := link.LoadPinnedLink(pin, nil)
-		if lerr != nil {
-			if rmErr := os.Remove(pin); rmErr != nil {
-				m.log.Warn().Err(rmErr).Str("link", e.Name()).Msg("ebpf: removing unreadable link pin")
-			}
+		if !m.sweepLink(e.Name()) {
 			cleaned++
 			continue
 		}
-		if m.linkAttached(l, e.Name()) {
-			kept++
+		kept++
+		if id, ok := linkCgroupID(e.Name()); ok {
+			live[id] = struct{}{}
 		} else {
-			if unpinErr := l.Unpin(); unpinErr != nil {
-				m.log.Warn().Err(unpinErr).Str("link", e.Name()).Msg("ebpf: unpinning stale link")
-			}
-			cleaned++
-		}
-		if closeErr := l.Close(); closeErr != nil {
-			m.log.Warn().Err(closeErr).Str("link", e.Name()).Msg("ebpf: closing link")
+			m.log.Warn().Str("link", e.Name()).Msg("ebpf: link pin name has no cgroup ID")
 		}
 	}
 
@@ -301,6 +298,44 @@ func (m *Manager) cleanupStaleLinks() {
 		m.log.Info().Int("cleaned", cleaned).Int("kept", kept).
 			Msg("cleaned stale link pins from dead cgroups")
 	}
+	return live, nil
+}
+
+// sweepLink keeps one pinned link when its cgroup is live and removes it
+// otherwise. It reports whether the link was kept.
+func (m *Manager) sweepLink(name string) bool {
+	pin := filepath.Join(m.pinPath, name)
+	l, err := link.LoadPinnedLink(pin, nil)
+	if err != nil {
+		if rmErr := os.Remove(pin); rmErr != nil {
+			m.log.Warn().Err(rmErr).Str("link", name).Msg("ebpf: removing unreadable link pin")
+		}
+		return false
+	}
+	defer func() {
+		if closeErr := l.Close(); closeErr != nil {
+			m.log.Warn().Err(closeErr).Str("link", name).Msg("ebpf: closing link")
+		}
+	}()
+	if m.linkAttached(l, name) {
+		return true
+	}
+	if unpinErr := l.Unpin(); unpinErr != nil {
+		m.log.Warn().Err(unpinErr).Str("link", name).Msg("ebpf: unpinning stale link")
+	}
+	return false
+}
+
+// linkCgroupID parses the cgroup ID from a link pin name
+// (link_<program>_<cgroupID>). Program names can contain '_', so the ID is
+// the text after the last '_'.
+func linkCgroupID(name string) (uint64, bool) {
+	_, idText, ok := strings.CutLast(name, "_")
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseUint(idText, 10, 64)
+	return id, err == nil
 }
 
 // linkAttached reports whether a pinned cgroup link is still attached to a
@@ -390,127 +425,94 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 
 // FlushAll clears all per-container/per-flow eBPF state: empties
 // container_map, bypass_map, ratelimit_state, udp_flow_map, and
-// ratelimit_drops, then unpins every link. Called ONLY on drain-to-zero
-// shutdown (INV-B2-007) when no agents remain — this is the drain
-// complement to CleanupAllLinks, which only touches pinned links.
+// ratelimit_drops, then unpins every link. Called ONLY by FirewallRemove
+// (`firewall down`), where the operator turns enforcement off. The CP drain
+// calls FlushDead instead, so agents that outlive the CP stay enrolled.
 //
 // After FlushAll, the BPF maps contain no entries but the programs
-// themselves stay loaded until Close is called; the caller drives the
-// final teardown order (typically: FlushAll → Close).
+// themselves stay loaded until Close is called.
 //
 // Returns a joined error surfacing all per-entry failures.
 func (m *Manager) FlushAll() error {
-	var errs []error
-
-	if m.objs.ContainerMap != nil {
-		var keys []uint64
-		var key uint64
-		var val clawkerContainerConfig
-		iter := m.objs.ContainerMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate container_map: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.ContainerMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush container_map[%d]: %w", id, err))
-			}
-		}
-	}
-
-	if m.objs.BypassMap != nil {
-		var keys []uint64
-		var key uint64
-		var val uint8
-		iter := m.objs.BypassMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate bypass_map: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush bypass_map[%d]: %w", id, err))
-			}
-		}
-	}
-
-	// Drain ratelimit_state so a CP restart leaves each cgroup starting from
-	// a full token bucket — matches drain-to-zero semantics for the other
-	// per-cgroup maps. LRU eviction would eventually do this, but explicit
-	// drain keeps the post-drain state deterministic.
-	if m.objs.RatelimitState != nil {
-		var keys []uint64
-		var key uint64
-		var val clawkerRatelimitStateVal
-		iter := m.objs.RatelimitState.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate ratelimit_state: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.RatelimitState.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush ratelimit_state[%d]: %w", id, err))
-			}
-		}
-	}
-
-	// Drain udp_flow_map (UDP reverse-NAT state). LRU eviction would eventually
-	// clear it, but draining on drain-to-zero keeps the post-drain state
-	// deterministic alongside the other per-flow maps.
-	if m.objs.UdpFlowMap != nil {
-		var keys []clawkerUdpFlowKey
-		var key clawkerUdpFlowKey
-		var val clawkerUdpFlowVal
-		iter := m.objs.UdpFlowMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate udp_flow_map: %w", err))
-		}
-		for _, k := range keys {
-			if err := m.objs.UdpFlowMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(
-					errs,
-					fmt.Errorf("flush udp_flow_map[cookie=%d,backend_port=%d]: %w", k.Cookie, k.BackendPort, err),
-				)
-			}
-		}
-	}
-
-	// Drain ratelimit_drops so per-cgroup drop counters reset on CP restart.
-	// Unlike ratelimit_state, ratelimit_drops is a plain BPF_MAP_TYPE_HASH
-	// with no eviction — without this drain, drop counts from previous CP
-	// lifetimes would accumulate indefinitely up to max_entries=256.
-	// Operators expect "since the current CP started" semantics; carrying
-	// stale counts across restarts would misattribute drops to fresh
-	// containers reusing recycled cgroup IDs.
-	if m.objs.RatelimitDrops != nil {
-		var keys []uint64
-		var key uint64
-		var val uint64
-		iter := m.objs.RatelimitDrops.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate ratelimit_drops: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.RatelimitDrops.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush ratelimit_drops[%d]: %w", id, err))
-			}
-		}
-	}
-
+	errs := m.flushMaps(func(uint64) bool { return false })
 	m.CleanupAllLinks()
 	return errors.Join(errs...)
+}
+
+// FlushDead clears the eBPF state of cgroups that no longer exist and keeps
+// live cgroups enrolled. Called by the CP drain (INV-B2-007). A live agent
+// keeps its links and its container_map row, so after the drain stops Envoy
+// and CoreDNS its egress has nowhere to go: it fails closed until the next
+// CP re-enrolls it. Emptying container_map here would make the BPF programs
+// pass the agent through, and its traffic would leave through the network
+// gateway with no enforcement.
+//
+// bypass_map is emptied for every cgroup: the bypass dead-man timers stop
+// with the CP, and a bypass with no timer would never expire.
+// ratelimit_state, udp_flow_map, and ratelimit_drops are emptied as in
+// FlushAll.
+//
+// Returns a joined error surfacing all per-entry failures.
+func (m *Manager) FlushDead() error {
+	live, err := m.cleanupStaleLinks()
+	if err != nil {
+		// The live set is unknown: keep every container_map row.
+		errs := append([]error{err}, m.flushMaps(func(uint64) bool { return true })...)
+		return errors.Join(errs...)
+	}
+	errs := m.flushMaps(func(id uint64) bool {
+		_, ok := live[id]
+		return ok
+	})
+	return errors.Join(errs...)
+}
+
+// flushMaps empties the per-container and per-flow maps. keepContainer
+// selects the container_map rows to keep; every other map is emptied.
+func (m *Manager) flushMaps(keepContainer func(cgroupID uint64) bool) []error {
+	return slices.Concat(
+		flushMap[uint64, clawkerContainerConfig](m.objs.ContainerMap, "container_map", keepContainer),
+		flushMap[uint64, uint8](m.objs.BypassMap, "bypass_map", nil),
+		// A CP restart starts each cgroup from a full token bucket. LRU
+		// eviction would do this later; the flush makes the state
+		// deterministic.
+		flushMap[uint64, clawkerRatelimitStateVal](m.objs.RatelimitState, "ratelimit_state", nil),
+		// UDP reverse-NAT state. LRU eviction would clear it later; the
+		// flush makes the state deterministic alongside the other
+		// per-flow maps.
+		flushMap[clawkerUdpFlowKey, clawkerUdpFlowVal](m.objs.UdpFlowMap, "udp_flow_map", nil),
+		// ratelimit_drops is a plain HASH with no eviction. Without the
+		// flush, drop counts from earlier CP lifetimes would accumulate and
+		// be attributed to new containers that reuse a cgroup ID.
+		flushMap[uint64, uint64](m.objs.RatelimitDrops, "ratelimit_drops", nil),
+	)
+}
+
+// flushMap deletes every entry of m whose key keep does not select. A nil
+// keep deletes every entry. A nil map is a no-op.
+func flushMap[K comparable, V any](m *ebpf.Map, name string, keep func(K) bool) []error {
+	if m == nil {
+		return nil
+	}
+	var errs []error
+	var keys []K
+	var key K
+	var val V
+	iter := m.Iterate()
+	for iter.Next(&key, &val) {
+		if keep == nil || !keep(key) {
+			keys = append(keys, key)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("iterate %s: %w", name, err))
+	}
+	for _, k := range keys {
+		if err := m.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			errs = append(errs, fmt.Errorf("flush %s[%+v]: %w", name, k, err))
+		}
+	}
+	return errs
 }
 
 // Close detaches all links and closes all programs and maps.
