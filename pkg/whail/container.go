@@ -52,6 +52,8 @@ type ContainerStartOptions struct {
 
 // ContainerCreate creates a container with managed labels automatically applied.
 // If EnsureNetwork is specified, the network is created (if needed) and the container is connected to it.
+// When HostConfig.NetworkMode is empty, the ensured network also becomes the network mode, so the
+// daemon does not attach its default bridge as an additional network.
 // Does not mutate the caller's config - creates an internal copy.
 func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOptions) (client.ContainerCreateResult, error) {
 	// Copy the config to avoid mutating caller's struct.
@@ -63,6 +65,7 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 
 	// Handle EnsureNetwork if specified - creates network if needed and adds container to it
 	networkingConfig := opts.NetworkingConfig
+	hostConfig := opts.HostConfig
 	if opts.EnsureNetwork != nil {
 		networkID, err := e.EnsureNetwork(ctx, *opts.EnsureNetwork)
 		if err != nil {
@@ -86,6 +89,15 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 		networkingConfig.EndpointsConfig[opts.EnsureNetwork.Name] = &network.EndpointSettings{
 			NetworkID: networkID,
 		}
+
+		if hostConfig == nil || hostConfig.NetworkMode == "" {
+			var hc container.HostConfig
+			if hostConfig != nil {
+				hc = *hostConfig
+			}
+			hc.NetworkMode = container.NetworkMode(opts.EnsureNetwork.Name)
+			hostConfig = &hc
+		}
 	}
 
 	// Merge labels into the copy: base managed + config + extra + user-provided
@@ -101,7 +113,7 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 	sdkOpts := client.ContainerCreateOptions{
 		Name:             opts.Name,
 		Config:           configCopy,
-		HostConfig:       opts.HostConfig,
+		HostConfig:       hostConfig,
 		NetworkingConfig: networkingConfig,
 		Platform:         opts.Platform,
 	}
