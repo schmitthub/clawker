@@ -1857,6 +1857,15 @@ func TestContainerCreateWithEnsureNetwork(t *testing.T) {
 					t.Errorf("Container is not connected to network %q, connected to: %v",
 						tt.networkName, getNetworkNames(inspect.Container.NetworkSettings.Networks))
 				}
+				// The ensured network is the primary network: the daemon must not
+				// also attach its default bridge.
+				if n := len(inspect.Container.NetworkSettings.Networks); n != 1 {
+					t.Errorf("Container should be on exactly 1 network, got %d: %v",
+						n, getNetworkNames(inspect.Container.NetworkSettings.Networks))
+				}
+				if got := string(inspect.Container.HostConfig.NetworkMode); got != tt.networkName {
+					t.Errorf("NetworkMode = %q, want %q", got, tt.networkName)
+				}
 			}
 		})
 	}
@@ -1882,6 +1891,7 @@ func TestContainerCreateEnsureNetworkDoesNotMutateCaller(t *testing.T) {
 		},
 	}
 	originalMapLen := len(originalConfig.EndpointsConfig)
+	originalHostConfig := &container.HostConfig{}
 
 	// Create container with EnsureNetwork and existing NetworkingConfig
 	resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
@@ -1889,6 +1899,7 @@ func TestContainerCreateEnsureNetworkDoesNotMutateCaller(t *testing.T) {
 			Image: testImageTag,
 			Cmd:   []string{"sleep", "300"},
 		},
+		HostConfig:       originalHostConfig,
 		NetworkingConfig: originalConfig,
 		Name:             containerName,
 		EnsureNetwork: &EnsureNetworkOptions{
@@ -1912,6 +1923,10 @@ func TestContainerCreateEnsureNetworkDoesNotMutateCaller(t *testing.T) {
 	// Verify the new network is NOT in the original config
 	if _, ok := originalConfig.EndpointsConfig[networkName]; ok {
 		t.Errorf("Original NetworkingConfig should not contain %q", networkName)
+	}
+
+	if originalHostConfig.NetworkMode != "" {
+		t.Errorf("Original HostConfig was mutated: NetworkMode = %q", originalHostConfig.NetworkMode)
 	}
 }
 

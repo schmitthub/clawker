@@ -173,6 +173,6 @@ Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and
 2. All mutating operations verify managed label before proceeding
 3. List operations auto-inject managed filter — only managed resources returned
 4. Config structs are copied internally — caller state never mutated
-5. `EnsureNetwork` creates-if-not-exists, idempotent on already-connected containers
+5. `EnsureNetwork` creates-if-not-exists, idempotent on already-connected containers. On `ContainerCreate` with an empty `HostConfig.NetworkMode`, the ensured network also becomes the network mode, so the daemon does not attach its default bridge
 6. `IsContainerManaged()` returns `(false, nil)` for a container that does not exist; it is not an error. Every mutating method checks it first, and unmanaged containers get `ErrContainerNotManaged` or `ErrContainerNotFound` depending on the method
 7. Channel-based methods (`ContainerWait`) return a nil response channel for unmanaged containers and use buffered error channels
