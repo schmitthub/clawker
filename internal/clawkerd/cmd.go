@@ -268,7 +268,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	}
 
 	// Agent telemetry relay: the SDK exports to this loopback OTLP/HTTP
-	// listener and clawkerd carries each batch to AgentService.Export
+	// listener and clawkerd carries each batch to AgentService.ExportTelemetry
 	// over its leaf. Optional subsystem: a missing CP address or bad
 	// material degrades to nil (event=otlp_relay_unavailable) and the
 	// daemon continues. Stopped after the child exits (the child is the

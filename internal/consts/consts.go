@@ -648,7 +648,7 @@ const (
 	// AgentOTLPRelayAddr is the loopback address clawkerd's OTLP/HTTP
 	// relay listens on inside the agent container. The agent SDK
 	// exports there; clawkerd carries each batch to
-	// AgentService.Export over its mTLS leaf. Port 4318 is the
+	// AgentService.ExportTelemetry over its mTLS leaf. Port 4318 is the
 	// OTLP/HTTP default so an SDK with no endpoint env still finds it.
 	AgentOTLPRelayAddr = Localhost + ":4318"
 	// AgentOTLPRelayURL is the OTEL_EXPORTER_OTLP_ENDPOINT value baked
