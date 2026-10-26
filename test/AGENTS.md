@@ -61,7 +61,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 
 | Function | Signature | Purpose |
 |----------|-----------|---------|
-| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, registers cleanup |
+| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, links the real `~/.docker/cli-plugins` into the empty isolated `DOCKER_CONFIG` (Docker Desktop keeps `docker compose` only there), registers cleanup |
 | `Chdir` | `(r *SetupResult) Chdir(t, dir)` | Changes working directory with cleanup to restore |
 | `Run` | `(h *Harness) Run(args ...string) *RunResult` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer` | `(h *Harness) RunInContainer(agent, cmd...) *RunResult` | `container run --rm --agent <agent> @ <cmd>` |
