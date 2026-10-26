@@ -25,19 +25,19 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// fakeExport stands in for the CP's AgentService on the relay's
-// outbound side and records every Export call.
-type fakeExport struct {
+// fakeTelemetryExport stands in for the CP's AgentService on the relay's
+// outbound side and records every ExportTelemetry call.
+type fakeTelemetryExport struct {
 	mu    sync.Mutex
-	calls []*agentv1.ExportRequest
+	calls []*agentv1.ExportTelemetryRequest
 	err   error
 	// sawDeadline records whether the relay bounded the forward.
 	sawDeadline bool
 }
 
-func (f *fakeExport) Export(
-	ctx context.Context, in *agentv1.ExportRequest, _ ...grpc.CallOption,
-) (*agentv1.ExportResult, error) {
+func (f *fakeTelemetryExport) ExportTelemetry(
+	ctx context.Context, in *agentv1.ExportTelemetryRequest, _ ...grpc.CallOption,
+) (*agentv1.ExportTelemetryResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	_, f.sawDeadline = ctx.Deadline()
@@ -45,18 +45,18 @@ func (f *fakeExport) Export(
 	if f.err != nil {
 		return nil, f.err
 	}
-	return new(agentv1.ExportResult), nil
+	return new(agentv1.ExportTelemetryResult), nil
 }
 
-func (f *fakeExport) requests() []*agentv1.ExportRequest {
+func (f *fakeTelemetryExport) requests() []*agentv1.ExportTelemetryRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]*agentv1.ExportRequest(nil), f.calls...)
+	return append([]*agentv1.ExportTelemetryRequest(nil), f.calls...)
 }
 
 // newTestRelay starts a relay on an ephemeral loopback port and returns
 // its base URL.
-func newTestRelay(t *testing.T, fake *fakeExport) string {
+func newTestRelay(t *testing.T, fake *fakeTelemetryExport) string {
 	t.Helper()
 	relay, err := newOTLPRelay(t.Context(), consts.Localhost+":0", fake, logger.Nop())
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestOTLPRelay_ForwardsEachSignal(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			fake := new(fakeExport)
+			fake := new(fakeTelemetryExport)
 			base := newTestRelay(t, fake)
 			body := []byte("otlp-" + tc.path)
 
@@ -137,7 +137,7 @@ func TestOTLPRelay_ForwardsEachSignal(t *testing.T) {
 
 // TestOTLPRelay_RejectsBeforeForward: client faults never reach the CP.
 func TestOTLPRelay_RejectsBeforeForward(t *testing.T) {
-	oversize := make([]byte, agentv1.ExportMaxBodyBytes+1)
+	oversize := make([]byte, agentv1.ExportTelemetryMaxBodyBytes+1)
 	cases := []struct {
 		name   string
 		method string
@@ -168,7 +168,7 @@ func TestOTLPRelay_RejectsBeforeForward(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := new(fakeExport)
+			fake := new(fakeTelemetryExport)
 			base := newTestRelay(t, fake)
 			res := send(t, tc.method, base+tc.path, tc.body, tc.hdr)
 			assert.Equal(t, tc.want, res.StatusCode)
@@ -180,13 +180,13 @@ func TestOTLPRelay_RejectsBeforeForward(t *testing.T) {
 // TestOTLPRelay_BodyAtCapAccepted pins the boundary the handler and
 // the CP listener share.
 func TestOTLPRelay_BodyAtCapAccepted(t *testing.T) {
-	fake := new(fakeExport)
+	fake := new(fakeTelemetryExport)
 	base := newTestRelay(t, fake)
-	body := make([]byte, agentv1.ExportMaxBodyBytes)
+	body := make([]byte, agentv1.ExportTelemetryMaxBodyBytes)
 	res := post(t, base, "/v1/metrics", body)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	require.Len(t, fake.requests(), 1)
-	assert.Len(t, fake.requests()[0].GetBody(), agentv1.ExportMaxBodyBytes)
+	assert.Len(t, fake.requests()[0].GetBody(), agentv1.ExportTelemetryMaxBodyBytes)
 }
 
 // TestOTLPRelay_StalledUploadClosed: a client that sends the headers and
@@ -194,7 +194,7 @@ func TestOTLPRelay_BodyAtCapAccepted(t *testing.T) {
 // goroutine and its body buffer) past the read timeout.
 func TestOTLPRelay_StalledUploadClosed(t *testing.T) {
 	t.Parallel()
-	fake := new(fakeExport)
+	fake := new(fakeTelemetryExport)
 	base := newTestRelay(t, fake)
 	var d net.Dialer
 	conn, err := d.DialContext(t.Context(), "tcp", strings.TrimPrefix(base, "http://"))
@@ -219,7 +219,7 @@ func TestOTLPRelay_StalledUploadClosed(t *testing.T) {
 // compressed body cannot expand past the wire cap.
 func TestOTLPRelay_Encodings(t *testing.T) {
 	t.Run("identity forwarded", func(t *testing.T) {
-		fake := new(fakeExport)
+		fake := new(fakeTelemetryExport)
 		base := newTestRelay(t, fake)
 		plain := []byte("identity-bytes")
 		res := send(t, http.MethodPost, base+"/v1/logs", plain, http.Header{"Content-Encoding": {"identity"}})
@@ -228,7 +228,7 @@ func TestOTLPRelay_Encodings(t *testing.T) {
 		assert.Equal(t, plain, fake.requests()[0].GetBody())
 	})
 	t.Run("gzip decoded body forwarded", func(t *testing.T) {
-		fake := new(fakeExport)
+		fake := new(fakeTelemetryExport)
 		base := newTestRelay(t, fake)
 		plain := []byte("plain-otlp-bytes")
 		res := send(t, http.MethodPost, base+"/v1/traces", gzipBytes(t, plain), gzipHeader())
@@ -237,10 +237,10 @@ func TestOTLPRelay_Encodings(t *testing.T) {
 		assert.Equal(t, plain, fake.requests()[0].GetBody())
 	})
 	t.Run("decoded size over cap", func(t *testing.T) {
-		fake := new(fakeExport)
+		fake := new(fakeTelemetryExport)
 		base := newTestRelay(t, fake)
-		bomb := gzipBytes(t, make([]byte, agentv1.ExportMaxBodyBytes+1))
-		require.Less(t, len(bomb), agentv1.ExportMaxBodyBytes, "compressed input must fit the wire cap")
+		bomb := gzipBytes(t, make([]byte, agentv1.ExportTelemetryMaxBodyBytes+1))
+		require.Less(t, len(bomb), agentv1.ExportTelemetryMaxBodyBytes, "compressed input must fit the wire cap")
 		res := send(t, http.MethodPost, base+"/v1/logs", bomb, gzipHeader())
 		assert.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 		assert.Empty(t, fake.requests())
@@ -270,7 +270,7 @@ func TestOTLPRelay_StatusMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := new(fakeExport)
+			fake := new(fakeTelemetryExport)
 			fake.err = tc.err
 			base := newTestRelay(t, fake)
 			res := post(t, base, "/v1/logs", []byte("x"))
@@ -290,7 +290,7 @@ func TestOTLPRelay_StatusMapping(t *testing.T) {
 func TestOTLPRelay_RejectionLog(t *testing.T) {
 	t.Run("cp unavailable logs once per interval", func(t *testing.T) {
 		var buf bytes.Buffer
-		fake := new(fakeExport)
+		fake := new(fakeTelemetryExport)
 		fake.err = status.Error(codes.Unavailable, "cp down")
 		relay, err := newOTLPRelay(t.Context(), consts.Localhost+":0", fake, logger.NewWriter(&buf))
 		require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestOTLPRelay_RejectionLog(t *testing.T) {
 	})
 	t.Run("cp verdict logs rejected", func(t *testing.T) {
 		var buf bytes.Buffer
-		fake := new(fakeExport)
+		fake := new(fakeTelemetryExport)
 		fake.err = status.Error(codes.PermissionDenied, "unregistered")
 		relay, err := newOTLPRelay(t.Context(), consts.Localhost+":0", fake, logger.NewWriter(&buf))
 		require.NoError(t, err)
