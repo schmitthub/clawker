@@ -1,8 +1,10 @@
 package firewall
 
 import (
+	"net"
 	"net/netip"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -240,7 +242,6 @@ func assertNoBindTarget(t *testing.T, mounts []mount.Mount, target string) {
 // publishes nothing there.
 func TestContainerSpecs_InfraTelemetryTargetsCollector(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 	overrideHostPathsForTest(t, consts.DataDir())
 
 	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
@@ -251,5 +252,9 @@ func TestContainerSpecs_InfraTelemetryTargetsCollector(t *testing.T) {
 	netInfo.CoreDNSIP = "172.20.0.3"
 
 	coredns := s.corednsContainerSpec(&netInfo)
-	require.Contains(t, coredns.env, consts.EnvCoreDNSOtelEndpoint+"="+consts.MonitoringServiceOtelCollector+":4319")
+	wantEndpoint := net.JoinHostPort(
+		consts.MonitoringServiceOtelCollector,
+		strconv.Itoa(consts.MonitoringOtelInfraPort),
+	)
+	require.Contains(t, coredns.env, consts.EnvCoreDNSOtelEndpoint+"="+wantEndpoint)
 }

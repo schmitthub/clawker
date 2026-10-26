@@ -24,6 +24,18 @@ const (
 	MonitoringServiceOpenSearchDashboards = "opensearch-dashboards"
 )
 
+// Collector mTLS receiver ports on [TelemetryNetwork]. Neither receiver
+// is published on the host, so the ports cannot collide with a host
+// service and are not user settings.
+const (
+	// MonitoringOtelInfraPort is the otlp/infra receiver: the CP, Envoy,
+	// and CoreDNS push their own telemetry here.
+	MonitoringOtelInfraPort = 4319
+	// MonitoringOtelAgentIngestPort is the otlp/agents receiver: the CP
+	// gateway forwards agent telemetry here.
+	MonitoringOtelAgentIngestPort = 4320
+)
+
 // ResolveOTLPEndpoint reads the standard OTLP endpoint env vars (the
 // logs-signal override [EnvOTLPLogsEndpoint] taking precedence over the
 // base [EnvOTLPEndpoint]) and normalises the value to the host:port form

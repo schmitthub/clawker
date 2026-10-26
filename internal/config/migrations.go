@@ -94,6 +94,8 @@ var legacyMonitoringKeys = []string{
 	"grafana_port",
 	"otel_collector_internal",
 	"otel_collector_endpoint",
+	"otel_cp_port",
+	"otel_infra_port",
 }
 
 // migrateRemoveLegacyMonitoringKeys strips removed monitoring keys
@@ -112,14 +114,6 @@ func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error)
 	if !slices.Contains(s.Keys(), keyMonitoring) {
 		return false, nil
 	}
-	changed := false
-
-	renamed, err := migrateOtelCPPort(s)
-	if err != nil {
-		return false, err
-	}
-	changed = changed || renamed
-
 	var removed []string
 	for _, key := range legacyMonitoringKeys {
 		v, gErr := storage.Get[any](s, keyMonitoring, key)
@@ -135,7 +129,7 @@ func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error)
 		}
 	}
 	if len(removed) == 0 {
-		return changed, nil
+		return false, nil
 	}
 	sort.Strings(removed)
 	s.Noticef("%s", legacyMonitoringNoticeText(s.MigratingLayerPath(), removed))
@@ -151,42 +145,11 @@ func legacyMonitoringNoticeText(path string, removed []string) string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	b.WriteString("These keys reference services that no longer ship (Loki/Jaeger/Grafana) or have\n")
-	b.WriteString("been renamed; the values above are dropped. See `clawker monitor init` to scaffold\n")
-	b.WriteString("the OpenSearch + Prometheus stack with the current settings surface.\n")
+	b.WriteString("These keys reference services that no longer ship (Loki/Jaeger/Grafana) or ports\n")
+	b.WriteString("that are no longer configurable; the values above are dropped. See\n")
+	b.WriteString("`clawker monitor init` to scaffold the OpenSearch + Prometheus stack with the\n")
+	b.WriteString("current settings surface.\n")
 	return b.String()
-}
-
-// migrateOtelCPPort renames the legacy monitoring.otel_cp_port to
-// monitoring.otel_infra_port, carrying the value forward when only the legacy
-// key is set and warning + dropping on collision.
-func migrateOtelCPPort(s *storage.Store[Settings]) (bool, error) {
-	old, err := storage.Get[any](s, keyMonitoring, "otel_cp_port")
-	if err != nil {
-		if errors.Is(err, storage.ErrKeyNotFound) {
-			return false, nil
-		}
-		return false, fmt.Errorf("reading monitoring.otel_cp_port: %w", err)
-	}
-	if rErr := s.Remove(keyMonitoring, "otel_cp_port"); rErr != nil {
-		return false, fmt.Errorf("removing monitoring.otel_cp_port: %w", rErr)
-	}
-	if slices.Contains(s.Keys(keyMonitoring), "otel_infra_port") {
-		s.Noticef(
-			"warning: %s: both monitoring.otel_cp_port (%v) and monitoring.otel_infra_port present; keeping otel_infra_port, dropping otel_cp_port",
-			s.MigratingLayerPath(),
-			old,
-		)
-		return true, nil
-	}
-	if sErr := s.Set([]string{keyMonitoring, "otel_infra_port"}, old); sErr != nil {
-		return false, fmt.Errorf("setting monitoring.otel_infra_port: %w", sErr)
-	}
-	s.Noticef(
-		"notice: %s: monitoring.otel_cp_port renamed to monitoring.otel_infra_port; carried value %v forward",
-		s.MigratingLayerPath(), old,
-	)
-	return true, nil
 }
 
 // legacyUseHostAuthKey is the deleted host-credential-copy toggle: host
