@@ -86,18 +86,27 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 			}
 			networkingConfig = &nc
 		}
-		networkingConfig.EndpointsConfig[opts.EnsureNetwork.Name] = &network.EndpointSettings{
-			NetworkID: networkID,
-		}
+		var endpoint network.EndpointSettings
 
-		if hostConfig == nil || hostConfig.NetworkMode == "" {
+		if hostConfig == nil || hostConfig.NetworkMode == "" || hostConfig.NetworkMode.IsDefault() {
 			var hc container.HostConfig
 			if hostConfig != nil {
 				hc = *hostConfig
 			}
 			hc.NetworkMode = container.NetworkMode(opts.EnsureNetwork.Name)
 			hostConfig = &hc
+
+			// The "default" endpoint names the network mode. The ensured network is now the
+			// network mode, so its settings move to the ensured network.
+			if def, ok := networkingConfig.EndpointsConfig[network.NetworkDefault]; ok {
+				if def != nil {
+					endpoint = *def
+				}
+				delete(networkingConfig.EndpointsConfig, network.NetworkDefault)
+			}
 		}
+		endpoint.NetworkID = networkID
+		networkingConfig.EndpointsConfig[opts.EnsureNetwork.Name] = &endpoint
 	}
 
 	// Merge labels into the copy: base managed + config + extra + user-provided

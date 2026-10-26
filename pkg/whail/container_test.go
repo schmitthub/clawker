@@ -1871,6 +1871,63 @@ func TestContainerCreateWithEnsureNetwork(t *testing.T) {
 	}
 }
 
+// TestContainerCreateEnsureNetworkReplacesDefaultEndpoint sends the request the clawker CLI sends
+// when no --network flag is set: an endpoint under the "default" key. The container must start on
+// the ensured network only.
+func TestContainerCreateEnsureNetworkReplacesDefaultEndpoint(t *testing.T) {
+	ctx := context.Background()
+
+	networkName := generateNetworkName("test-ensure-net-default-ep")
+	containerName := generateContainerName("test-create-ensure-net-default-ep")
+
+	callerNetworking := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"default": {},
+		},
+	}
+	resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+		Config: &container.Config{
+			Image: testImageTag,
+			Cmd:   []string{"sleep", "300"},
+		},
+		HostConfig:       &container.HostConfig{},
+		NetworkingConfig: callerNetworking,
+		Name:             containerName,
+		EnsureNetwork:    &EnsureNetworkOptions{Name: networkName},
+	})
+	if err != nil {
+		t.Fatalf("ContainerCreate with EnsureNetwork failed: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := testEngine.APIClient.ContainerRemove(cleanupCtx, resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+			t.Logf("remove container: %v", err)
+		}
+		if _, err := testEngine.NetworkRemove(cleanupCtx, networkName); err != nil {
+			t.Logf("remove network: %v", err)
+		}
+	})
+
+	if _, err := testEngine.ContainerStart(ctx, ContainerStartOptions{ContainerID: resp.ID}); err != nil {
+		t.Fatalf("ContainerStart failed: %v", err)
+	}
+
+	inspect, err := testEngine.APIClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatalf("Failed to inspect container: %v", err)
+	}
+	networks := inspect.Container.NetworkSettings.Networks
+	if len(networks) != 1 {
+		t.Fatalf("Container should be on exactly 1 network, got %d: %v", len(networks), getNetworkNames(networks))
+	}
+	if _, ok := networks[networkName]; !ok {
+		t.Fatalf("Container is not connected to network %q, connected to: %v", networkName, getNetworkNames(networks))
+	}
+	if _, ok := callerNetworking.EndpointsConfig["default"]; !ok || len(callerNetworking.EndpointsConfig) != 1 {
+		t.Errorf("caller NetworkingConfig was mutated: %v", callerNetworking.EndpointsConfig)
+	}
+}
+
 func TestContainerCreateEnsureNetworkDoesNotMutateCaller(t *testing.T) {
 	ctx := context.Background()
 
