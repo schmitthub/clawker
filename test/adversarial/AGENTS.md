@@ -13,7 +13,7 @@ Red team infrastructure for testing clawker's security boundaries. The primary w
 │  │                   │    │                      │  │
 │  │ HTTPS :8443       │◄───│  Agent attempts      │  │
 │  │ HTTPS :9443       │    │  exfiltration via     │  │
-│  │ WS/WSS :443/8443  │    │  curl, nc, dig,      │  │
+│  │ WS/WSS :8443      │    │  curl, nc, dig,      │  │
 │  │ HTTP  :8080       │    │  python, websocat,    │  │
 │  │ UDP   :5353       │    │  etc.                 │  │
 │  │ ICMP  raw         │    │                      │  │
@@ -21,15 +21,15 @@ Red team infrastructure for testing clawker's security boundaries. The primary w
 │  │ SQLite capture DB │    │  attempts from chat   │  │
 │  └───────────────────┘    └──────────────────────┘  │
 │                                                     │
-│  clawker-net (external bridge network)              │
-│                                                     │
+│  C2 network: clawker-adversarial (no agents on it)  │
+│  Agent -> eBPF -> CoreDNS/Envoy -> C2 host ports    │
 │  Host Proxy (:18374) — also an attack surface       │
 └─────────────────────────────────────────────────────┘
 ```
 
 1. Operator starts the C2: `docker compose up -d`
-2. Operator starts a clawker container and connects it to the testnet
-3. Operator tells the agent where to send data (C2 hostname/port)
+2. Operator starts a clawker container. Do not attach it to the C2 network: the only path is the egress stack
+3. Operator tells the agent where to send data (the C2's public ngrok edge; add a firewall rule for each lane under test)
 4. Agent attempts exfiltration using various techniques
 5. Operator checks the C2 capture DB to see what got through
 
@@ -102,8 +102,8 @@ The C2 auto-decodes captured data based on the test ID's spec:
 cd test/adversarial
 docker compose up -d
 
-# Connect a running clawker container to the testnet
-docker network connect clawker-net <clawker-container-name>
+# Expose the C2 host ports through ngrok, then start a clawker container.
+# Traffic goes through eBPF -> CoreDNS/Envoy; allow a lane with a firewall rule.
 
 # Now in the clawker container session, try exfil...
 # The operator tells the agent what to attempt and where to send it
@@ -174,8 +174,8 @@ C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
 Behavioral tests for the eBPF→Envoy transport routing of opaque `tcp`/`udp`
 egress rules. Same rule as all egress UAT: **clawker-net is an eBPF allowlist**
 (Envoy, CoreDNS:53, CP agent + Hydra ports only), so the dst must be the
-**public ngrok edge**, never the C2's clawker-net IP — that one is denied in
-the kernel.
+**public ngrok edge**. The C2 is not on clawker-net; it listens only on host
+ports.
 Route projection is **FQDN-only** (IP dsts have no `dns_cache` entry to key the
 `route_map` lookup), so rules must target a hostname.
 
@@ -209,7 +209,7 @@ edge** → host `:7777`; raw UDP via an ngrok **UDP** tunnel → host `:5454`
 test/adversarial/
 ├── CLAUDE.md                    # This file
 ├── Dockerfile                   # Multi-stage Go build for C2 server
-├── compose.yml                  # Docker Compose (attacker on testnet)
+├── compose.yml                  # Docker Compose (attacker on its own network)
 ├── attacker-server/
 │   ├── go.mod                   # go module + sqlite deps
 │   ├── go.sum
