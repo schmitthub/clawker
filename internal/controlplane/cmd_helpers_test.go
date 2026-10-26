@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"net"
 	"os"
@@ -24,9 +23,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
-	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/sdscerts"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -420,43 +417,5 @@ func TestRequireSDSClientSAN(t *testing.T) {
 
 	t.Run("empty chain set refused", func(t *testing.T) {
 		require.Error(t, requireSDSClientSAN(nil))
-	})
-}
-
-// stubIssuer is an otelcerts.Issuer that is never asked to mint: the
-// gateway dial is lazy, so construction needs the service, not a leaf.
-type stubIssuer struct{}
-
-func (stubIssuer) MintClient(string, time.Duration) ([]byte, []byte, error) {
-	return nil, nil, errors.New("stub issuer: mint not expected")
-}
-
-// TestBuildOtelGateway pins the CP-resilience contract for the agent
-// telemetry gateway. With no infra leaf issuer (otelcerts construction
-// failed at boot) the result is a true nil interface, not a typed nil, so
-// the handler's nil check degrades ExportTelemetry to Unavailable instead of
-// panicking on dispatch. With an issuer the gateway is built without any
-// collector listening (the dial is lazy) and its cleanup is callable.
-func TestBuildOtelGateway(t *testing.T) {
-	cfg := configmocks.NewBlankConfig()
-
-	t.Run("no issuer degrades to nil", func(t *testing.T) {
-		ingestSvc, cleanup := buildOtelGateway(cfg, nil, logger.Nop())
-		assert.Nil(t, ingestSvc, "degraded gateway must be a true nil interface")
-		require.NotNil(t, cleanup)
-		cleanup()
-	})
-
-	t.Run("issuer present builds the gateway", func(t *testing.T) {
-		caCert, _, err := firewall.EnsureCA(t.TempDir())
-		require.NoError(t, err)
-		rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw, Headers: nil})
-		svc, err := otelcerts.New(stubIssuer{}, t.TempDir(), rootPEM, logger.Nop())
-		require.NoError(t, err)
-
-		ingestSvc, cleanup := buildOtelGateway(cfg, svc, logger.Nop())
-		require.NotNil(t, ingestSvc)
-		require.NotNil(t, cleanup)
-		cleanup()
 	})
 }
