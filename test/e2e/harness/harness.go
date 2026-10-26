@@ -121,18 +121,29 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		opts.ProjectDir = "testproject"
 	}
 
-	// Docker CLI plugin discovery (`docker compose`) and registry auth live
-	// under the real user's ~/.docker. testenv re-points HOME at the temp
-	// base, which would silently strip the compose plugin from the monitor
-	// verbs — pin DOCKER_CONFIG to the real location first, unless the
-	// caller already set one.
-	if os.Getenv("DOCKER_CONFIG") == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			h.T.Setenv("DOCKER_CONFIG", filepath.Join(home, ".docker"))
-		}
+	// Read before testenv re-points HOME at the temp base.
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		h.T.Fatalf("harness: resolving home dir: %v", err)
 	}
 
 	env := testenv.New(h.T)
+
+	// testenv points DOCKER_CONFIG at an empty directory, so the docker CLI
+	// does not find the plugins under the user's ~/.docker. Docker Desktop
+	// installs `docker compose` only there. Link the plugin directory into
+	// the isolated config so the monitor verbs keep compose. Contexts and
+	// credentials stay isolated.
+	plugins := filepath.Join(realHome, ".docker", "cli-plugins")
+	_, statErr := os.Stat(plugins)
+	switch {
+	case statErr == nil:
+		if linkErr := os.Symlink(plugins, filepath.Join(env.Dirs.DockerConfig, "cli-plugins")); linkErr != nil {
+			h.T.Fatalf("harness: linking docker cli plugins: %v", linkErr)
+		}
+	case !os.IsNotExist(statErr):
+		h.T.Fatalf("harness: checking docker cli plugins %s: %v", plugins, statErr)
+	}
 
 	projectDir := filepath.Join(env.Dirs.Base, opts.ProjectDir)
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
