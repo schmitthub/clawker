@@ -117,20 +117,17 @@ processors:
         action: upsert
   # The Prometheus exporter turns only datapoint attributes into labels,
   # so a client datapoint attribute named like an identity label would
-  # reach Prometheus as is. Drop the client copies (and the dotted or
-  # dashed spellings label sanitizing would fold into them) and copy the
-  # CP-stamped values from the resource. Runs after transform/metrics,
-  # which already copies project and agent.
+  # reach Prometheus as is. Drop the client copies (every key that label
+  # sanitizing folds into the label: each rune outside [A-Za-z0-9]
+  # becomes "_") and copy the CP-stamped values from the resource. Runs
+  # after transform/metrics, which already copies project and agent.
   transform/agent_gateway_metrics:
     error_mode: ignore
     metric_statements:
       - context: datapoint
         statements:
-          - delete_key(attributes, "container_id")
-          - delete_key(attributes, "container.id")
-          - delete_key(attributes, "ingest_source")
-          - delete_key(attributes, "ingest.source")
-          - delete_key(attributes, "ingest-source")
+          - delete_matching_keys(attributes, "^container[^A-Za-z0-9]+id$")
+          - delete_matching_keys(attributes, "^ingest[^A-Za-z0-9]+source$")
           - set(attributes["container_id"], resource.attributes["container_id"]) where resource.attributes["container_id"] != nil
           - set(attributes["ingest_source"], resource.attributes["ingest_source"]) where resource.attributes["ingest_source"] != nil
   # Copy project/agent from resource attributes to datapoint attributes.
