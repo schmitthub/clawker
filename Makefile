@@ -2,7 +2,7 @@
         clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
         bpf-deps ebpf ebpf-binary coredns-binary cp-binary bpffs-delegate-binary embeds-tar embeds-untar \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
-        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf \
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e test-bpf test-root \
         changelog-preview \
         licenses-check \
         docs docs-check \
@@ -61,6 +61,7 @@ help:
 	@echo "  test-e2e            End-to-end firewall stack tests (requires Docker)"
 	@echo "  test-whail          Whail BuildKit integration tests (requires Docker + BuildKit)"
 	@echo "  test-bpf            Privileged BPF prog-run tests (requires Linux root/CAP_BPF)"
+	@echo "  test-root           Root tests of the container socket server (requires Linux root)"
 	@echo "  test-agents         Agent E2E tests (requires Docker)"
 	@echo "  test-all            Run all test suites"
 	@echo "  test-coverage       Unit tests with coverage"
@@ -747,6 +748,14 @@ test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delega
 test-bpf: ebpf
 	@echo "Running privileged BPF prog-run tests (requires root/CAP_BPF)..."
 	PRIVILEGED_TESTS=1 $(GO) test -exec sudo -count=1 -v ./controlplane/firewall/ebpf/bpftest/
+
+# Root tests of the container socket server: setup as root for a distinct
+# agent uid, then checks as that uid. Without root they skip, so they ride
+# along inert in `make test`. In the dev container, run the test binary in a
+# Docker container (go test -c, docker create, docker cp).
+test-root:
+	@echo "Running socket server root tests (requires root)..."
+	$(GO) test -exec sudo -count=1 -v ./internal/hostproxy/internals/cmd/clawker-socket-server/
 
 # All test suites
 test-all: test test-e2e test-whail

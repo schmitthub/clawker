@@ -39,6 +39,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  root:
+    # Socket server root tests: the server runs as root in the container and
+    # chowns what it creates to the agent. The test sets up as root for a
+    # distinct uid and checks access as that uid; the unit job runs as the
+    # runner user, where it skips.
+    name: Root Tests
+    if: inputs.run_unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run root tests
+        run: make test-root
+
   bpf:
     # Privileged BPF prog-run suite (cilium bpf/tests pattern): SYSCALL
     # wrapper programs #including the production common.h run under

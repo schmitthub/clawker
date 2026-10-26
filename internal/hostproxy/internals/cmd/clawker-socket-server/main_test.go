@@ -4,10 +4,13 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -301,5 +304,120 @@ func TestUserDir_RequireEmpty(t *testing.T) {
 	}
 	if err := d.requireEmpty(); err == nil {
 		t.Fatal("non-empty dir accepted")
+	}
+}
+
+// agentUID and agentGID are the agent identity for the root tests. They differ
+// from the root writer, so a missing chown leaves an entry the agent cannot use.
+const (
+	agentUID = 4242
+	agentGID = 4242
+	// agentHomeEnv names the home the helper process checks as the agent.
+	agentHomeEnv = "CLAWKER_TEST_AGENT_HOME"
+	// agentSocketArg marks a helper argument as a socket to connect to.
+	agentSocketArg = "socket:"
+)
+
+// agentTempDir returns a temporary directory that another uid can traverse.
+func agentTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, p := range []string{filepath.Dir(dir), dir} {
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestUserDir_DistinctAgentCanUse runs the root setup for a distinct agent uid,
+// then checks as that uid that the files are readable and the sockets accept a
+// connection.
+func TestUserDir_DistinctAgentCanUse(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to set up entries for another uid")
+	}
+	home := agentTempDir(t)
+	if err := os.Chown(home, agentUID, agentGID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The helper arguments: files to read and sockets to connect to,
+	// relative to home.
+	entries := make([]string, 0, 5)
+	gnupg := mustOpenUserDir(t, home, ".gnupg", agentUID, agentGID)
+	for _, name := range []string{"pubring.kbx", "gpg.conf", "gpg-agent.conf"} {
+		if err := gnupg.writeFile(name, []byte(name)); err != nil {
+			t.Fatalf("writeFile %s: %v", name, err)
+		}
+		entries = append(entries, ".gnupg/"+name)
+	}
+	ssh := mustOpenUserDir(t, home, ".ssh", agentUID, agentGID)
+	for _, sock := range []struct {
+		dir  *userDir
+		name string
+	}{{gnupg, "S.gpg-agent"}, {ssh, "agent.sock"}} {
+		ln, err := sock.dir.listenUnix(sock.name)
+		if err != nil {
+			t.Fatalf("listenUnix %s: %v", sock.name, err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		entries = append(entries, agentSocketArg+filepath.Base(sock.dir.path)+"/"+sock.name)
+	}
+
+	// The test binary sits in a directory only its owner can read, so the
+	// agent runs a copy.
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentBin := filepath.Join(agentTempDir(t), "agent.test")
+	if err = os.WriteFile(agentBin, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(agentBin, append([]string{"-test.run=^TestHelperAgentAccess$", "-test.v"}, entries...)...)
+	cmd.Dir = filepath.Dir(agentBin)
+	cmd.Env = append(os.Environ(), agentHomeEnv+"="+home)
+	// No supplementary groups: the agent has only agentGID.
+	cred := &syscall.Credential{Uid: agentUID, Gid: agentGID, Groups: nil, NoSetGroups: false}
+	cmd.SysProcAttr = &syscall.SysProcAttr{ //nolint:exhaustruct_v5 // stdlib SysProcAttr: only Credential applies
+		Credential: cred,
+	}
+	if out, runErr := cmd.CombinedOutput(); runErr != nil {
+		t.Fatalf("agent uid %d cannot use the entries: %v\n%s", agentUID, runErr, out)
+	}
+}
+
+// TestHelperAgentAccess is the agent side of TestUserDir_DistinctAgentCanUse.
+// It does nothing unless that test starts it. Each argument is a file to read
+// or, with the socket prefix, a socket to connect to, relative to the home.
+func TestHelperAgentAccess(t *testing.T) {
+	home := os.Getenv(agentHomeEnv)
+	if home == "" {
+		t.Skip("helper process for TestUserDir_DistinctAgentCanUse")
+	}
+	if os.Geteuid() != agentUID {
+		t.Fatalf("helper runs as uid %d, want %d", os.Geteuid(), agentUID)
+	}
+	if flag.NArg() == 0 {
+		t.Fatal("no entries to check")
+	}
+	for _, arg := range flag.Args() {
+		if sock, ok := strings.CutPrefix(arg, agentSocketArg); ok {
+			c, err := net.Dial("unix", filepath.Join(home, sock))
+			if err != nil {
+				t.Errorf("dial %s: %v", sock, err)
+				continue
+			}
+			_ = c.Close()
+			continue
+		}
+		if _, err := os.ReadFile(filepath.Join(home, arg)); err != nil {
+			t.Errorf("read %s: %v", arg, err)
+		}
 	}
 }
