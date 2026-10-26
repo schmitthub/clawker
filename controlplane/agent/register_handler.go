@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
-	"github.com/schmitthub/clawker/controlplane/ingest"
+	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -41,21 +41,21 @@ type Handler struct {
 	Registry Registry
 	Log      *logger.Logger
 	Clock    func() time.Time
-	// Ingest forwards verified Export batches to the collector. nil is
+	// OtelGateway forwards verified ExportTelemetry batches to the collector. nil is
 	// the degraded state (gateway construction failed at wiring):
-	// Export answers Unavailable and the relay retries, while Register
+	// ExportTelemetry answers Unavailable and the relay retries, while Register
 	// and every other CP surface are unaffected.
-	Ingest TelemetryIngest
+	OtelGateway OtelForwarder
 }
 
-// TelemetryIngest is the Export handler's forwarding seam: the handler
-// resolves and verifies the peer, the implementation (controlplane/ingest)
-// decodes, stamps, and forwards. ingest.ErrMalformedBody marks a client
+// OtelForwarder is the ExportTelemetry handler's forwarding seam: the handler
+// resolves and verifies the peer, the implementation (controlplane/otelgateway)
+// decodes, stamps, and forwards. otelgateway.ErrMalformedBody marks a client
 // fault; any other error is a forward failure.
 //
-//go:generate moq -rm -pkg mocks -out mocks/telemetry_ingest_mock.go . TelemetryIngest
-type TelemetryIngest interface {
-	Ingest(ctx context.Context, signal agentv1.Signal, body []byte, id ingest.Identity) error
+//go:generate moq -rm -pkg mocks -out mocks/otel_forwarder_mock.go . OtelForwarder
+type OtelForwarder interface {
+	Forward(ctx context.Context, signal agentv1.Signal, body []byte, id otelgateway.Identity) error
 }
 
 // NewHandler constructs a Register handler. registry MUST be non-nil
@@ -70,10 +70,10 @@ func NewHandler(registry Registry, log *logger.Logger) (*Handler, error) {
 		log = logger.Nop()
 	}
 	return &Handler{
-		Registry: registry,
-		Log:      log,
-		Clock:    time.Now,
-		Ingest:   nil,
+		Registry:    registry,
+		Log:         log,
+		Clock:       time.Now,
+		OtelGateway: nil,
 	}, nil
 }
 

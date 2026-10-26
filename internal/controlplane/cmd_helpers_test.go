@@ -431,17 +431,17 @@ func (stubIssuer) MintClient(string, time.Duration) ([]byte, []byte, error) {
 	return nil, nil, errors.New("stub issuer: mint not expected")
 }
 
-// TestBuildAgentIngest pins the CP-resilience contract for the agent
+// TestBuildOtelGateway pins the CP-resilience contract for the agent
 // telemetry gateway. With no infra leaf issuer (otelcerts construction
 // failed at boot) the result is a true nil interface, not a typed nil, so
-// the handler's nil check degrades Export to Unavailable instead of
+// the handler's nil check degrades ExportTelemetry to Unavailable instead of
 // panicking on dispatch. With an issuer the gateway is built without any
 // collector listening (the dial is lazy) and its cleanup is callable.
-func TestBuildAgentIngest(t *testing.T) {
+func TestBuildOtelGateway(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 
 	t.Run("no issuer degrades to nil", func(t *testing.T) {
-		ingestSvc, cleanup := buildAgentIngest(cfg, nil, logger.Nop())
+		ingestSvc, cleanup := buildOtelGateway(cfg, nil, logger.Nop())
 		assert.Nil(t, ingestSvc, "degraded gateway must be a true nil interface")
 		require.NotNil(t, cleanup)
 		cleanup()
@@ -454,7 +454,7 @@ func TestBuildAgentIngest(t *testing.T) {
 		svc, err := otelcerts.New(stubIssuer{}, t.TempDir(), rootPEM, logger.Nop())
 		require.NoError(t, err)
 
-		ingestSvc, cleanup := buildAgentIngest(cfg, svc, logger.Nop())
+		ingestSvc, cleanup := buildOtelGateway(cfg, svc, logger.Nop())
 		require.NotNil(t, ingestSvc)
 		require.NotNil(t, cleanup)
 		cleanup()

@@ -16,7 +16,7 @@ import (
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	registrymock "github.com/schmitthub/clawker/controlplane/agent/mocks"
-	"github.com/schmitthub/clawker/controlplane/ingest"
+	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -26,7 +26,7 @@ type exportFixture struct {
 	leaf     *x509.Certificate
 	resolved agent.ResolvedContainer
 	registry *registrymock.RegistryMock
-	ingest   *registrymock.TelemetryIngestMock
+	gateway  *registrymock.OtelForwarderMock
 	handler  *agent.Handler
 }
 
@@ -46,15 +46,15 @@ func newExportFixture(t *testing.T) *exportFixture {
 		e.Thumbprint = thumb
 		return e, nil
 	}
-	ing := new(registrymock.TelemetryIngestMock)
-	ing.IngestFunc = func(context.Context, agentv1.Signal, []byte, ingest.Identity) error { return nil }
+	ing := new(registrymock.OtelForwarderMock)
+	ing.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error { return nil }
 	h := newTestHandler(registry)
-	h.Ingest = ing
+	h.OtelGateway = ing
 	return &exportFixture{
 		leaf:     leaf,
 		resolved: resolved,
 		registry: registry,
-		ingest:   ing,
+		gateway:  ing,
 		handler:  h,
 	}
 }
@@ -66,8 +66,8 @@ func (f *exportFixture) ctx(t *testing.T) context.Context {
 	return resolvedCtx(t, f.leaf, f.resolved)
 }
 
-func exportReq(signal agentv1.Signal, body []byte) *agentv1.ExportRequest {
-	req := new(agentv1.ExportRequest)
+func exportReq(signal agentv1.Signal, body []byte) *agentv1.ExportTelemetryRequest {
+	req := new(agentv1.ExportTelemetryRequest)
 	req.Signal = signal
 	req.Body = body
 	return req
@@ -81,35 +81,35 @@ func assertCode(t *testing.T, err error, want codes.Code) {
 	assert.Equal(t, want, st.Code(), "status message: %s", st.Message())
 }
 
-// TestExport_HappyPath: a registered peer's batch reaches the gateway
+// TestExportTelemetry_HappyPath: a registered peer's batch reaches the gateway
 // with the CP-resolved identity, never anything from the request.
-func TestExport_HappyPath(t *testing.T) {
+func TestExportTelemetry_HappyPath(t *testing.T) {
 	f := newExportFixture(t)
 	body := []byte("otlp-bytes")
 
-	res, err := f.handler.Export(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_METRICS, body))
+	res, err := f.handler.ExportTelemetry(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_METRICS, body))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
-	calls := f.ingest.IngestCalls()
+	calls := f.gateway.ForwardCalls()
 	require.Len(t, calls, 1)
 	assert.Equal(t, agentv1.Signal_SIGNAL_METRICS, calls[0].Signal)
 	assert.Equal(t, body, calls[0].Body)
-	assert.Equal(t, ingest.Identity{
+	assert.Equal(t, otelgateway.Identity{
 		Project:     project,
 		Agent:       agentName,
 		ContainerID: "ctr-id",
 	}, calls[0].ID)
 }
 
-// TestExport_RequestValidation: client faults are classified before any
+// TestExportTelemetry_RequestValidation: client faults are classified before any
 // identity work, so a bad request never touches the registry or the
 // gateway.
-func TestExport_RequestValidation(t *testing.T) {
-	oversize := make([]byte, agentv1.ExportMaxBodyBytes+1)
+func TestExportTelemetry_RequestValidation(t *testing.T) {
+	oversize := make([]byte, agentv1.ExportTelemetryMaxBodyBytes+1)
 	cases := []struct {
 		name     string
-		req      *agentv1.ExportRequest
+		req      *agentv1.ExportTelemetryRequest
 		wantCode codes.Code
 	}{
 		{"nil request", nil, codes.InvalidArgument},
@@ -120,28 +120,28 @@ func TestExport_RequestValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newExportFixture(t)
-			_, err := f.handler.Export(f.ctx(t), tc.req)
+			_, err := f.handler.ExportTelemetry(f.ctx(t), tc.req)
 			assertCode(t, err, tc.wantCode)
 			assert.Empty(t, f.registry.LookupByContainerIDCalls())
-			assert.Empty(t, f.ingest.IngestCalls())
+			assert.Empty(t, f.gateway.ForwardCalls())
 		})
 	}
 }
 
-// TestExport_BodyAtCapAccepted pins the boundary: exactly the cap is
+// TestExportTelemetry_BodyAtCapAccepted pins the boundary: exactly the cap is
 // forwarded, one byte more is rejected (covered above).
-func TestExport_BodyAtCapAccepted(t *testing.T) {
+func TestExportTelemetry_BodyAtCapAccepted(t *testing.T) {
 	f := newExportFixture(t)
-	body := make([]byte, agentv1.ExportMaxBodyBytes)
-	_, err := f.handler.Export(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, body))
+	body := make([]byte, agentv1.ExportTelemetryMaxBodyBytes)
+	_, err := f.handler.ExportTelemetry(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, body))
 	require.NoError(t, err)
-	assert.Len(t, f.ingest.IngestCalls(), 1)
+	assert.Len(t, f.gateway.ForwardCalls(), 1)
 }
 
-// TestExport_CtxGates mirrors TestRegister_CtxGates: no resolved container
+// TestExportTelemetry_CtxGates mirrors TestRegister_CtxGates: no resolved container
 // is a wiring bug (Internal); a resolved container without a peer cert
 // is a defensive reject.
-func TestExport_CtxGates(t *testing.T) {
+func TestExportTelemetry_CtxGates(t *testing.T) {
 	resolved := resolvedFor(t, "p", "ctr-id")
 	cases := []struct {
 		name     string
@@ -158,17 +158,17 @@ func TestExport_CtxGates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newExportFixture(t)
-			_, err := f.handler.Export(tc.ctx(), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
+			_, err := f.handler.ExportTelemetry(tc.ctx(), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
 			assertCode(t, err, tc.wantCode)
-			assert.Empty(t, f.ingest.IngestCalls())
+			assert.Empty(t, f.gateway.ForwardCalls())
 		})
 	}
 }
 
-// TestExport_RegistryGate: the live peer cert must be the one Register
+// TestExportTelemetry_RegistryGate: the live peer cert must be the one Register
 // bound. No row, a different thumbprint, and a failing lookup each stop
 // the batch before the gateway.
-func TestExport_RegistryGate(t *testing.T) {
+func TestExportTelemetry_RegistryGate(t *testing.T) {
 	cases := []struct {
 		name     string
 		lookup   func(thumb [sha256.Size]byte) (*agent.Entry, error)
@@ -203,29 +203,29 @@ func TestExport_RegistryGate(t *testing.T) {
 			live := sha256.Sum256(f.leaf.Raw)
 			f.registry.LookupByContainerIDFunc = func(string) (*agent.Entry, error) { return tc.lookup(live) }
 
-			_, err := f.handler.Export(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
+			_, err := f.handler.ExportTelemetry(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
 			assertCode(t, err, tc.wantCode)
-			assert.Empty(t, f.ingest.IngestCalls())
+			assert.Empty(t, f.gateway.ForwardCalls())
 		})
 	}
 }
 
-// TestExport_IngestOutcomes: the gateway's verdict maps onto the wire.
+// TestExportTelemetry_ForwardOutcomes: the gateway's verdict maps onto the wire.
 // A nil gateway (degraded CP) and a forward failure are Unavailable so
 // the relay answers the SDK with a retryable status; a body the gateway
 // cannot decode is the client's fault.
-func TestExport_IngestOutcomes(t *testing.T) {
+func TestExportTelemetry_ForwardOutcomes(t *testing.T) {
 	cases := []struct {
 		name     string
-		ingest   func(f *exportFixture)
+		gateway  func(f *exportFixture)
 		wantCode codes.Code
 	}{
-		{"gateway unavailable", func(f *exportFixture) { f.handler.Ingest = nil }, codes.Unavailable},
+		{"gateway unavailable", func(f *exportFixture) { f.handler.OtelGateway = nil }, codes.Unavailable},
 		{
 			"forward failed",
 			func(f *exportFixture) {
-				f.ingest.IngestFunc = func(context.Context, agentv1.Signal, []byte, ingest.Identity) error {
-					return errors.New("ingest: forward logs: rpc error: code = Unavailable")
+				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
+					return errors.New("otelgateway: forward logs: rpc error: code = Unavailable")
 				}
 			},
 			codes.Unavailable,
@@ -233,8 +233,8 @@ func TestExport_IngestOutcomes(t *testing.T) {
 		{
 			"malformed body",
 			func(f *exportFixture) {
-				f.ingest.IngestFunc = func(context.Context, agentv1.Signal, []byte, ingest.Identity) error {
-					return fmt.Errorf("%w: logs: boom", ingest.ErrMalformedBody)
+				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
+					return fmt.Errorf("%w: logs: boom", otelgateway.ErrMalformedBody)
 				}
 			},
 			codes.InvalidArgument,
@@ -242,8 +242,8 @@ func TestExport_IngestOutcomes(t *testing.T) {
 		{
 			"batch over the resource cap",
 			func(f *exportFixture) {
-				f.ingest.IngestFunc = func(context.Context, agentv1.Signal, []byte, ingest.Identity) error {
-					return ingest.ErrBatchTooLarge
+				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
+					return otelgateway.ErrBatchTooLarge
 				}
 			},
 			codes.ResourceExhausted,
@@ -251,8 +251,8 @@ func TestExport_IngestOutcomes(t *testing.T) {
 		{
 			"gateway busy",
 			func(f *exportFixture) {
-				f.ingest.IngestFunc = func(context.Context, agentv1.Signal, []byte, ingest.Identity) error {
-					return ingest.ErrBusy
+				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
+					return otelgateway.ErrBusy
 				}
 			},
 			codes.Unavailable,
@@ -261,8 +261,8 @@ func TestExport_IngestOutcomes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newExportFixture(t)
-			tc.ingest(f)
-			_, err := f.handler.Export(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
+			tc.gateway(f)
+			_, err := f.handler.ExportTelemetry(f.ctx(t), exportReq(agentv1.Signal_SIGNAL_LOGS, []byte("x")))
 			assertCode(t, err, tc.wantCode)
 		})
 	}
