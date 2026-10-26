@@ -1,7 +1,8 @@
 # Docker Compose for Clawker Adversarial Security Tests
 #
-# The attacker C2 joins clawker-net (the network clawker containers are on)
-# so the agent can reach it via typosquatted domain aliases.
+# The attacker C2 runs on its own network and listens only on host ports.
+# Agents reach it through the egress stack (eBPF -> CoreDNS/Envoy -> host),
+# for example via the operator's ngrok edge, and only where a rule allows it.
 #
 # Usage:
 #   ./scripts/setup.sh            # One-time: generate TLS certs
@@ -30,24 +31,13 @@ services:
           path: ./Dockerfile
     container_name: clawker-test-attacker
     networks:
-      clawker-net:
-        aliases:
-          - attacker
-          # Typosquatted domains — resolve to C2 inside clawker-net
-          - cdn-jsdelivr.net
-          - hooks-slackapi.com
-          - api-githubcdn.com
-          - storage-googleapis.net
-          - registry-nprnjs.org
-          - telemetry-vscoде.com
+      - adversarial
     ports:
       - "8443:8443"           # Alternate HTTPS (legacy)
       - "9443:9443"           # Alternate HTTPS (port bypass testing)
       - "8080:8080"           # Plain HTTP (always on, for ngrok)
       - "5454:5353/udp"       # UDP (raw-udp routing test — ngrok UDP edge)
       - "7777:7777"           # Raw TCP echo (opaque tcp_proxy test — ngrok TCP edge)
-    expose:
-      - "443"                 # Standard HTTPS (reachable on clawker-net)
     cap_add:
       - NET_RAW              # ICMP raw socket listener
     volumes:
@@ -64,5 +54,5 @@ services:
     restart: unless-stopped
 
 networks:
-  clawker-net:
-    external: true
+  adversarial:
+    name: clawker-adversarial

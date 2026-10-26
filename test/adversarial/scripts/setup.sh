@@ -12,8 +12,8 @@ CLAWKER_DATA="${CLAWKER_DATA_DIR:-${HOME}/.local/share/clawker}"
 FIREWALL_CA_CERT="${CLAWKER_DATA}/firewall/certs/ca-cert.pem"
 FIREWALL_CA_KEY="${CLAWKER_DATA}/firewall/certs/ca-key.pem"
 
-# All domains the attacker server needs certs for (compose aliases + localhost).
-SANS="DNS:attacker,DNS:localhost,DNS:cdn-jsdelivr.net,DNS:hooks-slackapi.com,DNS:api-githubcdn.com,DNS:storage-googleapis.net,DNS:registry-nprnjs.org,IP:127.0.0.1"
+# Names the attacker server needs certs for.
+SANS="DNS:attacker,DNS:localhost,IP:127.0.0.1"
 
 echo "=== Clawker Adversarial Test Harness Setup ==="
 
