@@ -83,11 +83,10 @@ func migrateDockerSocketToHost(s *storage.Store[Settings]) (bool, error) {
 	return true, nil
 }
 
-// legacyMonitoringKeys is the set of monitoring.* keys removed in the
-// OpenSearch refactor. migrateRemoveLegacyMonitoringKeys detects them
-// in a user's settings.yaml on first load post-upgrade, prints a one-
-// shot stderr notice naming each value the user had customized, then
-// removes the keys so the file is rewritten clean.
+// legacyMonitoringKeys is the set of monitoring.* keys clawker no longer
+// reads: the Loki/Jaeger/Grafana ports and the collector receiver ports that
+// are now constants. migrateRemoveLegacyMonitoringKeys removes them from a
+// user's settings.yaml on the first load after an upgrade.
 var legacyMonitoringKeys = []string{
 	"loki_port",
 	"jaeger_port",
@@ -98,12 +97,10 @@ var legacyMonitoringKeys = []string{
 	"otel_infra_port",
 }
 
-// migrateRemoveLegacyMonitoringKeys strips removed monitoring keys
-// from a settings file and warns the user on stderr. Without this the
-// keys are silently dropped by yaml.Unmarshal and a custom port the
-// user had set (e.g. otel_cp_port: 5319) disappears unnoticed. We
-// print once per upgrade because the migration framework auto-saves
-// the file when this returns true.
+// migrateRemoveLegacyMonitoringKeys silently removes the legacy monitoring
+// keys from a settings file. The keys have no effect, so the user has
+// nothing to act on. The migration framework saves the file when this
+// returns true.
 func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error) {
 	// Existence via the root's child-key names — non-error, and correct even
 	// when the key holds a scalar or bare null. During a migration pass the
@@ -114,42 +111,20 @@ func migrateRemoveLegacyMonitoringKeys(s *storage.Store[Settings]) (bool, error)
 	if !slices.Contains(s.Keys(), keyMonitoring) {
 		return false, nil
 	}
-	var removed []string
+	changed := false
 	for _, key := range legacyMonitoringKeys {
-		v, gErr := storage.Get[any](s, keyMonitoring, key)
-		if gErr != nil {
+		if _, gErr := storage.Get[any](s, keyMonitoring, key); gErr != nil {
 			if errors.Is(gErr, storage.ErrKeyNotFound) {
 				continue
 			}
 			return false, fmt.Errorf("reading monitoring.%s: %w", key, gErr)
 		}
-		removed = append(removed, fmt.Sprintf("  monitoring.%s = %v", key, v))
 		if rErr := s.Remove(keyMonitoring, key); rErr != nil {
 			return false, fmt.Errorf("removing monitoring.%s: %w", key, rErr)
 		}
+		changed = true
 	}
-	if len(removed) == 0 {
-		return false, nil
-	}
-	sort.Strings(removed)
-	s.Noticef("%s", legacyMonitoringNoticeText(s.MigratingLayerPath(), removed))
-	return true, nil
-}
-
-// legacyMonitoringNoticeText builds the one-shot notice for the
-// monitoring-key strip, naming the settings file the keys were removed from.
-func legacyMonitoringNoticeText(path string, removed []string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "warning: %s: legacy monitoring settings removed in this clawker version:\n", path)
-	for _, line := range removed {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	b.WriteString("These keys reference services that no longer ship (Loki/Jaeger/Grafana) or ports\n")
-	b.WriteString("that are no longer configurable; the values above are dropped. See\n")
-	b.WriteString("`clawker monitor init` to scaffold the OpenSearch + Prometheus stack with the\n")
-	b.WriteString("current settings surface.\n")
-	return b.String()
+	return changed, nil
 }
 
 // legacyUseHostAuthKey is the deleted host-credential-copy toggle: host
