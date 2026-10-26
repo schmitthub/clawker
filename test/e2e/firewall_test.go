@@ -652,8 +652,16 @@ func TestFirewall_ControlPlaneDownFailsClosed(t *testing.T) {
 			"-o", "/dev/null", "-w", "%{http_code}", url)
 	}
 
-	runRes := h.Run("container", "run", "--detach", "--agent", "cp-down", "@", "sleep", "infinity")
+	// clawkerd starts the user CMD only after the boot plan completes, so
+	// the marker file shows the agent is ready. `run --detach` returns
+	// before that, and a drain during init or boot halts the agent.
+	const readyMarker = "/tmp/cp-down-ready"
+	runRes := h.Run("container", "run", "--detach", "--agent", "cp-down", "@",
+		"sh", "-c", "touch "+readyMarker+" && exec sleep infinity")
 	require.NoError(t, runRes.Err, "start cp-down failed\nstdout: %s\nstderr: %s", runRes.Stdout, runRes.Stderr)
+	require.Eventually(t, func() bool {
+		return h.ExecInContainer("cp-down", "test", "-f", readyMarker).Err == nil
+	}, 3*time.Minute, time.Second, "cp-down never finished boot")
 
 	// Positive control: the allowed domain goes through Envoy.
 	allowRes := curl("https://api.anthropic.com")
