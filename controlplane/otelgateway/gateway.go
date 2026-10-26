@@ -99,6 +99,10 @@ var (
 	// ErrBusy reports that the concurrency cap is reached. The RPC
 	// handler maps it to Unavailable so the relay retries.
 	ErrBusy = errors.New("otelgateway: too many batches in flight")
+	// ErrCollectorRejected reports that the collector refused the batch
+	// with InvalidArgument, a permanent verdict. The RPC handler maps it
+	// to InvalidArgument so the relay does not retry it.
+	ErrCollectorRejected = errors.New("otelgateway: collector rejected the batch")
 )
 
 // Identity is the CP-resolved provenance stamped onto every resource in
@@ -317,7 +321,8 @@ func (g *Gateway) Close() error {
 
 // Forward decodes body as the named signal, stamps id onto every resource,
 // and forwards the batch. ErrMalformedBody, ErrUnknownSignal, and
-// ErrBatchTooLarge are client faults; ErrBusy asks the relay to retry.
+// ErrBatchTooLarge are client faults; ErrCollectorRejected is the
+// collector's permanent refusal of the batch; ErrBusy asks the relay to retry.
 // Any other error is a forward failure while the breaker is closed; with
 // the breaker open the batch is dropped and nil is returned so the SDK
 // does not retry against a collector that is away.
@@ -394,6 +399,9 @@ func (g *Gateway) onForwardFailure(parent context.Context, name string, sendErr 
 			Str("event", "otel_gateway_forward_failed").
 			Str("signal", name).
 			Msg("collector rejected an agent telemetry batch")
+		if status.Code(sendErr) == codes.InvalidArgument {
+			return fmt.Errorf("%w: %w", ErrCollectorRejected, sendErr)
+		}
 		return sendErr
 	}
 	open, tripped := g.breaker.failure(time.Now())

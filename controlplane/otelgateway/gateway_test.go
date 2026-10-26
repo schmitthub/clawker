@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"math/big"
 	"net"
 	"sync"
@@ -652,6 +653,8 @@ func TestGateway_BatchRejectedByThisBatchDoesNotTrip(t *testing.T) {
 		rec.setFail(status.Error(code, "this batch"))
 		err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
 		require.Error(t, err, "%s must surface", code)
+		assert.Equal(t, code == codes.InvalidArgument, errors.Is(err, otelgateway.ErrCollectorRejected),
+			"only a collector InvalidArgument is a permanent rejection (%s)", code)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
