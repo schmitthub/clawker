@@ -50,7 +50,7 @@ receivers:
           client_ca_file: /etc/otel/tls/ca.pem
   # Agent telemetry, forwarded by the control plane. The agent SDK
   # exports to a loopback relay inside its container; clawkerd carries
-  # the batch to the CP over AgentService.Export; the CP verifies the
+  # the batch to the CP over AgentService.ExportTelemetry; the CP verifies the
   # peer against the agent registry, overwrites the project / agent /
   # container_id / ingest_source resource attributes with the values it
   # resolved itself, and forwards here with its infra leaf. Same TLS
