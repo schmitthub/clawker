@@ -240,6 +240,16 @@ func TestExportTelemetry_ForwardOutcomes(t *testing.T) {
 			codes.InvalidArgument,
 		},
 		{
+			"collector rejected the batch",
+			func(f *exportFixture) {
+				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
+					return fmt.Errorf("%w: %w", otelgateway.ErrCollectorRejected,
+						status.Error(codes.InvalidArgument, "bad attribute"))
+				}
+			},
+			codes.InvalidArgument,
+		},
+		{
 			"batch over the resource cap",
 			func(f *exportFixture) {
 				f.gateway.ForwardFunc = func(context.Context, agentv1.Signal, []byte, otelgateway.Identity) error {
