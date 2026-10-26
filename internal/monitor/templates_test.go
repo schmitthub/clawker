@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -281,6 +285,65 @@ monitoring:
 			t.Errorf("otel-config.yaml with no active units should not contain %q", absent)
 		}
 	}
+}
+
+// The Prometheus exporter folds every rune outside [A-Za-z0-9] into "_",
+// so any client datapoint key that folds into a CP-owned label must be
+// dropped before the CP value is copied in.
+func TestRenderTemplate_AgentGatewayDropsCollidingLabels(t *testing.T) {
+	data, err := NewMonitorTemplateData(testMonitoring(t, ""), nil)
+	if err != nil {
+		t.Fatalf("NewMonitorTemplateData: %v", err)
+	}
+	result, err := RenderTemplate("otel-config.yaml", OtelConfigTemplate, data)
+	if err != nil {
+		t.Fatalf("RenderTemplate failed: %v", err)
+	}
+	patterns := agentGatewayDropPatterns(t, result)
+	dropped := func(key string) bool {
+		return slices.ContainsFunc(patterns, func(p *regexp.Regexp) bool { return p.MatchString(key) })
+	}
+
+	for _, key := range []string{
+		"container_id", "container.id", "container-id", "container/id", "container id", "container..id",
+		"ingest_source", "ingest.source", "ingest-source", "ingest/source", "ingest source", "ingest..source",
+	} {
+		if !dropped(key) {
+			t.Errorf("client key %q folds into a CP-owned label but is not dropped", key)
+		}
+	}
+	for _, key := range []string{"container_name", "containerid", "container_id_x", "project", "agent"} {
+		if dropped(key) {
+			t.Errorf("client key %q does not collide with a CP-owned label but is dropped", key)
+		}
+	}
+}
+
+// agentGatewayDropPatterns returns the compiled delete_matching_keys
+// patterns of the rendered transform/agent_gateway_metrics processor.
+func agentGatewayDropPatterns(t *testing.T, otelConfig string) []*regexp.Regexp {
+	t.Helper()
+	var cfg struct {
+		Processors map[string]struct {
+			MetricStatements []struct {
+				Statements []string `yaml:"statements"`
+			} `yaml:"metric_statements"`
+		} `yaml:"processors"`
+	}
+	if err := yaml.Unmarshal([]byte(otelConfig), &cfg); err != nil {
+		t.Fatalf("parse otel-config.yaml: %v", err)
+	}
+
+	argRE := regexp.MustCompile(`^delete_matching_keys\(attributes, "(.+)"\)$`)
+	var patterns []*regexp.Regexp
+	for _, group := range cfg.Processors["transform/agent_gateway_metrics"].MetricStatements {
+		for _, stmt := range group.Statements {
+			if m := argRE.FindStringSubmatch(stmt); m != nil {
+				patterns = append(patterns, regexp.MustCompile(m[1]))
+			}
+		}
+	}
+	return patterns
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {
