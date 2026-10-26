@@ -273,6 +273,7 @@ The firewall is intentionally **not** configured inside the container. eBPF cgro
 
 - The container image has no baked-in firewall addresses or capabilities — it is portable across different Docker network configurations.
 - Agent containers run with **no Linux capabilities** (`cap_add: []`). No `NET_ADMIN`, no `NET_RAW`. The firewall enforcement happens kernel-side, outside the container's privilege scope.
+- Agent containers run with **`no-new-privileges`**. A setuid binary in the image (`su`, `mount`, `passwd`) cannot give a process more privileges than it already has. If your workflow needs setuid (for example, `sudo` that you add through `build.packages`), pass `--security-opt no-new-privileges=false` to `clawker run` or `clawker create`.
 - A compromised user CMD cannot modify, weaken, or bypass the firewall from inside — the eBPF programs, the BPF maps, and the route table are all in kernel space owned by the host, not the container.
 
 If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debugging), add them to `security.cap_add` in your `clawker.yaml`. The firewall does not require any.

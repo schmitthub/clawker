@@ -723,7 +723,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Bypass escape hatch**: `clawker firewall bypass` sets an eBPF bypass flag for instant unrestricted egress, auto-clearing after a configurable timeout. No rule flushing or re-application needed — just a BPF map update.
 
-**PID-1 privilege model**: Agent containers run fully unprivileged. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, write log files, and reap reparented orphans; the user CMD it forks runs as the unprivileged container user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities.
+**PID-1 privilege model**: Agent containers run fully unprivileged, with `no-new-privileges` set by default in `applySecurityOptions` (a user `--security-opt no-new-privileges=...` replaces it). The container user stays in the `docker` group in the image even without `security.docker_socket`: clawkerd resolves supplementary groups once at startup, before CP boot steps, so membership cannot be added at runtime. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, write log files, and reap reparented orphans; the user CMD it forks runs as the unprivileged container user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities.
 
 #### Per-decision telemetry / eBPF egress event stream
 
