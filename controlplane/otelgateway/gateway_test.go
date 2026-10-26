@@ -1,4 +1,4 @@
-package ingest_test
+package otelgateway_test
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
-	"github.com/schmitthub/clawker/controlplane/ingest"
+	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -239,8 +239,8 @@ func startCollector(t *testing.T, pki testPKI, rec *recorder) string {
 	return lis.Addr().String()
 }
 
-func gatewayOptions(pki testPKI, endpoint string) ingest.Options {
-	var opts ingest.Options
+func gatewayOptions(pki testPKI, endpoint string) otelgateway.Options {
+	var opts otelgateway.Options
 	opts.Endpoint = endpoint
 	opts.TLSConfig = pki.clientTLS()
 	opts.Log = logger.Nop()
@@ -248,9 +248,9 @@ func gatewayOptions(pki testPKI, endpoint string) ingest.Options {
 	return opts
 }
 
-func newGateway(t *testing.T, opts ingest.Options) *ingest.Gateway {
+func newGateway(t *testing.T, opts otelgateway.Options) *otelgateway.Gateway {
 	t.Helper()
-	gw, err := ingest.New(opts)
+	gw, err := otelgateway.New(opts)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if cerr := gw.Close(); cerr != nil {
@@ -290,8 +290,8 @@ func clientAttrs() []*commonv1.KeyValue {
 	}
 }
 
-func wantIdentity() ingest.Identity {
-	return ingest.Identity{Project: "myapp", Agent: "dev", ContainerID: "ctr-1"}
+func wantIdentity() otelgateway.Identity {
+	return otelgateway.Identity{Project: "myapp", Agent: "dev", ContainerID: "ctr-1"}
 }
 
 func logsBody(t *testing.T, resources ...*resourcev1.Resource) []byte {
@@ -364,10 +364,10 @@ func assertStamped(t *testing.T, res *resourcev1.Resource) {
 	t.Helper()
 	got := attrMap(t, res)
 	want := wantIdentity()
-	assert.Equal(t, want.Project, got[ingest.AttrProject])
-	assert.Equal(t, want.Agent, got[ingest.AttrAgent])
-	assert.Equal(t, want.ContainerID, got[ingest.AttrContainerID])
-	assert.Equal(t, ingest.IngestSourceCPGateway, got[ingest.AttrIngestSource])
+	assert.Equal(t, want.Project, got[otelgateway.AttrProject])
+	assert.Equal(t, want.Agent, got[otelgateway.AttrAgent])
+	assert.Equal(t, want.ContainerID, got[otelgateway.AttrContainerID])
+	assert.Equal(t, otelgateway.IngestSourceCPGateway, got[otelgateway.AttrIngestSource])
 	assert.NotContains(t, got, "clawker.forged", "reserved-prefix client keys are dropped")
 }
 
@@ -396,7 +396,7 @@ func TestGateway_StampsIdentity(t *testing.T) {
 
 	t.Run("logs", func(t *testing.T) {
 		body := logsBody(t, resource(clientAttrs()...), nil)
-		require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+		require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 
 		require.Len(t, rec.logs, 1)
 		got := rec.logs[0].GetResourceLogs()
@@ -416,7 +416,7 @@ func TestGateway_StampsIdentity(t *testing.T) {
 
 	t.Run("metrics", func(t *testing.T) {
 		body := metricsBody(t, resource(clientAttrs()...), nil)
-		require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_METRICS, body, id))
+		require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_METRICS, body, id))
 
 		require.Len(t, rec.metrics, 1)
 		got := rec.metrics[0].GetResourceMetrics()
@@ -430,7 +430,7 @@ func TestGateway_StampsIdentity(t *testing.T) {
 
 	t.Run("traces", func(t *testing.T) {
 		body := tracesBody(t, resource(clientAttrs()...), nil)
-		require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_TRACES, body, id))
+		require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_TRACES, body, id))
 
 		require.Len(t, rec.traces, 1)
 		got := rec.traces[0].GetResourceSpans()
@@ -452,16 +452,16 @@ func TestGateway_GlobalAgentStampsEmptyProject(t *testing.T) {
 	gw := newGateway(t, gatewayOptions(pki, startCollector(t, pki, rec)))
 
 	body := logsBody(t, resource(kv("project", "evil")))
-	var global ingest.Identity
+	var global otelgateway.Identity
 	global.Agent = "solo"
 	global.ContainerID = "ctr-2"
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, global))
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, global))
 
 	require.Len(t, rec.logs, 1)
 	got := attrMap(t, rec.logs[0].GetResourceLogs()[0].GetResource())
-	require.Contains(t, got, ingest.AttrProject, "the key must be stamped, not left absent")
-	assert.Empty(t, got[ingest.AttrProject])
-	assert.Equal(t, "solo", got[ingest.AttrAgent])
+	require.Contains(t, got, otelgateway.AttrProject, "the key must be stamped, not left absent")
+	assert.Empty(t, got[otelgateway.AttrProject])
+	assert.Equal(t, "solo", got[otelgateway.AttrAgent])
 }
 
 // TestGateway_RejectsBeforeForward: a body that does not decode as the
@@ -473,13 +473,13 @@ func TestGateway_RejectsBeforeForward(t *testing.T) {
 	gw := newGateway(t, gatewayOptions(pki, startCollector(t, pki, rec)))
 	id := wantIdentity()
 
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, []byte{0xff, 0xff, 0xff}, id)
-	require.ErrorIs(t, err, ingest.ErrMalformedBody)
+	err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, []byte{0xff, 0xff, 0xff}, id)
+	require.ErrorIs(t, err, otelgateway.ErrMalformedBody)
 	assert.Equal(t, 1, counter(t, gw.Metrics.Malformed, "logs"))
 
 	for _, signal := range []agentv1.Signal{agentv1.Signal_SIGNAL_UNSPECIFIED, agentv1.Signal(99)} {
-		err = gw.Ingest(t.Context(), signal, []byte{}, id)
-		require.ErrorIs(t, err, ingest.ErrUnknownSignal, "signal %d", signal)
+		err = gw.Forward(t.Context(), signal, []byte{}, id)
+		require.ErrorIs(t, err, otelgateway.ErrUnknownSignal, "signal %d", signal)
 	}
 	assert.Equal(t, 1, counter(t, gw.Metrics.Malformed, "logs"), "an unknown signal is not a malformed body")
 
@@ -505,18 +505,18 @@ func TestGateway_BreakerTrips(t *testing.T) {
 	body := logsBody(t, resource())
 
 	for i := range 2 {
-		err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
+		err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
 		require.Error(t, err, "failure %d must surface while the breaker is closed", i+1)
-		require.NotErrorIs(t, err, ingest.ErrMalformedBody)
-		require.NotErrorIs(t, err, ingest.ErrUnknownSignal)
+		require.NotErrorIs(t, err, otelgateway.ErrMalformedBody)
+		require.NotErrorIs(t, err, otelgateway.ErrUnknownSignal)
 	}
 	// The failure that trips the breaker is itself dropped.
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	assert.Equal(t, 3, counter(t, gw.Metrics.ForwardFailures, "logs"))
 	assert.Equal(t, 1, counter(t, gw.Metrics.Dropped, "logs"))
 
 	for range 5 {
-		require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+		require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	}
 	assert.Equal(t, 6, counter(t, gw.Metrics.Dropped, "logs"))
 	assert.Equal(t, 3, counter(t, gw.Metrics.ForwardFailures, "logs"), "no forward while the probe window is closed")
@@ -538,13 +538,13 @@ func TestGateway_BreakerCountsConsecutiveFailures(t *testing.T) {
 	down := status.Error(codes.Unavailable, "collector down")
 
 	rec.setFail(down)
-	require.Error(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
-	require.Error(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.Error(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.Error(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	rec.setFail(nil)
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	rec.setFail(down)
-	require.Error(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
-	require.Error(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id), "count restarted after the success")
+	require.Error(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.Error(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id), "count restarted after the success")
 	assert.Equal(t, 0, counter(t, gw.Metrics.Dropped, "logs"), "breaker never opened")
 	assert.Equal(t, 1, rec.logCount())
 }
@@ -566,21 +566,21 @@ func TestGateway_BreakerRecovers(t *testing.T) {
 
 	require.NoError(
 		t,
-		gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id),
+		gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id),
 		"threshold 1: the first failure trips and is dropped",
 	)
 	assert.Equal(t, 1, counter(t, gw.Metrics.Dropped, "logs"))
 
 	rec.setFail(nil)
 	require.Eventually(t, func() bool {
-		return gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id) == nil && rec.logCount() > 0
+		return gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id) == nil && rec.logCount() > 0
 	}, 5*time.Second, 20*time.Millisecond, "a probe must reach the recovered collector")
 
 	// An open breaker lets at most one batch per interval through; a
 	// closed one forwards every batch in a burst.
 	before := rec.logCount()
 	for range 5 {
-		require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+		require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	}
 	assert.Equal(t, before+5, rec.logCount(), "forwarding resumes after a probe succeeds")
 }
@@ -601,7 +601,7 @@ func TestGateway_CollectorDown(t *testing.T) {
 
 	body := tracesBody(t, resource())
 	start := time.Now()
-	err = gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_TRACES, body, wantIdentity())
+	err = gw.Forward(t.Context(), agentv1.Signal_SIGNAL_TRACES, body, wantIdentity())
 	require.Error(t, err, "below the trip threshold the failure surfaces")
 	assert.Less(t, time.Since(start), 4*time.Second)
 	assert.Equal(t, 1, counter(t, gw.Metrics.ForwardFailures, "traces"))
@@ -609,17 +609,17 @@ func TestGateway_CollectorDown(t *testing.T) {
 
 // TestNew_Validation: the constructor refuses an unusable configuration
 // so the CP degrades at wiring time with a structured event instead of
-// serving an Export that can never forward.
+// serving an ExportTelemetry that can never forward.
 func TestNew_Validation(t *testing.T) {
 	pki := newTestPKI(t)
 	cases := []struct {
 		name   string
-		mutate func(o *ingest.Options)
+		mutate func(o *otelgateway.Options)
 	}{
-		{"empty endpoint", func(o *ingest.Options) { o.Endpoint = "" }},
-		{"nil tls", func(o *ingest.Options) { o.TLSConfig = nil }},
-		{"nil log", func(o *ingest.Options) { o.Log = nil }},
-		{"probe interval within forward timeout", func(o *ingest.Options) {
+		{"empty endpoint", func(o *otelgateway.Options) { o.Endpoint = "" }},
+		{"nil tls", func(o *otelgateway.Options) { o.TLSConfig = nil }},
+		{"nil log", func(o *otelgateway.Options) { o.Log = nil }},
+		{"probe interval within forward timeout", func(o *otelgateway.Options) {
 			o.ForwardTimeout = time.Second
 			o.ProbeInterval = time.Second
 		}},
@@ -628,7 +628,7 @@ func TestNew_Validation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := gatewayOptions(pki, "127.0.0.1:1")
 			tc.mutate(&opts)
-			gw, err := ingest.New(opts)
+			gw, err := otelgateway.New(opts)
 			require.Error(t, err)
 			assert.Nil(t, gw)
 		})
@@ -650,18 +650,18 @@ func TestGateway_BatchRejectedByThisBatchDoesNotTrip(t *testing.T) {
 
 	for _, code := range []codes.Code{codes.InvalidArgument, codes.ResourceExhausted, codes.Internal} {
 		rec.setFail(status.Error(code, "this batch"))
-		err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
+		err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
 		require.Error(t, err, "%s must surface", code)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	rec.setFail(status.Error(codes.Unavailable, "down"))
-	require.Error(t, gw.Ingest(ctx, agentv1.Signal_SIGNAL_LOGS, body, id), "a cancelled caller surfaces")
+	require.Error(t, gw.Forward(ctx, agentv1.Signal_SIGNAL_LOGS, body, id), "a cancelled caller surfaces")
 	assert.Equal(t, 4, counter(t, gw.Metrics.ForwardFailures, "logs"))
 	assert.Equal(t, 0, counter(t, gw.Metrics.Dropped, "logs"), "none of these may open the breaker")
 
 	rec.setFail(nil)
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id))
 	assert.Equal(t, 1, rec.logCount(), "breaker still closed: the batch is forwarded, not dropped")
 }
 
@@ -680,12 +680,12 @@ func TestGateway_MessageBudget(t *testing.T) {
 	id := wantIdentity()
 
 	atBudget := logsBody(t, resource(), resource(), resource())
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, atBudget, id))
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, atBudget, id))
 	assert.Equal(t, 1, rec.logCount())
 
 	overBudget := logsBody(t, resource(), resource(), resource(), resource())
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, overBudget, id)
-	require.ErrorIs(t, err, ingest.ErrBatchTooLarge)
+	err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, overBudget, id)
+	require.ErrorIs(t, err, otelgateway.ErrBatchTooLarge)
 	assert.Equal(t, 1, rec.logCount(), "over-budget batch never forwarded")
 	assert.Equal(t, 1, counter(t, gw.Metrics.Rejected, "logs"))
 }
@@ -701,8 +701,8 @@ func TestGateway_NestedEmptyRecordsRejected(t *testing.T) {
 
 	body := emptyLogRecordsBody(200_000)
 	require.Less(t, len(body), 1<<20)
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, wantIdentity())
-	require.ErrorIs(t, err, ingest.ErrBatchTooLarge)
+	err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, wantIdentity())
+	require.ErrorIs(t, err, otelgateway.ErrBatchTooLarge)
 	assert.Equal(t, 0, rec.logCount())
 	assert.Equal(t, 1, counter(t, gw.Metrics.Rejected, "logs"))
 }
@@ -725,8 +725,8 @@ func TestGateway_DeepNestingRejected(t *testing.T) {
 		attr.Key = "nest"
 		attr.Value = v
 	}
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, logsBody(t, resource(attr)), wantIdentity())
-	require.ErrorIs(t, err, ingest.ErrMalformedBody)
+	err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, logsBody(t, resource(attr)), wantIdentity())
+	require.ErrorIs(t, err, otelgateway.ErrMalformedBody)
 	assert.Equal(t, 0, rec.logCount())
 }
 
@@ -758,14 +758,14 @@ func TestGateway_ConcurrencyCap(t *testing.T) {
 	body := logsBody(t, resource())
 
 	first := make(chan error, 1)
-	go func() { first <- gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id) }()
+	go func() { first <- gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id) }()
 	require.Eventually(t, rec.blocked, 5*time.Second, 10*time.Millisecond, "first batch must be in flight")
 
-	err := gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
-	require.ErrorIs(t, err, ingest.ErrBusy)
+	err := gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id)
+	require.ErrorIs(t, err, otelgateway.ErrBusy)
 	assert.Equal(t, 1, counter(t, gw.Metrics.Rejected, "logs"))
 
 	close(release)
 	require.NoError(t, <-first)
-	require.NoError(t, gw.Ingest(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id), "slot released")
+	require.NoError(t, gw.Forward(t.Context(), agentv1.Signal_SIGNAL_LOGS, body, id), "slot released")
 }

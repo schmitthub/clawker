@@ -74,9 +74,9 @@ func (Signal) EnumDescriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
-// ExportRequest carries one serialized Export<Signal>ServiceRequest, the
+// ExportTelemetryRequest carries one serialized Export<Signal>ServiceRequest, the
 // http/protobuf payload exactly as the SDK sent it to the loopback relay.
-type ExportRequest struct {
+type ExportTelemetryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Signal        Signal                 `protobuf:"varint,1,opt,name=signal,proto3,enum=clawker.agent.v1.Signal" json:"signal,omitempty"`
 	Body          []byte                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
@@ -84,20 +84,20 @@ type ExportRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExportRequest) Reset() {
-	*x = ExportRequest{}
+func (x *ExportTelemetryRequest) Reset() {
+	*x = ExportTelemetryRequest{}
 	mi := &file_agent_v1_agent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExportRequest) String() string {
+func (x *ExportTelemetryRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExportRequest) ProtoMessage() {}
+func (*ExportTelemetryRequest) ProtoMessage() {}
 
-func (x *ExportRequest) ProtoReflect() protoreflect.Message {
+func (x *ExportTelemetryRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_agent_v1_agent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -109,48 +109,48 @@ func (x *ExportRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExportRequest.ProtoReflect.Descriptor instead.
-func (*ExportRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ExportTelemetryRequest.ProtoReflect.Descriptor instead.
+func (*ExportTelemetryRequest) Descriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ExportRequest) GetSignal() Signal {
+func (x *ExportTelemetryRequest) GetSignal() Signal {
 	if x != nil {
 		return x.Signal
 	}
 	return Signal_SIGNAL_UNSPECIFIED
 }
 
-func (x *ExportRequest) GetBody() []byte {
+func (x *ExportTelemetryRequest) GetBody() []byte {
 	if x != nil {
 		return x.Body
 	}
 	return nil
 }
 
-// ExportResult is the success response. Empty — the act of returning
+// ExportTelemetryResult is the success response. Empty — the act of returning
 // without error is the signal; the relay answers the SDK with an empty
 // Export<Signal>ServiceResponse.
-type ExportResult struct {
+type ExportTelemetryResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExportResult) Reset() {
-	*x = ExportResult{}
+func (x *ExportTelemetryResult) Reset() {
+	*x = ExportTelemetryResult{}
 	mi := &file_agent_v1_agent_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExportResult) String() string {
+func (x *ExportTelemetryResult) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExportResult) ProtoMessage() {}
+func (*ExportTelemetryResult) ProtoMessage() {}
 
-func (x *ExportResult) ProtoReflect() protoreflect.Message {
+func (x *ExportTelemetryResult) ProtoReflect() protoreflect.Message {
 	mi := &file_agent_v1_agent_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -162,8 +162,8 @@ func (x *ExportResult) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExportResult.ProtoReflect.Descriptor instead.
-func (*ExportResult) Descriptor() ([]byte, []int) {
+// Deprecated: Use ExportTelemetryResult.ProtoReflect.Descriptor instead.
+func (*ExportTelemetryResult) Descriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
 }
 
@@ -271,11 +271,11 @@ var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"U\n" +
-	"\rExportRequest\x120\n" +
+	"\x14agent/v1/agent.proto\x12\x10clawker.agent.v1\"^\n" +
+	"\x16ExportTelemetryRequest\x120\n" +
 	"\x06signal\x18\x01 \x01(\x0e2\x18.clawker.agent.v1.SignalR\x06signal\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\fR\x04body\"\x0e\n" +
-	"\fExportResult\"J\n" +
+	"\x04body\x18\x02 \x01(\fR\x04body\"\x17\n" +
+	"\x15ExportTelemetryResult\"J\n" +
 	"\x0fRegisterRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x18\n" +
@@ -285,10 +285,10 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSIGNAL_LOGS\x10\x01\x12\x12\n" +
 	"\x0eSIGNAL_METRICS\x10\x02\x12\x11\n" +
-	"\rSIGNAL_TRACES\x10\x032\xa3\x01\n" +
+	"\rSIGNAL_TRACES\x10\x032\xbe\x01\n" +
 	"\fAgentService\x12H\n" +
-	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.Welcome\x12I\n" +
-	"\x06Export\x12\x1f.clawker.agent.v1.ExportRequest\x1a\x1e.clawker.agent.v1.ExportResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
+	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.Welcome\x12d\n" +
+	"\x0fExportTelemetry\x12(.clawker.agent.v1.ExportTelemetryRequest\x1a'.clawker.agent.v1.ExportTelemetryResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -305,18 +305,18 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(Signal)(0),             // 0: clawker.agent.v1.Signal
-	(*ExportRequest)(nil),   // 1: clawker.agent.v1.ExportRequest
-	(*ExportResult)(nil),    // 2: clawker.agent.v1.ExportResult
-	(*RegisterRequest)(nil), // 3: clawker.agent.v1.RegisterRequest
-	(*Welcome)(nil),         // 4: clawker.agent.v1.Welcome
+	(Signal)(0),                    // 0: clawker.agent.v1.Signal
+	(*ExportTelemetryRequest)(nil), // 1: clawker.agent.v1.ExportTelemetryRequest
+	(*ExportTelemetryResult)(nil),  // 2: clawker.agent.v1.ExportTelemetryResult
+	(*RegisterRequest)(nil),        // 3: clawker.agent.v1.RegisterRequest
+	(*Welcome)(nil),                // 4: clawker.agent.v1.Welcome
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	0, // 0: clawker.agent.v1.ExportRequest.signal:type_name -> clawker.agent.v1.Signal
+	0, // 0: clawker.agent.v1.ExportTelemetryRequest.signal:type_name -> clawker.agent.v1.Signal
 	3, // 1: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
-	1, // 2: clawker.agent.v1.AgentService.Export:input_type -> clawker.agent.v1.ExportRequest
+	1, // 2: clawker.agent.v1.AgentService.ExportTelemetry:input_type -> clawker.agent.v1.ExportTelemetryRequest
 	4, // 3: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
-	2, // 4: clawker.agent.v1.AgentService.Export:output_type -> clawker.agent.v1.ExportResult
+	2, // 4: clawker.agent.v1.AgentService.ExportTelemetry:output_type -> clawker.agent.v1.ExportTelemetryResult
 	3, // [3:5] is the sub-list for method output_type
 	1, // [1:3] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

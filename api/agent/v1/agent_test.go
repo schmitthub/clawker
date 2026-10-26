@@ -36,12 +36,12 @@ func TestAgentMethodScopes_CoversAllRPCs(t *testing.T) {
 	}
 }
 
-// TestAgentMethodScopes_ExportIsPublic pins the Export lane's auth shape:
+// TestAgentMethodScopes_ExportTelemetryIsPublic pins the ExportTelemetry lane's auth shape:
 // no bearer token (clawkerd's single-use Hydra assertion is spent on
 // Register), mTLS plus the identity interceptor only.
-func TestAgentMethodScopes_ExportIsPublic(t *testing.T) {
+func TestAgentMethodScopes_ExportTelemetryIsPublic(t *testing.T) {
 	scopes := agentv1.AgentMethodScopes()
-	scope, ok := scopes["/"+agentv1.ServiceName+"/Export"]
+	scope, ok := scopes["/"+agentv1.ServiceName+"/ExportTelemetry"]
 	require.True(t, ok)
 	assert.Equal(t, agentv1.AgentScope(consts.ScopePublic), scope)
 	assert.Equal(t, agentv1.ScopeSelfRegister, scopes["/"+agentv1.ServiceName+"/Register"],

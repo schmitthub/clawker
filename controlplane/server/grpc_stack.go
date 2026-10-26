@@ -35,7 +35,7 @@ const (
 )
 
 // agentMaxConcurrentStreams caps in-flight RPCs per clawkerd connection
-// on the agent listener. The Export gateway holds decoded OTLP batches in
+// on the agent listener. The ExportTelemetry gateway holds decoded OTLP batches in
 // memory per call; the cap plus the gateway's own concurrency slot keep
 // that memory proportional to a constant, not to a flooding peer.
 const agentMaxConcurrentStreams = 16
@@ -99,11 +99,11 @@ type GRPCDeps struct {
 	// AgentService surface — see ServeAgent / the identity gate below.
 	PeerLookup agent.ContainerByPeerIP
 
-	// Ingest forwards verified AgentService.Export batches to the
-	// collector. nil is the degraded state (event=agent_ingest_unavailable
-	// at wiring): Export answers Unavailable, every other surface is
+	// OtelGateway forwards verified AgentService.ExportTelemetry batches to the
+	// collector. nil is the degraded state (event=otel_gateway_unavailable
+	// at wiring): ExportTelemetry answers Unavailable, every other surface is
 	// unaffected.
-	Ingest agent.TelemetryIngest
+	OtelGateway agent.OtelForwarder
 
 	// ServerCertPath / ServerKeyPath locate the CP server leaf used for
 	// both the admin and agent listeners (same mTLS material).
@@ -456,12 +456,12 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 
 	agentServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-		// Export bodies are capped at agentv1.ExportMaxBodyBytes; the
+		// ExportTelemetry bodies are capped at agentv1.ExportTelemetryMaxBodyBytes; the
 		// transport cap leaves room for the envelope so a body at the
 		// cap reaches the handler and an oversize one is refused by
 		// grpc-go with ResourceExhausted before any decode.
-		grpc.MaxRecvMsgSize(agentv1.ExportMaxMessageBytes),
-		// One clawkerd per container; a handful of in-flight Export calls
+		grpc.MaxRecvMsgSize(agentv1.ExportTelemetryMaxMessageBytes),
+		// One clawkerd per container; a handful of in-flight ExportTelemetry calls
 		// per connection is plenty, and the cap keeps a flooding peer
 		// from holding unbounded decode memory open.
 		grpc.MaxConcurrentStreams(agentMaxConcurrentStreams),
@@ -495,9 +495,9 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 		closeBound(grpcLis, agentLis)
 		return nil, fmt.Errorf("agent register handler: %w", herr)
 	}
-	// The same handler serves Export; the gateway is optional (nil =
-	// degraded, Export answers Unavailable).
-	registerHandler.Ingest = deps.Ingest
+	// The same handler serves ExportTelemetry; the gateway is optional (nil =
+	// degraded, ExportTelemetry answers Unavailable).
+	registerHandler.OtelGateway = deps.OtelGateway
 	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	stack.agentServer = agentServer
