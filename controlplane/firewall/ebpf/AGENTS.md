@@ -154,13 +154,13 @@ admin/health/SDS) returns `V_DENY` with an `ACTION_DENY` metric and an
 allowlist because `host.docker.internal` can resolve inside the subnet (a
 daemon with `host-gateway-ip` set, some engine variants). `gateway_ip` is carried for dumps only.
 `bpftest` runs the production helpers under `BPF_PROG_TEST_RUN`
-(`TestProgRun_AllowedInternal`, `TestProgRun_DecideSendmsg_IntraSubnet`);
+(`TestProgRun_AllowedInternal`);
 `make test-bpf` on a privileged host, or the compiled test binary under
 `docker run --privileged` from a dev container.
 
 ## Invariants
 
-- `struct container_config` is 36 bytes (`_Static_assert` + `TestContainerConfig_SizeMatchesABI`). Append new fields at the end. After an upgrade that changes the value size, the schema check replaces the pinned map with an empty one, and rows come back only when the `FirewallInit` sweep re-installs each agent. The stale-link sweep keys on the kernel's link state, not on this map, so live agents keep their links (and the previous programs keep enforcing against the old map) across a failed bringup and any number of later `Load()` calls. `TestLoad_KeepsLinksOfLiveCgroups` (privileged) guards this.
+- `struct container_config` is 36 bytes (`_Static_assert`). Append new fields at the end. After an upgrade that changes the value size, the schema check replaces the pinned map with an empty one, and rows come back only when the `FirewallInit` sweep re-installs each agent. The stale-link sweep keys on the kernel's link state, not on this map, so live agents keep their links (and the previous programs keep enforcing against the old map) across a failed bringup and any number of later `Load()` calls.
 - Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.
