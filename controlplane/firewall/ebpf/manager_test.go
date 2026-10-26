@@ -3,17 +3,24 @@ package ebpf
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"io/fs"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -66,37 +73,181 @@ func TestNewContainerConfig_ControlPlaneFields(t *testing.T) {
 	}
 }
 
-// TestLiveCgroupIDs_LayoutIndependent: the stale-link sweep in Load()
-// reads the previous CP's pinned container_map. When the value layout has
-// grown since that CP (a container_config field was appended), a typed
-// Lookup fails and every live agent would be swept as dead, so presence
-// must be checked against the map's own value size. Both the old (28
-// byte) and the current layout must report the seeded cgroup live.
-func TestLiveCgroupIDs_LayoutIndependent(t *testing.T) {
+// TestLoad_KeepsLinksOfLiveCgroups: Load() sweeps pinned links, and the
+// sweep must keep every link whose cgroup still exists. The case is a CP
+// upgrade that grows container_config: the first boot replaces the pinned
+// container_map with an empty map of the new layout, and rows come back
+// only in the FirewallInit re-enroll sweep. When that bringup fails, the
+// next Load() must still keep the live agent's links, or the agent runs
+// unenforced. A link whose cgroup was destroyed is swept.
+func TestLoad_KeepsLinksOfLiveCgroups(t *testing.T) {
 	t.Parallel()
 	requireBPF(t)
-	var current clawkerContainerConfig
-	for _, valueSize := range []int{28, binary.Size(current)} {
-		t.Run(strconv.Itoa(valueSize), func(t *testing.T) {
-			t.Parallel()
-			spec := new(ebpf.MapSpec)
-			spec.Type = ebpf.Hash
-			spec.KeySize = 8
-			spec.ValueSize = uint32(valueSize)
-			spec.MaxEntries = 4
-			m, err := ebpf.NewMap(spec)
-			if err != nil {
-				t.Fatalf("create map: %v", err)
-			}
-			defer m.Close()
-			if putErr := m.Put(uint64(11), make([]byte, valueSize)); putErr != nil {
-				t.Fatalf("seed: %v", putErr)
-			}
-			live := liveCgroupIDs(m, map[uint64]bool{11: true, 22: true})
-			if !live[11] || live[22] {
-				t.Fatalf("live = %v; want {11:true}", live)
-			}
-		})
+	pinPath := requireBPFFSDir(t)
+	cgroupPath := testCgroup(t)
+	cgroupID, err := CgroupID(cgroupPath)
+	if err != nil {
+		t.Fatalf("CgroupID: %v", err)
+	}
+	// The previous CP: a 28-byte container_map with this cgroup enrolled,
+	// and a pinned link on the cgroup.
+	pinOldContainerMap(t, pinPath, cgroupID)
+	linkPin := pinTestCgroupLink(t, pinPath, cgroupPath, cgroupID)
+
+	// Upgrade boot: the pinned container_map is replaced by an empty map of
+	// the current layout. Bringup then fails, so no agent is re-enrolled.
+	loadAt(t, pinPath)
+	newMap, err := ebpf.LoadPinnedMap(filepath.Join(pinPath, ContainerMapName), nil)
+	if err != nil {
+		t.Fatalf("open container_map: %v", err)
+	}
+	var cfg clawkerContainerConfig
+	if got, want := newMap.ValueSize(), uint32(binary.Size(cfg)); got != want {
+		t.Fatalf("container_map value size = %d after upgrade boot, want %d", got, want)
+	}
+	newMap.Close()
+
+	// Next CP start: the live agent's link must survive.
+	loadAt(t, pinPath)
+	if _, statErr := os.Stat(linkPin); statErr != nil {
+		t.Fatalf("link of a live cgroup swept by second Load(): %v", statErr)
+	}
+
+	// The container exits: its cgroup is destroyed, the kernel detaches the
+	// link, and the next Load() sweeps the pin.
+	if rmErr := os.Remove(cgroupPath); rmErr != nil {
+		t.Fatalf("remove cgroup: %v", rmErr)
+	}
+	waitLinkDetached(t, linkPin)
+	loadAt(t, pinPath)
+	if _, statErr := os.Stat(linkPin); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("link of a destroyed cgroup kept by Load(): stat err = %v", statErr)
+	}
+}
+
+// loadAt runs one CP boot's Manager.Load against pinPath.
+func loadAt(t *testing.T, pinPath string) {
+	t.Helper()
+	m := NewManager(logger.Nop())
+	m.pinPath = pinPath
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// pinOldContainerMap pins a container_map with the 28-byte value layout of
+// an earlier release, with cgroupID enrolled.
+func pinOldContainerMap(t *testing.T, pinPath string, cgroupID uint64) {
+	t.Helper()
+	spec, err := loadClawker()
+	if err != nil {
+		t.Fatalf("loadClawker: %v", err)
+	}
+	oldSpec := spec.Maps[ContainerMapName].Copy()
+	oldSpec.ValueSize = 28
+	oldSpec.Pinning = ebpf.PinNone
+	oldMap, err := ebpf.NewMap(oldSpec)
+	if err != nil {
+		t.Fatalf("create old container_map: %v", err)
+	}
+	defer oldMap.Close()
+	if putErr := oldMap.Put(cgroupID, make([]byte, 28)); putErr != nil {
+		t.Fatalf("seed old container_map: %v", putErr)
+	}
+	if pinErr := oldMap.Pin(filepath.Join(pinPath, ContainerMapName)); pinErr != nil {
+		t.Fatalf("pin old container_map: %v", pinErr)
+	}
+}
+
+// requireBPFFSDir returns a new directory on the BPF filesystem, or skips
+// the test when no BPF filesystem is mounted at consts.SysFSBPFPath.
+func requireBPFFSDir(t *testing.T) string {
+	t.Helper()
+	return requireTestDir(t, consts.SysFSBPFPath, "BPF filesystem unavailable")
+}
+
+// testCgroup creates a child cgroup, or skips the test when the cgroup v2
+// hierarchy is not writable.
+func testCgroup(t *testing.T) string {
+	t.Helper()
+	return requireTestDir(t, "/sys/fs/cgroup", "cgroup v2 hierarchy not writable")
+}
+
+// requireTestDir creates a directory for this test under root and removes
+// it at cleanup. It skips the test when root does not accept the mkdir.
+func requireTestDir(t *testing.T, root, skipMsg string) string {
+	t.Helper()
+	dir := filepath.Join(root, fmt.Sprintf("clawker-%s-%d", t.Name(), os.Getpid()))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Skipf("%s: %v", skipMsg, err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("remove %s: %v", dir, err)
+		}
+	})
+	return dir
+}
+
+// pinTestCgroupLink attaches an allow-all connect4 program to the cgroup
+// and pins the link under the name Install uses. Returns the pin path.
+func pinTestCgroupLink(t *testing.T, pinPath, cgroupPath string, cgroupID uint64) string {
+	t.Helper()
+	spec := new(ebpf.ProgramSpec)
+	spec.Type = ebpf.CGroupSockAddr
+	spec.AttachType = ebpf.AttachCGroupInet4Connect
+	spec.Instructions = asm.Instructions{
+		asm.Mov.Imm(asm.R0, 1),
+		asm.Return(),
+	}
+	spec.License = "Dual MIT/GPL"
+	prog, err := ebpf.NewProgram(spec)
+	if err != nil {
+		t.Fatalf("load test program: %v", err)
+	}
+	defer prog.Close()
+	l, err := link.AttachCgroup(link.CgroupOptions{
+		Path:    cgroupPath,
+		Attach:  ebpf.AttachCGroupInet4Connect,
+		Program: prog,
+	})
+	if err != nil {
+		t.Fatalf("attach test program: %v", err)
+	}
+	defer l.Close()
+	pin := filepath.Join(pinPath, fmt.Sprintf("link_connect4_%d", cgroupID))
+	if pinErr := l.Pin(pin); pinErr != nil {
+		t.Fatalf("pin test link: %v", pinErr)
+	}
+	return pin
+}
+
+// waitLinkDetached waits until the kernel has detached the pinned link
+// from its destroyed cgroup. The detach runs from a kernel work item after
+// the cgroup goes offline, so it is not synchronous with rmdir.
+func waitLinkDetached(t *testing.T, pin string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		l, err := link.LoadPinnedLink(pin, nil)
+		if err != nil {
+			t.Fatalf("open pinned link: %v", err)
+		}
+		info, err := l.Info()
+		l.Close()
+		if err != nil {
+			t.Fatalf("link info: %v", err)
+		}
+		if info.Cgroup().CgroupId == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("link still attached to cgroup %d after its removal", info.Cgroup().CgroupId)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

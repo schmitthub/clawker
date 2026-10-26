@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -257,87 +256,64 @@ func (m *Manager) CleanupAllLinks() {
 	}
 }
 
-// cleanupStaleLinks removes pinned link files whose target cgroups no longer
-// exist (dead containers). Links to live cgroups are preserved so their
-// enforcement survives CP restarts. The cgroup ID is extracted from the
-// pin filename (link_{prog}_{cgroupID}) and looked up in container_map —
-// if the cgroup ID is absent from the map (or the map doesn't exist),
-// the link is considered stale and removed.
+// cleanupStaleLinks removes pinned links whose cgroup is gone (dead
+// containers). The kernel detaches a cgroup link when its cgroup is
+// destroyed and then reports cgroup ID 0 for it, so a link that still
+// reports a cgroup belongs to a live container and is kept: its enforcement
+// must survive CP restarts. The sweep does not read container_map. After an
+// upgrade that changes the value layout, that map is empty until the
+// FirewallInit sweep re-enrolls each agent; a sweep keyed on it would unpin
+// the links of live agents when a bringup fails before the re-enroll.
 func (m *Manager) cleanupStaleLinks() {
 	entries, err := os.ReadDir(m.pinPath)
 	if err != nil {
 		return
 	}
 
-	// Collect unique cgroup IDs from link pin filenames.
-	cgroupIDs := make(map[uint64]bool)
+	kept, cleaned := 0, 0
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "link_") {
 			continue
 		}
-		// Format: link_{prog}_{cgroupID}
-		parts := strings.Split(e.Name(), "_")
-		if len(parts) < 3 {
-			continue
-		}
-		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
-		if err != nil {
-			continue
-		}
-		cgroupIDs[id] = true
-	}
-
-	if len(cgroupIDs) == 0 {
-		return
-	}
-
-	// Check which cgroup IDs are still alive by trying to look them up
-	// in the container_map (if it exists). A cgroup in container_map is
-	// an active enforcement target — keep its links. Everything else is stale.
-	liveIDs := make(map[uint64]bool)
-	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, ContainerMapName), nil)
-	if err == nil {
-		defer containerMap.Close()
-		liveIDs = liveCgroupIDs(containerMap, cgroupIDs)
-	}
-	// If container_map doesn't exist (first boot), all links are stale.
-
-	// Remove links for dead cgroups.
-	cleaned := 0
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "link_") {
-			continue
-		}
-		parts := strings.Split(e.Name(), "_")
-		if len(parts) < 3 {
-			continue
-		}
-		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
-		if err != nil {
-			continue
-		}
-		if liveIDs[id] {
-			continue // live cgroup — keep link
-		}
-
 		pin := filepath.Join(m.pinPath, e.Name())
 		l, lerr := link.LoadPinnedLink(pin, nil)
-		if lerr == nil {
-			l.Unpin()
-			l.Close()
-		} else {
-			os.Remove(pin)
+		if lerr != nil {
+			if rmErr := os.Remove(pin); rmErr != nil {
+				m.log.Warn().Err(rmErr).Str("link", e.Name()).Msg("ebpf: removing unreadable link pin")
+			}
+			cleaned++
+			continue
 		}
-		cleaned++
+		if m.linkAttached(l, e.Name()) {
+			kept++
+		} else {
+			if unpinErr := l.Unpin(); unpinErr != nil {
+				m.log.Warn().Err(unpinErr).Str("link", e.Name()).Msg("ebpf: unpinning stale link")
+			}
+			cleaned++
+		}
+		if closeErr := l.Close(); closeErr != nil {
+			m.log.Warn().Err(closeErr).Str("link", e.Name()).Msg("ebpf: closing link")
+		}
 	}
-
-	// Programs attached per cgroup — derived from the single source of truth.
-	numBPFPrograms := len(m.cgroupAttachments())
 
 	if cleaned > 0 {
-		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*numBPFPrograms).
+		m.log.Info().Int("cleaned", cleaned).Int("kept", kept).
 			Msg("cleaned stale link pins from dead cgroups")
 	}
+}
+
+// linkAttached reports whether a pinned cgroup link is still attached to a
+// live cgroup. A link info error keeps the link: removing it could leave a
+// live agent unenforced, and keeping it costs only a leaked link.
+func (m *Manager) linkAttached(l link.Link, name string) bool {
+	info, err := l.Info()
+	if err != nil {
+		m.log.Warn().Err(err).Str("link", name).Msg("ebpf: link info failed; keeping pinned link")
+		return true
+	}
+	cg := info.Cgroup()
+	return cg != nil && cg.CgroupId != 0
 }
 
 // cleanupLinks removes stale pinned links for a cgroup ID.
@@ -589,26 +565,9 @@ type cgroupAttachment struct {
 	typ  ebpf.AttachType
 }
 
-// liveCgroupIDs returns the subset of ids present in containerMap. The
-// map is the PREVIOUS CP's pinned container_map, whose value layout may
-// be older than this binary's struct, so presence is checked with
-// LookupBytes (sized from the map's own ValueSize). A typed Lookup into
-// the current struct fails on a size change and would report every live
-// agent as dead: its links would be unpinned and the agent would run
-// unenforced until the re-enroll sweep.
-func liveCgroupIDs(containerMap *ebpf.Map, ids map[uint64]bool) map[uint64]bool {
-	live := make(map[uint64]bool, len(ids))
-	for id := range ids {
-		if b, err := containerMap.LookupBytes(id); err == nil && b != nil {
-			live[id] = true
-		}
-	}
-	return live
-}
-
 // cgroupAttachments is the single source of truth for the set of cgroup BPF
 // programs clawker attaches per container — Install attaches them, cleanupLinks
-// and Remove unpin their links by name, and the count drives the cleanup log.
+// and Remove unpin their links by name.
 // Adding or removing a program is a one-line edit here (plus the two pin maps in
 // Load/OpenPinned, which must bind struct-field addresses and can't derive).
 func (m *Manager) cgroupAttachments() []cgroupAttachment {
