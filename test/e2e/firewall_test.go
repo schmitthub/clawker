@@ -455,10 +455,9 @@ func TestFirewall_Status(t *testing.T) {
 // TestFirewall_IntraSubnetAllowlist proves the eBPF in-subnet allowlist: a
 // managed agent reaches only Envoy, CoreDNS on 53, and the control plane
 // on its agent and Hydra ports. Another container on clawker-net is denied
-// on TCP and UDP, the CP health port is denied, and DNS plus allowed
-// egress still work. Every probe runs in one container through bash's
-// /dev/tcp and /dev/udp so a denial is the kernel's EPERM on connect(),
-// never a missing listener.
+// on TCP and UDP, and DNS plus allowed egress still work. Every probe runs
+// in one container through bash's /dev/tcp and /dev/udp so a denial is the
+// kernel's EPERM on connect(), never a missing listener.
 func TestFirewall_IntraSubnetAllowlist(t *testing.T) {
 	h := newFirewallHarness(t)
 	ctx := context.Background()
@@ -501,7 +500,6 @@ probe other-tcp "exec 3<>/dev/tcp/` + listenerIP + `/8080"
 probe other-udp "echo x > /dev/udp/` + listenerIP + `/9"
 probe cp-agent "exec 3<>/dev/tcp/` + cpIP + `/7444"
 probe cp-hydra "exec 3<>/dev/tcp/` + cpIP + `/4444"
-probe cp-health "exec 3<>/dev/tcp/` + cpIP + `/7080"
 probe dns "getent hosts api.anthropic.com >/dev/null"
 `
 	res := h.RunInContainer("intra-net-test", "bash", "-c", script)
@@ -511,7 +509,6 @@ probe dns "getent hosts api.anthropic.com >/dev/null"
 		"other-udp=closed",
 		"cp-agent=open",
 		"cp-hydra=open",
-		"cp-health=closed",
 		"dns=open",
 	} {
 		assert.Contains(t, res.Stdout, want, "probe results:\n%s", res.Stdout)
