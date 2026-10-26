@@ -49,5 +49,12 @@ func AgentMethodScopes() map[string]AgentScope {
 		// the listener plus the IdentityInterceptor and the handler's
 		// registry thumbprint check are the gate.
 		svc + "ExportTelemetry": consts.ScopePublic,
+		// Host actions are PUBLIC for the same reason. The handler adds
+		// the per-container policy from the container labels.
+		svc + "OpenURL":          consts.ScopePublic,
+		svc + "GitCredential":    consts.ScopePublic,
+		svc + "RegisterCallback": consts.ScopePublic,
+		svc + "GetCallbackData":  consts.ScopePublic,
+		svc + "DeleteCallback":   consts.ScopePublic,
 	}
 }
