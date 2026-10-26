@@ -4,7 +4,7 @@ Pipeline contract (collector routing, indices, record schema, runtime UAT): `int
 
 Userspace consumer of the BPF `events_ringbuf`. Drains per-decision-point egress records, enriches each with `{container_id, agent, project, domain}` attribution looked up by `cgroup_id`, and pushes the result through an OTel log sink to the trusted-infra OTLP receiver. Lives under `internal/controlplane/firewall/ebpf/` because it is the userspace half of the ebpf egress event emitter — the BPF programs in `bpf/clawker.c` submit records into the pinned ringbuf; this package shapes them into the OTLP log stream the monitoring backend consumes.
 
-The package ships as a per-decision-point egress event emitter with an OTel sink and a circuit breaker; CP main constructs the `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps it with `NewCircuitExporter`, and wires it through `Deps.OtelLoggerProvider`. The drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushAll()`.
+The package ships as a per-decision-point egress event emitter with an OTel sink and a circuit breaker; CP main constructs the `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps it with `NewCircuitExporter`, and wires it through `Deps.OtelLoggerProvider`. The drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushDead()`.
 
 ## Pipeline shape
 
@@ -202,7 +202,7 @@ No explicit cache backfill is needed at startup. `firewall.Handler.FirewallInit`
 3. Cancel the inner ctx (the reverse-DNS refresher exits on the next tick; subscriber goroutines exit on the next select).
 4. Wait on the goroutines with a bounded timeout (`defaultStopTimeout = 5s`); beyond that we proceed so netlogger is never the long pole during CP drain-to-zero.
 
-The CP wiring (see `cmd/clawkercp/main.go::drainCallbackBody`) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down. Stop is wrapped in a `if netloggerSvc != nil` so the degraded path (boot-time provider failure) doesn't NPE.
+The CP wiring (see `cmd/clawkercp/main.go::drainCallbackBody`) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushDead()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down. Stop is wrapped in a `if netloggerSvc != nil` so the degraded path (boot-time provider failure) doesn't NPE.
 
 ## CP no-panic discipline
 

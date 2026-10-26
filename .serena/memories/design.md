@@ -744,7 +744,7 @@ Collector-unavailable posture is binary per-CP-lifetime:
 - **Startup preflight**: `controlplane.NewOtelLoggerProvider` performs a one-shot TLS dial against the OTLP endpoint. Failure returns an error to CP main; main emits `event=netlogger_unavailable` with the failing `step` field, leaves `netloggerSvc=nil`, and CP runs degraded with no per-decision telemetry. Firewall enforcement is untouched.
 - **Runtime circuit breaker**: `netlogger.NewCircuitExporter` wraps the OTLP exporter inside the BatchProcessor. After 3 consecutive `Export` failures the breaker permanently trips, drops records on the floor, and emits a single `event=netlogger_collector_lost` line. No background reconnect — operators recover by restarting CP.
 
-Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
+Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushDead()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
 
 ### 7.3 Strict Label Ownership
 

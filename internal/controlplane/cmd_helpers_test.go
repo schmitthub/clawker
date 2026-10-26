@@ -123,7 +123,7 @@ func TestLogHostIdentity(t *testing.T) {
 // TestRunDrainStage pins the CP §3.4 drain-resilience contract: a panicking
 // teardown stage MUST be contained (recovered, not propagated) and reported as
 // an error, so the linear drain sequence in run() falls through to
-// ebpfMgr.FlushAll instead of unwinding the whole function and stranding eBPF.
+// ebpfMgr.FlushDead instead of unwinding the whole function and stranding eBPF.
 // A clean stage runs its body and reports no error and no log noise. The
 // structured event name is the only operator triage surface, so a rename or a
 // dropped emit must trip this test.
@@ -147,7 +147,7 @@ func TestRunDrainStage(t *testing.T) {
 		log := logger.NewWriter(&buf)
 		var err error
 		// The whole point of the recover: a panic in one teardown stage must
-		// NOT unwind run() (which would skip FlushAll and strand eBPF).
+		// NOT unwind run() (which would skip FlushDead and strand eBPF).
 		require.NotPanics(t, func() {
 			err = runDrainStage(log, "pre-flush teardown", "drain_preflush_panic", func() {
 				panic("stack stop blew up")
@@ -161,9 +161,9 @@ func TestRunDrainStage(t *testing.T) {
 	})
 
 	t.Run("a panicking stage still lets the caller reach a later stage", func(t *testing.T) {
-		// This is the load-bearing FlushAll-still-runs guarantee, modeled as
+		// This is the load-bearing FlushDead-still-runs guarantee, modeled as
 		// the call site does it: two stages in sequence, the first panics,
-		// the second (FlushAll's stand-in) must still run.
+		// the second (FlushDead's stand-in) must still run.
 		log := logger.Nop()
 		flushed := false
 		_ = runDrainStage(log, "pre-flush teardown", "drain_preflush_panic", func() {
@@ -174,7 +174,7 @@ func TestRunDrainStage(t *testing.T) {
 		_ = runDrainStage(log, "ebpf flush", "drain_ebpf_flush_panic", func() {
 			flushed = true
 		})
-		require.True(t, flushed, "FlushAll-equivalent stage must run after a prior stage panics")
+		require.True(t, flushed, "FlushDead-equivalent stage must run after a prior stage panics")
 	})
 }
 
