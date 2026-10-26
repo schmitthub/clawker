@@ -93,19 +93,6 @@ func newEnrollmentStoreImpl(store *storage.Store[EnrollmentFile]) *enrollmentSto
 	return &enrollmentStoreImpl{Store: store}
 }
 
-// NewEnrollmentStoreFromString is the in-memory seam for the enrollment
-// table: the seed YAML is the only layer, with no directory and no disk, so
-// writes error by design. For consumer doubles that only read.
-//
-//nolint:ireturn // returns the EnrollmentStore domain interface by design — enrollmentStoreImpl stays package-private
-func NewEnrollmentStoreFromString(seed string) (EnrollmentStore, error) {
-	store, err := storage.NewFromString[EnrollmentFile](seed)
-	if err != nil {
-		return nil, fmt.Errorf("firewall: loading enrollment table from string: %w", err)
-	}
-	return newEnrollmentStoreImpl(store), nil
-}
-
 // HostProxy implements EnrollmentStore.
 func (s *enrollmentStoreImpl) HostProxy(containerID string) (bool, bool, error) {
 	entry, err := storage.Get[EnrollmentEntry](s.Store, enrollmentContainersField, containerID)
