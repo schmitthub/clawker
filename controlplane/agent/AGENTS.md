@@ -73,7 +73,7 @@ now unexported helpers behind `Start`.
 | `lister.go` | `ContainerLister` + `ListOpts` + `NewContainerLister` — Docker lookup of `purpose=agent` container IDs, used by `Start`/`DialAllRunning` |
 | `repository.go` | `AgentStore` (the `AgentEventState` worldview map) + `Repository` aggregator. `Subscribe`/`SubscribeDockerEvents` wire the stores to the agent + docker topics; `project` is the sole mutation path that folds an `AgentEvent` into the worldview |
 | `register_handler.go` | `Handler` (the AgentService server: Register + ExportTelemetry) — Register consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row. Declares the `OtelForwarder` interface (`Handler.OtelGateway`, nil = degraded) |
-| `export_handler.go` | `Handler.ExportTelemetry` — the agent telemetry lane. Reads the resolved container, captures the live peer thumbprint, compares it against the registry row (`verifyTelemetryPeer`), then hands the body + CP-resolved `otelgateway.Identity` to `Handler.OtelGateway`. Status map: identity rejections `PermissionDenied` (uniform envelope, per-reason `event=agent_export_*`), unknown signal / undecodable body `InvalidArgument`, body over `agentv1.ExportTelemetryMaxBodyBytes` `ResourceExhausted`, nil or failing gateway `Unavailable` |
+| `export_handler.go` | `Handler.ExportTelemetry` — the agent telemetry lane. Reads the resolved container, captures the live peer thumbprint, compares it against the registry row (`verifyTelemetryPeer`), then hands the body + CP-resolved `otelgateway.Identity` to `Handler.OtelGateway`. Status map: identity rejections `PermissionDenied` (uniform envelope, per-reason `event=agent_export_*`), unknown signal / undecodable body / `otelgateway.ErrCollectorRejected` `InvalidArgument`, body over `agentv1.ExportTelemetryMaxBodyBytes` `ResourceExhausted`, nil or failing gateway `Unavailable` |
 | `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabel`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver. `ErrInvalidAgentLabel` fires only on a missing/malformed `dev.clawker.agent` label; a missing `dev.clawker.project` label is the legitimate global-scope-agent signal (2-segment naming) and resolves cleanly |
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
@@ -256,7 +256,7 @@ thumbprint check are the gate. The agent listener caps messages at
 
 ## Imports
 
-**Uses**: `controlplane/otelgateway` (`Identity`, `ErrMalformedBody` — the
+**Uses**: `controlplane/otelgateway` (`Identity` and the error values — the
 telemetry gateway contract; otelgateway never imports this package),
 `internal/auth` (AgentFullName, NewAgentName,
 NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert),

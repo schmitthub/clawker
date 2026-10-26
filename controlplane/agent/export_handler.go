@@ -25,7 +25,8 @@ const exportIdentityRejected = "export: identity check failed"
 // Every identity rejection returns PermissionDenied with the same
 // envelope as Register; the structured log line carries the reason.
 // Client faults (unknown signal, oversize body, body that does not
-// decode) return InvalidArgument or ResourceExhausted. A missing or
+// decode) and a batch the collector refused as invalid return
+// InvalidArgument or ResourceExhausted. A missing or
 // failing gateway returns Unavailable so the clawkerd relay answers the
 // SDK with a retryable status.
 func (h *Handler) ExportTelemetry(
@@ -67,6 +68,9 @@ func (h *Handler) ExportTelemetry(
 				Str("container_id", resolved.ContainerID).
 				Msg("ExportTelemetry body did not decode as the named signal")
 			return nil, status.Errorf(codes.InvalidArgument, "export: body does not decode")
+		}
+		if errors.Is(ingestErr, otelgateway.ErrCollectorRejected) {
+			return nil, status.Errorf(codes.InvalidArgument, "export: collector rejected the batch")
 		}
 		return nil, status.Errorf(codes.Unavailable, "export: forward failed")
 	}
