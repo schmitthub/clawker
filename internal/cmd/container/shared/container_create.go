@@ -2303,7 +2303,8 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
 	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
 	// handles internal name resolution (container names, host.docker.internal).
-	// When the firewall is enabled, eBPF redirects all DNS to CoreDNS;
+	// When the firewall is enabled, eBPF redirects port 53 to CoreDNS and
+	// denies every other port on 127.0.0.11;
 	// when disabled, 127.0.0.11 forwards to these upstreams.
 	if len(hostConfig.DNS) == 0 {
 		hostConfig.DNS = []netip.Addr{
