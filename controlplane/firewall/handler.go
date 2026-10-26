@@ -189,10 +189,11 @@ type HandlerDeps struct {
 
 	// ListAgents returns canonical container IDs of every running
 	// managed agent the CP knows about. FirewallInit uses it to rebuild
-	// per-container enforcement after a CP restart: FlushAll wipes
-	// container_map on shutdown, so agents that outlived the previous
-	// CP instance would otherwise egress unenforced until they were
-	// restarted. Nil means "no re-enrollment" (test wiring and flows
+	// per-container enforcement after a CP restart: the drain keeps
+	// live agents enrolled against the stopped stack (fail closed), and
+	// the re-enroll points them at the new stack with current config.
+	// After `firewall down` (FlushAll) it restores enforcement for
+	// agents that ran unenforced. Nil means "no re-enrollment" (test wiring and flows
 	// that never want Init to touch agent state).
 	ListAgents func(ctx context.Context) ([]string, error)
 
@@ -313,10 +314,11 @@ func resultAs[T any](val any) (T, error) {
 // ebpf.Manager.Load; this RPC is the idempotent "stack up" signal.
 //
 // After the stack is healthy, Init re-enrolls every running managed
-// agent it can find. On a cold CP start that follows a previous CP's
-// FlushAll, container_map is empty — without re-enrollment, long-lived
-// agents that outlived the previous CP would egress unenforced
-// (fail-open by BPF design). Re-enrollment is in-closure so it
+// agent it can find. Agents that outlived the previous CP are still
+// enrolled (the drain keeps live cgroups, so they fail closed) and the
+// re-enroll restores their egress; after `firewall down` (FlushAll)
+// container_map is empty and the re-enroll restores enforcement.
+// Re-enrollment is in-closure so it
 // serializes with concurrent Enable/Disable/Bypass through the same
 // ActionBringup work unit.
 func (h *Handler) FirewallInit(
@@ -1380,7 +1382,7 @@ func (h *Handler) envoyPorts() EnvoyPorts {
 
 // CancelAllBypassTimers stops every pending dead-man timer and clears
 // the bypass-timers map. Part of INV-B2-007 drain-to-zero: cancelling
-// before eBPF FlushAll stops scheduled Enables from firing against
+// before the eBPF flush stops scheduled Enables from firing against
 // maps that are about to be emptied. A fire goroutine past
 // timer.Stop's check will submit to the queue; after queue.Close that
 // submission returns ErrClosed and is a harmless retry-exhausted log.
@@ -1552,7 +1554,7 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 	// enable failure is logged and the operator can reissue
 	// FirewallEnable.
 	// Route through the queue so the Enable can't collide with a
-	// simultaneous stack reconcile or a mid-shutdown FlushAll. Post-
+	// simultaneous stack reconcile or a mid-shutdown eBPF flush. Post-
 	// Close the queue returns ErrClosed — treat that as "CP is tearing
 	// down, nothing useful an Enable can do against a flushed map"
 	// and exit cleanly.

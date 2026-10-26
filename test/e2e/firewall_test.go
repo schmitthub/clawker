@@ -637,6 +637,46 @@ func TestFirewall_HostProxyPerContainer(t *testing.T) {
 	assert.NotEqual(t, "200", probe("hp-on"), "firewall enable must apply the project's disabled lane")
 }
 
+// TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`
+// with a running agent keeps the agent enrolled: the drain stops Envoy and
+// CoreDNS but keeps the eBPF state of live cgroups, so the agent has no
+// egress until `controlplane up` re-enrolls it. Before this, the drain
+// emptied container_map and detached every link, and the agent sent its
+// traffic directly through the network gateway.
+func TestFirewall_ControlPlaneDownFailsClosed(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	curl := func(url string) *harness.RunResult {
+		t.Helper()
+		return h.ExecInContainer("cp-down", "curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+			"-o", "/dev/null", "-w", "%{http_code}", url)
+	}
+
+	runRes := h.Run("container", "run", "--detach", "--agent", "cp-down", "@", "sleep", "infinity")
+	require.NoError(t, runRes.Err, "start cp-down failed\nstdout: %s\nstderr: %s", runRes.Stdout, runRes.Stderr)
+
+	// Positive control: the allowed domain goes through Envoy.
+	allowRes := curl("https://api.anthropic.com")
+	require.NoError(t, allowRes.Err, "allowed domain must work with the CP up\nstdout: %s\nstderr: %s",
+		allowRes.Stdout, allowRes.Stderr)
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must be denied with the CP up")
+
+	downRes := h.Run("controlplane", "down")
+	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s", downRes.Stdout, downRes.Stderr)
+
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must stay denied with the CP down")
+	require.Error(t, curl("https://api.anthropic.com").Err,
+		"allowed domain must fail with the CP down: no Envoy, no direct egress")
+
+	upRes := h.Run("controlplane", "up")
+	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
+
+	againRes := curl("https://api.anthropic.com")
+	require.NoError(t, againRes.Err, "allowed domain must work after controlplane up\nstdout: %s\nstderr: %s",
+		againRes.Stdout, againRes.Stderr)
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must be denied after controlplane up")
+}
+
 func TestFirewall_SSHTCPMapping(t *testing.T) {
 	// Configure an SSH rule for github.com — exercises the TCP mapping path:
 	// eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
