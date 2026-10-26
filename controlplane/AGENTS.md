@@ -243,7 +243,7 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `adminv1.AdminServiceClient` — `api/admin/v1/mocks.AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/AGENTS.md`).
 - `firewall.EgressRulesStore` / `firewall.RouteIdentityStore` / `firewall.EnrollmentStore` — the three store-backed firewall domain facades; moq mocks in `controlplane/firewall/mocks/`. CP wiring (`buildEnforcement`) threads the interfaces, never a `storage.Store`. Firewall's own tests use real stores instead.
-- `agent.OtelForwarder` — moq-generated `OtelForwarderMock` (`controlplane/agent/mocks/otel_forwarder_mock.go`) for the ExportTelemetry handler tests; `controlplane/otelgateway`'s own tests run the real `Gateway` against an in-process mTLS fake collector.
+- `agent.OtelForwarder` — moq-generated `OtelForwarderMock` (`controlplane/agent/mocks/otel_forwarder_mock.go`) for the ExportTelemetry handler tests.
 - `agent.Registry` — moq-generated `RegistryMock` (in `controlplane/agent/mocks/registry_mock.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage
