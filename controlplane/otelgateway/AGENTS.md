@@ -9,7 +9,6 @@ The package holds no identity logic and does not import `controlplane/agent`: `I
 | File | Purpose |
 |------|---------|
 | `gateway.go` | `Gateway` (`New`, `Forward`, `Close`), `Options`, `Identity`, `Metrics`, the breaker, the attribute stamp |
-| `gateway_test.go` | Black-box tests against an in-process mTLS fake collector serving the three OTLP collector services |
 
 ## Contract
 
