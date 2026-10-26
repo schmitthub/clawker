@@ -369,17 +369,19 @@ func TestSettingsLoadDoesNotWriteKeys(t *testing.T) {
 // removal of dropped monitoring keys: the Loki/Jaeger/Grafana ports and the
 // collector receiver ports that are no longer configurable.
 func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
-	t.Run("removes dead keys", func(t *testing.T) {
+	t.Run("removes dead keys silently", func(t *testing.T) {
 		const in = `monitoring:
   otel_cp_port: 5319
   otel_infra_port: 7000
   loki_port: 3100
   jaeger_port: 16686
 `
-		after := loadSettings(t, in)
+		var after string
+		notice := captureStderr(t, func() { after = loadSettings(t, in) })
 		for _, key := range []string{"otel_cp_port", "otel_infra_port", "loki_port", "jaeger_port"} {
 			assert.NotContains(t, after, key, "dead key must be removed")
 		}
+		assert.Empty(t, notice, "the removal must not print a notice")
 	})
 
 	t.Run("no-op without monitoring", func(t *testing.T) {
