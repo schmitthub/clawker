@@ -47,3 +47,19 @@ func TestAgentMethodScopes_ExportTelemetryIsPublic(t *testing.T) {
 	assert.Equal(t, agentv1.ScopeSelfRegister, scopes["/"+agentv1.ServiceName+"/Register"],
 		"Register stays bearer-gated")
 }
+
+// TestAgentMethodScopes_HostActionsArePublic pins the host-action lane's
+// auth shape. clawkerd relays the agent's host-proxy requests with the
+// same leaf and no bearer, as for ExportTelemetry. The identity
+// interceptor, the registry thumbprint check and the per-container
+// policy in the handler are the gate.
+func TestAgentMethodScopes_HostActionsArePublic(t *testing.T) {
+	scopes := agentv1.AgentMethodScopes()
+	for _, rpc := range []string{
+		"OpenURL", "GitCredential", "RegisterCallback", "GetCallbackData", "DeleteCallback",
+	} {
+		scope, ok := scopes["/"+agentv1.ServiceName+"/"+rpc]
+		require.True(t, ok, "%s has no scope entry", rpc)
+		assert.Equal(t, agentv1.AgentScope(consts.ScopePublic), scope, rpc)
+	}
+}
