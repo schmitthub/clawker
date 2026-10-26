@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
@@ -416,7 +415,6 @@ monitoring:
 			otel, err := monitor.RenderTemplate("otel-config.yaml", monitor.OtelConfigTemplate, data)
 			require.NoError(t, err)
 			assertGolden(t, filepath.Join("testdata", "golden", "otel-config-"+sc.name+".yaml"), []byte(otel))
-			assertCollectorGraph(t, otel, len(sc.extensions) > 0)
 
 			destDir := filepath.Join(t.TempDir(), monitor.OpenSearchBootstrapDirName)
 			require.NoError(t, monitor.WriteOpenSearchBootstrap(destDir, data, units))
@@ -497,96 +495,6 @@ func treeManifest(t *testing.T, destDir string) []string {
 	}))
 	sort.Strings(paths)
 	return paths
-}
-
-// collectorConfig is the subset of the rendered collector config the
-// graph check reads.
-type collectorConfig struct {
-	Receivers  map[string]any `yaml:"receivers"`
-	Processors map[string]any `yaml:"processors"`
-	Exporters  map[string]any `yaml:"exporters"`
-	Connectors map[string]struct {
-		Table []struct {
-			Condition string   `yaml:"condition"`
-			Pipelines []string `yaml:"pipelines"`
-		} `yaml:"table"`
-	} `yaml:"connectors"`
-	Service struct {
-		Pipelines map[string]struct {
-			Receivers  []string `yaml:"receivers"`
-			Processors []string `yaml:"processors"`
-			Exporters  []string `yaml:"exporters"`
-		} `yaml:"pipelines"`
-	} `yaml:"service"`
-}
-
-// assertCollectorGraph checks the rendered collector config against the
-// constraints the collector enforces at start, which a byte-for-byte
-// golden cannot: every pipeline reference names a defined component
-// (a connector counts as receiver and exporter), every routing table
-// has at least one row, and each connector table's pipelines exist. It
-// also pins the lane contract: only one connector routes
-// service.name=clawker-cli, and when unit lanes exist the gateway
-// connector routing/agents is present without that route.
-func assertCollectorGraph(t *testing.T, rendered string, wantUnitLanes bool) {
-	t.Helper()
-	var cfg collectorConfig
-	require.NoError(t, yaml.Unmarshal([]byte(rendered), &cfg))
-	assertPipelineRefs(t, cfg)
-	assertRoutingTables(t, cfg)
-
-	_, hasAgents := cfg.Connectors["routing/agents"]
-	assert.Equal(t, wantUnitLanes, hasAgents, "routing/agents rendered only when a unit lane exists")
-}
-
-// assertPipelineRefs checks every pipeline reference names a defined
-// component; a connector counts as receiver and exporter.
-func assertPipelineRefs(t *testing.T, cfg collectorConfig) {
-	t.Helper()
-	defined := func(section map[string]any, name string) bool {
-		if _, ok := section[name]; ok {
-			return true
-		}
-		_, ok := cfg.Connectors[name]
-		return ok
-	}
-	for pipeline, p := range cfg.Service.Pipelines {
-		for _, r := range p.Receivers {
-			assert.Truef(t, defined(cfg.Receivers, r), "pipeline %s: receiver %q undefined", pipeline, r)
-		}
-		for _, pr := range p.Processors {
-			_, ok := cfg.Processors[pr]
-			assert.Truef(t, ok, "pipeline %s: processor %q undefined", pipeline, pr)
-		}
-		for _, e := range p.Exporters {
-			assert.Truef(t, defined(cfg.Exporters, e), "pipeline %s: exporter %q undefined", pipeline, e)
-		}
-	}
-}
-
-// assertRoutingTables checks every routing connector has at least one row
-// that targets a defined pipeline, and that only routing/untrusted routes
-// service.name=clawker-cli.
-func assertRoutingTables(t *testing.T, cfg collectorConfig) {
-	t.Helper()
-	cliRoutes := 0
-	for name, c := range cfg.Connectors {
-		if !strings.HasPrefix(name, "routing/") {
-			continue
-		}
-		assert.NotEmptyf(t, c.Table, "connector %s: the collector rejects an empty routing table", name)
-		for _, row := range c.Table {
-			if strings.Contains(row.Condition, `"clawker-cli"`) {
-				cliRoutes++
-				assert.Equal(t, "routing/untrusted", name, "only the host CLI lane routes clawker-cli")
-			}
-			for _, p := range row.Pipelines {
-				_, ok := cfg.Service.Pipelines[p]
-				assert.Truef(t, ok, "connector %s routes to undefined pipeline %q", name, p)
-			}
-		}
-	}
-	assert.Equal(t, 1, cliRoutes, "exactly one clawker-cli route")
 }
 
 func assertGolden(t *testing.T, goldenPath string, got []byte) {

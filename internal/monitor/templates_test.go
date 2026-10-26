@@ -342,7 +342,7 @@ monitoring:
 	// empty routing table); the gateway log pipeline exports to debug.
 	// Unmatched service names (any inactive unit's traffic) fall to the
 	// debug-only unrouted pipeline. The with-lanes shape is locked by the
-	// otel-config goldens and assertCollectorGraph.
+	// otel-config goldens.
 	for _, absent := range []string{"claude-code", "logs/unit_", "routing/agents:", "[routing/agents]"} {
 		if strings.Contains(result, absent) {
 			t.Errorf("otel-config.yaml with no active units should not contain %q", absent)
