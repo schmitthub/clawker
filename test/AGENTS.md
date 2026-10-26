@@ -110,7 +110,10 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker. Shared
 preamble lives in `newFirewallHarness` / `newFirewallYAMLHarness(t, projectYAML,
 services...)` (real wiring + services invariant + isolated FS + register +
 build); pass `fwNoServices` for tests that deliberately end with the stack
-down. `fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
+down. `harness.New` fails when a running agent without the test label exists:
+the test CP shares the host's pinned BPF maps, and its cleanup `firewall down`
+would open that agent's egress. Stop live agents before an e2e run.
+`fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
 filesystem. Each test must start a CP that uses its own CA; an existing CP
 can have a matching binary but certificates from another environment.
 Highlights (not exhaustive — see the file):

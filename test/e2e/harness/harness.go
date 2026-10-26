@@ -72,8 +72,35 @@ type Harness struct {
 // every dependency mocked, no real CP or admin client. Each mutator opts
 // one dependency into its real production wiring. Cleanup is populated by
 // the harness at teardown.
+// requireNoLiveAgents fails the test when a running agent container without
+// the test label exists. The test's control plane shares the host's pinned
+// BPF maps, so its cleanup `firewall down` would flush the live agents'
+// container_map rows and open their egress until the host CP re-enrolls them.
+func requireNoLiveAgents(t *testing.T) {
+	t.Helper()
+	//nolint:gosec // label keys are constants
+	out, err := exec.CommandContext(context.Background(), "docker", "ps",
+		"--filter", "label="+consts.LabelPurpose+"="+consts.PurposeAgent,
+		"--format", `{{.Names}}`+"\t"+`{{.Label "`+consts.LabelTestName+`"}}`).Output()
+	if err != nil {
+		t.Fatalf("harness: list running agents: %v", err)
+	}
+	var live []string
+	for line := range strings.Lines(strings.TrimSpace(string(out))) {
+		name, testName, _ := strings.Cut(strings.TrimSpace(line), "\t")
+		if name != "" && testName == "" {
+			live = append(live, name)
+		}
+	}
+	if len(live) > 0 {
+		t.Fatalf("harness: live agents %v: e2e shares the host's BPF pins and "+
+			"its cleanup opens live agents; stop them first", live)
+	}
+}
+
 func New(t *testing.T, mutators ...func(*FactoryOptions)) *Harness {
 	t.Helper()
+	requireNoLiveAgents(t)
 	opts := &FactoryOptions{
 		Config:              nil,
 		Client:              nil,
