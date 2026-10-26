@@ -19,8 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName        = "/clawker.agent.v1.AgentService/Register"
-	AgentService_ExportTelemetry_FullMethodName = "/clawker.agent.v1.AgentService/ExportTelemetry"
+	AgentService_Register_FullMethodName         = "/clawker.agent.v1.AgentService/Register"
+	AgentService_ExportTelemetry_FullMethodName  = "/clawker.agent.v1.AgentService/ExportTelemetry"
+	AgentService_OpenURL_FullMethodName          = "/clawker.agent.v1.AgentService/OpenURL"
+	AgentService_GitCredential_FullMethodName    = "/clawker.agent.v1.AgentService/GitCredential"
+	AgentService_RegisterCallback_FullMethodName = "/clawker.agent.v1.AgentService/RegisterCallback"
+	AgentService_GetCallbackData_FullMethodName  = "/clawker.agent.v1.AgentService/GetCallbackData"
+	AgentService_DeleteCallback_FullMethodName   = "/clawker.agent.v1.AgentService/DeleteCallback"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -83,6 +88,21 @@ type AgentServiceClient interface {
 	// Unavailable (collector forward failed; the relay answers the SDK
 	// with a retryable status).
 	ExportTelemetry(ctx context.Context, in *ExportTelemetryRequest, opts ...grpc.CallOption) (*ExportTelemetryResult, error)
+	// OpenURL opens a URL in the host browser after the egress check.
+	OpenURL(ctx context.Context, in *OpenURLRequest, opts ...grpc.CallOption) (*OpenURLResult, error)
+	// GitCredential runs one git credential helper action on the host.
+	// Needs the container's HTTPS git credential grant.
+	GitCredential(ctx context.Context, in *GitCredentialRequest, opts ...grpc.CallOption) (*GitCredentialResult, error)
+	// RegisterCallback is the one-shot OAuth flow: the host proxy checks
+	// auth_url against the egress rules, takes the callback port and path
+	// from its localhost redirect_uri, binds that port, opens auth_url in
+	// the host browser and captures the first callback. The session belongs
+	// to the calling container.
+	RegisterCallback(ctx context.Context, in *RegisterCallbackRequest, opts ...grpc.CallOption) (*RegisterCallbackResult, error)
+	// GetCallbackData polls a callback session the caller owns.
+	GetCallbackData(ctx context.Context, in *GetCallbackDataRequest, opts ...grpc.CallOption) (*GetCallbackDataResult, error)
+	// DeleteCallback ends a callback session the caller owns.
+	DeleteCallback(ctx context.Context, in *DeleteCallbackRequest, opts ...grpc.CallOption) (*DeleteCallbackResult, error)
 }
 
 type agentServiceClient struct {
@@ -107,6 +127,56 @@ func (c *agentServiceClient) ExportTelemetry(ctx context.Context, in *ExportTele
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExportTelemetryResult)
 	err := c.cc.Invoke(ctx, AgentService_ExportTelemetry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) OpenURL(ctx context.Context, in *OpenURLRequest, opts ...grpc.CallOption) (*OpenURLResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenURLResult)
+	err := c.cc.Invoke(ctx, AgentService_OpenURL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GitCredential(ctx context.Context, in *GitCredentialRequest, opts ...grpc.CallOption) (*GitCredentialResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GitCredentialResult)
+	err := c.cc.Invoke(ctx, AgentService_GitCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) RegisterCallback(ctx context.Context, in *RegisterCallbackRequest, opts ...grpc.CallOption) (*RegisterCallbackResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterCallbackResult)
+	err := c.cc.Invoke(ctx, AgentService_RegisterCallback_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetCallbackData(ctx context.Context, in *GetCallbackDataRequest, opts ...grpc.CallOption) (*GetCallbackDataResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCallbackDataResult)
+	err := c.cc.Invoke(ctx, AgentService_GetCallbackData_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) DeleteCallback(ctx context.Context, in *DeleteCallbackRequest, opts ...grpc.CallOption) (*DeleteCallbackResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteCallbackResult)
+	err := c.cc.Invoke(ctx, AgentService_DeleteCallback_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +243,21 @@ type AgentServiceServer interface {
 	// Unavailable (collector forward failed; the relay answers the SDK
 	// with a retryable status).
 	ExportTelemetry(context.Context, *ExportTelemetryRequest) (*ExportTelemetryResult, error)
+	// OpenURL opens a URL in the host browser after the egress check.
+	OpenURL(context.Context, *OpenURLRequest) (*OpenURLResult, error)
+	// GitCredential runs one git credential helper action on the host.
+	// Needs the container's HTTPS git credential grant.
+	GitCredential(context.Context, *GitCredentialRequest) (*GitCredentialResult, error)
+	// RegisterCallback is the one-shot OAuth flow: the host proxy checks
+	// auth_url against the egress rules, takes the callback port and path
+	// from its localhost redirect_uri, binds that port, opens auth_url in
+	// the host browser and captures the first callback. The session belongs
+	// to the calling container.
+	RegisterCallback(context.Context, *RegisterCallbackRequest) (*RegisterCallbackResult, error)
+	// GetCallbackData polls a callback session the caller owns.
+	GetCallbackData(context.Context, *GetCallbackDataRequest) (*GetCallbackDataResult, error)
+	// DeleteCallback ends a callback session the caller owns.
+	DeleteCallback(context.Context, *DeleteCallbackRequest) (*DeleteCallbackResult, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -188,6 +273,21 @@ func (UnimplementedAgentServiceServer) Register(context.Context, *RegisterReques
 }
 func (UnimplementedAgentServiceServer) ExportTelemetry(context.Context, *ExportTelemetryRequest) (*ExportTelemetryResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExportTelemetry not implemented")
+}
+func (UnimplementedAgentServiceServer) OpenURL(context.Context, *OpenURLRequest) (*OpenURLResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenURL not implemented")
+}
+func (UnimplementedAgentServiceServer) GitCredential(context.Context, *GitCredentialRequest) (*GitCredentialResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method GitCredential not implemented")
+}
+func (UnimplementedAgentServiceServer) RegisterCallback(context.Context, *RegisterCallbackRequest) (*RegisterCallbackResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterCallback not implemented")
+}
+func (UnimplementedAgentServiceServer) GetCallbackData(context.Context, *GetCallbackDataRequest) (*GetCallbackDataResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCallbackData not implemented")
+}
+func (UnimplementedAgentServiceServer) DeleteCallback(context.Context, *DeleteCallbackRequest) (*DeleteCallbackResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteCallback not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -246,6 +346,96 @@ func _AgentService_ExportTelemetry_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_OpenURL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenURLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).OpenURL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_OpenURL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).OpenURL(ctx, req.(*OpenURLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GitCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GitCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GitCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GitCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GitCredential(ctx, req.(*GitCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_RegisterCallback_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterCallbackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).RegisterCallback(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_RegisterCallback_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).RegisterCallback(ctx, req.(*RegisterCallbackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetCallbackData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCallbackDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetCallbackData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetCallbackData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetCallbackData(ctx, req.(*GetCallbackDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_DeleteCallback_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteCallbackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).DeleteCallback(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_DeleteCallback_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).DeleteCallback(ctx, req.(*DeleteCallbackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -260,6 +450,26 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExportTelemetry",
 			Handler:    _AgentService_ExportTelemetry_Handler,
+		},
+		{
+			MethodName: "OpenURL",
+			Handler:    _AgentService_OpenURL_Handler,
+		},
+		{
+			MethodName: "GitCredential",
+			Handler:    _AgentService_GitCredential_Handler,
+		},
+		{
+			MethodName: "RegisterCallback",
+			Handler:    _AgentService_RegisterCallback_Handler,
+		},
+		{
+			MethodName: "GetCallbackData",
+			Handler:    _AgentService_GetCallbackData_Handler,
+		},
+		{
+			MethodName: "DeleteCallback",
+			Handler:    _AgentService_DeleteCallback_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
