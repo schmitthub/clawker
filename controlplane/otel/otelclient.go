@@ -31,7 +31,7 @@ var errorHandlerOnce sync.Once
 // (sysexec events, etc.) wire the SDK once instead of duplicating the
 // otlploggrpc setup.
 //
-// Trust lane: Endpoint MUST be the infra receiver (OtelInfraPort) and
+// Trust lane: Endpoint MUST be the infra receiver (consts.MonitoringOtelInfraPort) and
 // TLSConfig MUST be sourced from otelcerts.Service.LoadTLSConfig so
 // per-handshake cert rotation is honored. Plaintext fallback is
 // intentionally not supported; the agent lane has its own untrusted

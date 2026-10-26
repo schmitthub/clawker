@@ -113,8 +113,6 @@ func TestRenderTemplate_Compose(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  otel_infra_port: 5319
-  otel_agent_ingest_port: 5320
   prometheus_port: 10090
   prometheus_metrics_port: 9889
   opensearch_port: 19200
@@ -257,8 +255,6 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  otel_infra_port: 5319
-  otel_agent_ingest_port: 5320
   prometheus_metrics_port: 9889
   opensearch_port: 9200
 `)
@@ -316,11 +312,11 @@ monitoring:
 		"receivers: [routing/trusted]",
 		"receivers: [routing/untrusted]",
 		// gRPC variant of the trusted receiver is what Envoy ALS dials.
-		"0.0.0.0:5319",
-		// CP gateway lane: the receiver follows the configured port and
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelInfraPort),
+		// CP gateway lane: the receiver listens on its fixed port and
 		// the two processors exist. Pipeline wiring is locked by the
 		// otel-config golden files.
-		"0.0.0.0:5320",
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelAgentIngestPort),
 		"resource/agent_gateway:",
 		"transform/agent_gateway_metrics:",
 	}

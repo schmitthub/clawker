@@ -67,7 +67,6 @@ func TestStack_ensureInfraClientCerts_DispatchesPerService(t *testing.T) {
 func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 
 	prov := &fakeOtelProvisioner{}
 	store, err := NewRulesStore(cfg)
@@ -100,17 +99,12 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 // otel_collector_als cluster against /etc/envoy/otel-tls/client.pem when
 // no bind-mount exists, producing a running Envoy that fails YAML load /
 // TLS handshake at restart. infraCertsReady=true must surface the
-// settings-store port through ALSConfig.
-//
-// Port-range validation is enforced upstream by config.Port's UnmarshalYAML
-// hook + WithDefaultsFromStruct backfill, so OtelInfraPort can never be
-// out-of-range at runtime — no defensive port gate is needed here.
+// infra receiver port through ALSConfig.
 // `TestGenerateEnvoyConfig_OtelALSCluster_MTLS` covers rendering with a
 // hardcoded ALSConfig.
 func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set([]string{"monitoring", "otel_infra_port"}, 4319))
 
 	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
 	require.NoError(t, err)
@@ -119,9 +113,9 @@ func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	s.infraCertsReady = true
 	assert.Equal(
 		t,
-		ALSConfig{Port: 4319, MTLS: true},
+		ALSConfig{Port: consts.MonitoringOtelInfraPort, MTLS: true},
 		s.alsConfig(),
-		"ready must yield MTLS=true with the settings-store port",
+		"ready must yield MTLS=true with the infra receiver port",
 	)
 }
 

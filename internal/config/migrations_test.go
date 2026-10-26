@@ -365,35 +365,21 @@ func TestSettingsLoadDoesNotWriteKeys(t *testing.T) {
 	assert.NotContains(t, after, "stacks:")
 }
 
-// TestMigrateRemoveLegacyMonitoringKeys covers the settings migration's two
-// shapes — renaming otel_cp_port → otel_infra_port and removing the dropped
-// Loki/Jaeger/Grafana keys.
+// TestMigrateRemoveLegacyMonitoringKeys covers the settings migration's
+// removal of dropped monitoring keys: the Loki/Jaeger/Grafana ports and the
+// collector receiver ports that are no longer configurable.
 func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
-	t.Run("renames otel_cp_port and removes dead keys", func(t *testing.T) {
+	t.Run("removes dead keys", func(t *testing.T) {
 		const in = `monitoring:
   otel_cp_port: 5319
+  otel_infra_port: 7000
   loki_port: 3100
   jaeger_port: 16686
 `
 		after := loadSettings(t, in)
-		assert.NotContains(t, after, "otel_cp_port", "renamed key must be gone")
-		assert.NotContains(t, after, "loki_port", "dead key must be removed")
-		assert.NotContains(t, after, "jaeger_port", "dead key must be removed")
-		assert.Contains(t, after, "otel_infra_port: 5319", "value must carry forward under the new key")
-	})
-
-	t.Run("collision keeps otel_infra_port and drops otel_cp_port", func(t *testing.T) {
-		// Both keys present (a user who set otel_infra_port before upgrading still
-		// carries the legacy otel_cp_port). The legacy key is dropped; the
-		// pre-existing otel_infra_port value must survive, NOT be overwritten.
-		const in = `monitoring:
-  otel_cp_port: 5319
-  otel_infra_port: 7000
-`
-		after := loadSettings(t, in)
-		assert.NotContains(t, after, "otel_cp_port", "legacy key must be dropped on collision")
-		assert.Contains(t, after, "otel_infra_port: 7000",
-			"existing otel_infra_port value must be kept, not overwritten")
+		for _, key := range []string{"otel_cp_port", "otel_infra_port", "loki_port", "jaeger_port"} {
+			assert.NotContains(t, after, key, "dead key must be removed")
+		}
 	})
 
 	t.Run("no-op without monitoring", func(t *testing.T) {
@@ -508,7 +494,6 @@ func TestMigrations_RouteToTheOwningFile(t *testing.T) {
 
 	assert.NotContains(t, settingsAfter, "otel_cp_port")
 	assert.NotContains(t, settingsAfter, "loki_port")
-	assert.Contains(t, settingsAfter, "otel_infra_port: 5111")
 	assert.NotContains(t, settingsAfter, "build", "project keys must not land in the settings file")
 
 	assert.NotContains(t, userAfter, "image:")
