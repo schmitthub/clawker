@@ -63,7 +63,7 @@ receivers:
   otlp/agents:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:0
+        endpoint: 0.0.0.0:4320
         # The CP forwards bodies up to its 4 MiB cap plus the stamp.
         max_recv_msg_size_mib: 8
         tls:

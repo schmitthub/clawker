@@ -407,7 +407,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// The bpffs source this container was built with, so
 			// firewall.Stack gives the CoreDNS sibling the same one.
 			consts.EnvHostBPFFSSource + "=" + bpffsSource,
-		}, otelLogsEnv(cfg)...),
+		}, otelLogsEnv()...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawkercp"},
 		NetworkName: consts.Network,
@@ -444,7 +444,7 @@ func resolveBPFFSSource() (string, error) {
 // the OTEL bridge against the CP-only mTLS-gated receiver on the
 // monitoring stack.
 //
-// Endpoint: https://otel-collector:<OtelInfraPort>. The CP joins the
+// Endpoint: https://otel-collector:<MonitoringOtelInfraPort>. The CP joins the
 // internal telemetry network, where Docker's embedded DNS resolves the
 // collector's service name. Agents never join that network, and they
 // cannot present an infra-chained client cert, so the receiver is closed
@@ -460,11 +460,10 @@ func resolveBPFFSSource() (string, error) {
 // The dial is always attempted; logger construction treats OTEL
 // provider failure as non-fatal so the daemon survives a collector
 // that's down at startup.
-func otelLogsEnv(cfg config.Config) []string {
-	mon := cfg.MonitoringConfig()
+func otelLogsEnv() []string {
 	endpoint := "https://" + net.JoinHostPort(
 		consts.MonitoringServiceOtelCollector,
-		strconv.Itoa(int(mon.OtelInfraPort)),
+		strconv.Itoa(consts.MonitoringOtelInfraPort),
 	)
 	return []string{
 		consts.EnvOTLPEndpoint + "=" + endpoint,
