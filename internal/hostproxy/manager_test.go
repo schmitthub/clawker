@@ -36,18 +36,6 @@ func getFreeMgrPort(t *testing.T) int {
 	return port
 }
 
-func TestManagerProxyURL(t *testing.T) {
-	cfg := newMockConfigWithPort(t, 12345)
-	m, err := NewManager(cfg, logger.Nop())
-	if err != nil {
-		t.Fatalf("NewManager failed: %v", err)
-	}
-	expected := "http://host.docker.internal:12345"
-	if m.ProxyURL() != expected {
-		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
-	}
-}
-
 func TestManagerPort(t *testing.T) {
 	cfg := newMockConfigWithPort(t, 12345)
 	m, err := NewManager(cfg, logger.Nop())
@@ -78,10 +66,6 @@ func TestManagerDefaultPort(t *testing.T) {
 	}
 	if m.Port() != 18374 {
 		t.Errorf("expected default port 18374, got %d", m.Port())
-	}
-	expected := "http://host.docker.internal:18374"
-	if m.ProxyURL() != expected {
-		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
 	}
 }
 

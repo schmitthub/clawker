@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -24,16 +22,12 @@ import (
 // that don't spawn daemon subprocesses.
 //
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-// schemeHTTP is the URL scheme used for the host proxy's loopback HTTP endpoints.
-const schemeHTTP = "http"
 
 type Service interface {
 	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
 	EnsureRunning() error
 	// IsRunning returns whether the host proxy is currently running.
 	IsRunning() bool
-	// ProxyURL returns the URL containers should use to reach the host proxy.
-	ProxyURL() string
 	// PrecheckGitCredential reports whether the host can serve the
 	// /git/credential endpoint: the same `git` binary the handler execs
 	// must be on PATH with a credential helper configured. Callers warn
@@ -125,17 +119,6 @@ func (m *Manager) IsRunning() bool {
 // Port returns the port the host proxy daemon is configured to use.
 func (m *Manager) Port() int {
 	return m.port
-}
-
-// ProxyURL returns the URL containers should use to reach the host proxy.
-// This uses host.docker.internal which Docker automatically resolves to the host.
-func (m *Manager) ProxyURL() string {
-	host := net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(m.port))
-	u := url.URL{
-		Scheme: schemeHTTP,
-		Host:   host,
-	}
-	return u.String()
 }
 
 // isDaemonRunning checks if the daemon is running via PID file and health check.

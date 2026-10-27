@@ -789,11 +789,13 @@ func TestCreateContainer_HostActionGrantLabels(t *testing.T) {
 			fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
 			fake.SetupCopyToContainer()
 			var labels map[string]string
+			var env []string
 			fake.FakeAPI.ContainerCreateFn = func(
 				_ context.Context, opts moby.ContainerCreateOptions,
 			) (moby.ContainerCreateResult, error) {
 				if opts.Config != nil {
 					labels = opts.Config.Labels
+					env = opts.Config.Env
 				}
 				return moby.ContainerCreateResult{
 					ID:       "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
@@ -811,6 +813,13 @@ func TestCreateContainer_HostActionGrantLabels(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.wantHostProxy, labels[consts.LabelHostProxy])
 			require.Equal(t, tc.wantGitHTTPS, labels[consts.LabelGitHTTPS])
+			// The agent reaches host actions only through the clawkerd relay.
+			relayEnv := consts.EnvHostProxy + "=" + consts.AgentHostRelayURL
+			if tc.wantHostProxy == "true" {
+				require.Contains(t, env, relayEnv)
+			} else {
+				require.NotContains(t, env, relayEnv)
+			}
 		})
 	}
 }
