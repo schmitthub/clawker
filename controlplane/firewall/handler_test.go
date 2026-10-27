@@ -803,14 +803,14 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
 }
 
-// TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts asserts the
-// reconcile-path identity sync allocates one sticky identity per rule dst
-// (domains, wildcards normalized, IP literals — allow AND deny alike, so an
-// action flip never renumbers) plus every reserved internal host, and that
+// TestHandler_IdentityTable_CoversRuleDsts asserts the reconcile-path
+// identity sync allocates one sticky identity per rule dst (domains,
+// wildcards normalized, IP literals — allow AND deny alike, so an action
+// flip never renumbers) and nothing else, and that
 // the snapshot the netlogger IdentitySource serves reverse-resolves each of
 // them. This is the attribution guarantee: dnsbpf writes and route_map keys
 // both come from this one table.
-func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
+func TestHandler_IdentityTable_CoversRuleDsts(t *testing.T) {
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
 
@@ -824,10 +824,10 @@ func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	wantDsts := []string{"github.com", "example.com", "45.79.112.203", "blocked.test", "docker.internal"}
-	// The monitoring stack is off the agent network: its service names
-	// are not reserved hosts and get no route identity.
-	for _, name := range []string{consts.MonitoringServiceOtelCollector, consts.MonitoringServicePrometheus} {
+	wantDsts := []string{"github.com", "example.com", "45.79.112.203", "blocked.test"}
+	// Names no rule names get no route identity: docker.internal resolves
+	// only through a rule, and the monitoring stack is off the agent network.
+	for _, name := range []string{"docker.internal", consts.DockerHostInternal, consts.MonitoringServiceOtelCollector, consts.MonitoringServicePrometheus} {
 		_, ok := h.identity.IdentityFor(name)
 		assert.Falsef(t, ok, "monitoring name %q must not get a route identity", name)
 	}

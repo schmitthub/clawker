@@ -890,13 +890,6 @@ func (h *Handler) FirewallListRules(
 	return &adminv1.FirewallListRulesResult{Rules: adminv1.EgressRulesToProto(r.Rules)}, nil
 }
 
-// reservedHosts is the internal-host prefix shared by every resolvable-domain
-// path: docker.internal, which CoreDNS forwards out of band regardless of the
-// rule set.
-func (h *Handler) reservedHosts() []string {
-	return []string{"docker.internal"}
-}
-
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
 // mutating the rule set. No pre-Submit work — it is a pure reconcile
 // signal against the current store contents.
@@ -1195,11 +1188,10 @@ func (h *Handler) syncIdentities() error {
 			Msg("firewall: no identity allocator wired; routes and dnsbpf directives will be empty (fail closed)")
 		return nil
 	}
-	dsts := make([]string, 0, len(rules)+1)
+	dsts := make([]string, 0, len(rules))
 	for _, r := range rules {
 		dsts = append(dsts, r.Dst)
 	}
-	dsts = append(dsts, h.reservedHosts()...)
 	if err := h.identity.SyncDsts(dsts); err != nil {
 		return fmt.Errorf("syncing route identities: %w", err)
 	}

@@ -742,13 +742,26 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 		h.Run("container", "stop", "--agent", "dns-test")
 	})
 
-	// Verify host.docker.internal resolves (docker.internal zone → Docker DNS).
-	hostRes := h.ExecInContainer("dns-test", "getent", "hosts", "host.docker.internal")
-	t.Logf("host.docker.internal: stdout=%q stderr=%q err=%v", hostRes.Stdout, hostRes.Stderr, hostRes.Err)
-	require.NoError(t, hostRes.Err,
-		"host.docker.internal should resolve through CoreDNS → Docker DNS\nstdout: %s\nstderr: %s",
-		hostRes.Stdout, hostRes.Stderr)
-	assert.NotEmpty(t, strings.TrimSpace(hostRes.Stdout), "should get an IP for host.docker.internal")
+	// With no rule, nothing under docker.internal resolves: Docker DNS
+	// sends names it does not know to the host resolvers, so an open
+	// subtree would be a DNS exfiltration path.
+	for _, name := range []string{"host.docker.internal", "gateway.docker.internal", "x.host.docker.internal"} {
+		res := h.ExecInContainer("dns-test", "getent", "hosts", name)
+		t.Logf("%s without rule: stdout=%q err=%v", name, res.Stdout, res.Err)
+		require.Errorf(t, res.Err, "%s must not resolve without a rule", name)
+	}
+
+	// A rule for host.docker.internal opens only that exact name, through
+	// Docker DNS.
+	addRes := h.Run("firewall", "add", "host.docker.internal", "--proto", "tcp", "--port", "8080")
+	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s", addRes.Stdout, addRes.Stderr)
+	require.Eventually(t, func() bool {
+		res := h.ExecInContainer("dns-test", "getent", "hosts", "host.docker.internal")
+		return res.Err == nil && strings.TrimSpace(res.Stdout) != ""
+	}, 30*time.Second, time.Second, "host.docker.internal should resolve after the rule is added")
+	subRes := h.ExecInContainer("dns-test", "getent", "hosts", "x.host.docker.internal")
+	t.Logf("x.host.docker.internal with rule: stdout=%q err=%v", subRes.Stdout, subRes.Err)
+	require.Error(t, subRes.Err, "a name below host.docker.internal must not resolve")
 
 	// If monitoring stack is running (otel-collector on the clawker network), verify it resolves.
 	otelRes := h.ExecInContainer("dns-test", "getent", "hosts", "otel-collector")

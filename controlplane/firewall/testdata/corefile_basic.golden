@@ -9,7 +9,7 @@ github.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 261
+    dnsbpf 260
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -39,7 +39,7 @@ registry.npmjs.org {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 263
+    dnsbpf 262
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -54,7 +54,7 @@ proxy.golang.org {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 262
+    dnsbpf 261
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -64,16 +64,6 @@ evil.example.com {
     template IN ANY . {
         rcode NXDOMAIN
     }
-}
-
-docker.internal {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf 259
-    forward . 127.0.0.11
 }
 
 clawker-controlplane {
