@@ -159,8 +159,8 @@ The `127.0.0.11` deny closes Docker's embedded resolver: Docker DNATs
 `127.0.0.11:53` to a random port in the container network namespace, and
 that resolver forwards to public upstreams from outside this program. Without
 the deny, a direct dial to that port is an upstream resolver that bypasses
-CoreDNS. CoreDNS itself is not under agent eBPF and still uses its own
-`127.0.0.11` for `host.docker.internal`.
+CoreDNS. CoreDNS itself is not under agent eBPF and uses its own `127.0.0.11`
+for `host.docker.internal` when a rule names it.
 `bpftest` runs the production helpers under `BPF_PROG_TEST_RUN`
 (`TestProgRun_AllowedInternal`);
 `make test-bpf` on a privileged host, or the compiled test binary under

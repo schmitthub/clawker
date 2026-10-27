@@ -29,7 +29,7 @@ somedomain.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 260
+    dnsbpf 259
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -39,7 +39,7 @@ github.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 259
+    dnsbpf 258
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -49,16 +49,6 @@ sub.somedomain.com {
     template IN ANY . {
         rcode NXDOMAIN
     }
-}
-
-docker.internal {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf 258
-    forward . 127.0.0.11
 }
 
 clawker-controlplane {
