@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"time"
 
 	mobyclient "github.com/moby/moby/client"
@@ -148,6 +149,8 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 			ContainerID: mm.containerID,
 			Project:     project,
 			AgentName:   agentName,
+			HostProxy:   labelGrant(mm.labels[consts.LabelHostProxy]),
+			GitHTTPS:    labelGrant(mm.labels[consts.LabelGitHTTPS]),
 		}, nil
 	}
 
@@ -161,4 +164,11 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 		return ResolvedContainer{}, fmt.Errorf("peer lookup: all candidate inspects failed: %w", lastInspectErr)
 	}
 	return ResolvedContainer{}, ErrNoContainerForPeerIP
+}
+
+// labelGrant reports whether a grant label value grants the action. Any
+// value that does not parse as true is no grant.
+func labelGrant(v string) bool {
+	granted, err := strconv.ParseBool(v)
+	return err == nil && granted
 }

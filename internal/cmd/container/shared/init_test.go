@@ -759,3 +759,58 @@ func seedUnreadableHostConfig(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(hostDir, "settings.json"), []byte("{}"), 0o000))
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 }
+
+// TestCreateContainer_HostActionGrantLabels pins the grant labels the CP
+// authorizes AgentService host actions from: the host-proxy grant follows
+// security.enable_host_proxy, and the git HTTPS grant also needs
+// security.git_credentials.forward_https.
+func TestCreateContainer_HostActionGrantLabels(t *testing.T) {
+	cases := []struct {
+		name          string
+		yaml          string
+		wantHostProxy string
+		wantGitHTTPS  string
+	}{
+		{"defaults", "workspace:\n  default_mode: bind\n", "true", "true"},
+		{
+			"host proxy off",
+			"workspace:\n  default_mode: bind\nsecurity:\n  enable_host_proxy: false\n",
+			"false", "false",
+		},
+		{
+			"forward_https off",
+			"workspace:\n  default_mode: bind\nsecurity:\n  git_credentials:\n    forward_https: false\n",
+			"true", "false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupAuthEnv(t)
+			fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+			fake.SetupCopyToContainer()
+			var labels map[string]string
+			fake.FakeAPI.ContainerCreateFn = func(
+				_ context.Context, opts moby.ContainerCreateOptions,
+			) (moby.ContainerCreateResult, error) {
+				if opts.Config != nil {
+					labels = opts.Config.Labels
+				}
+				return moby.ContainerCreateResult{
+					ID:       "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+					Warnings: nil,
+				}, nil
+			}
+
+			cmd := testFlags()
+			containerOpts := NewContainerOptions()
+			containerOpts.Image = "alpine"
+			containerOpts.Agent = "test-agent"
+
+			_, err := CreateContainer(context.Background(),
+				testCreateConfig(fake, configmocks.NewFromString(tc.yaml, ""), containerOpts, cmd))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantHostProxy, labels[consts.LabelHostProxy])
+			require.Equal(t, tc.wantGitHTTPS, labels[consts.LabelGitHTTPS])
+		})
+	}
+}

@@ -2254,6 +2254,10 @@ type containerConfigs struct {
 	// ID-mapped views (rootless daemons only; empty otherwise). Stamped as
 	// a label so every later start can re-establish the views.
 	idmapRoots []string
+	// hostProxy and gitHTTPS are the host-action grants, stamped as labels
+	// for the CP to authorize the AgentService host actions.
+	hostProxy bool
+	gitHTTPS  bool
 }
 
 // buildContainerConfigs assembles the git-credential mounts and create-time
@@ -2324,6 +2328,8 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 		host:       hostConfig,
 		network:    networkConfig,
 		idmapRoots: idmapRoots,
+		hostProxy:  hostProxyRunning,
+		gitHTTPS:   security.GitCredentials.GitHTTPSEnabled(hostProxyRunning),
 	}, nil
 }
 
@@ -2376,6 +2382,11 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 	// start-time consumers (pre_run composition, egress refresh) read back
 	// instead of re-resolving the configured default.
 	extraLabels[consts.LabelHarness] = opts.harnessBundle.Name
+
+	// Stamp the host-action grants. The CP authorizes AgentService host
+	// actions from these labels; it cannot read the project config.
+	extraLabels[consts.LabelHostProxy] = strconv.FormatBool(cfgs.hostProxy)
+	extraLabels[consts.LabelGitHTTPS] = strconv.FormatBool(cfgs.gitHTTPS)
 
 	// Stamp the ID-mapped workspace roots so every start can re-establish
 	// the views before Docker resolves the bind sources (they die at
