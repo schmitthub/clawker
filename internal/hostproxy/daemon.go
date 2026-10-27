@@ -66,7 +66,7 @@ type DaemonOption func(*Daemon)
 // WithDaemonPort overrides the daemon listen port.
 func WithDaemonPort(port int) DaemonOption {
 	return func(d *Daemon) {
-		d.server = NewServer(port, d.log, d.server.rulesFilePath)
+		d.server = NewServer(port, d.log, d.server.rulesFilePath, d.server.tlsConfig)
 	}
 }
 
@@ -126,6 +126,11 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
 	}
 
+	tlsConfig, err := ServerTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("host proxy TLS: %w", err)
+	}
+
 	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -134,7 +139,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	d := &Daemon{
 		cfg:                cfg,
 		log:                log,
-		server:             NewServer(daemonCfg.Port, log, rulesFilePath),
+		server:             NewServer(daemonCfg.Port, log, rulesFilePath, tlsConfig),
 		docker:             dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,
