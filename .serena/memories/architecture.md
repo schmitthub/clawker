@@ -418,21 +418,21 @@ See `.agents/skills/cli-output/SKILL.md` for full scenario details and rendering
 
 ### internal/hostproxy - Host Proxy Service
 
-HTTP service mesh mediating container-to-host interactions. See `internal/hostproxy/AGENTS.md` for detailed architecture diagrams.
+Host daemon that runs host actions for agents. It has no listener for actions: it dials out to the CP admin listener and holds one `HostProxyService.Connect` stream; the CP (which authorizes every action) sends actions down it. See `internal/hostproxy/AGENTS.md`.
 
 **Components:**
 
-- `Server` - HTTP server on localhost (:18374)
+- `Actions` - runs one host action; owns the short-lived OAuth callback listeners
+- `Connector` - the stream to the CP; reconnects with backoff
 - `SessionStore` - Generic session management with TTL
 - `CallbackChannel` - OAuth callback interception/forwarding
-- `Manager` - Lifecycle management (lazy init via Factory)
-- `GitCredential` - HTTPS credential forwarding handler
+- `Manager` / `Daemon` - Lifecycle (lazy init via Factory; PID-file flock = single instance)
 
 **Key flows:**
 
-- URL opening: Container → `host-open` script → POST /open/url → host browser
-- OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
-- Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
+- URL opening: Container → `host-open` → clawkerd relay → CP `OpenURL` → stream → host browser
+- OAuth: `host-open` → CP `RegisterCallback` → stream → host proxy binds the redirect port and opens the browser → captures the redirect
+- Git HTTPS: `git-credential-clawker` → clawkerd relay → CP `GitCredential` → stream → host credential store
 - SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
 ### Firewall Subsystem (CP-owned)
@@ -732,8 +732,10 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │                 go.opentelemetry.io/otel/sdk/log                │
 │  controlplane/manager → config, docker, logger (+ embedded cp + │
 │                        ebpf-manager binaries)                   │
-│  controlplane/adminclient → auth, consts, api/admin/v1           │
-│  hostproxy → config, logger                                     │
+│  controlplane/adminclient → auth, consts, api/admin/v1,         │
+│                             api/hostproxy/v1                    │
+│  hostproxy → config, consts, logger, api/agent/v1,              │
+│              api/hostproxy/v1                                   │
 │  socketbridge → config, logger                                  │
 │  containerfs → config, keyring, logger                          │
 │  monitor → config                                               │

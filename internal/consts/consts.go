@@ -520,8 +520,9 @@ const (
 	// the SAN and verified against label-derived ground truth.
 	ContainerClawkerd = "clawker-clawkerd"
 
-	// HostProxyServerName is the host proxy's server certificate CN.
-	HostProxyServerName = "clawker-host-proxy"
+	// HostProxyClientName is the CN of the host proxy's client leaf. The
+	// CP admits a HostProxyService stream only from this CN.
+	HostProxyClientName = "clawker-hostproxy"
 )
 
 // Container images.
@@ -707,6 +708,17 @@ const (
 	ClawkerdKeepaliveMinClientPing = 10 * time.Second
 )
 
+// gRPC keepalive parameters for the host proxy's HostProxyService stream
+// to the CP admin listener (host proxy = client, CP = server). The stream
+// idles between host actions; client pings find a dead CP connection.
+// HostProxyKeepaliveTime MUST be >= AdminKeepaliveMinClientPing, the
+// admin server's EnforcementPolicy.MinTime.
+const (
+	HostProxyKeepaliveTime      = 30 * time.Second
+	HostProxyKeepaliveTimeout   = 10 * time.Second
+	AdminKeepaliveMinClientPing = 10 * time.Second
+)
+
 // Container user identity.
 const (
 	ContainerUser = "clawker"
@@ -835,6 +847,10 @@ const (
 	// tokens to for clawkerd. CLI signs assertions for both clients with
 	// one private key — distinct client IDs keep the scope surface clean.
 	ClientIDAgent = "clawker-agent"
+	// ClientIDHostProxy is the OAuth2 client identity of the host proxy
+	// daemon. It has its own signing key and holds only the
+	// hostproxy:serve scope.
+	ClientIDHostProxy = "clawker-hostproxy"
 )
 
 // Agent bootstrap material (per-container auth artifacts).
@@ -1323,30 +1339,44 @@ func AuthInfraCAKeyPath() (string, error) {
 }
 
 // AuthHostProxyDir ensures and returns the auth/hostproxy directory under
-// the XDG data dir. Holds the host proxy's mTLS server identity. The CP
-// dials the host proxy at host.docker.internal with its CP client cert.
+// the XDG data dir. Holds the host proxy's identity for its outbound
+// stream to the CP admin listener: a CLI-CA client leaf (CN
+// HostProxyClientName) and an ES256 signing key whose public JWK the CP
+// registers as the ClientIDHostProxy Hydra client.
 func AuthHostProxyDir() (string, error) {
 	return subdirPathUnder(filepath.Join(authDir, authHostProxySub), DataDir())
 }
 
-// AuthHostProxyServerCertPath returns the path to the host proxy's
-// server certificate.
-func AuthHostProxyServerCertPath() (string, error) {
-	dir, err := AuthHostProxyDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, ServerCertFile), nil
+// AuthHostProxyClientCertPath returns the path to the host proxy's mTLS
+// client certificate.
+func AuthHostProxyClientCertPath() (string, error) {
+	return authHostProxyFile(ClientCertFile)
 }
 
-// AuthHostProxyServerKeyPath returns the path to the host proxy's server
-// private key.
-func AuthHostProxyServerKeyPath() (string, error) {
+// AuthHostProxyClientKeyPath returns the path to the host proxy's mTLS
+// client private key.
+func AuthHostProxyClientKeyPath() (string, error) {
+	return authHostProxyFile(ClientKeyFile)
+}
+
+// AuthHostProxySigningKeyPath returns the path to the host proxy's ES256
+// private key (private_key_jwt). It never enters a container.
+func AuthHostProxySigningKeyPath() (string, error) {
+	return authHostProxyFile(SigningKeyFile)
+}
+
+// AuthHostProxySigningJWKPath returns the path to the host proxy's public
+// JWK. Bind-mounted RO into the CP at CPHostProxyPubKeyPath.
+func AuthHostProxySigningJWKPath() (string, error) {
+	return authHostProxyFile(SigningJWKFile)
+}
+
+func authHostProxyFile(name string) (string, error) {
 	dir, err := AuthHostProxyDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, ServerKeyFile), nil
+	return filepath.Join(dir, name), nil
 }
 
 // AuthCPDir ensures and returns the auth/cp directory under the

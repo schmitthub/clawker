@@ -3,11 +3,14 @@ package hostproxy
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/client"
+
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -23,7 +26,10 @@ type mockContainerLister struct {
 	closeCalled atomic.Bool
 }
 
-func (m *mockContainerLister) ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error) {
+func (m *mockContainerLister) ContainerList(
+	ctx context.Context,
+	options client.ContainerListOptions,
+) (client.ContainerListResult, error) {
 	m.callCount.Add(1)
 	if m.err != nil {
 		return client.ContainerListResult{}, m.err
@@ -52,17 +58,9 @@ func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestNewDaemon_ValidatesPort(t *testing.T) {
-	cfg := configmocks.NewFromString("", `host_proxy: { port: 0 }`)
-	_, err := NewDaemon(cfg, logger.Nop())
-	if err == nil {
-		t.Fatal("expected error for port 0")
-	}
-}
-
 func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
 	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { poll_interval: "0s" } }`)
-	_, err := NewDaemon(cfg, logger.Nop())
+	_, err := NewDaemon(cfg, logger.Nop(), nil)
 	if err == nil {
 		t.Fatal("expected error for zero poll interval")
 	}
@@ -70,7 +68,7 @@ func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
 
 func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
 	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { grace_period: "-1s" } }`)
-	_, err := NewDaemon(cfg, logger.Nop())
+	_, err := NewDaemon(cfg, logger.Nop(), nil)
 	if err == nil {
 		t.Fatal("expected error for negative grace period")
 	}
@@ -78,7 +76,7 @@ func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
 
 func TestNewDaemon_ValidatesMaxConsecutiveErrs(t *testing.T) {
 	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { max_consecutive_errs: 0 } }`)
-	_, err := NewDaemon(cfg, logger.Nop())
+	_, err := NewDaemon(cfg, logger.Nop(), nil)
 	if err == nil {
 		t.Fatal("expected error for zero max consecutive errors")
 	}
@@ -252,7 +250,8 @@ func alwaysReady(b bool) func(context.Context) bool {
 // TestEnsureEgressRulesReady_FirewallDisabled_SkipsWait: empty rules path
 // (firewall off) is a legitimate skip, not a wait.
 func TestEnsureEgressRulesReady_FirewallDisabled_SkipsWait(t *testing.T) {
-	d := &Daemon{log: logger.Nop(), server: &Server{rulesFilePath: ""}}
+	d := new(Daemon)
+	d.log = logger.Nop()
 	if err := d.ensureEgressRulesReady(context.Background()); err != nil {
 		t.Fatalf("expected nil when firewall disabled, got %v", err)
 	}
@@ -264,8 +263,8 @@ func TestEnsureEgressRulesReady_FirewallDisabled_SkipsWait(t *testing.T) {
 func TestEnsureEgressRulesReady_AllStagesPass(t *testing.T) {
 	var order []string
 	d := &Daemon{
-		log:    logger.Nop(),
-		server: &Server{rulesFilePath: testRulesFile},
+		log:           logger.Nop(),
+		rulesFilePath: testRulesFile,
 		firewallRunningProbe: func(context.Context) bool {
 			order = append(order, "firewall")
 			return true
@@ -295,7 +294,7 @@ func TestEnsureEgressRulesReady_StopsAtStage1(t *testing.T) {
 	var envoyCalls atomic.Int32
 	d := &Daemon{
 		log:                  logger.Nop(),
-		server:               &Server{rulesFilePath: testRulesFile},
+		rulesFilePath:        testRulesFile,
 		firewallRunningProbe: alwaysReady(false),
 		envoyHealthProbe: func(context.Context) bool {
 			envoyCalls.Add(1)
@@ -317,7 +316,7 @@ func TestEnsureEgressRulesReady_StopsAtStage1(t *testing.T) {
 func TestEnsureEgressRulesReady_StopsAtStage2(t *testing.T) {
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
+		rulesFilePath:          testNonexistentRulesFile,
 		firewallRunningProbe:   alwaysReady(true),
 		envoyHealthProbe:       alwaysReady(false),
 		firewallRunningTimeout: 20 * time.Millisecond,
@@ -341,7 +340,7 @@ func TestEnsureEgressRulesReady_StopsAtStage2(t *testing.T) {
 func TestEnsureEgressRulesReady_RulesNeverReady_Errors(t *testing.T) {
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
+		rulesFilePath:          testNonexistentRulesFile,
 		firewallRunningProbe:   alwaysReady(true),
 		envoyHealthProbe:       alwaysReady(true),
 		firewallRunningTimeout: 20 * time.Millisecond,
@@ -365,7 +364,7 @@ func TestEnsureEgressRulesReady_ContextCancel(t *testing.T) {
 	cancel()
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
+		rulesFilePath:          testNonexistentRulesFile,
 		firewallRunningProbe:   alwaysReady(false),
 		firewallRunningTimeout: time.Hour,
 		readyInterval:          time.Hour,
@@ -377,4 +376,32 @@ func TestEnsureEgressRulesReady_ContextCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
+}
+
+// TestLockPIDFile_SingleInstance: the PID file lock is the single-instance
+// guard. A second daemon cannot take it while the first holds it; once
+// released, the file is gone and the lock is free again.
+func TestLockPIDFile_SingleInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hostproxy.pid")
+	first, err := lockPIDFile(path)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if pid, readErr := readPIDFile(path); readErr != nil || pid != os.Getpid() {
+		t.Fatalf("PID file holds %d (%v), want %d", pid, readErr, os.Getpid())
+	}
+
+	if _, secondErr := lockPIDFile(path); !errors.Is(secondErr, errDaemonAlreadyRunning) {
+		t.Fatalf("second lock: got %v, want errDaemonAlreadyRunning", secondErr)
+	}
+
+	releasePIDFile(first, path, logger.Nop())
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("PID file must be removed on release, stat: %v", statErr)
+	}
+	again, err := lockPIDFile(path)
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
+	}
+	releasePIDFile(again, path, logger.Nop())
 }

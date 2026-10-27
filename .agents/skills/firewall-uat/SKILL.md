@@ -79,7 +79,6 @@ missing listener). Get the IPs from the host with `docker inspect -f
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/4444'` | exit 0 (connects) |
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/7080'` | `Permission denied` |
 | `getent hosts host.docker.internal` | resolves (CoreDNS lane intact) |
-| `openssl s_client -connect host.docker.internal:18374 </dev/null 2>&1` | no `clawker-host-proxy` certificate (Envoy reset or kernel deny): agents never reach the host proxy directly |
 | `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18374/open/url -d '{"url":"https://denied.invalid/"}'` | `403` from the CP (host actions go clawkerd relay -> CP -> host proxy; a denied URL never opens a browser) |
 | `dig +tcp @127.0.0.11 -p <port of the 0B00007F listener in /proc/net/tcp> example.com` | `no servers could be reached` (Docker resolver denied; NOERROR = DNS bypass) |
 | `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)'` | `PermissionError` (ping socket denied at create; success = ICMP tunnel) |

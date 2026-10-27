@@ -1,4 +1,4 @@
-> Retained plan (rewritten 2026-10-27). Approved by operator. Branch `feat/hostproxy-behind-cp` (#604, stack #605). Steps 1-7 of the first design are DONE (CP authorization, clawkerd relay, eBPF lane removal, e2e, docs, `host_proxy.port` merge + migration). The REVERSE CONNECTION rework below is IN PROGRESS. Check source before reuse.
+> Retained plan (rewritten 2026-10-27). Approved by operator. Branch `feat/hostproxy-behind-cp` (#604, stack #605). Steps 1-7 of the first design are DONE (CP authorization, clawkerd relay, eBPF lane removal, e2e, docs, `host_proxy.port` merge + migration). The REVERSE CONNECTION rework below: steps 1-5 DONE in code (unit tests pass), step 6 (restack, submit, e2e, bigdaddy UAT) open. Check source before reuse.
 
 # Host proxy behind the CP
 
