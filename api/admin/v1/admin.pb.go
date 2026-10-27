@@ -1554,94 +1554,6 @@ func (x *FirewallSyncRoutesResult) GetApplied() uint32 {
 	return 0
 }
 
-type FirewallResolveHostnameRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FirewallResolveHostnameRequest) Reset() {
-	*x = FirewallResolveHostnameRequest{}
-	mi := &file_admin_v1_admin_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FirewallResolveHostnameRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FirewallResolveHostnameRequest) ProtoMessage() {}
-
-func (x *FirewallResolveHostnameRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FirewallResolveHostnameRequest.ProtoReflect.Descriptor instead.
-func (*FirewallResolveHostnameRequest) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *FirewallResolveHostnameRequest) GetHostname() string {
-	if x != nil {
-		return x.Hostname
-	}
-	return ""
-}
-
-type FirewallResolveHostnameResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Addresses     []string               `protobuf:"bytes,1,rep,name=addresses,proto3" json:"addresses,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FirewallResolveHostnameResult) Reset() {
-	*x = FirewallResolveHostnameResult{}
-	mi := &file_admin_v1_admin_proto_msgTypes[28]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FirewallResolveHostnameResult) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FirewallResolveHostnameResult) ProtoMessage() {}
-
-func (x *FirewallResolveHostnameResult) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[28]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FirewallResolveHostnameResult.ProtoReflect.Descriptor instead.
-func (*FirewallResolveHostnameResult) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{28}
-}
-
-func (x *FirewallResolveHostnameResult) GetAddresses() []string {
-	if x != nil {
-		return x.Addresses
-	}
-	return nil
-}
-
 type ListAgentsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1650,7 +1562,7 @@ type ListAgentsRequest struct {
 
 func (x *ListAgentsRequest) Reset() {
 	*x = ListAgentsRequest{}
-	mi := &file_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_admin_v1_admin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1662,7 +1574,7 @@ func (x *ListAgentsRequest) String() string {
 func (*ListAgentsRequest) ProtoMessage() {}
 
 func (x *ListAgentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_admin_v1_admin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1675,7 +1587,7 @@ func (x *ListAgentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAgentsRequest.ProtoReflect.Descriptor instead.
 func (*ListAgentsRequest) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{29}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{27}
 }
 
 type ListAgentsResult struct {
@@ -1687,7 +1599,7 @@ type ListAgentsResult struct {
 
 func (x *ListAgentsResult) Reset() {
 	*x = ListAgentsResult{}
-	mi := &file_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_admin_v1_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1699,7 +1611,7 @@ func (x *ListAgentsResult) String() string {
 func (*ListAgentsResult) ProtoMessage() {}
 
 func (x *ListAgentsResult) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_admin_v1_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1712,7 +1624,7 @@ func (x *ListAgentsResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAgentsResult.ProtoReflect.Descriptor instead.
 func (*ListAgentsResult) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{30}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListAgentsResult) GetAgents() []*Agent {
@@ -1730,7 +1642,7 @@ type GetSystemTimeRequest struct {
 
 func (x *GetSystemTimeRequest) Reset() {
 	*x = GetSystemTimeRequest{}
-	mi := &file_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_admin_v1_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1742,7 +1654,7 @@ func (x *GetSystemTimeRequest) String() string {
 func (*GetSystemTimeRequest) ProtoMessage() {}
 
 func (x *GetSystemTimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_admin_v1_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1755,7 +1667,7 @@ func (x *GetSystemTimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSystemTimeRequest.ProtoReflect.Descriptor instead.
 func (*GetSystemTimeRequest) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{31}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
 type GetSystemTimeResult struct {
@@ -1774,7 +1686,7 @@ type GetSystemTimeResult struct {
 
 func (x *GetSystemTimeResult) Reset() {
 	*x = GetSystemTimeResult{}
-	mi := &file_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_admin_v1_admin_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1786,7 +1698,7 @@ func (x *GetSystemTimeResult) String() string {
 func (*GetSystemTimeResult) ProtoMessage() {}
 
 func (x *GetSystemTimeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_admin_v1_admin_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1799,7 +1711,7 @@ func (x *GetSystemTimeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSystemTimeResult.ProtoReflect.Descriptor instead.
 func (*GetSystemTimeResult) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{32}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *GetSystemTimeResult) GetUnixNanos() int64 {
@@ -1817,7 +1729,7 @@ type WatchSOSRequest struct {
 
 func (x *WatchSOSRequest) Reset() {
 	*x = WatchSOSRequest{}
-	mi := &file_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_admin_v1_admin_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1829,7 +1741,7 @@ func (x *WatchSOSRequest) String() string {
 func (*WatchSOSRequest) ProtoMessage() {}
 
 func (x *WatchSOSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_admin_v1_admin_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1842,7 +1754,7 @@ func (x *WatchSOSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchSOSRequest.ProtoReflect.Descriptor instead.
 func (*WatchSOSRequest) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{31}
 }
 
 // SOS is one recoverable startup failure: the CP cannot fix it alone and
@@ -1858,7 +1770,7 @@ type SOS struct {
 
 func (x *SOS) Reset() {
 	*x = SOS{}
-	mi := &file_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_admin_v1_admin_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1870,7 +1782,7 @@ func (x *SOS) String() string {
 func (*SOS) ProtoMessage() {}
 
 func (x *SOS) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_admin_v1_admin_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1883,7 +1795,7 @@ func (x *SOS) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SOS.ProtoReflect.Descriptor instead.
 func (*SOS) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{34}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *SOS) GetMessage() string {
@@ -1928,7 +1840,7 @@ type Agent struct {
 
 func (x *Agent) Reset() {
 	*x = Agent{}
-	mi := &file_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_admin_v1_admin_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1940,7 +1852,7 @@ func (x *Agent) String() string {
 func (*Agent) ProtoMessage() {}
 
 func (x *Agent) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_admin_v1_admin_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1953,7 +1865,7 @@ func (x *Agent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Agent.ProtoReflect.Descriptor instead.
 func (*Agent) Descriptor() ([]byte, []int) {
-	return file_admin_v1_admin_proto_rawDescGZIP(), []int{35}
+	return file_admin_v1_admin_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *Agent) GetAgentName() string {
@@ -2081,11 +1993,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x19FirewallSyncRoutesRequest\x12/\n" +
 	"\x06routes\x18\x01 \x03(\v2\x17.clawker.admin.v1.RouteR\x06routes\"4\n" +
 	"\x18FirewallSyncRoutesResult\x12\x18\n" +
-	"\aapplied\x18\x01 \x01(\rR\aapplied\"<\n" +
-	"\x1eFirewallResolveHostnameRequest\x12\x1a\n" +
-	"\bhostname\x18\x01 \x01(\tR\bhostname\"=\n" +
-	"\x1dFirewallResolveHostnameResult\x12\x1c\n" +
-	"\taddresses\x18\x01 \x03(\tR\taddresses\"\x13\n" +
+	"\aapplied\x18\x01 \x01(\rR\aapplied\"\x13\n" +
 	"\x11ListAgentsRequest\"C\n" +
 	"\x10ListAgentsResult\x12/\n" +
 	"\x06agents\x18\x01 \x03(\v2\x17.clawker.admin.v1.AgentR\x06agents\"\x16\n" +
@@ -2117,7 +2025,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x1cREMOVE_RULE_STATUS_NOT_FOUND\x10\x03*B\n" +
 	"\aSOSKind\x12\x18\n" +
 	"\x14SOS_KIND_UNSPECIFIED\x10\x00\x12\x1d\n" +
-	"\x19SOS_KIND_BPFFS_DELEGATION\x10\x012\xd9\f\n" +
+	"\x19SOS_KIND_BPFFS_DELEGATION\x10\x012\xdb\v\n" +
 	"\fAdminService\x12[\n" +
 	"\fFirewallInit\x12%.clawker.admin.v1.FirewallInitRequest\x1a$.clawker.admin.v1.FirewallInitResult\x12a\n" +
 	"\x0eFirewallRemove\x12'.clawker.admin.v1.FirewallRemoveRequest\x1a&.clawker.admin.v1.FirewallRemoveResult\x12a\n" +
@@ -2130,8 +2038,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x0eFirewallReload\x12'.clawker.admin.v1.FirewallReloadRequest\x1a&.clawker.admin.v1.FirewallReloadResult\x12a\n" +
 	"\x0eFirewallStatus\x12'.clawker.admin.v1.FirewallStatusRequest\x1a&.clawker.admin.v1.FirewallStatusResult\x12g\n" +
 	"\x10FirewallRotateCA\x12).clawker.admin.v1.FirewallRotateCARequest\x1a(.clawker.admin.v1.FirewallRotateCAResult\x12m\n" +
-	"\x12FirewallSyncRoutes\x12+.clawker.admin.v1.FirewallSyncRoutesRequest\x1a*.clawker.admin.v1.FirewallSyncRoutesResult\x12|\n" +
-	"\x17FirewallResolveHostname\x120.clawker.admin.v1.FirewallResolveHostnameRequest\x1a/.clawker.admin.v1.FirewallResolveHostnameResult\x12U\n" +
+	"\x12FirewallSyncRoutes\x12+.clawker.admin.v1.FirewallSyncRoutesRequest\x1a*.clawker.admin.v1.FirewallSyncRoutesResult\x12U\n" +
 	"\n" +
 	"ListAgents\x12#.clawker.admin.v1.ListAgentsRequest\x1a\".clawker.admin.v1.ListAgentsResult\x12^\n" +
 	"\rGetSystemTime\x12&.clawker.admin.v1.GetSystemTimeRequest\x1a%.clawker.admin.v1.GetSystemTimeResult\x12F\n" +
@@ -2150,47 +2057,45 @@ func file_admin_v1_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_admin_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_admin_v1_admin_proto_goTypes = []any{
-	(AddRuleStatus)(0),                     // 0: clawker.admin.v1.AddRuleStatus
-	(RemoveRuleStatus)(0),                  // 1: clawker.admin.v1.RemoveRuleStatus
-	(SOSKind)(0),                           // 2: clawker.admin.v1.SOSKind
-	(*Route)(nil),                          // 3: clawker.admin.v1.Route
-	(*EgressRule)(nil),                     // 4: clawker.admin.v1.EgressRule
-	(*PathRule)(nil),                       // 5: clawker.admin.v1.PathRule
-	(*FirewallInitRequest)(nil),            // 6: clawker.admin.v1.FirewallInitRequest
-	(*FirewallInitResult)(nil),             // 7: clawker.admin.v1.FirewallInitResult
-	(*FirewallRemoveRequest)(nil),          // 8: clawker.admin.v1.FirewallRemoveRequest
-	(*FirewallRemoveResult)(nil),           // 9: clawker.admin.v1.FirewallRemoveResult
-	(*FirewallEnableRequest)(nil),          // 10: clawker.admin.v1.FirewallEnableRequest
-	(*FirewallEnableResult)(nil),           // 11: clawker.admin.v1.FirewallEnableResult
-	(*FirewallDisableRequest)(nil),         // 12: clawker.admin.v1.FirewallDisableRequest
-	(*FirewallDisableResult)(nil),          // 13: clawker.admin.v1.FirewallDisableResult
-	(*FirewallBypassRequest)(nil),          // 14: clawker.admin.v1.FirewallBypassRequest
-	(*FirewallBypassResult)(nil),           // 15: clawker.admin.v1.FirewallBypassResult
-	(*FirewallAddRulesRequest)(nil),        // 16: clawker.admin.v1.FirewallAddRulesRequest
-	(*FirewallAddRulesResult)(nil),         // 17: clawker.admin.v1.FirewallAddRulesResult
-	(*FirewallRemoveRuleRequest)(nil),      // 18: clawker.admin.v1.FirewallRemoveRuleRequest
-	(*FirewallRemoveRuleResult)(nil),       // 19: clawker.admin.v1.FirewallRemoveRuleResult
-	(*FirewallListRulesRequest)(nil),       // 20: clawker.admin.v1.FirewallListRulesRequest
-	(*FirewallListRulesResult)(nil),        // 21: clawker.admin.v1.FirewallListRulesResult
-	(*FirewallReloadRequest)(nil),          // 22: clawker.admin.v1.FirewallReloadRequest
-	(*FirewallReloadResult)(nil),           // 23: clawker.admin.v1.FirewallReloadResult
-	(*FirewallStatusRequest)(nil),          // 24: clawker.admin.v1.FirewallStatusRequest
-	(*FirewallStatusResult)(nil),           // 25: clawker.admin.v1.FirewallStatusResult
-	(*FirewallRotateCARequest)(nil),        // 26: clawker.admin.v1.FirewallRotateCARequest
-	(*FirewallRotateCAResult)(nil),         // 27: clawker.admin.v1.FirewallRotateCAResult
-	(*FirewallSyncRoutesRequest)(nil),      // 28: clawker.admin.v1.FirewallSyncRoutesRequest
-	(*FirewallSyncRoutesResult)(nil),       // 29: clawker.admin.v1.FirewallSyncRoutesResult
-	(*FirewallResolveHostnameRequest)(nil), // 30: clawker.admin.v1.FirewallResolveHostnameRequest
-	(*FirewallResolveHostnameResult)(nil),  // 31: clawker.admin.v1.FirewallResolveHostnameResult
-	(*ListAgentsRequest)(nil),              // 32: clawker.admin.v1.ListAgentsRequest
-	(*ListAgentsResult)(nil),               // 33: clawker.admin.v1.ListAgentsResult
-	(*GetSystemTimeRequest)(nil),           // 34: clawker.admin.v1.GetSystemTimeRequest
-	(*GetSystemTimeResult)(nil),            // 35: clawker.admin.v1.GetSystemTimeResult
-	(*WatchSOSRequest)(nil),                // 36: clawker.admin.v1.WatchSOSRequest
-	(*SOS)(nil),                            // 37: clawker.admin.v1.SOS
-	(*Agent)(nil),                          // 38: clawker.admin.v1.Agent
+	(AddRuleStatus)(0),                // 0: clawker.admin.v1.AddRuleStatus
+	(RemoveRuleStatus)(0),             // 1: clawker.admin.v1.RemoveRuleStatus
+	(SOSKind)(0),                      // 2: clawker.admin.v1.SOSKind
+	(*Route)(nil),                     // 3: clawker.admin.v1.Route
+	(*EgressRule)(nil),                // 4: clawker.admin.v1.EgressRule
+	(*PathRule)(nil),                  // 5: clawker.admin.v1.PathRule
+	(*FirewallInitRequest)(nil),       // 6: clawker.admin.v1.FirewallInitRequest
+	(*FirewallInitResult)(nil),        // 7: clawker.admin.v1.FirewallInitResult
+	(*FirewallRemoveRequest)(nil),     // 8: clawker.admin.v1.FirewallRemoveRequest
+	(*FirewallRemoveResult)(nil),      // 9: clawker.admin.v1.FirewallRemoveResult
+	(*FirewallEnableRequest)(nil),     // 10: clawker.admin.v1.FirewallEnableRequest
+	(*FirewallEnableResult)(nil),      // 11: clawker.admin.v1.FirewallEnableResult
+	(*FirewallDisableRequest)(nil),    // 12: clawker.admin.v1.FirewallDisableRequest
+	(*FirewallDisableResult)(nil),     // 13: clawker.admin.v1.FirewallDisableResult
+	(*FirewallBypassRequest)(nil),     // 14: clawker.admin.v1.FirewallBypassRequest
+	(*FirewallBypassResult)(nil),      // 15: clawker.admin.v1.FirewallBypassResult
+	(*FirewallAddRulesRequest)(nil),   // 16: clawker.admin.v1.FirewallAddRulesRequest
+	(*FirewallAddRulesResult)(nil),    // 17: clawker.admin.v1.FirewallAddRulesResult
+	(*FirewallRemoveRuleRequest)(nil), // 18: clawker.admin.v1.FirewallRemoveRuleRequest
+	(*FirewallRemoveRuleResult)(nil),  // 19: clawker.admin.v1.FirewallRemoveRuleResult
+	(*FirewallListRulesRequest)(nil),  // 20: clawker.admin.v1.FirewallListRulesRequest
+	(*FirewallListRulesResult)(nil),   // 21: clawker.admin.v1.FirewallListRulesResult
+	(*FirewallReloadRequest)(nil),     // 22: clawker.admin.v1.FirewallReloadRequest
+	(*FirewallReloadResult)(nil),      // 23: clawker.admin.v1.FirewallReloadResult
+	(*FirewallStatusRequest)(nil),     // 24: clawker.admin.v1.FirewallStatusRequest
+	(*FirewallStatusResult)(nil),      // 25: clawker.admin.v1.FirewallStatusResult
+	(*FirewallRotateCARequest)(nil),   // 26: clawker.admin.v1.FirewallRotateCARequest
+	(*FirewallRotateCAResult)(nil),    // 27: clawker.admin.v1.FirewallRotateCAResult
+	(*FirewallSyncRoutesRequest)(nil), // 28: clawker.admin.v1.FirewallSyncRoutesRequest
+	(*FirewallSyncRoutesResult)(nil),  // 29: clawker.admin.v1.FirewallSyncRoutesResult
+	(*ListAgentsRequest)(nil),         // 30: clawker.admin.v1.ListAgentsRequest
+	(*ListAgentsResult)(nil),          // 31: clawker.admin.v1.ListAgentsResult
+	(*GetSystemTimeRequest)(nil),      // 32: clawker.admin.v1.GetSystemTimeRequest
+	(*GetSystemTimeResult)(nil),       // 33: clawker.admin.v1.GetSystemTimeResult
+	(*WatchSOSRequest)(nil),           // 34: clawker.admin.v1.WatchSOSRequest
+	(*SOS)(nil),                       // 35: clawker.admin.v1.SOS
+	(*Agent)(nil),                     // 36: clawker.admin.v1.Agent
 }
 var file_admin_v1_admin_proto_depIdxs = []int32{
 	5,  // 0: clawker.admin.v1.EgressRule.path_rules:type_name -> clawker.admin.v1.PathRule
@@ -2199,7 +2104,7 @@ var file_admin_v1_admin_proto_depIdxs = []int32{
 	1,  // 3: clawker.admin.v1.FirewallRemoveRuleResult.status:type_name -> clawker.admin.v1.RemoveRuleStatus
 	4,  // 4: clawker.admin.v1.FirewallListRulesResult.rules:type_name -> clawker.admin.v1.EgressRule
 	3,  // 5: clawker.admin.v1.FirewallSyncRoutesRequest.routes:type_name -> clawker.admin.v1.Route
-	38, // 6: clawker.admin.v1.ListAgentsResult.agents:type_name -> clawker.admin.v1.Agent
+	36, // 6: clawker.admin.v1.ListAgentsResult.agents:type_name -> clawker.admin.v1.Agent
 	2,  // 7: clawker.admin.v1.SOS.kind:type_name -> clawker.admin.v1.SOSKind
 	6,  // 8: clawker.admin.v1.AdminService.FirewallInit:input_type -> clawker.admin.v1.FirewallInitRequest
 	8,  // 9: clawker.admin.v1.AdminService.FirewallRemove:input_type -> clawker.admin.v1.FirewallRemoveRequest
@@ -2213,28 +2118,26 @@ var file_admin_v1_admin_proto_depIdxs = []int32{
 	24, // 17: clawker.admin.v1.AdminService.FirewallStatus:input_type -> clawker.admin.v1.FirewallStatusRequest
 	26, // 18: clawker.admin.v1.AdminService.FirewallRotateCA:input_type -> clawker.admin.v1.FirewallRotateCARequest
 	28, // 19: clawker.admin.v1.AdminService.FirewallSyncRoutes:input_type -> clawker.admin.v1.FirewallSyncRoutesRequest
-	30, // 20: clawker.admin.v1.AdminService.FirewallResolveHostname:input_type -> clawker.admin.v1.FirewallResolveHostnameRequest
-	32, // 21: clawker.admin.v1.AdminService.ListAgents:input_type -> clawker.admin.v1.ListAgentsRequest
-	34, // 22: clawker.admin.v1.AdminService.GetSystemTime:input_type -> clawker.admin.v1.GetSystemTimeRequest
-	36, // 23: clawker.admin.v1.AdminService.WatchSOS:input_type -> clawker.admin.v1.WatchSOSRequest
-	7,  // 24: clawker.admin.v1.AdminService.FirewallInit:output_type -> clawker.admin.v1.FirewallInitResult
-	9,  // 25: clawker.admin.v1.AdminService.FirewallRemove:output_type -> clawker.admin.v1.FirewallRemoveResult
-	11, // 26: clawker.admin.v1.AdminService.FirewallEnable:output_type -> clawker.admin.v1.FirewallEnableResult
-	13, // 27: clawker.admin.v1.AdminService.FirewallDisable:output_type -> clawker.admin.v1.FirewallDisableResult
-	15, // 28: clawker.admin.v1.AdminService.FirewallBypass:output_type -> clawker.admin.v1.FirewallBypassResult
-	17, // 29: clawker.admin.v1.AdminService.FirewallAddRules:output_type -> clawker.admin.v1.FirewallAddRulesResult
-	19, // 30: clawker.admin.v1.AdminService.FirewallRemoveRule:output_type -> clawker.admin.v1.FirewallRemoveRuleResult
-	21, // 31: clawker.admin.v1.AdminService.FirewallListRules:output_type -> clawker.admin.v1.FirewallListRulesResult
-	23, // 32: clawker.admin.v1.AdminService.FirewallReload:output_type -> clawker.admin.v1.FirewallReloadResult
-	25, // 33: clawker.admin.v1.AdminService.FirewallStatus:output_type -> clawker.admin.v1.FirewallStatusResult
-	27, // 34: clawker.admin.v1.AdminService.FirewallRotateCA:output_type -> clawker.admin.v1.FirewallRotateCAResult
-	29, // 35: clawker.admin.v1.AdminService.FirewallSyncRoutes:output_type -> clawker.admin.v1.FirewallSyncRoutesResult
-	31, // 36: clawker.admin.v1.AdminService.FirewallResolveHostname:output_type -> clawker.admin.v1.FirewallResolveHostnameResult
-	33, // 37: clawker.admin.v1.AdminService.ListAgents:output_type -> clawker.admin.v1.ListAgentsResult
-	35, // 38: clawker.admin.v1.AdminService.GetSystemTime:output_type -> clawker.admin.v1.GetSystemTimeResult
-	37, // 39: clawker.admin.v1.AdminService.WatchSOS:output_type -> clawker.admin.v1.SOS
-	24, // [24:40] is the sub-list for method output_type
-	8,  // [8:24] is the sub-list for method input_type
+	30, // 20: clawker.admin.v1.AdminService.ListAgents:input_type -> clawker.admin.v1.ListAgentsRequest
+	32, // 21: clawker.admin.v1.AdminService.GetSystemTime:input_type -> clawker.admin.v1.GetSystemTimeRequest
+	34, // 22: clawker.admin.v1.AdminService.WatchSOS:input_type -> clawker.admin.v1.WatchSOSRequest
+	7,  // 23: clawker.admin.v1.AdminService.FirewallInit:output_type -> clawker.admin.v1.FirewallInitResult
+	9,  // 24: clawker.admin.v1.AdminService.FirewallRemove:output_type -> clawker.admin.v1.FirewallRemoveResult
+	11, // 25: clawker.admin.v1.AdminService.FirewallEnable:output_type -> clawker.admin.v1.FirewallEnableResult
+	13, // 26: clawker.admin.v1.AdminService.FirewallDisable:output_type -> clawker.admin.v1.FirewallDisableResult
+	15, // 27: clawker.admin.v1.AdminService.FirewallBypass:output_type -> clawker.admin.v1.FirewallBypassResult
+	17, // 28: clawker.admin.v1.AdminService.FirewallAddRules:output_type -> clawker.admin.v1.FirewallAddRulesResult
+	19, // 29: clawker.admin.v1.AdminService.FirewallRemoveRule:output_type -> clawker.admin.v1.FirewallRemoveRuleResult
+	21, // 30: clawker.admin.v1.AdminService.FirewallListRules:output_type -> clawker.admin.v1.FirewallListRulesResult
+	23, // 31: clawker.admin.v1.AdminService.FirewallReload:output_type -> clawker.admin.v1.FirewallReloadResult
+	25, // 32: clawker.admin.v1.AdminService.FirewallStatus:output_type -> clawker.admin.v1.FirewallStatusResult
+	27, // 33: clawker.admin.v1.AdminService.FirewallRotateCA:output_type -> clawker.admin.v1.FirewallRotateCAResult
+	29, // 34: clawker.admin.v1.AdminService.FirewallSyncRoutes:output_type -> clawker.admin.v1.FirewallSyncRoutesResult
+	31, // 35: clawker.admin.v1.AdminService.ListAgents:output_type -> clawker.admin.v1.ListAgentsResult
+	33, // 36: clawker.admin.v1.AdminService.GetSystemTime:output_type -> clawker.admin.v1.GetSystemTimeResult
+	35, // 37: clawker.admin.v1.AdminService.WatchSOS:output_type -> clawker.admin.v1.SOS
+	23, // [23:38] is the sub-list for method output_type
+	8,  // [8:23] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -2251,7 +2154,7 @@ func file_admin_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_v1_admin_proto_rawDesc), len(file_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   36,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

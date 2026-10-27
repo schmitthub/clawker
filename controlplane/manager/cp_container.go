@@ -89,12 +89,6 @@ type CPContainerConfig struct {
 	NetworkName string
 	// RestartPolicy is the Docker restart policy for the container.
 	RestartPolicy container.RestartPolicy
-	// ExtraHosts adds /etc/hosts entries inside the CP container.
-	// Used to map host.docker.internal → host-gateway so the firewall
-	// handler can resolve the host-proxy address for per-container
-	// bypass enrollment. Telemetry does not use it: the CP reaches the
-	// collector over the telemetry network.
-	ExtraHosts []string
 }
 
 // localhost is the 127.0.0.1 address used for all published port bindings.
@@ -425,7 +419,6 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// firewall.Stack gives the CoreDNS sibling the same one.
 			consts.EnvHostBPFFSSource + "=" + bpffsSource,
 		}, otelLogsEnv()...),
-		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawkercp"},
 		NetworkName: consts.Network,
 		// on-failure (not unless-stopped/always) so the CP's graceful

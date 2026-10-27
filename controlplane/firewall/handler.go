@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -73,12 +72,6 @@ type StatusResult struct {
 	Status
 }
 
-// ResolveResult carries the answer set of a DNS lookup run inside the
-// CP's netns.
-type ResolveResult struct {
-	Addresses []string
-}
-
 // ContainerResolver looks up a container reference (name, short ID, or
 // canonical long ID) against Docker and returns its canonical ID, the
 // BPF-attachable cgroup path, and whether Docker still knows the container.
@@ -124,10 +117,6 @@ type Handler struct {
 	ca         *CAStore
 	listAgents func(ctx context.Context) ([]string, error)
 	identity   *IdentityAllocator
-
-	// resolveHostFn is injectable for tests. nil defaults to
-	// net.DefaultResolver.LookupHost.
-	resolveHostFn func(ctx context.Context, host string) ([]string, error)
 
 	// cgroupIDFn reads the cgroup_id for a cgroupfs path. Injectable for
 	// tests — the production path stats a real /sys/fs/cgroup/ inode,
@@ -1030,37 +1019,6 @@ func (h *Handler) FirewallSyncRoutes(
 		applied = math.MaxUint32
 	}
 	return &adminv1.FirewallSyncRoutesResult{Applied: uint32(applied)}, nil
-}
-
-// FirewallResolveHostname performs a DNS lookup from the CP's network
-// namespace — used to resolve host.docker.internal during per-container
-// enroll so the BPF container_config holds a routable address.
-func (h *Handler) FirewallResolveHostname(
-	ctx context.Context,
-	req *adminv1.FirewallResolveHostnameRequest,
-) (*adminv1.FirewallResolveHostnameResult, error) {
-	if req.GetHostname() == "" {
-		return nil, status.Error(codes.InvalidArgument, "hostname is required")
-	}
-	val, err := h.submit(ActionRead, func(qctx context.Context) (any, error) {
-		resolve := h.resolveHostFn
-		if resolve == nil {
-			resolve = net.DefaultResolver.LookupHost
-		}
-		addrs, err := resolve(qctx, req.GetHostname())
-		if err != nil {
-			return nil, fmt.Errorf("resolve %q: %w", req.GetHostname(), err)
-		}
-		return ResolveResult{Addresses: addrs}, nil
-	})
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	r, err := resultAs[ResolveResult](val)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return &adminv1.FirewallResolveHostnameResult{Addresses: r.Addresses}, nil
 }
 
 // --- Closures shared across RPCs ---
