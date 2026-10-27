@@ -386,12 +386,10 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 			return fmt.Errorf("bootstrapping services: connecting to control plane: %w", err)
 		}
 
-		// The request carries the project's host-proxy value; the CP
-		// persists it per container and installs the eBPF bypass only
-		// when it is true.
-		req := adminv1.NewFirewallEnableRequest(container, security)
-		if _, enableErr := client.FirewallEnable(ctx, req); enableErr != nil {
-			return fmt.Errorf("bootstrapping services: enabling firewall for container: %w", enableErr)
+		if _, err := client.FirewallEnable(ctx, &adminv1.FirewallEnableRequest{
+			ContainerId: container,
+		}); err != nil {
+			return fmt.Errorf("bootstrapping services: enabling firewall for container: %w", err)
 		}
 
 		if log != nil {

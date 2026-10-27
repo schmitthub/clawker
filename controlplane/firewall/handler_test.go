@@ -188,38 +188,6 @@ func assertCode(t *testing.T, err error, want codes.Code) {
 // FirewallEnable
 // ---------------------------------------------------------------------------
 
-// TestHandler_FirewallEnable_NoEnrollmentStore_Internal: a handler without
-// the store is a wiring fault and must fail loud instead of enrolling a
-// container whose record can never be replayed.
-func TestHandler_FirewallEnable_NoEnrollmentStore_Internal(t *testing.T) {
-	mock := noopMock()
-	q := NewActionQueue(nil)
-	t.Cleanup(func() { _ = q.Close() })
-	h, err := NewHandler(HandlerDeps{
-		EBPF:          mock,
-		Stack:         new(fakeStack),
-		Store:         nil,
-		Cfg:           testConfig(),
-		Resolver:      nopResolver,
-		Log:           nil,
-		Queue:         q,
-		EnrolledTopic: nil,
-		CA:            nil,
-		Identity:      nil,
-		ListAgents:    nil,
-		Enrollments:   nil,
-	})
-	require.NoError(t, err)
-	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
-
-	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
-		ContainerId: "ctr-1",
-		HostProxy:   new(true),
-	})
-	assertCode(t, err, codes.Internal)
-	assert.Empty(t, mock.InstallCalls())
-}
-
 // ---------------------------------------------------------------------------
 // FirewallDisable
 // ---------------------------------------------------------------------------
@@ -362,9 +330,6 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 		ListAgents:    func(_ context.Context) ([]string, error) { return agents, nil },
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(path string) (uint64, error) {
 		for cid, p := range cgroupPaths {
 			if p == path {
@@ -436,9 +401,6 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 		ListAgents: func(_ context.Context) ([]string, error) { return []string{"broken", "healthy"}, nil },
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(path string) (uint64, error) {
 		if path == "/test/cgroup/broken" {
 			return 111, nil
@@ -686,9 +648,6 @@ func ruleStoreHandlerWithCfg(
 		Identity: alloc,
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
 	return h, stack, cfg
 }

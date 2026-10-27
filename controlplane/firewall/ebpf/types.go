@@ -46,17 +46,15 @@ const (
 // ContainerConfig mirrors struct container_config in bpf/common.h.
 // All IP fields are in network byte order. Port fields are host byte order.
 type ContainerConfig struct {
-	EnvoyIP       uint32 // Envoy static IP (network byte order)
-	CoreDNSIP     uint32 // CoreDNS static IP (network byte order)
-	GatewayIP     uint32 // the clawker network gateway IP (network byte order)
-	NetAddr       uint32 // clawker network address (network byte order)
-	NetMask       uint32 // the clawker network subnet mask (network byte order)
-	HostProxyIP   uint32 // Host proxy resolved IP (network byte order)
-	HostProxyPort uint16 // Host proxy port (host byte order)
-	EgressPort    uint16 // Envoy egress listener port (host byte order)
-	CPIP          uint32 // Control-plane static IP (network byte order)
-	CPAgentPort   uint16 // CP AgentService port (host byte order)
-	CPHydraPort   uint16 // CP Hydra public port (host byte order)
+	EnvoyIP     uint32 // Envoy static IP (network byte order)
+	CoreDNSIP   uint32 // CoreDNS static IP (network byte order)
+	GatewayIP   uint32 // the clawker network gateway IP (network byte order)
+	NetAddr     uint32 // clawker network address (network byte order)
+	NetMask     uint32 // the clawker network subnet mask (network byte order)
+	CPIP        uint32 // Control-plane static IP (network byte order)
+	EgressPort  uint16 // Envoy egress listener port (host byte order)
+	CPAgentPort uint16 // CP AgentService port (host byte order)
+	CPHydraPort uint16 // CP Hydra public port (host byte order)
 }
 
 // RouteIdentity is a userspace-allocated route identity — the key that ties

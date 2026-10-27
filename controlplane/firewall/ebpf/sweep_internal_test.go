@@ -125,8 +125,8 @@ func installCgroup(t *testing.T, m *Manager, path string) uint64 {
 	t.Helper()
 	cfg, err := NewContainerConfig(ContainerConfigParams{
 		EnvoyIP: "172.30.0.200", CoreDNSIP: "172.30.0.201", GatewayIP: "172.30.0.1", CIDR: "172.30.0.0/16",
-		HostProxyIP: "", HostProxyPort: 0, EgressPort: 10000,
-		CPIP: "172.30.0.202", CPAgentPort: 7444, CPHydraPort: 4444,
+		EgressPort: 10000,
+		CPIP:       "172.30.0.202", CPAgentPort: 7444, CPHydraPort: 4444,
 	})
 	if err != nil {
 		t.Fatalf("NewContainerConfig: %v", err)
