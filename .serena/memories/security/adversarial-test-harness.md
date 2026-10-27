@@ -15,7 +15,7 @@ NOT an automated test suite. The `scripts/run-tests.sh` is secondary.
 ## Components
 - **C2 server** (`attacker-server/main.go`): Go + SQLite, multi-protocol (HTTPS/HTTP/UDP/ICMP), auto-decode pipeline for various encoding schemes
 - **Dockerfile** (adversarial root): Multi-stage build, self-signed TLS
-- **compose.yml**: C2 on `clawker-net` external bridge network
+- **compose.yml**: C2 on its own `clawker-adversarial` network, reachable only on host ports through the egress stack (no agent attaches to it)
 - **Payloads** (`payloads/01-30`): Reference from prior project (Benthic), not adapted for clawker yet
 
 ## Key Hostproxy Findings
