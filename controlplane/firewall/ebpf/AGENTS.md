@@ -128,7 +128,7 @@ const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix // /sys/fs/bpf/cla
 
 type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
 type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
-type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy, CP IP + agent/Hydra ports */ }
+type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, CP IP + agent/Hydra ports */ }
 type ContainerConfigParams struct { /* NewContainerConfig inputs: the same fields as dotted IPs + host-order ports; CPIP is required */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
@@ -146,15 +146,15 @@ func Supported() error                                       // checks cgroup v2
 `decide_connect` and `decide_sendmsg` in `bpf/common.h` share one order: Envoy
 loop-prevention mark → DNS rewrite to CoreDNS (any destination on port 53) →
 deny Docker's embedded resolver `127.0.0.11` on every other port → loopback pass-through →
-(connect only) per-container host-proxy bypass → **in-subnet allowlist** →
+**in-subnet allowlist** →
 per-domain route lookup → Envoy catch-all (TCP) or deny (UDP). The allowlist
 is `allowed_internal`: inside `net_addr/net_mask` only `envoy_ip` (any port),
 `coredns_ip:53`, and `cp_ip` on `cp_agent_port` or `cp_hydra_port` pass;
 every other in-subnet destination (another agent, the gateway, CP
 admin/health/SDS) returns `V_DENY` with an `ACTION_DENY` metric and an
-`EGRESS_VERDICT_DENIED` event. The host-proxy bypass runs before the
-allowlist because `host.docker.internal` can resolve inside the subnet (a
-daemon with `host-gateway-ip` set, some engine variants). `gateway_ip` is carried for dumps only.
+`EGRESS_VERDICT_DENIED` event. There is no host-proxy lane: a direct dial
+to `host.docker.internal` is denied in-subnet or routed to Envoy, which has
+no rule for it. Host actions go through clawkerd and the CP. `gateway_ip` is carried for dumps only.
 The `127.0.0.11` deny closes Docker's embedded resolver: Docker DNATs
 `127.0.0.11:53` to a random port in the container network namespace, and
 that resolver forwards to public upstreams from outside this program. Without
@@ -168,7 +168,7 @@ CoreDNS. CoreDNS itself is not under agent eBPF and still uses its own
 
 ## Invariants
 
-- `struct container_config` is 36 bytes (`_Static_assert`). Append new fields at the end. After an upgrade that changes the value size, the schema check replaces the pinned map with an empty one, and rows come back only when the `FirewallInit` sweep re-installs each agent. The stale-link sweep keys on the kernel's link state, not on this map, so live agents keep their links (and the previous programs keep enforcing against the old map) across a failed bringup and any number of later `Load()` calls.
+- `struct container_config` is 32 bytes (`_Static_assert`). Append new fields at the end. After an upgrade that changes the value size, the schema check replaces the pinned map with an empty one, and rows come back only when the `FirewallInit` sweep re-installs each agent. The stale-link sweep keys on the kernel's link state, not on this map, so live agents keep their links (and the previous programs keep enforcing against the old map) across a failed bringup and any number of later `Load()` calls.
 - Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.

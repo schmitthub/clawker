@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -556,111 +555,6 @@ func clawkerNetIP(t *testing.T, container string) string {
 	ip := strings.TrimSpace(string(out))
 	require.NotEmpty(t, ip, "%s should have an IP on clawker-net", container)
 	return ip
-}
-
-func TestFirewall_HostProxyReachable(t *testing.T) {
-	h := harness.New(t, firewallFactoryOpts, func(o *harness.FactoryOptions) {
-		o.HostProxy = hostproxy.NewManager
-	})
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
-	fwSetup(t, h, `
-`)
-
-	// Agent container with real host proxy — should reach /health via targeted eBPF RETURN.
-	healthRes := h.RunInContainer("hp-test",
-		"sh", "-c",
-		`curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "$CLAWKER_HOST_PROXY/health"`)
-	require.NoError(t, healthRes.Err,
-		"host proxy /health should be reachable through firewall\nstdout: %s\nstderr: %s",
-		healthRes.Stdout, healthRes.Stderr)
-	assert.Contains(t, healthRes.Stdout, "200",
-		"should get HTTP 200 from host proxy health endpoint")
-
-	// Non-proxy host port should still be blocked (CIDR bypass doesn't cover host).
-	blockedRes := h.RunInContainer("hp-test",
-		"curl", "-s", "--max-time", "3", "--connect-timeout", "2",
-		"-o", "/dev/null", "-w", "%{http_code}",
-		"http://host.docker.internal:9999")
-	assert.NotNil(t, blockedRes.Err, "non-proxy host port should be blocked by firewall")
-}
-
-// TestFirewall_HostProxyPerContainer proves the host-proxy bypass follows
-// the enrolling project's enable_host_proxy, not the host-level default: a
-// container whose project disabled the lane cannot reach the daemon port
-// while a container with the lane enabled can; both decisions survive a
-// bypass stop and a CP restart (the persisted enrollment record is
-// replayed); and `firewall enable` applies a clawker.yaml edit to a running
-// container. A stub HTTP server on the configured daemon port stands in for
-// the daemon so a failed request can only mean the firewall refused it.
-func TestFirewall_HostProxyPerContainer(t *testing.T) {
-	h := harness.New(t, firewallFactoryOpts)
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
-	setup := fwSetup(t, h, "security: { enable_host_proxy: false }\n")
-
-	// Stand-in for the host proxy daemon, bound to loopback as the daemon
-	// is; the container reaches it through host.docker.internal.
-	stub, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "listening for the host proxy stub")
-	stubSrv := new(http.Server)
-	stubSrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	go func() { _ = stubSrv.Serve(stub) }()
-	t.Cleanup(func() { _ = stubSrv.Close() })
-	stubAddr, ok := stub.Addr().(*net.TCPAddr)
-	require.True(t, ok, "tcp listener address is %T", stub.Addr())
-	stubPort := stubAddr.Port
-	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { daemon: { port: %d } }\n", stubPort))
-
-	probe := func(agent string) string {
-		t.Helper()
-		res := h.ExecInContainer(agent, "curl", "-s", "--max-time", "5", "--connect-timeout", "3",
-			"-o", "/dev/null", "-w", "%{http_code}",
-			fmt.Sprintf("http://host.docker.internal:%d/", stubPort))
-		return strings.TrimSpace(res.Stdout)
-	}
-
-	// Project lane off: enrolled with no bypass.
-	offRes := h.Run("container", "run", "--detach", "--agent", "hp-off", "@", "sleep", "infinity")
-	require.NoError(t, offRes.Err, "start hp-off failed\nstdout: %s\nstderr: %s", offRes.Stdout, offRes.Stderr)
-	assert.NotEqual(t, "200", probe("hp-off"), "project with enable_host_proxy=false must not reach the daemon port")
-
-	// Same host, project lane on: enrolled with the bypass. This is the
-	// positive control that proves the stub is reachable at all.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: true }\n")
-	onRes := h.Run("container", "run", "--detach", "--agent", "hp-on", "@", "sleep", "infinity")
-	require.NoError(t, onRes.Err, "start hp-on failed\nstdout: %s\nstderr: %s", onRes.Stdout, onRes.Stderr)
-	require.Equal(t, "200", probe("hp-on"), "project with enable_host_proxy=true must reach the daemon port")
-
-	// The disabled container stays closed while the enabled one runs.
-	assert.NotEqual(t, "200", probe("hp-off"),
-		"disabled container must not inherit the bypass from a sibling with the lane on")
-
-	// A bypass stop re-enables with the project's value, so the lane stays
-	// on for hp-on (the project still enables it).
-	bypassRes := h.Run("firewall", "bypass", "5s", "--agent", "hp-on", "--non-interactive")
-	require.NoError(t, bypassRes.Err, "bypass failed\nstdout: %s\nstderr: %s", bypassRes.Stdout, bypassRes.Stderr)
-	stopRes := h.Run("firewall", "bypass", "--stop", "--agent", "hp-on")
-	require.NoError(t, stopRes.Err, "bypass --stop failed\nstdout: %s\nstderr: %s", stopRes.Stdout, stopRes.Stderr)
-	assert.Equal(t, "200", probe("hp-on"), "bypass --stop must keep the project's host-proxy lane")
-
-	// CP restart: the startup FirewallInit gate re-enrolls both running
-	// containers from their persisted records before the CP reports ready.
-	downRes := h.Run("controlplane", "down")
-	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s", downRes.Stdout, downRes.Stderr)
-	upRes := h.Run("controlplane", "up")
-	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
-
-	assert.NotEqual(t, "200", probe("hp-off"), "disabled container must stay closed after a CP restart")
-	assert.Equal(t, "200", probe("hp-on"), "enabled container must keep its bypass after a CP restart")
-
-	// A clawker.yaml edit reaches a running container through firewall
-	// enable, which sends the project's current value.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: false }\n")
-	enableRes := h.Run("firewall", "enable", "--agent", "hp-on")
-	require.NoError(t, enableRes.Err, "firewall enable failed\nstdout: %s\nstderr: %s",
-		enableRes.Stdout, enableRes.Stderr)
-	assert.NotEqual(t, "200", probe("hp-on"), "firewall enable must apply the project's disabled lane")
 }
 
 // TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`

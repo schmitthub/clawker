@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -114,18 +113,17 @@ var _ StackLifecycle = (*Stack)(nil)
 type Handler struct {
 	adminv1.UnimplementedAdminServiceServer
 
-	ebpf        ebpf.EBPFManager
-	stack       StackLifecycle
-	store       EgressRulesStore
-	cfg         config.Config
-	resolve     ContainerResolver
-	log         *logger.Logger
-	queue       *ActionQueue
-	enrolled    *pubsub.Topic[ebpf.EBPFContainerEnrolled]
-	ca          *CAStore
-	listAgents  func(ctx context.Context) ([]string, error)
-	identity    *IdentityAllocator
-	enrollments EnrollmentStore
+	ebpf       ebpf.EBPFManager
+	stack      StackLifecycle
+	store      EgressRulesStore
+	cfg        config.Config
+	resolve    ContainerResolver
+	log        *logger.Logger
+	queue      *ActionQueue
+	enrolled   *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+	ca         *CAStore
+	listAgents func(ctx context.Context) ([]string, error)
+	identity   *IdentityAllocator
 
 	// resolveHostFn is injectable for tests. nil defaults to
 	// net.DefaultResolver.LookupHost.
@@ -196,14 +194,6 @@ type HandlerDeps struct {
 	// agents that ran unenforced. Nil means "no re-enrollment" (test wiring and flows
 	// that never want Init to touch agent state).
 	ListAgents func(ctx context.Context) ([]string, error)
-
-	// Enrollments holds the per-container records the CLI pushes on
-	// FirewallEnable (the enrolling project's host-proxy value). The
-	// re-enrollment sweep replays them; a container with no record is
-	// enrolled with no bypass. Nil makes FirewallEnable fail with
-	// codes.Internal (a wiring fault) and the sweep enroll every agent
-	// without a bypass. Production wiring always provides one.
-	Enrollments EnrollmentStore
 }
 
 // maxBypassTimeout caps how long a single FirewallBypass call can
@@ -273,7 +263,6 @@ func NewHandler(deps HandlerDeps) (*Handler, error) {
 		ca:             deps.CA,
 		listAgents:     deps.ListAgents,
 		identity:       deps.Identity,
-		enrollments:    deps.Enrollments,
 		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
 		storedCgroupID: make(map[string]uint64),
@@ -402,7 +391,7 @@ func (h *Handler) FirewallInit(
 // logs at warn and continues the loop so one stuck agent cannot block
 // a successful FirewallInit for the rest. Nil listAgents (test wiring,
 // no-docker handler builds) short-circuits silently. The loop uses
-// shared network/host-proxy state resolved once per Init so a large
+// shared network state resolved once per Init so a large
 // agent fleet doesn't pay per-container discovery cost.
 func (h *Handler) reenrollAgents(ctx context.Context) {
 	if h.listAgents == nil || h.cfg == nil {
@@ -421,12 +410,11 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: network info failed, skipping")
 		return
 	}
-	// The bypass decision is per container, replayed from the enrollment
-	// record the CLI pushed at the container's last FirewallEnable. The
-	// host.docker.internal lookup runs once, and only when some record
-	// needs it, so a host without that name still re-enrolls every agent
-	// whose project has the lane off.
-	bpfCfgFor := h.reenrollConfigFn(ctx, netInfo)
+	bpfCfg, err := h.containerConfig(netInfo)
+	if err != nil {
+		h.log.Warn().Err(err).Msg("firewall ebpf: re-enroll: build container config failed, skipping")
+		return
+	}
 	var enrolled, failed int
 	for _, cid := range agents {
 		rid, cgroupPath, exists, resolveErr := h.resolve(ctx, cid)
@@ -448,15 +436,6 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 				Err(err).
 				Str("container_id", rid).
 				Msg("firewall ebpf: re-enroll: cgroup id failed, skipping container")
-			failed++
-			continue
-		}
-		bpfCfg, err := bpfCfgFor(h.enrolledHostProxy(rid))
-		if err != nil {
-			h.log.Warn().
-				Err(err).
-				Str("container_id", rid).
-				Msg("firewall ebpf: re-enroll: build container config failed, skipping container")
 			failed++
 			continue
 		}
@@ -489,86 +468,6 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		Int("failed", failed).
 		Int("total", len(agents)).
 		Msg("firewall ebpf: re-enroll complete")
-}
-
-// enrollHostProxy decides a container's host-proxy bypass for an enable.
-// Container start sends the project's value: it is persisted before the
-// enroll so a CP restart between the two replays the same decision. Every
-// start overwrites the record, so a config change takes effect at the next
-// container start. A re-enable of an already enrolled container (firewall
-// enable, bypass stop or expiry) sends no value and replays the stored
-// record; no record means no bypass. Runs on the ActionQueue only.
-func (h *Handler) enrollHostProxy(cid string, requested *bool) (bool, error) {
-	if requested == nil {
-		return h.enrolledHostProxy(cid), nil
-	}
-	if err := h.enrollments.SetHostProxy(cid, *requested); err != nil {
-		return false, fmt.Errorf("firewall enable: persist enrollment: %w", err)
-	}
-	return *requested, nil
-}
-
-// enrolledHostProxy reads the persisted host-proxy value for a container,
-// for the re-enrollment sweep and for a FirewallEnable that carries no
-// value. No record, no store, or a read failure all mean no bypass: the
-// bypass is a grant the project must have stated, never a default.
-func (h *Handler) enrolledHostProxy(cid string) bool {
-	if h.enrollments == nil {
-		h.log.Warn().
-			Str("container_id", cid).
-			Str("event", "firewall_enrollments_unavailable").
-			Msg("firewall ebpf: enrollment store not wired; enrolling without host-proxy bypass")
-		return false
-	}
-	enabled, found, err := h.enrollments.HostProxy(cid)
-	if err != nil {
-		h.log.Warn().Err(err).
-			Str("container_id", cid).
-			Str("event", "firewall_enroll_record_unreadable").
-			Msg("firewall ebpf: enrollment record unreadable; enrolling without host-proxy bypass")
-		return false
-	}
-	if !found {
-		h.log.Warn().
-			Str("container_id", cid).
-			Str("event", "firewall_enroll_no_record").
-			Msg("firewall ebpf: no enrollment record; enrolling without host-proxy bypass")
-		return false
-	}
-	return enabled
-}
-
-// reenrollConfigFn returns a builder for the per-container BPF config of
-// the re-enrollment sweep. The host-proxy address is resolved at most once,
-// on the first container whose record enables the lane, and a resolve
-// failure is reported to every such container without touching the ones
-// that need no bypass.
-func (h *Handler) reenrollConfigFn(
-	ctx context.Context,
-	netInfo *NetworkInfo,
-) func(hostProxy bool) (ebpf.BPFContainerConfig, error) {
-	var (
-		resolved    bool
-		proxyIP     string
-		proxyPort   uint16
-		resolveErr  error
-		buildConfig = func(ip string, port uint16) (ebpf.BPFContainerConfig, error) {
-			return h.containerConfig(netInfo, ip, port)
-		}
-	)
-	return func(hostProxy bool) (ebpf.BPFContainerConfig, error) {
-		if !hostProxy {
-			return buildConfig("", 0)
-		}
-		if !resolved {
-			proxyIP, proxyPort, resolveErr = h.resolveHostProxy(ctx, true)
-			resolved = true
-		}
-		if resolveErr != nil {
-			return ebpf.BPFContainerConfig{}, fmt.Errorf("resolve host proxy: %w", resolveErr)
-		}
-		return buildConfig(proxyIP, proxyPort)
-	}
 }
 
 // FirewallRemove is global teardown. Pre-Submit: cancel pending bypass
@@ -641,10 +540,9 @@ func removeGeneratedConfigs() error {
 // --- Per-container enforcement ---
 
 // FirewallEnable enrolls a container. Pre-Submit resolves container_id →
-// cgroup_path and reads the network. The queued closure
-// persists or replays the enrollment record, resolves the host proxy the
-// record grants, builds the BPF container_config, installs it via
-// ebpf.Install, and cancels any pending bypass timer.
+// cgroup_path and reads the network. The queued closure builds the BPF
+// container_config, installs it via ebpf.Install, and cancels any pending
+// bypass timer.
 func (h *Handler) FirewallEnable(
 	ctx context.Context,
 	req *adminv1.FirewallEnableRequest,
@@ -654,10 +552,6 @@ func (h *Handler) FirewallEnable(
 	}
 	if h.cfg == nil {
 		return nil, status.Error(codes.FailedPrecondition, "firewall enable: cp config not wired")
-	}
-
-	if h.enrollments == nil {
-		return nil, status.Errorf(codes.Internal, "firewall enable: enrollment store not wired")
 	}
 
 	cid, cgroupPath, cgroupID, err := h.resolveForEnable(ctx, req.GetContainerId())
@@ -670,19 +564,8 @@ func (h *Handler) FirewallEnable(
 		return nil, status.Errorf(codes.Internal, "firewall enable: discover network: %v", err)
 	}
 
-	// The record and the policy built from it change together on the
-	// queue, the record's only writer: a concurrent enable for the same
-	// container cannot persist one value and install the other.
 	_, err = h.submit(ActionEnable, func(_ context.Context) (any, error) {
-		hostProxy, enrollErr := h.enrollHostProxy(cid, req.HostProxy)
-		if enrollErr != nil {
-			return nil, enrollErr
-		}
-		hostProxyIP, hostProxyPort, resolveErr := h.resolveHostProxy(ctx, hostProxy)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("firewall enable: resolve host proxy: %w", resolveErr)
-		}
-		bpfCfg, cfgErr := h.containerConfig(netInfo, hostProxyIP, hostProxyPort)
+		bpfCfg, cfgErr := h.containerConfig(netInfo)
 		if cfgErr != nil {
 			return nil, fmt.Errorf("firewall enable: %w", cfgErr)
 		}
@@ -1434,52 +1317,13 @@ func (h *Handler) resolveForEnable(
 	return cid, cgroupPath, cgroupID, nil
 }
 
-// resolveHostProxy returns the IP + port a container should use to reach
-// the host proxy via its bypass route. enabled is the enrolling project's
-// value (pushed by the CLI, replayed from the enrollment record), never
-// CP's own config: the CP cannot see clawker.yaml. Empty IP + zero port
-// when the lane is off — callers pass those through to
-// ebpf.NewContainerConfig which treats them as "no bypass". Errors only
-// when the lane is on but the hostname fails to resolve, so enforcement
-// does not silently enroll a container with a broken proxy path.
-func (h *Handler) resolveHostProxy(ctx context.Context, enabled bool) (string, uint16, error) {
-	if !enabled || h.cfg == nil {
-		return "", 0, nil
-	}
-	// Settings hold the port as a plain int, so an out-of-range value can
-	// reach here. Reject it rather than truncating: a silently wrapped port
-	// would enroll the container with a bypass route to the wrong service.
-	port, err := portUint16("host proxy port", h.cfg.HostProxyConfig().Daemon.Port)
-	if err != nil {
-		return "", 0, err
-	}
-
-	resolve := h.resolveHostFn
-	if resolve == nil {
-		resolve = net.DefaultResolver.LookupHost
-	}
-	addrs, err := resolve(ctx, "host.docker.internal")
-	if err != nil {
-		return "", 0, fmt.Errorf("looking up host.docker.internal: %w", err)
-	}
-	if len(addrs) == 0 {
-		return "", 0, fmt.Errorf("host.docker.internal resolved to no addresses")
-	}
-	ip := strings.TrimSpace(addrs[0])
-	if ip == "" {
-		return "", 0, fmt.Errorf("host.docker.internal resolved to empty address")
-	}
-	return ip, port, nil
-}
-
 // containerConfig builds the BPF container_config for one agent: the
-// firewall addresses from the network info, the per-container host-proxy
-// lane (empty + zero when off), and the control-plane endpoints the
-// intra-subnet allowlist admits. Both enroll sites (FirewallEnable and
+// firewall addresses from the network info and the control-plane endpoints
+// the intra-subnet allowlist admits. Both enroll sites (FirewallEnable and
 // the restart sweep) go through here so neither can drop a field. The
 // config holds ports as ints, so every conversion is range-checked.
 func (h *Handler) containerConfig(
-	netInfo *NetworkInfo, hostProxyIP string, hostProxyPort uint16,
+	netInfo *NetworkInfo,
 ) (ebpf.BPFContainerConfig, error) {
 	egressPort, err := portUint16("envoy egress port", h.cfg.EnvoyEgressPort())
 	if err != nil {
@@ -1495,16 +1339,14 @@ func (h *Handler) containerConfig(
 		return ebpf.BPFContainerConfig{}, err
 	}
 	cfg, err := ebpf.NewContainerConfig(ebpf.ContainerConfigParams{
-		EnvoyIP:       netInfo.EnvoyIP,
-		CoreDNSIP:     netInfo.CoreDNSIP,
-		GatewayIP:     netInfo.Gateway.String(),
-		CIDR:          netInfo.CIDR,
-		HostProxyIP:   hostProxyIP,
-		HostProxyPort: hostProxyPort,
-		EgressPort:    egressPort,
-		CPIP:          netInfo.CPIP,
-		CPAgentPort:   agentPort,
-		CPHydraPort:   hydraPort,
+		EnvoyIP:     netInfo.EnvoyIP,
+		CoreDNSIP:   netInfo.CoreDNSIP,
+		GatewayIP:   netInfo.Gateway.String(),
+		CIDR:        netInfo.CIDR,
+		EgressPort:  egressPort,
+		CPIP:        netInfo.CPIP,
+		CPAgentPort: agentPort,
+		CPHydraPort: hydraPort,
 	})
 	if err != nil {
 		return ebpf.BPFContainerConfig{}, fmt.Errorf("build container config: %w", err)

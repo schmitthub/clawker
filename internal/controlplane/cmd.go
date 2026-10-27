@@ -900,7 +900,6 @@ type enforcement struct {
 	stack             *fwhandler.Stack
 	ebpfMgr           *ebpf.Manager
 	identityAlloc     *fwhandler.IdentityAllocator
-	enrollments       fwhandler.EnrollmentStore
 }
 
 // buildEnforcement builds the Docker client, cgroup-driver detection +
@@ -966,15 +965,6 @@ func buildEnforcement(
 	if err != nil {
 		return enforcement{}, cleanup, err
 	}
-	// Per-container enrollment records (host-proxy bypass pushed by the CLI
-	// at FirewallEnable, replayed by the re-enrollment sweep). Beside the
-	// identity table; a table that no longer decodes is a startup gate.
-	enrollments, err := fwhandler.NewEnrollmentStore(cfg)
-	if err != nil {
-		return enforcement{}, cleanup, fmt.Errorf(
-			"enrollment store: %w", err,
-		)
-	}
 	stack, err := fwhandler.NewStack(
 		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
 	)
@@ -999,7 +989,6 @@ func buildEnforcement(
 		stack:             stack,
 		ebpfMgr:           ebpfMgr,
 		identityAlloc:     identityAlloc,
-		enrollments:       enrollments,
 	}, enforcementCleanup(dockerCli, ebpfMgr, log), nil
 }
 
@@ -1152,7 +1141,6 @@ type grpcStackDeps struct {
 	rulesStore        fwhandler.EgressRulesStore
 	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
-	enrollments       fwhandler.EnrollmentStore
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	otelGateway       agent.OtelForwarder
@@ -1321,7 +1309,6 @@ func buildGRPCStack(d grpcStackDeps) (
 		Queue:         actionQueue,
 		EnrolledTopic: d.enrolledTopic,
 		Identity:      d.identityAlloc,
-		Enrollments:   d.enrollments,
 		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
 	})
 	if err != nil {
@@ -1786,32 +1773,25 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		rulesStore:        enf.rulesStore,
 		caStore:           enf.caStore,
 		identityAlloc:     enf.identityAlloc,
-		enrollments:       enf.enrollments,
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		otelGateway:       otelGateway,
 		hostGateway: buildHostGateway(consts.CPClientCertPath, consts.CPClientKeyPath, caCertPool,
 			cfg.HostProxyConfig().Daemon.Port, log),
 		agentPeerLookup: agentPeerLookup,
-		lister:            lister,
-		enrolledTopic:     enrolledTopic,
-		orchestrator:      orchestrator,
-		caCertPool:        caCertPool,
-		caTLS:             caTLS,
-		cp:                cp,
-		serverCertPath:    serverCertPath,
-		serverKeyPath:     serverKeyPath,
+		lister:          lister,
+		enrolledTopic:   enrolledTopic,
+		orchestrator:    orchestrator,
+		caCertPool:      caCertPool,
+		caTLS:           caTLS,
+		cp:              cp,
+		serverCertPath:  serverCertPath,
+		serverKeyPath:   serverKeyPath,
 	})
 	if err != nil {
 		return err
 	}
 	defer grpcCleanup()
-
-	// A destroyed container's enrollment record is dropped on the same
-	// docker event the agent registry evicts on. The removal runs on the
-	// handler's ActionQueue, so the subscription waits for the handler; the
-	// docker watcher starts later, so no destroy event is missed.
-	handler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic)
 
 	// The admin listener socket is already bound, so the /healthz grpc-admin
 	// probe's dial would succeed from here on regardless of whether anything

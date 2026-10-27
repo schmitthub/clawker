@@ -83,19 +83,17 @@
 // Field order is the container_map value layout; append new fields at the
 // end and keep the Go mirror (bpf2go) plus the size assert in step.
 struct container_config {
-	__u32 envoy_ip;        // Envoy static IP (network byte order)
-	__u32 coredns_ip;      // CoreDNS static IP (network byte order)
-	__u32 gateway_ip;      // clawker-net gateway IP (network byte order; dump only, the programs deny it as in-subnet)
-	__u32 net_addr;        // clawker-net network address (network byte order)
-	__u32 net_mask;        // clawker-net subnet mask (network byte order)
-	__u32 host_proxy_ip;   // Host proxy IP (network byte order)
-	__u16 host_proxy_port; // Host proxy port (host byte order)
-	__u16 egress_port;     // Envoy egress listener port (host byte order)
-	__u32 cp_ip;           // Control-plane static IP (network byte order)
-	__u16 cp_agent_port;   // CP AgentService port: Register + Export (host byte order)
-	__u16 cp_hydra_port;   // CP Hydra public port: clawkerd assertion exchange (host byte order)
+	__u32 envoy_ip;      // Envoy static IP (network byte order)
+	__u32 coredns_ip;    // CoreDNS static IP (network byte order)
+	__u32 gateway_ip;    // clawker-net gateway IP (network byte order; dump only, the programs deny it as in-subnet)
+	__u32 net_addr;      // clawker-net network address (network byte order)
+	__u32 net_mask;      // clawker-net subnet mask (network byte order)
+	__u32 cp_ip;         // Control-plane static IP (network byte order)
+	__u16 egress_port;   // Envoy egress listener port (host byte order)
+	__u16 cp_agent_port; // CP AgentService port: Register, Export, host actions (host byte order)
+	__u16 cp_hydra_port; // CP Hydra public port: clawkerd assertion exchange (host byte order)
 };
-_Static_assert(sizeof(struct container_config) == 36, "container_config must stay 36 bytes");
+_Static_assert(sizeof(struct container_config) == 32, "container_config must stay 32 bytes");
 
 // dns_entry.source values. Precedence: SEED > DNS. A SEED entry is written by
 // SyncRoutes for an IP-literal rule and owned by its reconcile lifecycle; the
@@ -900,13 +898,6 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	if (is_loopback(dst_ip))
 		return r;
 
-	// Host-proxy bypass (per-container lane, zero when the project has it
-	// off). Checked before the subnet allowlist: host.docker.internal can
-	// resolve inside the subnet (daemon host-gateway-ip, engine variants).
-	if (cfg->host_proxy_ip != 0 &&
-	    dst_ip == cfg->host_proxy_ip && dst_port == cfg->host_proxy_port)
-		return r;
-
 	// Intra-subnet allowlist. The gateway is inside the subnet too, so a
 	// direct dial to any other host port is denied here in the kernel.
 	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask)) {
@@ -1013,8 +1004,7 @@ decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
 	if (is_loopback(dst_ip))
 		return r;
 
-	// Intra-subnet allowlist, same table as decide_connect. No host-proxy
-	// lane here: the proxy is TCP only.
+	// Intra-subnet allowlist, same table as decide_connect.
 	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask)) {
 		if (allowed_internal(cfg, dst_ip, dst_port))
 			return r;

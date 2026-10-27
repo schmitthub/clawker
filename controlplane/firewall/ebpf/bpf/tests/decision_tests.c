@@ -125,8 +125,7 @@ int test_record_udp_flow(void *ctx)
 }
 
 // scratch_config builds the container_config the decision wrappers run
-// against. Host proxy and egress port stay zero: decide_sendmsg never
-// reads them, and a zero host_proxy_ip is the lane-off shape. gateway_ip
+// against. Egress port stays zero: decide_sendmsg never reads it. gateway_ip
 // is set so a gateway row cannot pass by accident against a zero field.
 static __always_inline void scratch_config(const struct test_scratch *s,
 					   struct container_config *cfg)
