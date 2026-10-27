@@ -1,37 +1,31 @@
-> Retained plan (2026-10-26). Approved by operator. Status: steps 1-7 DONE on local branch `feat/hostproxy-behind-cp` (b27011e0 proto, 80de04b0 CP authz, d7641fee host proxy mTLS, 58476022 clawkerd relay, ed03dce2 eBPF lane removal, b76426af e2e, then docs/memory). Remaining: insert the layer below #600 (D2). Ruling: the CP does all authorization (label grants, callback-session ownership) in `controlplane/hostgateway` + `controlplane/agent/host_handler.go`; the host proxy keeps the egress check, redirect validation, port bind and browser open. Check source before reuse.
+> Retained plan (rewritten 2026-10-27). Approved by operator. Branch `feat/hostproxy-behind-cp` (#604, stack #605). Steps 1-7 of the first design are DONE (CP authorization, clawkerd relay, eBPF lane removal, e2e, docs, `host_proxy.port` merge + migration). The REVERSE CONNECTION rework below is IN PROGRESS. Check source before reuse.
 
 # Host proxy behind the CP
 
-Source: Mythos probe `mem:security/probes/2026-10-26-sandbox-escape-probe` secondaries 1 (`/callback/register` binds any host loopback port) and 2 (`/git/credential` has no server-side policy gate; `store`/`erase` mutate host credential store).
+Source: Mythos probe `mem:security/probes/2026-10-26-sandbox-escape-probe` secondaries 1 (`/callback/register` binds any host loopback port) and 2 (`/git/credential` has no server-side policy gate).
 
 ## Goal
 
-Agents cannot reach the host proxy directly. Every host action goes agent -> clawkerd loopback relay -> CP `AgentService` RPC (per-container authorization, audit with agent identity) -> host proxy (mTLS, accepts only clawker-CA client certs).
+Agents cannot reach the host proxy. Every host action goes agent -> clawkerd loopback relay -> CP `AgentService` RPC (all authorization) -> host proxy. The host proxy keeps the egress check, redirect check, callback port bind, and browser open.
 
-## Facts that drive the design
+## Why the reverse connection
 
-- The host proxy cannot identify the calling container: on Docker Desktop, traffic to `host.docker.internal` is NATed. Only the CP has agent identity (mTLS + peer IP + registry).
-- `forward_https` (`GitHTTPSEnabled`) is only a container-side gate (`internal/workspace/git.go:27`, `container_start.go:513`). `server.go` registers `POST /git/credential` with no condition, so a container with `forward_https: false` can still `curl` it.
-- The CP cannot read `clawker.yaml`. #593 pushes `enable_host_proxy` in `FirewallEnableRequest` to the firewall `EnrollmentStore`. That is firewall-only and fails the rule "never gate CP behavior on firewall.enable".
-- Prior art: #596 `clawkerd/otlp_relay.go` (loopback HTTP -> `AgentService.ExportTelemetry` over the clawkerd bootstrap leaf, no bearer token) and `controlplane/agent/export_handler.go` (identity interceptor + registry thumbprint check).
-- The host proxy listens on host loopback only (`server.go` Start). The eBPF host-proxy lane is `common.h` ~L906 (`host_proxy_ip`, `host_proxy_port`).
-- Container scripts: `internal/hostproxy/internals/host-open.sh`, `git-credential-clawker.sh`, `cmd/callback-forwarder`.
+Linux UAT (bigdaddy, rootless, 2026-10-27): the CP dial to `host.docker.internal:<port>` (172.17.0.1) is refused. The host proxy binds host loopback, and on rootless Docker 172.17.0.1 is in the rootlesskit namespace. The CP admin port is host-published on 127.0.0.1, which works on macOS, rootful and rootless Linux. So the host proxy dials the CP.
 
-## Operator rulings
+## Operator rulings (2026-10-27)
 
-- D1 policy source: container LABELS written by the CLI at create (`enable_host_proxy`, `forward_https`). The CP reads them through the identity interceptor. Live apply from #593 is lost; changes take effect at the next create.
-- D2 placement: new layer just below the release branch #600. `gh stack add` only adds on top. Procedure: commit on `feat/hostproxy-behind-cp`, `git rebase --onto feat/hostproxy-behind-cp chore/adversarial-host-listen release/mythos-hardening`, `gh stack unstack`, `gh stack init` with all 10 branches bottom to top, `gh stack submit --auto`, then mark the new PR ready. Existing PRs survive.
-- D3: e2e must not open a real browser on the host. Check how `TestFirewall_HostProxyReachable` wires the host proxy. If there is no safe path, the callback and open-url allow paths become CP-handler unit tests; e2e covers deny paths and git.
-- Callback design B: register carries the auth URL; the server egress-checks it, requires `redirect_uri` = `http://localhost|127.0.0.1:<port>` with that port, port >= 1024, TTL <= 5 min, opens the browser itself, closes the listener after first capture.
-- git `store`/`erase` stay allowed when `forward_https` is on (policy grant).
-- Native Linux reachability (CP and host proxy on a loopback-only listener) is a FOLLOW-UP: no Linux host available (bigdaddy offline).
+- RPC: new service `api/hostproxy/v1` `HostProxyService.Connect` (bidi stream; the host proxy sends results, the CP sends requests; each carries an `id`; requests are a oneof of the AgentService host-action request messages). Served on the ADMIN listener (7443): ports follow trust lanes, and the host proxy is a CLI-CA host process. gRPC routes services by path; no gateway.
+- Identity: own Hydra client `clawker-hostproxy` with its own ES256 key/JWK and its own scope, plus its own CLI-CA client leaf (CN `clawker-hostproxy`). `Connect` pins the client ID (interceptor) and the CN (handler).
+- No TCP listener in the host proxy except the short-lived OAuth callback ports. Health = the daemon process is alive; it keeps reconnecting with backoff. `host_proxy.port` is dead: the unreleased migration removes `port`, `manager.port`, `daemon.port`.
+- Single instance: the daemon holds an exclusive `flock` on its PID file for its whole life (before, only the port bind guarded it).
+- The CP holds ONE stream. The newest replaces the old one; pending calls on the old one fail with `Unavailable`. No connected host proxy -> `Unavailable`.
+- Prior rulings stay: grants from container labels (`dev.clawker.host_proxy`, `dev.clawker.git_https`), callback-session ownership in `controlplane/hostgateway`, e2e opens no real browser.
 
-## Steps (tests first in each)
+## Rework steps (tests first in each)
 
-1. Proto: `AgentService` RPCs `OpenURL`, `GitCredential`, `RegisterCallback`, `GetCallbackData`, `DeleteCallback`. Public scope like `ExportTelemetry`.
-2. CP `controlplane/hostgateway` + `controlplane/agent/host_handler.go`: peer -> container + thumbprint; grants from labels; `enable_host_proxy` off -> PermissionDenied; `GitCredential` needs `forward_https`; callback sessions owned by the registering container. The egress check stays in the host proxy (ruling). The CP dials `host_proxy.port` (the one host proxy port setting).
-3. Host proxy: mTLS listener, client cert chained to the clawker CA (CP for actions, CLI for health/status); register-and-open as one action; one-shot listener.
-4. clawkerd: loopback relay serving the current HTTP paths, mapped to the RPCs; `CLAWKER_HOST_PROXY` points at it. `host-open.sh` uses the single register-and-open call.
-5. Remove the eBPF host-proxy lane (BPF C fields and branch) and #593's `host_proxy` enrollment plumbing (`FirewallEnableRequest.host_proxy`, `EnrollmentStore` field). Run `make clawker` after BPF edits.
-6. e2e `TestFirewall_HostActionsBehindCP` (PASS 2026-10-26): direct dial never reaches the host proxy (Envoy reset, no peer cert); `enable_host_proxy: false` -> 403; `forward_https: false` -> git 403, on -> git `erase` on an `.invalid` host 200 (not `get`: a host helper could prompt or show a GUI); an unowned callback session -> 403 (cross-agent ownership with a real session would open a browser, so A-owns/B-denied is a `hostgateway` unit test); open/url to a denied host 403.
-7. Docs and memory: `docs/threat-model.mdx`, `docs/security.mdx`, `docs/credentials.mdx`, hostproxy and clawkerd `AGENTS.md`, Serena `runtime/core`, `controlplane/core`, `controlplane/firewall/core`, firewall-uat skill host-proxy rows.
+1. Proto + scope map (`api/hostproxy/v1`), Makefile proto inputs.
+2. consts + `internal/auth`: host proxy signing key/JWK + client leaf; remove the server leaf; CP container mounts the host proxy JWK.
+3. CP: Hydra registers the host proxy client; admin listener routes `HostProxyService` to its own auth interceptor (scope + client-ID pin); `hostgateway` holds the stream (CN pin, newest wins, pending map, deadlines); remove the HTTPS dial and `buildHostGateway`'s HTTP client.
+4. Host proxy: action executor (old handlers without HTTP) + CP connector (dial 127.0.0.1:<admin port>, own token source, backoff); daemon flock; manager = PID liveness; `serve --port` removed; config `host_proxy.port` removed + migration.
+5. e2e `TestFirewall_HostActionsBehindCP`: drop the port setup and the direct-dial probe; add a reconnect check after `controlplane down`/`up`.
+6. Docs, AGENTS.md, Serena memories; restack, submit, `make clawker`, e2e, bigdaddy UAT.

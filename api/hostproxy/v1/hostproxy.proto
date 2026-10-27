@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package clawker.hostproxy.v1;
+
+option go_package = "github.com/schmitthub/clawker/api/hostproxy/v1";
+
+import "agent/v1/agent.proto";
+
+// HostProxyService is the host proxy's lane to the control plane. The host
+// proxy dials out to the CP admin listener (published on host loopback)
+// and holds one Connect stream. The CP sends each authorized AgentService
+// host action down the stream and the host proxy sends back the result.
+// The host proxy has no listener for host actions.
+//
+// Authentication: mTLS with the host proxy's own client leaf (chained to
+// the CLI CA, CN pinned by the CP) plus an OAuth2 bearer token from the
+// host proxy's own Hydra client, which carries only the hostproxy:serve
+// scope.
+service HostProxyService {
+  // Connect carries host actions from the CP to the host proxy. The CP
+  // keeps one stream; a new stream replaces the old one, and the calls in
+  // flight on the old stream fail as unavailable.
+  rpc Connect(stream HostActionResult) returns (stream HostActionRequest);
+}
+
+// HostActionRequest is one host action the CP authorized. The host proxy
+// echoes id in the result.
+message HostActionRequest {
+  uint64 id = 1;
+  oneof action {
+    clawker.agent.v1.OpenURLRequest open_url = 2;
+    clawker.agent.v1.GitCredentialRequest git_credential = 3;
+    clawker.agent.v1.RegisterCallbackRequest register_callback = 4;
+    clawker.agent.v1.GetCallbackDataRequest get_callback_data = 5;
+    clawker.agent.v1.DeleteCallbackRequest delete_callback = 6;
+  }
+}
+
+// HostActionResult is the outcome of one host action: the result that
+// matches the request, or an error.
+message HostActionResult {
+  uint64 id = 1;
+  oneof outcome {
+    HostActionError error = 2;
+    clawker.agent.v1.OpenURLResult open_url = 3;
+    clawker.agent.v1.GitCredentialResult git_credential = 4;
+    clawker.agent.v1.RegisterCallbackResult register_callback = 5;
+    clawker.agent.v1.GetCallbackDataResult get_callback_data = 6;
+    clawker.agent.v1.DeleteCallbackResult delete_callback = 7;
+  }
+}
+
+// HostActionError is a refused or failed host action.
+message HostActionError {
+  // code is a gRPC status code (google.golang.org/grpc/codes). The CP
+  // maps it to the AgentService answer.
+  uint32 code = 1;
+  string message = 2;
+}
