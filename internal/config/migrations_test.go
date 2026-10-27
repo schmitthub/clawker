@@ -395,6 +395,51 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 }
 
+// TestMigrateHostProxyPortKeys covers the merge of host_proxy.manager.port and
+// host_proxy.daemon.port into host_proxy.port. The manager port was the port
+// in effect (the manager started the daemon on it), so its value is carried.
+func TestMigrateHostProxyPortKeys(t *testing.T) {
+	t.Run("carries the manager port and drops the daemon port silently", func(t *testing.T) {
+		const in = `host_proxy:
+  manager:
+    port: 19000
+  daemon:
+    port: 18374
+    poll_interval: 45s
+`
+		var after string
+		notice := captureStderr(t, func() { after = loadSettings(t, in) })
+		assert.NotContains(t, after, "manager:", "legacy manager block must be gone")
+		assert.Contains(t, after, "port: 19000", "manager port must be carried")
+		assert.NotContains(t, after, "port: 18374", "dead daemon port must be removed")
+		assert.Contains(t, after, "poll_interval: 45s", "other daemon keys must be kept")
+		assert.Empty(t, notice, "the migration must not print a notice")
+	})
+
+	t.Run("an existing port wins over the manager port", func(t *testing.T) {
+		const in = `host_proxy:
+  port: 20000
+  manager:
+    port: 19000
+`
+		after := loadSettings(t, in)
+		assert.NotContains(t, after, "manager:")
+		assert.Contains(t, after, "port: 20000")
+		assert.NotContains(t, after, "port: 19000")
+	})
+
+	t.Run("a daemon port alone is removed, not carried", func(t *testing.T) {
+		// Without a manager port the manager used its default, so the
+		// daemon port never took effect.
+		const in = `host_proxy:
+  daemon:
+    port: 19000
+`
+		after := loadSettings(t, in)
+		assert.NotContains(t, after, "19000")
+	})
+}
+
 // TestMigrateDockerSocketToHost covers the docker.socket → docker.host rename.
 // The key always held a daemon address; only its name was wrong.
 func TestMigrateDockerSocketToHost(t *testing.T) {
