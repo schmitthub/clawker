@@ -24,6 +24,7 @@ import (
 	// replicated here for each plugin we use. We import only the plugins
 	// our Corefile needs (not the full core/plugin set which drags in
 	// Azure, AWS, K8s, etc.).
+	_ "github.com/coredns/coredns/plugin/acl"
 	_ "github.com/coredns/coredns/plugin/forward"
 	_ "github.com/coredns/coredns/plugin/health"
 	_ "github.com/coredns/coredns/plugin/log"
