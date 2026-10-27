@@ -106,8 +106,10 @@ regardless of which trigger fires:
 2. `grpcServer.GracefulStop` retires in-flight RPCs.
 3. `handler.CancelAllBypassTimers` stops dead-man timers.
 4. `stack.Stop` removes the Envoy + CoreDNS containers from the clawker network.
-5. `ebpfMgr.FlushAll` wipes `container_map` + `bypass_map` so a
-   subsequent `controlplane up` starts with a clean per-container state.
+5. `ebpfMgr.FlushDead` removes the eBPF state of dead cgroups and every
+   bypass flag. Live agents stay enrolled against the stopped Envoy and
+   CoreDNS, so they have no egress (fail closed) until `controlplane up`
+   re-enrolls them.
 
 `down` itself is therefore minimal:
 1. Short-circuits with an `InfoIcon` message if `Manager.IsRunning`

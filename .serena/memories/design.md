@@ -711,7 +711,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Firewall container lifecycle**: The firewall runs as Docker containers managed by `Stack.EnsureRunning()`, called from CP startup. `Stack` manages container lifecycle and runs dual health check loops (Envoy HTTP + CoreDNS HTTP, 5s interval). The CP's agent watcher drives the `drain-to-zero` path that calls `Stack.Stop()` when no clawker containers are running.
 
-**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy gets `.2`, CoreDNS `.3`, and the eBPF manager `.4` (static IPs computed from the network gateway). eBPF `cgroup/connect4`/`connect6` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs.
+**Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy gets `.200`, CoreDNS `.201`, and the control plane `.202` (static IPs computed from the network gateway, `consts.*IPLastOctet`). eBPF `cgroup/connect4`/`connect6` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs. Inside the subnet the programs apply an allowlist (`allowed_internal` in `bpf/common.h`): Envoy on any port, CoreDNS on 53, the CP on its agent and Hydra public ports. Every other in-subnet destination (another agent, the gateway, CP admin/health/SDS) is denied in the kernel with `V_DENY`. The per-container host-proxy bypass runs before the allowlist because `host.docker.internal` can resolve inside the subnet (daemon `host-gateway-ip`, engine variants).
 
 **Startup ordering is security-critical**: `EnsureRunning` starts the eBPF container and runs `init` BEFORE Envoy and CoreDNS, because the `dnsbpf` plugin opens the pinned `dns_cache` map on CoreDNS startup and fails to boot if it doesn't exist. The `regenerateAndRestart` path preserves this invariant — it re-runs init and `syncRoutes` before restarting Envoy/CoreDNS.
 
@@ -744,7 +744,7 @@ Collector-unavailable posture is binary per-CP-lifetime:
 - **Startup preflight**: `controlplane.NewOtelLoggerProvider` performs a one-shot TLS dial against the OTLP endpoint. Failure returns an error to CP main; main emits `event=netlogger_unavailable` with the failing `step` field, leaves `netloggerSvc=nil`, and CP runs degraded with no per-decision telemetry. Firewall enforcement is untouched.
 - **Runtime circuit breaker**: `netlogger.NewCircuitExporter` wraps the OTLP exporter inside the BatchProcessor. After 3 consecutive `Export` failures the breaker permanently trips, drops records on the floor, and emits a single `event=netlogger_collector_lost` line. No background reconnect — operators recover by restarting CP.
 
-Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
+Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushDead()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
 
 ### 7.3 Strict Label Ownership
 

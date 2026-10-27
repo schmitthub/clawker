@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,7 +95,9 @@ func (m *Manager) Load() error {
 	// Clean up links to dead cgroups. Pinned links keep old programs alive
 	// and attached — for dead cgroups this is a resource leak; for live
 	// cgroups it's load-bearing enforcement that must survive CP restarts.
-	m.cleanupStaleLinks()
+	if _, err := m.cleanupStaleLinks(); err != nil {
+		m.log.Warn().Err(err).Msg("ebpf: stale link sweep skipped")
+	}
 
 	spec, err := loadClawker()
 	if err != nil {
@@ -233,10 +236,9 @@ func (m *Manager) OpenPinned() error {
 }
 
 // CleanupAllLinks removes ALL pinned link files from the pin directory.
-// Called by the daemon ONLY when no agent containers remain and the daemon
-// is shutting down — this ensures the next container start gets a clean
-// slate. Must NOT be called on health check failure, signal shutdown, or
-// CP restart, because agent containers may still be running with active
+// Called ONLY through FlushAll, when the operator turns the firewall off.
+// Must NOT be called on health check failure, signal shutdown, or CP
+// restart, because agent containers may still be running with active
 // enforcement.
 func (m *Manager) CleanupAllLinks() {
 	entries, err := os.ReadDir(m.pinPath)
@@ -257,92 +259,96 @@ func (m *Manager) CleanupAllLinks() {
 	}
 }
 
-// cleanupStaleLinks removes pinned link files whose target cgroups no longer
-// exist (dead containers). Links to live cgroups are preserved so their
-// enforcement survives CP restarts. The cgroup ID is extracted from the
-// pin filename (link_{prog}_{cgroupID}) and looked up in container_map —
-// if the cgroup ID is absent from the map (or the map doesn't exist),
-// the link is considered stale and removed.
-func (m *Manager) cleanupStaleLinks() {
+// cleanupStaleLinks removes pinned links whose cgroup is gone (dead
+// containers). The kernel detaches a cgroup link when its cgroup is
+// destroyed and then reports cgroup ID 0 for it, so a link that still
+// reports a cgroup belongs to a live container and is kept: its enforcement
+// must survive CP restarts. The sweep does not read container_map. After an
+// upgrade that changes the value layout, that map is empty until the
+// FirewallInit sweep re-enrolls each agent; a sweep keyed on it would unpin
+// the links of live agents when a bringup fails before the re-enroll.
+//
+// It returns the cgroup IDs of the links it keeps. An error means the pin
+// directory could not be read, so the live set is unknown.
+func (m *Manager) cleanupStaleLinks() (map[uint64]struct{}, error) {
 	entries, err := os.ReadDir(m.pinPath)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("ebpf: reading pin directory %s: %w", m.pinPath, err)
 	}
 
-	// Collect unique cgroup IDs from link pin filenames.
-	cgroupIDs := make(map[uint64]bool)
+	live := make(map[uint64]struct{})
+	kept, cleaned := 0, 0
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "link_") {
 			continue
 		}
-		// Format: link_{prog}_{cgroupID}
-		parts := strings.Split(e.Name(), "_")
-		if len(parts) < 3 {
+		if !m.sweepLink(e.Name()) {
+			cleaned++
 			continue
 		}
-		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
-		if err != nil {
-			continue
-		}
-		cgroupIDs[id] = true
-	}
-
-	if len(cgroupIDs) == 0 {
-		return
-	}
-
-	// Check which cgroup IDs are still alive by trying to look them up
-	// in the container_map (if it exists). A cgroup in container_map is
-	// an active enforcement target — keep its links. Everything else is stale.
-	liveIDs := make(map[uint64]bool)
-	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, ContainerMapName), nil)
-	if err == nil {
-		defer containerMap.Close()
-		for id := range cgroupIDs {
-			var val clawkerContainerConfig
-			if err := containerMap.Lookup(id, &val); err == nil {
-				liveIDs[id] = true
-			}
-		}
-	}
-	// If container_map doesn't exist (first boot), all links are stale.
-
-	// Remove links for dead cgroups.
-	cleaned := 0
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "link_") {
-			continue
-		}
-		parts := strings.Split(e.Name(), "_")
-		if len(parts) < 3 {
-			continue
-		}
-		id, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
-		if err != nil {
-			continue
-		}
-		if liveIDs[id] {
-			continue // live cgroup — keep link
-		}
-
-		pin := filepath.Join(m.pinPath, e.Name())
-		l, lerr := link.LoadPinnedLink(pin, nil)
-		if lerr == nil {
-			l.Unpin()
-			l.Close()
+		kept++
+		if id, ok := linkCgroupID(e.Name()); ok {
+			live[id] = struct{}{}
 		} else {
-			os.Remove(pin)
+			m.log.Warn().Str("link", e.Name()).Msg("ebpf: link pin name has no cgroup ID")
 		}
-		cleaned++
 	}
-
-	// Programs attached per cgroup — derived from the single source of truth.
-	numBPFPrograms := len(m.cgroupAttachments())
 
 	if cleaned > 0 {
-		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*numBPFPrograms).
+		m.log.Info().Int("cleaned", cleaned).Int("kept", kept).
 			Msg("cleaned stale link pins from dead cgroups")
 	}
+	return live, nil
+}
+
+// sweepLink keeps one pinned link when its cgroup is live and removes it
+// otherwise. It reports whether the link was kept.
+func (m *Manager) sweepLink(name string) bool {
+	pin := filepath.Join(m.pinPath, name)
+	l, err := link.LoadPinnedLink(pin, nil)
+	if err != nil {
+		if rmErr := os.Remove(pin); rmErr != nil {
+			m.log.Warn().Err(rmErr).Str("link", name).Msg("ebpf: removing unreadable link pin")
+		}
+		return false
+	}
+	defer func() {
+		if closeErr := l.Close(); closeErr != nil {
+			m.log.Warn().Err(closeErr).Str("link", name).Msg("ebpf: closing link")
+		}
+	}()
+	if m.linkAttached(l, name) {
+		return true
+	}
+	if unpinErr := l.Unpin(); unpinErr != nil {
+		m.log.Warn().Err(unpinErr).Str("link", name).Msg("ebpf: unpinning stale link")
+	}
+	return false
+}
+
+// linkCgroupID parses the cgroup ID from a link pin name
+// (link_<program>_<cgroupID>). Program names can contain '_', so the ID is
+// the text after the last '_'.
+func linkCgroupID(name string) (uint64, bool) {
+	_, idText, ok := strings.CutLast(name, "_")
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseUint(idText, 10, 64)
+	return id, err == nil
+}
+
+// linkAttached reports whether a pinned cgroup link is still attached to a
+// live cgroup. A link info error keeps the link: removing it could leave a
+// live agent unenforced, and keeping it costs only a leaked link.
+func (m *Manager) linkAttached(l link.Link, name string) bool {
+	info, err := l.Info()
+	if err != nil {
+		m.log.Warn().Err(err).Str("link", name).Msg("ebpf: link info failed; keeping pinned link")
+		return true
+	}
+	cg := info.Cgroup()
+	return cg != nil && cg.CgroupId != 0
 }
 
 // cleanupLinks removes stale pinned links for a cgroup ID.
@@ -419,127 +425,94 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 
 // FlushAll clears all per-container/per-flow eBPF state: empties
 // container_map, bypass_map, ratelimit_state, udp_flow_map, and
-// ratelimit_drops, then unpins every link. Called ONLY on drain-to-zero
-// shutdown (INV-B2-007) when no agents remain — this is the drain
-// complement to CleanupAllLinks, which only touches pinned links.
+// ratelimit_drops, then unpins every link. Called ONLY by FirewallRemove
+// (`firewall down`), where the operator turns enforcement off. The CP drain
+// calls FlushDead instead, so agents that outlive the CP stay enrolled.
 //
 // After FlushAll, the BPF maps contain no entries but the programs
-// themselves stay loaded until Close is called; the caller drives the
-// final teardown order (typically: FlushAll → Close).
+// themselves stay loaded until Close is called.
 //
 // Returns a joined error surfacing all per-entry failures.
 func (m *Manager) FlushAll() error {
-	var errs []error
-
-	if m.objs.ContainerMap != nil {
-		var keys []uint64
-		var key uint64
-		var val clawkerContainerConfig
-		iter := m.objs.ContainerMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate container_map: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.ContainerMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush container_map[%d]: %w", id, err))
-			}
-		}
-	}
-
-	if m.objs.BypassMap != nil {
-		var keys []uint64
-		var key uint64
-		var val uint8
-		iter := m.objs.BypassMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate bypass_map: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush bypass_map[%d]: %w", id, err))
-			}
-		}
-	}
-
-	// Drain ratelimit_state so a CP restart leaves each cgroup starting from
-	// a full token bucket — matches drain-to-zero semantics for the other
-	// per-cgroup maps. LRU eviction would eventually do this, but explicit
-	// drain keeps the post-drain state deterministic.
-	if m.objs.RatelimitState != nil {
-		var keys []uint64
-		var key uint64
-		var val clawkerRatelimitStateVal
-		iter := m.objs.RatelimitState.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate ratelimit_state: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.RatelimitState.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush ratelimit_state[%d]: %w", id, err))
-			}
-		}
-	}
-
-	// Drain udp_flow_map (UDP reverse-NAT state). LRU eviction would eventually
-	// clear it, but draining on drain-to-zero keeps the post-drain state
-	// deterministic alongside the other per-flow maps.
-	if m.objs.UdpFlowMap != nil {
-		var keys []clawkerUdpFlowKey
-		var key clawkerUdpFlowKey
-		var val clawkerUdpFlowVal
-		iter := m.objs.UdpFlowMap.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate udp_flow_map: %w", err))
-		}
-		for _, k := range keys {
-			if err := m.objs.UdpFlowMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(
-					errs,
-					fmt.Errorf("flush udp_flow_map[cookie=%d,backend_port=%d]: %w", k.Cookie, k.BackendPort, err),
-				)
-			}
-		}
-	}
-
-	// Drain ratelimit_drops so per-cgroup drop counters reset on CP restart.
-	// Unlike ratelimit_state, ratelimit_drops is a plain BPF_MAP_TYPE_HASH
-	// with no eviction — without this drain, drop counts from previous CP
-	// lifetimes would accumulate indefinitely up to max_entries=256.
-	// Operators expect "since the current CP started" semantics; carrying
-	// stale counts across restarts would misattribute drops to fresh
-	// containers reusing recycled cgroup IDs.
-	if m.objs.RatelimitDrops != nil {
-		var keys []uint64
-		var key uint64
-		var val uint64
-		iter := m.objs.RatelimitDrops.Iterate()
-		for iter.Next(&key, &val) {
-			keys = append(keys, key)
-		}
-		if err := iter.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("iterate ratelimit_drops: %w", err))
-		}
-		for _, id := range keys {
-			if err := m.objs.RatelimitDrops.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-				errs = append(errs, fmt.Errorf("flush ratelimit_drops[%d]: %w", id, err))
-			}
-		}
-	}
-
+	errs := m.flushMaps(func(uint64) bool { return false })
 	m.CleanupAllLinks()
 	return errors.Join(errs...)
+}
+
+// FlushDead clears the eBPF state of cgroups that no longer exist and keeps
+// live cgroups enrolled. Called by the CP drain (INV-B2-007). A live agent
+// keeps its links and its container_map row, so after the drain stops Envoy
+// and CoreDNS its egress has nowhere to go: it fails closed until the next
+// CP re-enrolls it. Emptying container_map here would make the BPF programs
+// pass the agent through, and its traffic would leave through the network
+// gateway with no enforcement.
+//
+// bypass_map is emptied for every cgroup: the bypass dead-man timers stop
+// with the CP, and a bypass with no timer would never expire.
+// ratelimit_state, udp_flow_map, and ratelimit_drops are emptied as in
+// FlushAll.
+//
+// Returns a joined error surfacing all per-entry failures.
+func (m *Manager) FlushDead() error {
+	live, err := m.cleanupStaleLinks()
+	if err != nil {
+		// The live set is unknown: keep every container_map row.
+		errs := append([]error{err}, m.flushMaps(func(uint64) bool { return true })...)
+		return errors.Join(errs...)
+	}
+	errs := m.flushMaps(func(id uint64) bool {
+		_, ok := live[id]
+		return ok
+	})
+	return errors.Join(errs...)
+}
+
+// flushMaps empties the per-container and per-flow maps. keepContainer
+// selects the container_map rows to keep; every other map is emptied.
+func (m *Manager) flushMaps(keepContainer func(cgroupID uint64) bool) []error {
+	return slices.Concat(
+		flushMap[uint64, clawkerContainerConfig](m.objs.ContainerMap, "container_map", keepContainer),
+		flushMap[uint64, uint8](m.objs.BypassMap, "bypass_map", nil),
+		// A CP restart starts each cgroup from a full token bucket. LRU
+		// eviction would do this later; the flush makes the state
+		// deterministic.
+		flushMap[uint64, clawkerRatelimitStateVal](m.objs.RatelimitState, "ratelimit_state", nil),
+		// UDP reverse-NAT state. LRU eviction would clear it later; the
+		// flush makes the state deterministic alongside the other
+		// per-flow maps.
+		flushMap[clawkerUdpFlowKey, clawkerUdpFlowVal](m.objs.UdpFlowMap, "udp_flow_map", nil),
+		// ratelimit_drops is a plain HASH with no eviction. Without the
+		// flush, drop counts from earlier CP lifetimes would accumulate and
+		// be attributed to new containers that reuse a cgroup ID.
+		flushMap[uint64, uint64](m.objs.RatelimitDrops, "ratelimit_drops", nil),
+	)
+}
+
+// flushMap deletes every entry of m whose key keep does not select. A nil
+// keep deletes every entry. A nil map is a no-op.
+func flushMap[K comparable, V any](m *ebpf.Map, name string, keep func(K) bool) []error {
+	if m == nil {
+		return nil
+	}
+	var errs []error
+	var keys []K
+	var key K
+	var val V
+	iter := m.Iterate()
+	for iter.Next(&key, &val) {
+		if keep == nil || !keep(key) {
+			keys = append(keys, key)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("iterate %s: %w", name, err))
+	}
+	for _, k := range keys {
+		if err := m.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			errs = append(errs, fmt.Errorf("flush %s[%+v]: %w", name, k, err))
+		}
+	}
+	return errs
 }
 
 // Close detaches all links and closes all programs and maps.
@@ -596,7 +569,7 @@ type cgroupAttachment struct {
 
 // cgroupAttachments is the single source of truth for the set of cgroup BPF
 // programs clawker attaches per container — Install attaches them, cleanupLinks
-// and Remove unpin their links by name, and the count drives the cleanup log.
+// and Remove unpin their links by name.
 // Adding or removing a program is a one-line edit here (plus the two pin maps in
 // Load/OpenPinned, which must bind struct-field addresses and can't derive).
 func (m *Manager) cgroupAttachments() []cgroupAttachment {
@@ -1213,6 +1186,9 @@ func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
 				HostProxyIP:   cfg.HostProxyIp,
 				HostProxyPort: cfg.HostProxyPort,
 				EgressPort:    cfg.EgressPort,
+				CPIP:          cfg.CpIp,
+				CPAgentPort:   cfg.CpAgentPort,
+				CPHydraPort:   cfg.CpHydraPort,
 			},
 		})
 	}
@@ -1287,26 +1263,48 @@ type Route struct {
 // than providing the protection itself.
 const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
+// ContainerConfigParams are the inputs of NewContainerConfig. IPs are
+// dotted strings; ports are host byte order. HostProxyIP empty with
+// HostProxyPort zero means the host-proxy lane is off for this container.
+type ContainerConfigParams struct {
+	EnvoyIP       string
+	CoreDNSIP     string
+	GatewayIP     string
+	CIDR          string
+	HostProxyIP   string
+	HostProxyPort uint16
+	EgressPort    uint16
+	// CPIP and the two ports are the only control-plane endpoints an agent
+	// may dial inside the subnet (Register + Export, and the Hydra token
+	// endpoint). CPIP is required: without it every agent would be cut
+	// off from the CP.
+	CPIP        string
+	CPAgentPort uint16
+	CPHydraPort uint16
+}
+
 // NewContainerConfig builds a BPF container_config from network parameters.
-func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
-	hostProxyIP string, hostProxyPort, egressPort uint16,
-) (clawkerContainerConfig, error) {
-	netAddr, netMask, err := CIDRToAddrMask(cidr)
+func NewContainerConfig(p ContainerConfigParams) (clawkerContainerConfig, error) {
+	netAddr, netMask, err := CIDRToAddrMask(p.CIDR)
 	if err != nil {
-		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", cidr, err)
+		return clawkerContainerConfig{}, fmt.Errorf("parsing CIDR %s: %w", p.CIDR, err)
 	}
 
-	envoy, err := parseIP(envoyIP)
+	envoy, err := parseIP(p.EnvoyIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("envoyIP: %w", err)
 	}
-	coredns, err := parseIP(corednsIP)
+	coredns, err := parseIP(p.CoreDNSIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("corednsIP: %w", err)
 	}
-	gateway, err := parseIP(gatewayIP)
+	gateway, err := parseIP(p.GatewayIP)
 	if err != nil {
 		return clawkerContainerConfig{}, fmt.Errorf("gatewayIP: %w", err)
+	}
+	cp, err := parseIP(p.CPIP)
+	if err != nil {
+		return clawkerContainerConfig{}, fmt.Errorf("cpIP: %w", err)
 	}
 
 	cfg := clawkerContainerConfig{
@@ -1315,13 +1313,16 @@ func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,
 		GatewayIp:     IPToUint32(gateway),
 		NetAddr:       netAddr,
 		NetMask:       netMask,
-		HostProxyPort: hostProxyPort,
-		EgressPort:    egressPort,
+		HostProxyPort: p.HostProxyPort,
+		EgressPort:    p.EgressPort,
+		CpIp:          IPToUint32(cp),
+		CpAgentPort:   p.CPAgentPort,
+		CpHydraPort:   p.CPHydraPort,
 	}
-	if hostProxyIP != "" {
-		hp, err := parseIP(hostProxyIP)
-		if err != nil {
-			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", err)
+	if p.HostProxyIP != "" {
+		hp, hpErr := parseIP(p.HostProxyIP)
+		if hpErr != nil {
+			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", hpErr)
 		}
 		cfg.HostProxyIp = IPToUint32(hp)
 	}

@@ -286,3 +286,56 @@ func TestProgRun_RecordUDPFlow(t *testing.T) {
 		t.Fatalf("cookie=0 flow lookup err = %v; want ErrKeyNotExist (must skip recording)", err)
 	}
 }
+
+// subnetScratch returns a scratch block whose config inputs describe a
+// 172.30.0.0/16 clawker-net with Envoy .200, CoreDNS .201, and the CP
+// .202 on the default agent (7444) and Hydra (4444) ports.
+func subnetScratch(t *testing.T) testprogsTestScratch {
+	t.Helper()
+	var in testprogsTestScratch
+	in.InEnvoyIp = ipU32(t, "172.30.0.200")
+	in.InCorednsIp = ipU32(t, "172.30.0.201")
+	in.InGatewayIp = ipU32(t, "172.30.0.1")
+	in.InNetAddr = ipU32(t, "172.30.0.0")
+	in.InNetMask = ipU32(t, "255.255.0.0")
+	in.InCpIp = ipU32(t, "172.30.0.202")
+	in.InCpAgentPort = 7444
+	in.InCpHydraPort = 4444
+	return in
+}
+
+// TestProgRun_AllowedInternal pins the intra-subnet allowlist row by row:
+// Envoy on any port, CoreDNS on 53 only, the CP on its agent and Hydra
+// ports only. Another agent, the gateway, and the CP admin/health/SDS
+// ports are not allowed.
+func TestProgRun_AllowedInternal(t *testing.T) {
+	objs := loadHarness(t)
+	cases := []struct {
+		name string
+		ip   string
+		port uint16
+		want uint8
+	}{
+		{"envoy any port", "172.30.0.200", 15003, 1},
+		{"coredns dns", "172.30.0.201", 53, 1},
+		{"coredns other port", "172.30.0.201", 8080, 0},
+		{"cp agent port", "172.30.0.202", 7444, 1},
+		{"cp hydra port", "172.30.0.202", 4444, 1},
+		{"cp admin port", "172.30.0.202", 7443, 0},
+		{"cp sds port", "172.30.0.202", 7445, 0},
+		{"gateway", "172.30.0.1", 18374, 0},
+		{"other agent", "172.30.0.7", 22, 0},
+		{"other agent on cp agent port", "172.30.0.7", 7444, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := subnetScratch(t)
+			in.InDstIp = ipU32(t, tc.ip)
+			in.InDstPort = tc.port
+			out := runScratch(t, objs, objs.TestAllowedInternal, in)
+			if out.OutAllowed != tc.want {
+				t.Fatalf("allowed_internal(%s:%d) = %d; want %d", tc.ip, tc.port, out.OutAllowed, tc.want)
+			}
+		})
+	}
+}

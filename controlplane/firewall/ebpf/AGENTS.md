@@ -41,7 +41,7 @@ cmd/                 break-glass ebpf-manager binary (see cmd/AGENTS.md)
 
 The `clawker-controlplane` container runs `clawkercp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/firewall/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning under `PinPath` is purely a crash-recovery mechanism, not load-bearing state.
 
-`Load()` runs `cleanupStaleLinks()` which checks each pinned `link_*` file against `container_map` — links to dead cgroups are removed, links to live cgroups are preserved. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY by the daemon on shutdown when no agent containers remain.
+`Load()` runs `cleanupStaleLinks()`, which asks the kernel whether each pinned `link_*` is still attached: the kernel detaches a cgroup link when its cgroup is destroyed and then reports cgroup ID 0. Detached links (dead cgroups) are removed; attached links (live cgroups) are preserved. A link info error keeps the link. The sweep does not read `container_map`. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY through `FlushAll` (`firewall down`). The CP drain calls `FlushDead`, which runs the same sweep and keeps the `container_map` rows of the cgroups whose links stay attached (cgroup ID from the `link_<program>_<cgroupID>` pin name), so a live agent fails closed while the CP is down. An unreadable pin directory keeps every row.
 
 Command-mode access to pinned state is done via the `cmd/ebpf-manager` break-glass binary + `OpenPinned()` (which opens handles to already-pinned maps without re-running Load). That binary is packaged in the CP image alongside `clawkercp` for emergency debugging.
 
@@ -55,12 +55,12 @@ All maps live at `PinPath` (`/sys/fs/bpf/clawker`) — the clawker subdirectory 
 | `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Disable`/`Enable`, cleared by `Install`/`Remove` | BPF fast path |
 | `dns_cache` | IPv4 (u32) | `dns_entry` {identity, expire_ts, source} | `SyncRoutes` seeds (DNSSourceSeed, IP-literal rules), `internal/dnsbpf` CoreDNS plugin (DNSSourceDNS; refuses to overwrite seeds), `UpdateDNSCache` (break-glass) | BPF fast path |
 | `route_map` | `{identity, dst_port, l4_proto}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
-| `udp_flow_map` | `{socket_cookie, backend_ip, backend_port}` (LRU) | `{orig_dst_ip, orig_dst_port}` | `connect4`/`sendmsg4` (`record_udp_flow`); drained by `FlushAll` | `recvmsg4` (reply source) + `getpeername4` (reported peer) |
+| `udp_flow_map` | `{socket_cookie, backend_ip, backend_port}` (LRU) | `{orig_dst_ip, orig_dst_port}` | `connect4`/`sendmsg4` (`record_udp_flow`); drained by `FlushAll`/`FlushDead` | `recvmsg4` (reply source) + `getpeername4` (reported peer) |
 | `metrics_map` | `{cgroup_id, identity, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
 | `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
 | `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
-| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take`; drained by `FlushAll` | BPF fast path |
-| `ratelimit_drops` | cgroup ID (u64) | u64 counter | BPF `ratelimit_check_and_take` on empty bucket; drained by `FlushAll` | userspace `netlogger` per-cgroup attribution |
+| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take`; drained by `FlushAll`/`FlushDead` | BPF fast path |
+| `ratelimit_drops` | cgroup ID (u64) | u64 counter | BPF `ratelimit_check_and_take` on empty bucket; drained by `FlushAll`/`FlushDead` | userspace `netlogger` per-cgroup attribution |
 
 `route_map` is **global** — container enforcement is gated by presence in `container_map`, so a single `SyncRoutes` call updates routing for every enforced container atomically.
 
@@ -110,7 +110,8 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 // Startup / shutdown maintenance — not on EBPFManager interface; called
 // by cmd/clawkercp directly so the RPC surface stays pure.
 func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
-func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map + ratelimit_state + udp_flow_map + ratelimit_drops, unpin links
+func (m *Manager) FlushAll() error                          // firewall down only — empty container_map + bypass_map + ratelimit_state + udp_flow_map + ratelimit_drops, unpin links
+func (m *Manager) FlushDead() error                         // INV-B2-007 CP drain — unpin dead links, keep container_map rows of live cgroups, empty the other maps
 
 // Read-only accessors for the netlogger subpackage. Return nil before
 // Load/OpenPinned; callers MUST nil-check.
@@ -127,20 +128,47 @@ const PinPath = consts.SysFSBPFPath + "/" + consts.NamePrefix // /sys/fs/bpf/cla
 
 type RouteIdentity uint32 // userspace-allocated route identity; zero (IsNone()) = no attribution
 type Route struct { Identity RouteIdentity; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]={Identity, DNSSourceSeed})
-type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
+type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy, CP IP + agent/Hydra ports */ }
+type ContainerConfigParams struct { /* NewContainerConfig inputs: the same fields as dotted IPs + host-order ports; CPIP is required */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
 func Uint32ToIP(uint32) net.IP
 func IPToBytes16(net.IP) [16]uint8                          // converts to EgressEvent.DstIp slot (IPv4 in first 4 bytes, IPv6 fills all 16)
 func CIDRToAddrMask(cidr string) (addr, mask uint32, err error)
-func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr, hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error)
+func NewContainerConfig(p ContainerConfigParams) (clawkerContainerConfig, error)
 func CgroupPath(containerID string) string                  // /sys/fs/cgroup/system.slice/docker-<id>.scope
 func CgroupID(cgroupPath string) (uint64, error)            // validated against path-injection, returns inode
 func Supported() error                                       // checks cgroup v2 available
 ```
 
+## Decision chain (connect4 / sendmsg4 and their IPv4-mapped v6 twins)
+
+`decide_connect` and `decide_sendmsg` in `bpf/common.h` share one order: Envoy
+loop-prevention mark → DNS rewrite to CoreDNS (any destination on port 53) →
+deny Docker's embedded resolver `127.0.0.11` on every other port → loopback pass-through →
+(connect only) per-container host-proxy bypass → **in-subnet allowlist** →
+per-domain route lookup → Envoy catch-all (TCP) or deny (UDP). The allowlist
+is `allowed_internal`: inside `net_addr/net_mask` only `envoy_ip` (any port),
+`coredns_ip:53`, and `cp_ip` on `cp_agent_port` or `cp_hydra_port` pass;
+every other in-subnet destination (another agent, the gateway, CP
+admin/health/SDS) returns `V_DENY` with an `ACTION_DENY` metric and an
+`EGRESS_VERDICT_DENIED` event. The host-proxy bypass runs before the
+allowlist because `host.docker.internal` can resolve inside the subnet (a
+daemon with `host-gateway-ip` set, some engine variants). `gateway_ip` is carried for dumps only.
+The `127.0.0.11` deny closes Docker's embedded resolver: Docker DNATs
+`127.0.0.11:53` to a random port in the container network namespace, and
+that resolver forwards to public upstreams from outside this program. Without
+the deny, a direct dial to that port is an upstream resolver that bypasses
+CoreDNS. CoreDNS itself is not under agent eBPF and still uses its own
+`127.0.0.11` for `host.docker.internal`.
+`bpftest` runs the production helpers under `BPF_PROG_TEST_RUN`
+(`TestProgRun_AllowedInternal`);
+`make test-bpf` on a privileged host, or the compiled test binary under
+`docker run --privileged` from a dev container.
+
 ## Invariants
 
+- `struct container_config` is 36 bytes (`_Static_assert`). Append new fields at the end. After an upgrade that changes the value size, the schema check replaces the pinned map with an empty one, and rows come back only when the `FirewallInit` sweep re-installs each agent. The stale-link sweep keys on the kernel's link state, not on this map, so live agents keep their links (and the previous programs keep enforcing against the old map) across a failed bringup and any number of later `Load()` calls.
 - Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived in this package. All keyspace users — `SyncRoutes` (route_map + seeds), `internal/dnsbpf` (dns_cache, via the Corefile directive argument), and netlogger attribution — read the same allocation. Live destinations are never renumbered; a value-shape change to `dns_entry` is the pinned-map migration lever (Load() removes schema-mismatched maps).
 - `Install` is idempotent and clears stale links + bypass flags before attaching, so it is also the canonical "re-enforce after bypass" entry point.
 - `SyncRoutes` collects per-entry errors into `errors.Join` instead of returning on the first failure — a partial sync returns non-nil and callers can decide what to do.

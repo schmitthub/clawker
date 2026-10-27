@@ -127,12 +127,38 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 build:
   packages:
     - iputils-ping
+    - python3
 `)
 
 	// ICMP must be blocked to prevent ICMP tunneling (ptunnel, icmpsh).
 	// ping sends ICMP echo requests — should fail with the DROP rule in place.
 	res := h.RunInContainer("firewall-icmp", "ping", "-c", "1", "-W", "3", "8.8.8.8")
 	assert.NotNil(t, res.Err, "ping should fail — ICMP must be blocked to prevent tunneling")
+
+	// ping connect()s its socket, which connect4 denies. An unconnected ICMP
+	// datagram socket (ping_group_range lets any uid open one) sends with
+	// sendto(), which no sendmsg hook sees, so sock_create must deny it.
+	script := `
+import socket, struct
+def csum(b):
+    s = sum(struct.unpack("!%dH" % (len(b) // 2), b))
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+    return ~s & 0xffff
+pkt = struct.pack("!BBHHH", 8, 0, 0, 0x1234, 1) + b"clawkerprobe"
+pkt = pkt[:2] + struct.pack("!H", csum(pkt)) + pkt[4:]
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
+    s.settimeout(3)
+    s.sendto(pkt, ("8.8.8.8", 0))
+    s.recvfrom(1024)
+    print("icmp-dgram=open")
+except OSError as e:
+    print("icmp-dgram=closed", e)
+`
+	dgramRes := h.RunInContainer("firewall-icmp", "python3", "-c", script)
+	require.NoError(t, dgramRes.Err, "probe failed\nstdout: %s\nstderr: %s", dgramRes.Stdout, dgramRes.Stderr)
+	assert.Contains(t, dgramRes.Stdout, "icmp-dgram=closed", "probe results:\n%s", dgramRes.Stdout)
 }
 
 // TestFirewall_Bypass exercises the full `firewall bypass` surface in one
@@ -452,7 +478,13 @@ func TestFirewall_Status(t *testing.T) {
 	assert.Positive(t, status.RuleCount, "harness floor rules should be present")
 }
 
-func TestFirewall_IntraNetworkBypass(t *testing.T) {
+// TestFirewall_IntraSubnetAllowlist proves the eBPF in-subnet allowlist: a
+// managed agent reaches only Envoy, CoreDNS on 53, and the control plane
+// on its agent and Hydra ports. Another container on clawker-net is denied
+// on TCP and UDP, and DNS plus allowed egress still work. Every probe runs
+// in one container through bash's /dev/tcp and /dev/udp so a denial is the
+// kernel's EPERM on connect(), never a missing listener.
+func TestFirewall_IntraSubnetAllowlist(t *testing.T) {
 	h := newFirewallHarness(t)
 	ctx := context.Background()
 
@@ -461,7 +493,8 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 	require.NoError(t, bootRes.Err, "boot container failed\nstdout: %s\nstderr: %s",
 		bootRes.Stdout, bootRes.Stderr)
 
-	// Start a simple HTTP listener on the clawker network — no firewall rule for this service.
+	// A listener on clawker-net stands in for another agent: it answers on
+	// 8080, so a refused connect can only be the firewall.
 	listenerName := fmt.Sprintf("clawker-test-listener-%d", time.Now().UnixNano())
 	//nolint:gosec // args are test-controlled
 	startCmd := exec.CommandContext(ctx, "docker", "run", "-d",
@@ -474,36 +507,55 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 	t.Cleanup(func() {
 		_ = exec.CommandContext(context.Background(), "docker", "rm", "-f", listenerName).Run()
 	})
+	listenerIP := clawkerNetIP(t, listenerName)
+	cpIP := clawkerNetIP(t, consts.ContainerCP)
+	t.Logf("listener IP: %s, cp IP: %s", listenerIP, cpIP)
 
-	// Get the listener's IP on the clawker network.
-	//nolint:gosec // args are test-controlled
-	ipOut, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		`{{(index .NetworkSettings.Networks "`+consts.Network+`").IPAddress}}`,
-		listenerName).Output()
-	require.NoError(t, err, "inspect listener IP failed")
-	listenerIP := strings.TrimSpace(string(ipOut))
-	require.NotEmpty(t, listenerIP, "listener should have an IP on clawker-net")
-	t.Logf("listener IP: %s", listenerIP)
+	// Positive control: an unmanaged container on clawker-net reaches the
+	// listener, so a closed probe below can only be the eBPF verdict.
+	require.Eventually(t, func() bool {
+		out, probeErr := exec.CommandContext(ctx, "docker", "run", "--rm",
+			"--network", consts.Network, "busybox",
+			"wget", "-qO-", "-T", "2", "http://"+net.JoinHostPort(listenerIP, "8080")+"/").Output()
+		return probeErr == nil && strings.TrimSpace(string(out)) == "OK"
+	}, 20*time.Second, time.Second, "listener never answered an unmanaged container")
 
-	// Wait for httpd to start.
-	time.Sleep(1 * time.Second)
-
-	// Agent container can reach intra-network service via CIDR bypass (no firewall rule).
-	connectRes := h.RunInContainer("intra-net-test",
-		"curl", "-s", "--max-time", "5", "--connect-timeout", "3",
-		"-o", "/dev/null", "-w", "%{http_code}",
-		"http://"+net.JoinHostPort(listenerIP, "8080")+"/")
-
-	require.NoError(t, connectRes.Err,
-		"intra-network should succeed via CIDR bypass\nstdout: %s\nstderr: %s",
-		connectRes.Stdout, connectRes.Stderr)
-	assert.Contains(t, connectRes.Stdout, "200",
-		"should get HTTP 200 from listener on clawker-net")
+	script := `
+probe() { local name=$1; shift; if timeout 3 bash -c "$*" 2>/dev/null; then echo "$name=open"; else echo "$name=closed"; fi; }
+probe other-tcp "exec 3<>/dev/tcp/` + listenerIP + `/8080"
+probe other-udp "echo x > /dev/udp/` + listenerIP + `/9"
+probe cp-agent "exec 3<>/dev/tcp/` + cpIP + `/7444"
+probe cp-hydra "exec 3<>/dev/tcp/` + cpIP + `/4444"
+probe dns "getent hosts api.anthropic.com >/dev/null"
+`
+	res := h.RunInContainer("intra-net-test", "bash", "-c", script)
+	require.NoError(t, res.Err, "probe script failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	for _, want := range []string{
+		"other-tcp=closed",
+		"other-udp=closed",
+		"cp-agent=open",
+		"cp-hydra=open",
+		"dns=open",
+	} {
+		assert.Contains(t, res.Stdout, want, "probe results:\n%s", res.Stdout)
+	}
 
 	// Sanity: external domain still blocked by firewall.
 	blockedRes := h.RunInContainer("intra-net-test",
 		"curl", "-s", "--max-time", "5", "https://example.com")
 	assert.NotNil(t, blockedRes.Err, "external domain should still be blocked")
+}
+
+// clawkerNetIP returns a container's address on clawker-net.
+func clawkerNetIP(t *testing.T, container string) string {
+	t.Helper()
+	out, err := exec.CommandContext(context.Background(), "docker", "inspect", "-f",
+		`{{(index .NetworkSettings.Networks "`+consts.Network+`").IPAddress}}`,
+		container).Output()
+	require.NoError(t, err, "inspect %s IP failed", container)
+	ip := strings.TrimSpace(string(out))
+	require.NotEmpty(t, ip, "%s should have an IP on clawker-net", container)
+	return ip
 }
 
 func TestFirewall_HostProxyReachable(t *testing.T) {
@@ -611,6 +663,54 @@ func TestFirewall_HostProxyPerContainer(t *testing.T) {
 	assert.NotEqual(t, "200", probe("hp-on"), "firewall enable must apply the project's disabled lane")
 }
 
+// TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`
+// with a running agent keeps the agent enrolled: the drain stops Envoy and
+// CoreDNS but keeps the eBPF state of live cgroups, so the agent has no
+// egress until `controlplane up` re-enrolls it. Before this, the drain
+// emptied container_map and detached every link, and the agent sent its
+// traffic directly through the network gateway.
+func TestFirewall_ControlPlaneDownFailsClosed(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	curl := func(url string) *harness.RunResult {
+		t.Helper()
+		return h.ExecInContainer("cp-down", "curl", "-s", "--max-time", "10", "--connect-timeout", "5",
+			"-o", "/dev/null", "-w", "%{http_code}", url)
+	}
+
+	// clawkerd starts the user CMD only after the boot plan completes, so
+	// the marker file shows the agent is ready. `run --detach` returns
+	// before that, and a drain during init or boot halts the agent.
+	const readyMarker = "/tmp/cp-down-ready"
+	runRes := h.Run("container", "run", "--detach", "--agent", "cp-down", "@",
+		"sh", "-c", "touch "+readyMarker+" && exec sleep infinity")
+	require.NoError(t, runRes.Err, "start cp-down failed\nstdout: %s\nstderr: %s", runRes.Stdout, runRes.Stderr)
+	require.Eventually(t, func() bool {
+		return h.ExecInContainer("cp-down", "test", "-f", readyMarker).Err == nil
+	}, 3*time.Minute, time.Second, "cp-down never finished boot")
+
+	// Positive control: the allowed domain goes through Envoy.
+	allowRes := curl("https://api.anthropic.com")
+	require.NoError(t, allowRes.Err, "allowed domain must work with the CP up\nstdout: %s\nstderr: %s",
+		allowRes.Stdout, allowRes.Stderr)
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must be denied with the CP up")
+
+	downRes := h.Run("controlplane", "down")
+	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s", downRes.Stdout, downRes.Stderr)
+
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must stay denied with the CP down")
+	require.Error(t, curl("https://api.anthropic.com").Err,
+		"allowed domain must fail with the CP down: no Envoy, no direct egress")
+
+	upRes := h.Run("controlplane", "up")
+	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
+
+	againRes := curl("https://api.anthropic.com")
+	require.NoError(t, againRes.Err, "allowed domain must work after controlplane up\nstdout: %s\nstderr: %s",
+		againRes.Stdout, againRes.Stderr)
+	require.Error(t, curl("https://1.1.1.1").Err, "raw IP must be denied after controlplane up")
+}
+
 func TestFirewall_SSHTCPMapping(t *testing.T) {
 	// Configure an SSH rule for github.com — exercises the TCP mapping path:
 	// eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
@@ -677,6 +777,65 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 	// Sanity: blocked domain still fails.
 	blockedRes := h.ExecInContainer("dns-test", "getent", "hosts", "evil.example.com")
 	assert.NotNil(t, blockedRes.Err, "non-whitelisted domain should not resolve")
+}
+
+// TestFirewall_DockerDNSDirectPortDenied proves an agent cannot reach Docker's
+// embedded resolver on its real port. Docker DNATs 127.0.0.11:53 to a random
+// port inside the container network namespace, and that resolver forwards
+// queries to public upstreams from outside the agent's eBPF. The port 53
+// redirect sends normal DNS to CoreDNS; a direct dial to the random port must
+// be denied, else it is an upstream resolver that bypasses CoreDNS NXDOMAIN.
+func TestFirewall_DockerDNSDirectPortDenied(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	script := `
+h=""
+while read -r _ local _ st _; do
+  case "$local" in 0B00007F:*) if [ "$st" = 0A ]; then h=${local#*:}; break; fi ;; esac
+done < /proc/net/tcp
+if [ -z "$h" ]; then echo port=none; exit 0; fi
+port=$((16#$h))
+echo port=$port
+if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.11/$port" 2>/dev/null; then echo direct=open; else echo direct=closed; fi
+if getent hosts api.anthropic.com >/dev/null; then echo dns=open; else echo dns=closed; fi
+`
+	res := h.RunInContainer("docker-dns-direct", "bash", "-c", script)
+	require.NoError(t, res.Err, "probe script failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	require.NotContains(t, res.Stdout, "port=none",
+		"Docker embedded DNS listener not found in /proc/net/tcp")
+	assert.Contains(t, res.Stdout, "direct=closed", "probe results:\n%s", res.Stdout)
+	assert.Contains(t, res.Stdout, "dns=open", "probe results:\n%s", res.Stdout)
+}
+
+// TestFirewall_CPNameResolves proves an enrolled agent resolves the CP by name.
+// clawkerd dials clawker-controlplane for Register, the host-action relay, and
+// the telemetry relay; after enrollment every query goes to CoreDNS, so CoreDNS
+// must answer the name. The zone forwards only the exact A query to Docker's
+// DNS: any other type gets an empty answer and any subdomain gets NXDOMAIN, so
+// no query name an agent picks can reach Docker's upstream resolvers.
+func TestFirewall_CPNameResolves(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "cp-name", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "cp-name") })
+
+	a := h.ExecInContainer("cp-name", "getent", "hosts", consts.ContainerCP)
+	require.NoError(t, a.Err, "CP name must resolve\nstdout: %s\nstderr: %s", a.Stdout, a.Stderr)
+	fields := strings.Fields(a.Stdout)
+	require.NotEmpty(t, fields, "CP name resolved to nothing")
+	assert.True(t, strings.HasSuffix(fields[0], fmt.Sprintf(".%d", consts.CPIPLastOctet)),
+		"CP name must resolve to the CP static IP, got %q", fields[0])
+
+	txt := h.ExecInContainer("cp-name", "dig", consts.ContainerCP, "TXT")
+	require.NoError(t, txt.Err, "dig TXT failed\nstdout: %s\nstderr: %s", txt.Stdout, txt.Stderr)
+	assert.Contains(t, txt.Stdout, "status: NOERROR", "non-A query must get an empty answer:\n%s", txt.Stdout)
+	assert.Contains(t, txt.Stdout, "ANSWER: 0", "non-A query must get an empty answer:\n%s", txt.Stdout)
+
+	sub := h.ExecInContainer("cp-name", "dig", "probe."+consts.ContainerCP, "A")
+	require.NoError(t, sub.Err, "dig subdomain failed\nstdout: %s\nstderr: %s", sub.Stdout, sub.Stderr)
+	assert.Contains(t, sub.Stdout, "status: NXDOMAIN", "CP subdomain must NXDOMAIN:\n%s", sub.Stdout)
 }
 
 // TestFirewall_ExactAllowBlocksSubdomain is the regression test for the DNS

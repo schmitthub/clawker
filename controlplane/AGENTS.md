@@ -46,7 +46,7 @@ This is the single most important invariant in the codebase. Read it before addi
 
 1. PID 1 exits. CP container goes down. `on-failure` restart policy retries 3×; if the bug is deterministic (most are), CP stays dead.
 2. **eBPF programs stay attached to cgroups.** They're pinned under `/sys/fs/bpf` and survive the CP container's death. Agent containers' egress traffic continues to be filtered by whatever rule set was loaded at the moment CP died.
-3. **The clean drain-to-zero path is skipped.** `firewall.Stack.Stop()` and `ebpfMgr.FlushAll()` only run on intentional shutdown via the orchestrator. A panic skips both. eBPF state is now frozen and unsupervised.
+3. **The clean drain-to-zero path is skipped.** `firewall.Stack.Stop()` and `ebpfMgr.FlushDead()` only run on intentional shutdown via the orchestrator. A panic skips both. eBPF state is now frozen and unsupervised, and a bypass in effect has no timer to end it.
 4. **Agent containers keep running.** They have no awareness that their supervisor died. They keep serving their workloads.
 5. **The user has no idea.** They see agents running. They assume the firewall is enforcing — and it technically is, against the rules that happened to be loaded. They assume CP is observing — it isn't. They assume CP can dispatch containment — it can't.
 
@@ -154,7 +154,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 10. `startFeeder` — the `dockerevents` feeder, sole producer of `DockerEvent` onto its typed topic.
 11. `startWorkers` — the long-lived observability workers: the `pubsub.NewStatsHeartbeat`, the `netlogger.Service` (subscribes `enrolledTopic` to hydrate its label cache; degrades to `netloggerSvc=nil` with `event=netlogger_unavailable` on any chain failure), and the `dns_cache` GC goroutine (`event=dns_gc_*`, escalates `dns_gc_degraded` after `dnsGCDegradedThreshold` consecutive reclaim-failures). All run on `watcherCtx`.
 12. Agent watcher + `startAgentDialer` — `agent.NewAgentWatcher` (drain-to-zero trigger; its goroutine recovers panics into a terminal shutdown error, `event=agent_watcher_panic`) plus the executor, CP→clawkerd dialer, and agent-axis subscriptions (§3.4 degrade contract).
-13. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once). EVERY arm drains — the subprocess-crash and serve-failure arms (`event=cp_subprocess_crashed` / `event=cp_serve_failed`) run the callback before returning their error, since a bare return would exit PID 1 with eBPF pinned and unsupervised. Drain-to-zero and signal exit 0 (the `on-failure` restart policy does NOT retrigger); a crash or serve failure exits 1 after draining.
+13. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushDead()`, INV-B2-007) exactly once (sync.Once). `FlushDead` keeps the eBPF state of live cgroups and removes the state of dead cgroups and every bypass flag, so an agent that outlives the CP stays enrolled against the stopped Envoy and CoreDNS and fails closed until the next CP re-enrolls it. E2E: `TestFirewall_ControlPlaneDownFailsClosed`. EVERY arm drains — the subprocess-crash and serve-failure arms (`event=cp_subprocess_crashed` / `event=cp_serve_failed`) run the callback before returning their error, since a bare return would exit PID 1 with eBPF pinned and unsupervised. Drain-to-zero and signal exit 0 (the `on-failure` restart policy does NOT retrigger); a crash or serve failure exits 1 after draining.
 
 ## Aggregate Health (`internal/controlplane/cmd.go`)
 
@@ -206,7 +206,7 @@ All ports from `cfg.ControlPlaneSettings()` (defaults via struct tags). Publishe
 
 The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` for full reference. Key surface consumed by CP core:
 
-- `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushAll` runs during drain-to-zero (INV-B2-007).
+- `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushDead` runs in the drain (INV-B2-007); `FlushAll` runs only on `firewall down` (`FirewallRemove`).
 - `ebpf.EBPFManager` interface — consumed by `firewall.Handler`. Methods: `Install`, `Remove`, `Enable`, `Disable`, `SyncRoutes`, `FlushAll`.
 - `ebpf.Route` + `ebpf.BPFContainerConfig` — shared types used by `internal/dnsbpf` and `controlplane/firewall`. Route identities are allocated by `firewall.IdentityAllocator` (sticky, persisted), never derived by hashing.
 - `ebpf.Manager.EventsRingbuf()` / `EventsDrops()` / `RatelimitDrops()` / `DNSCache()` — read-only map accessors consumed by `netlogger.Service` for the per-decision egress event pipeline. All return nil before `Load()` — callers MUST nil-check.

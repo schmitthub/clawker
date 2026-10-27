@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Upstream DNS servers: Cloudflare malware-blocking resolvers.
@@ -109,10 +110,11 @@ func GenerateCorefile(
 
 	// Reserved zones — internal hosts get their own zones forwarding to Docker DNS.
 	// Egress rules matching these names are skipped to avoid duplicate CoreDNS zones.
-	reserved := make(map[string]bool, len(internalHosts))
+	reserved := make(map[string]bool, len(internalHosts)+1)
 	for _, host := range internalHosts {
 		reserved[host] = true
 	}
+	reserved[consts.ContainerCP] = true
 
 	wildcard, denySeen, denyDomains := classifyZoneRules(rules, reserved)
 	allowDomains := collectAllowDomains(rules, reserved, denySeen)
@@ -134,6 +136,7 @@ func GenerateCorefile(
 	for _, host := range internalHosts {
 		writeAllowZone(&b, host, []string{"127.0.0.11"}, false, tracking)
 	}
+	writeCPZone(&b)
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
 	b.WriteString(". {\n")
@@ -253,6 +256,30 @@ func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exact
 		fmt.Fprintf(b, "    dnsbpf %d\n", id)
 	}
 	fmt.Fprintf(b, "    forward . %s\n", strings.Join(upstreams, " "))
+	b.WriteString("}\n\n")
+}
+
+// writeCPZone writes the zone that resolves the CP name for agents. clawkerd
+// dials consts.ContainerCP, and after enrollment every agent query comes to
+// CoreDNS. Docker's DNS knows the name, but it sends every name it does not
+// know to public resolvers. Thus only the exact A query goes to it: acl gives
+// an empty answer to every other type, and the template NXDOMAINs every
+// subdomain. No query name that an agent picks gets to Docker's DNS. There is
+// no dnsbpf: the eBPF allowlist admits the CP by its static IP.
+func writeCPZone(b *strings.Builder) {
+	fmt.Fprintf(b, "%s {\n", consts.ContainerCP)
+	b.WriteString("    otel\n")
+	fmt.Fprintf(b, "    log . \"%s\"\n", corefileLogFormat)
+	b.WriteString("    acl {\n")
+	b.WriteString("        allow type A\n")
+	b.WriteString("        filter\n")
+	b.WriteString("    }\n")
+	b.WriteString("    template IN ANY . {\n")
+	fmt.Fprintf(b, "        match \"%s\"\n", subdomainRegex(consts.ContainerCP))
+	b.WriteString("        rcode NXDOMAIN\n")
+	b.WriteString("        fallthrough\n")
+	b.WriteString("    }\n")
+	b.WriteString("    forward . 127.0.0.11\n")
 	b.WriteString("}\n\n")
 }
 

@@ -424,14 +424,14 @@ const (
 // runDrainStage runs one CP drain-to-zero teardown stage under recover and
 // returns nil on clean completion or a non-nil error if the stage panicked.
 //
-// CP §3.4 invariant: the drain sequence MUST reach ebpfMgr.FlushAll on every
-// shutdown — it is the only thing that drops per-container eBPF state to zero,
-// and a skipped flush leaves the next CP inheriting a frozen rule set with
-// agents filtered against stale rules and no supervisor. The drain body runs
-// its stages (pre-flush teardown → FlushAll → topic teardown) as a linear
+// CP §3.4 invariant: the drain sequence MUST reach ebpfMgr.FlushDead on every
+// shutdown — it is the only thing that drops the eBPF state of dead cgroups and
+// every bypass flag, and a skipped flush leaves a bypass with no timer to end
+// it. The drain body runs
+// its stages (pre-flush teardown → FlushDead → topic teardown) as a linear
 // sequence of runDrainStage calls; because a panicking stage is contained here
 // rather than unwinding the whole function, control always returns to the
-// caller to invoke the next stage, so FlushAll is reached on any panic path.
+// caller to invoke the next stage, so FlushDead is reached on any panic path.
 // The structured event is the only operator triage surface (panic stacks land
 // on stderr, not the rotating CP log).
 func runDrainStage(log *logger.Logger, stage, event string, fn func()) (err error) {
@@ -482,16 +482,17 @@ type drainDeps struct {
 //  6. stopDNSGC stops the dns_cache sweeper (BEFORE flush so a sweep can't
 //     iterate/delete a dns_cache fd the deferred ebpfMgr.Close() is tearing
 //     down).
-//  7. ebpfMgr.FlushAll drops per-container eBPF state to zero.
+//  7. ebpfMgr.FlushDead drops the eBPF state of dead cgroups and every
+//     bypass flag. Live agents stay enrolled against the stopped Envoy and
+//     CoreDNS, so they fail closed until the next CP re-enrolls them.
 //  8. feederCancel + topic Close.
 //
 // Each stage runs under runDrainStage's recover (the safe wrapper). CP §3.4
-// invariant: FlushAll (stage 7) is the only thing that drops per-container
-// eBPF state to zero on shutdown — if an earlier stage panicked and unwound
-// the whole function, FlushAll would be skipped and the next CP would inherit
-// a frozen rule set with agents filtered against stale rules and no
-// supervisor. Containing each stage's panic to that stage lets the linear
-// sequence fall through to FlushAll on any panic path. Errors are aggregated
+// invariant: FlushDead (stage 7) is the only thing that clears bypass flags
+// on shutdown — if an earlier stage panicked and unwound the whole function,
+// FlushDead would be skipped and a bypass would outlive its stopped timer.
+// Containing each stage's panic to that stage lets the linear
+// sequence fall through to FlushDead on any panic path. Errors are aggregated
 // so a broken drain exits non-zero.
 func runDrainSequence(ctx context.Context, d drainDeps) error {
 	var errs []error
@@ -537,10 +538,10 @@ func runDrainSequence(ctx context.Context, d drainDeps) error {
 		d.stopDNSGC()
 	})
 
-	// Flush per-container eBPF state. Reached unconditionally — a panic in any
+	// Flush the eBPF state of dead cgroups. Reached unconditionally — a panic in any
 	// pre-flush step was contained above, so this always runs.
 	safe("ebpf flush", "drain_ebpf_flush_panic", func() {
-		if err := d.ebpfMgr.FlushAll(); err != nil {
+		if err := d.ebpfMgr.FlushDead(); err != nil {
 			d.log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
 		}
@@ -1310,7 +1311,7 @@ func buildGRPCStack(d grpcStackDeps) (
 // newDrainCallback wraps runDrainSequence in a sync.Once so SIGTERM and the
 // AgentWatcher's drain-to-zero converge on a single teardown — whichever
 // trigger wins runs the literal un-reorderable drain order (reaching
-// ebpfMgr.FlushAll under per-stage recover) exactly once. Every later call,
+// ebpfMgr.FlushDead under per-stage recover) exactly once. Every later call,
 // including run()'s final `return drainCallback(...)`, returns the captured
 // error without re-running the teardown.
 func newDrainCallback(deps drainDeps) func(context.Context) error {
@@ -1487,7 +1488,7 @@ type workerDeps struct {
 // the dns_cache GC stop func — the handles the drain sequence acts on. All
 // three recover internally per the CP no-panic discipline; the heartbeat and
 // GC are cancelled transitively when run() cancels watcherCtx, and the drain
-// sequence stops netlogger + GC explicitly before FlushAll.
+// sequence stops netlogger + GC explicitly before FlushDead.
 //
 // netlogger degrades to a nil service (drain skips Stop) on any failure with an
 // event=netlogger_unavailable line; the returned provider is caller-owned (the
@@ -1517,7 +1518,7 @@ func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service,
 
 	// dns_cache GC — reclaims expired entries the CoreDNS dnsbpf
 	// plugin wrote so the pinned map stays bounded. The sync.Once-guarded stop
-	// is called BOTH from the drain body (before FlushAll) AND deferred by run()
+	// is called BOTH from the drain body (before FlushDead) AND deferred by run()
 	// (LIFO before ebpfMgr.Close), so an in-flight sweep is joined before the
 	// dns_cache fd is torn down.
 	stopDNSGC := ebpf.NewDNSGarbageCollector(d.ebpfMgr, d.log, ebpf.DNSGCOpts{}).Start(watcherCtx)
@@ -1828,7 +1829,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// long-lived observability workers (stats heartbeat, netlogger,
 	// dns_cache GC) — see startWorkers. They run on watcherCtx, so
 	// run()'s watcherCancel stops the heartbeat and GC transitively; the drain
-	// sequence stops netlogger + GC explicitly before FlushAll. The deferred
+	// sequence stops netlogger + GC explicitly before FlushDead. The deferred
 	// stopDNSGC is belt-and-braces (LIFO before ebpfMgr.Close) so an in-flight
 	// sweep is joined before the dns_cache fd is torn down.
 	netloggerSvc, netloggerProvider, stopDNSGC := startWorkers(watcherCtx, workerDeps{
@@ -1885,7 +1886,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	watcherDone := make(chan error, 1)
 	go func() {
 		// CP no-panic discipline: this goroutine owns the drain-to-zero
-		// teardown (drainCallback runs ebpfMgr.FlushAll). A panic in watcher.Run
+		// teardown (drainCallback runs ebpfMgr.FlushDead). A panic in watcher.Run
 		// must NOT unwind past the channel send, or watcherDone never receives,
 		// the serve select never drains, and PID 1 dies with eBPF pinned and
 		// unsupervised (§3.4). Convert any panic into a terminal shutdown error

@@ -3,6 +3,7 @@ package ebpf
 import (
 	"encoding/binary"
 	"errors"
+	"net"
 	"reflect"
 	"sort"
 	"strings"
@@ -14,6 +15,43 @@ import (
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// TestNewContainerConfig_ControlPlaneFields: the intra-subnet allowlist
+// needs the CP address and the two agent-facing CP ports in the map
+// value. A config without them would deny Register and Export for every
+// agent, so a missing or malformed CP IP is an error, not a zero field.
+func TestNewContainerConfig_ControlPlaneFields(t *testing.T) {
+	params := ContainerConfigParams{
+		EnvoyIP:       "172.20.0.200",
+		CoreDNSIP:     "172.20.0.201",
+		GatewayIP:     "172.20.0.1",
+		CIDR:          "172.20.0.0/16",
+		HostProxyIP:   "",
+		HostProxyPort: 0,
+		EgressPort:    10000,
+		CPIP:          "172.20.0.202",
+		CPAgentPort:   7444,
+		CPHydraPort:   4444,
+	}
+	cfg, err := NewContainerConfig(params)
+	if err != nil {
+		t.Fatalf("NewContainerConfig: %v", err)
+	}
+	if want := IPToUint32(net.ParseIP("172.20.0.202")); cfg.CpIp != want {
+		t.Errorf("CpIp = %d, want %d", cfg.CpIp, want)
+	}
+	if cfg.CpAgentPort != 7444 || cfg.CpHydraPort != 4444 {
+		t.Errorf("CP ports = %d/%d, want 7444/4444", cfg.CpAgentPort, cfg.CpHydraPort)
+	}
+	if cfg.HostProxyIp != 0 || cfg.HostProxyPort != 0 {
+		t.Errorf("host proxy must stay zero when the lane is off: %d/%d", cfg.HostProxyIp, cfg.HostProxyPort)
+	}
+
+	params.CPIP = ""
+	if _, badErr := NewContainerConfig(params); badErr == nil {
+		t.Error("empty CPIP: want error, got nil")
+	}
+}
 
 // TestEgressEvent_SizeMatchesABI mirrors the C-side
 // _Static_assert(sizeof(struct egress_event) == 48) on the Go side. If
