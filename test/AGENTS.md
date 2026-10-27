@@ -61,7 +61,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 
 | Function | Signature | Purpose |
 |----------|-----------|---------|
-| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, builds clawker binary, registers cleanup |
+| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, registers cleanup |
 | `Chdir` | `(r *SetupResult) Chdir(t, dir)` | Changes working directory with cleanup to restore |
 | `Run` | `(h *Harness) Run(args ...string) *RunResult` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer` | `(h *Harness) RunInContainer(agent, cmd...) *RunResult` | `container run --rm --agent <agent> @ <cmd>` |
@@ -100,7 +100,7 @@ On failure, dumps `clawker.log` (`logger.DefaultLogFileName`), `hostproxy.log`, 
 
 ### Internal Helpers
 
-- `ensureClawkerBinary(t)` — builds `bin/clawker` once per process, sets `CLAWKER_EXECUTABLE`
+- `TestMain` (`test/e2e/main_test.go`) — the e2e test binary acts as the clawker CLI when it is started with `host-proxy …`. The host proxy manager starts its daemon from its own executable, which in e2e runs is this binary.
 - `cleanupTestEnvironment(t, h)` — orchestrates cleanup chain above
 - `dockerListByLabel(ctx, resourceType, label)` — lists Docker resource IDs by label
 
