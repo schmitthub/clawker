@@ -559,13 +559,15 @@ func clawkerNetIP(t *testing.T, container string) string {
 
 // TestFirewall_HostActionsBehindCP proves agents reach the host proxy only
 // through the clawkerd relay and the CP, which authorizes every action from
-// the container's labels and owns callback sessions:
-//   - a direct dial to the host proxy port never reaches the host proxy;
+// the container's labels and owns callback sessions. The host proxy has no
+// listener for actions: it dials out to the CP and holds a stream.
 //   - a granted agent's git erase reaches the host (an .invalid host, so no
 //     helper prompts and nothing is removed);
 //   - open/url to a host the firewall denies is refused before any browser;
 //   - a callback session the agent does not own is refused;
-//   - enable_host_proxy: false and forward_https: false are refused at the CP.
+//   - enable_host_proxy: false and forward_https: false are refused at the CP;
+//   - after a CP restart the host proxy reconnects and the granted agent
+//     reaches the host again.
 //
 // No case opens a browser: the only open/url targets a denied host.
 func TestFirewall_HostActionsBehindCP(t *testing.T) {
@@ -574,19 +576,8 @@ func TestFirewall_HostActionsBehindCP(t *testing.T) {
 	})
 	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
 
-	// A free port, so a host proxy from a live session cannot collide. The
-	// harness caches the host proxy manager on first use, so the setting is
-	// written before any command runs (fwSetup's register and build).
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "picking a host proxy port")
-	addr, ok := l.Addr().(*net.TCPAddr)
-	require.True(t, ok, "tcp listener address is %T", l.Addr())
-	port := addr.Port
-	require.NoError(t, l.Close(), "releasing the host proxy port")
-
 	setup := h.NewIsolatedFS(nil)
 	harness.EnsureNoControlPlane(t, 30*time.Second)
-	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { port: %d }\n", port))
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "\n")
 	regRes := h.Run("project", "register", "testproject")
 	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
@@ -625,14 +616,6 @@ func TestFirewall_HostActionsBehindCP(t *testing.T) {
 
 	start("ha-on")
 
-	// Direct dial: the TLS handshake must never come from the host proxy.
-	require.NoError(t, h.ExecInContainer("ha-on", "sh", "-c", "command -v openssl").Err,
-		"openssl is the direct-dial probe; without it the check below proves nothing")
-	direct := h.ExecInContainer("ha-on", "sh", "-c", fmt.Sprintf(
-		"openssl s_client -connect host.docker.internal:%d -servername host.docker.internal </dev/null 2>&1", port))
-	assert.NotContains(t, direct.Stdout, consts.HostProxyServerName,
-		"a direct dial reached the host proxy:\n%s", direct.Stdout)
-
 	// Positive control: the CP reaches the host proxy for a granted agent.
 	require.Equal(t, "200", relay("ha-on", "POST", "/git/credential", gitErase),
 		"granted git erase must reach the host proxy through the CP")
@@ -653,6 +636,16 @@ func TestFirewall_HostActionsBehindCP(t *testing.T) {
 		"enable_host_proxy: false must refuse every host action")
 	assert.Equal(t, "403", relay("ha-off", "POST", "/open/url", `{"url":"https://denied.clawker-e2e.invalid/"}`),
 		"enable_host_proxy: false must refuse open/url before the egress check")
+
+	// The host proxy dials out to the CP. After a CP restart it reconnects
+	// by itself, and the granted agent reaches the host again.
+	downRes := h.Run("controlplane", "down")
+	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s", downRes.Stdout, downRes.Stderr)
+	upRes := h.Run("controlplane", "up")
+	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
+	require.Eventually(t, func() bool {
+		return relay("ha-on", "POST", "/git/credential", gitErase) == "200"
+	}, 2*time.Minute, 2*time.Second, "the host proxy must reconnect to the restarted CP")
 }
 
 // TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`

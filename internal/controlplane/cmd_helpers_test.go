@@ -24,10 +24,8 @@ import (
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/controlplane/sdscerts"
-	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // TestWireExecutor_NilBus pins the CP-resilience contract: a
@@ -420,32 +418,4 @@ func TestRequireSDSClientSAN(t *testing.T) {
 	t.Run("empty chain set refused", func(t *testing.T) {
 		require.Error(t, requireSDSClientSAN(nil))
 	})
-}
-
-// TestBuildHostGateway_DegradesOnMissingCert pins the degrade contract: a
-// CP client cert that does not load leaves the host actions answering
-// Unavailable (nil gateway, event=host_gateway_unavailable). It never
-// stops the CP.
-func TestBuildHostGateway_DegradesOnMissingCert(t *testing.T) {
-	var buf bytes.Buffer
-	gw := buildHostGateway("/nonexistent/cert.pem", "/nonexistent/key.pem", x509.NewCertPool(), 18374,
-		logger.NewWriter(&buf))
-	assert.Nil(t, gw)
-	assert.Contains(t, buf.String(), "host_gateway_unavailable")
-}
-
-func TestBuildHostGateway_Ready(t *testing.T) {
-	testenv.New(t)
-	require.NoError(t, auth.EnsureAuthMaterial())
-	certPath, err := consts.AuthCPClientCertPath()
-	require.NoError(t, err)
-	keyPath, err := consts.AuthCPClientKeyPath()
-	require.NoError(t, err)
-	caCert, err := auth.CACert()
-	require.NoError(t, err)
-	pool := x509.NewCertPool()
-	pool.AddCert(caCert)
-
-	gw := buildHostGateway(certPath, keyPath, pool, 18374, logger.Nop())
-	assert.NotNil(t, gw)
 }

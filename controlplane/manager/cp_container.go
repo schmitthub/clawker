@@ -188,6 +188,10 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	if err != nil {
 		return nil, fmt.Errorf("resolve signing JWK path: %w", err)
 	}
+	hostProxyJWKPath, err := consts.AuthHostProxySigningJWKPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve host proxy signing JWK path: %w", err)
+	}
 	serverCertPath, err := consts.AuthServerCertPath()
 	if err != nil {
 		return nil, fmt.Errorf("resolve server cert path: %w", err)
@@ -263,6 +267,19 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Source:   jwkPath,
 			Target:   consts.CPCLIPubKeyPath,
 			ReadOnly: true,
+		},
+		// Host proxy's public signing key (JWK) for its own Hydra client.
+		{
+			Type:           mount.TypeBind,
+			Source:         hostProxyJWKPath,
+			Target:         consts.CPHostProxyPubKeyPath,
+			ReadOnly:       true,
+			Consistency:    "",
+			BindOptions:    nil,
+			VolumeOptions:  nil,
+			ImageOptions:   nil,
+			TmpfsOptions:   nil,
+			ClusterOptions: nil,
 		},
 		// Server TLS certificate.
 		{

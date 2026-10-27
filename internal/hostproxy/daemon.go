@@ -2,6 +2,7 @@ package hostproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -35,12 +38,16 @@ type ContainerLister interface {
 	io.Closer
 }
 
-// Daemon manages the host proxy server as a background process.
-// It polls Docker for clawker containers and auto-exits when none are running.
+// Daemon runs the host proxy as a background process: it holds the
+// stream to the CP (Connector) and runs the host actions the CP sends
+// (Actions). It polls Docker for clawker containers and auto-exits when
+// none are running.
 type Daemon struct {
 	cfg                config.Config
 	log                *logger.Logger
-	server             *Server
+	rulesFilePath      string // egress rules file; empty = firewall off
+	actions            *Actions
+	connector          *Connector
 	docker             ContainerLister
 	pidFile            string
 	pollInterval       time.Duration
@@ -63,13 +70,6 @@ type Daemon struct {
 // CLI flags use these to take precedence over config without mutating the config object.
 type DaemonOption func(*Daemon)
 
-// WithDaemonPort overrides the daemon listen port.
-func WithDaemonPort(port int) DaemonOption {
-	return func(d *Daemon) {
-		d.server = NewServer(port, d.log, d.server.rulesFilePath, d.server.tlsConfig)
-	}
-}
-
 // WithPollInterval overrides the container poll interval.
 func WithPollInterval(interval time.Duration) DaemonOption {
 	return func(d *Daemon) {
@@ -85,16 +85,16 @@ func WithGracePeriod(period time.Duration) DaemonOption {
 }
 
 // NewDaemon creates a new daemon that reads all settings from cfg.HostProxyConfig().
-// Optional DaemonOption values override individual config settings (used by CLI flags).
-// It creates a Docker client internally. Tests that need a mock docker client
-// construct &Daemon{...} directly (the pattern used by watchContainers tests).
-func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Daemon, error) {
-	hpCfg := cfg.HostProxyConfig()
-	daemonCfg := hpCfg.Daemon
+// cpClient is the HostProxyService client on the CP admin listener; the
+// daemon opens its stream on Run. Optional DaemonOption values override
+// individual config settings (used by CLI flags). It creates a Docker
+// client internally. Tests that need a mock docker client construct
+// &Daemon{...} directly (the pattern used by watchContainers tests).
+func NewDaemon(
+	cfg config.Config, log *logger.Logger, cpClient hostproxyv1.HostProxyServiceClient, opts ...DaemonOption,
+) (*Daemon, error) {
+	daemonCfg := cfg.HostProxyConfig().Daemon
 
-	if err := validatePort(hpCfg.Port, "host proxy daemon"); err != nil {
-		return nil, err
-	}
 	if daemonCfg.PollInterval <= 0 {
 		return nil, fmt.Errorf("invalid poll interval %v: must be positive", daemonCfg.PollInterval)
 	}
@@ -127,11 +127,6 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 		rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
 	}
 
-	tlsConfig, err := ServerTLSConfig()
-	if err != nil {
-		return nil, fmt.Errorf("host proxy TLS: %w", err)
-	}
-
 	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -140,7 +135,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	d := &Daemon{
 		cfg:                cfg,
 		log:                log,
-		server:             NewServer(hpCfg.Port, log, rulesFilePath, tlsConfig),
+		rulesFilePath:      rulesFilePath,
 		docker:             dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,
@@ -157,6 +152,8 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	}
 	d.firewallRunningProbe = d.firewallContainerRunning
 	d.envoyHealthProbe = d.envoyHealthy
+	d.actions = NewActions(log, rulesFilePath)
+	d.connector = NewConnector(cpClient, d.actions, log)
 
 	for _, opt := range opts {
 		opt(d)
@@ -167,25 +164,14 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 
 // Run starts the daemon and blocks until it receives a signal or auto-exits.
 func (d *Daemon) Run(ctx context.Context) error {
-	// Write PID file
-	if err := writePIDFile(d.pidFile); err != nil {
-		return fmt.Errorf("failed to write PID file: %w", err)
+	// The PID file lock is the single-instance guard: a second daemon
+	// exits here. The manager's ensure waits on this PID file.
+	pidLock, err := lockPIDFile(d.pidFile)
+	if err != nil {
+		return err
 	}
-	defer removePIDFile(d.pidFile, d.log)
-
-	// Start the server FIRST so /health answers immediately. In container
-	// bootstrap the CP and firewall stack boot BEFORE the host proxy, and the
-	// manager's host-proxy ensure gates on this /health — binding immediately
-	// lets that proceed while the egress-rules readiness gate (which waits on
-	// the already-running firewall + Envoy, then validates the rules file)
-	// converges in the background. If the rules never become valid the gate
-	// fails the daemon closed: Run returns and the daemon exits. Egress
-	// enforcement on /open/url is fail-closed per request regardless —
-	// handleOpenURL rejects an unreadable/invalid rules file — so binding
-	// before the rules are confirmed never opens a hole.
-	if err := d.server.Start(); err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
+	defer releasePIDFile(pidLock, d.pidFile, d.log)
+	defer d.actions.Close(context.WithoutCancel(ctx))
 
 	// Set up signal handling
 	sigCh := make(chan os.Signal, 1)
@@ -195,6 +181,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// goroutine.
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
+
+	// Connect to the CP FIRST. In container bootstrap the CP and firewall
+	// stack boot BEFORE the host proxy; the egress-rules readiness gate
+	// (which waits on the already-running firewall + Envoy, then validates
+	// the rules file) converges in the background. Egress enforcement is
+	// fail-closed per request regardless — Actions rejects an
+	// unreadable/invalid rules file — so serving before the rules are
+	// confirmed never opens a hole.
+	connectorDone := make(chan struct{})
+	go func() {
+		d.connector.Run(runCtx)
+		close(connectorDone)
+	}()
+	defer func() { <-connectorDone }()
 
 	// Background lifecycle: run the staged egress-rules readiness gate first,
 	// then — only once the rules are confirmed usable — start the container
@@ -226,21 +226,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	case <-watcherDone:
 		d.log.Debug().Msg("container watcher exited, shutting down")
 	case err := <-readyErrCh:
-		d.log.Error().Err(err).Str("rules_file", d.server.rulesFilePath).
+		d.log.Error().Err(err).Str("rules_file", d.rulesFilePath).
 			Msg("host proxy egress rules never became ready; shutting down")
 		runErr = fmt.Errorf("host proxy egress rules not ready: %w", err)
 	case <-ctx.Done():
 		d.log.Debug().Msg("context cancelled, shutting down")
 	}
 
-	// Graceful shutdown
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-
-	if err := d.server.Stop(shutdownCtx); err != nil {
-		d.log.Warn().Err(err).Msg("error during server shutdown")
-	}
-
+	// Shutdown: stop the stream (the deferred wait joins the connector),
+	// then the deferred Close releases the callback listeners.
+	runCancel()
 	if d.docker != nil {
 		d.docker.Close()
 	}
@@ -273,7 +268,9 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 				consecutiveErrs++
 				d.log.Warn().Err(err).Int("consecutive_errors", consecutiveErrs).Msg("failed to count containers")
 				if consecutiveErrs >= d.maxConsecutiveErrs {
-					d.log.Error().Int("threshold", d.maxConsecutiveErrs).Msg("too many consecutive Docker API errors, initiating shutdown")
+					d.log.Error().
+						Int("threshold", d.maxConsecutiveErrs).
+						Msg("too many consecutive Docker API errors, initiating shutdown")
 					return
 				}
 				continue
@@ -319,7 +316,7 @@ func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 // fail-closed regardless. No-op when the firewall is disabled (empty rules
 // path → /open/url enforcement is intentionally skipped).
 func (d *Daemon) ensureEgressRulesReady(ctx context.Context) error {
-	path := d.server.rulesFilePath
+	path := d.rulesFilePath
 	if path == "" {
 		return nil
 	}
@@ -360,7 +357,12 @@ func (d *Daemon) ensureEgressRulesReady(ctx context.Context) error {
 // interval between attempts and logging a Warn each attempt so a slow firewall
 // bringup is visible. Returns an error naming what it waited for, or ctx.Err()
 // if the context is cancelled mid-wait.
-func (d *Daemon) waitForCondition(ctx context.Context, budget, interval time.Duration, what string, cond func(context.Context) bool) error {
+func (d *Daemon) waitForCondition(
+	ctx context.Context,
+	budget, interval time.Duration,
+	what string,
+	cond func(context.Context) bool,
+) error {
 	deadline := time.Now().Add(budget)
 	for attempt := 1; ; attempt++ {
 		if cond(ctx) {
@@ -434,11 +436,42 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 
 // PID file operations
 
-// writePIDFile writes the current process ID to the specified file.
-func writePIDFile(path string) error {
-	pid := os.Getpid()
-	content := strconv.Itoa(pid)
-	return os.WriteFile(path, []byte(content), 0644)
+// errDaemonAlreadyRunning: another daemon holds the PID file lock.
+var errDaemonAlreadyRunning = errors.New("host proxy daemon already running")
+
+// lockPIDFile takes an exclusive flock on the PID file and writes the
+// current PID into it. The lock is held until releasePIDFile; a second
+// daemon gets errDaemonAlreadyRunning. The kernel drops the lock when the
+// process exits, so a crashed daemon never blocks the next one.
+func lockPIDFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open PID file: %w", err)
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		if err = f.Truncate(0); err == nil {
+			_, err = f.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
+		}
+	}
+	if err == nil {
+		return f, nil
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		err = errors.Join(err, closeErr)
+	}
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, errDaemonAlreadyRunning
+	}
+	return nil, fmt.Errorf("lock and write PID file: %w", err)
+}
+
+// releasePIDFile removes the PID file, then drops the lock. Removing first
+// means no other process can see a PID file without a live holder.
+func releasePIDFile(f *os.File, path string, log *logger.Logger) {
+	removePIDFile(path, log)
+	if err := f.Close(); err != nil {
+		log.Warn().Err(err).Str("path", path).Msg("failed to close PID file")
+	}
 }
 
 // readPIDFile reads the process ID from the specified file.

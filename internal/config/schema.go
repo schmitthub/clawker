@@ -437,7 +437,6 @@ func (f *FirewallSettings) FirewallEnabled() bool {
 
 // HostProxyConfig configures the host proxy.
 type HostProxyConfig struct {
-	Port   int                   `yaml:"port"             label:"Port" desc:"Local port the host proxy listens on (change if 18374 conflicts)" default:"18374"`
 	Daemon HostProxyDaemonConfig `yaml:"daemon,omitempty"`
 }
 

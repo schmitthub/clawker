@@ -9,16 +9,19 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/controlplane/auth"
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
@@ -107,8 +110,9 @@ type GRPCDeps struct {
 	OtelGateway agent.OtelForwarder
 
 	// HostGateway forwards authorized AgentService host actions to the host
-	// proxy. nil is the degraded state (event=host_gateway_unavailable at
-	// wiring): the host actions answer Unavailable.
+	// proxy and serves the host proxy's HostProxyService stream on the
+	// admin listener. nil leaves both off: the host actions answer
+	// Unavailable.
 	HostGateway *hostgateway.Gateway
 
 	// ServerCertPath / ServerKeyPath locate the CP server leaf used for
@@ -297,6 +301,44 @@ func readyGateStreamInterceptor(ready func() bool, exempt map[string]bool) grpc.
 	}
 }
 
+// adminAuth is the auth link of the admin listener, which serves two
+// services. A HostProxyService call goes to the host proxy interceptor
+// (hostproxy:serve scope, pinned to the host proxy's client ID); every
+// other call goes to the admin interceptor. Each fails closed on a method
+// outside its own scope map, so neither token opens the other service.
+type adminAuth struct {
+	admin     *auth.AuthInterceptor[adminv1.AdminScope]
+	hostProxy *auth.AuthInterceptor[hostproxyv1.HostProxyScope]
+}
+
+func newAdminAuth(introspector auth.Introspector, log *logger.Logger) adminAuth {
+	return adminAuth{
+		admin: auth.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log),
+		hostProxy: auth.NewAuthInterceptor(introspector, hostproxyv1.HostProxyMethodScopes(), log).
+			RequireClientID(consts.ClientIDHostProxy),
+	}
+}
+
+func (a adminAuth) unary() grpc.UnaryServerInterceptor {
+	admin, hostProxy := a.admin.UnaryInterceptor(), a.hostProxy.UnaryInterceptor()
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if strings.HasPrefix(info.FullMethod, hostproxyv1.ServicePrefix) {
+			return hostProxy(ctx, req, info, handler)
+		}
+		return admin(ctx, req, info, handler)
+	}
+}
+
+func (a adminAuth) stream() grpc.StreamServerInterceptor {
+	admin, hostProxy := a.admin.StreamInterceptor(), a.hostProxy.StreamInterceptor()
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if strings.HasPrefix(info.FullMethod, hostproxyv1.ServicePrefix) {
+			return hostProxy(srv, ss, info, handler)
+		}
+		return admin(srv, ss, info, handler)
+	}
+}
+
 // NewGRPCStack constructs both gRPC listeners from deps without starting
 // to serve. It loads the server cert, builds both mTLS configs, the
 // shared Hydra introspector and the two per-listener auth interceptors,
@@ -359,7 +401,7 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	// which listener received them.
 	hydraIntrospectURL := fmt.Sprintf("https://"+consts.Localhost+":%d/admin/oauth2/introspect", deps.HydraAdminPort)
 	introspector := auth.NewHydraIntrospector(hydraIntrospectURL, deps.CATLS)
-	authInterceptor := auth.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
+	adminAuthn := newAdminAuth(introspector, log)
 	// Pin the agent interceptor to consts.ClientIDAgent — defense in
 	// depth on top of the agent:self:register scope. The admin
 	// interceptor stays unpinned — the CLI is the only client that holds
@@ -378,15 +420,21 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	exempt := readyGateExemptMethods()
 	grpcServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
+		// The host proxy's idle HostProxyService stream sends keepalive
+		// pings; the default policy (5 min) would end it as too many pings.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             consts.AdminKeepaliveMinClientPing,
+			PermitWithoutStream: false,
+		}),
 		grpc.ChainUnaryInterceptor(
 			recoveryUnaryInterceptor(log),
 			readyGateUnaryInterceptor(deps.Ready, exempt),
-			authInterceptor.UnaryInterceptor(),
+			adminAuthn.unary(),
 		),
 		grpc.ChainStreamInterceptor(
 			recoveryStreamInterceptor(log),
 			readyGateStreamInterceptor(deps.Ready, exempt),
-			authInterceptor.StreamInterceptor(),
+			adminAuthn.stream(),
 		),
 	)
 
@@ -395,6 +443,12 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 		return nil, fmt.Errorf("admin server: %w", err)
 	}
 	adminv1.RegisterAdminServiceServer(grpcServer, adminServer)
+	// The host proxy's outbound stream shares the admin listener: both are
+	// host-side clients with CLI-CA leaves. adminAuth checks it against its
+	// own scope and client ID; the gateway pins the client-cert CN.
+	if deps.HostGateway != nil {
+		hostproxyv1.RegisterHostProxyServiceServer(grpcServer, deps.HostGateway)
+	}
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(deps.AdminPort))
 	if err != nil {

@@ -13,6 +13,8 @@ Generates + owns:                       Receives bind-mounted (RO):
   Client cert (mTLS)                      Server cert + key (for TLS)
   Server cert + key                       CP client cert + key (outbound mTLS)
   JWK export                              Infra intermediate CA cert + key
+  Host proxy signing key + client cert    Host proxy public JWK (its own
+                                          Hydra client)
 
                                          Generates + owns locally (not
                                          bind-mounted — CP's own Hydra
@@ -50,7 +52,7 @@ Dials CP via:
 
 ## Auth material layout
 
-All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `AuthServerCertPath`, `AuthServerKeyPath`, `AuthCLIClientCertPath`, `AuthCLIClientKeyPath`, `AuthCLISigningKeyPath`, `AuthCLISigningJWKPath`, `HydraSystemSecretPath`, `AuthOtelServerCertPath`, `AuthOtelServerKeyPath`, `AuthCPClientCertPath`, `AuthCPClientKeyPath`, `AuthInfraCACertPath`, `AuthInfraCAKeyPath`).
+All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `AuthServerCertPath`, `AuthServerKeyPath`, `AuthCLIClientCertPath`, `AuthCLIClientKeyPath`, `AuthCLISigningKeyPath`, `AuthCLISigningJWKPath`, `HydraSystemSecretPath`, `AuthOtelServerCertPath`, `AuthOtelServerKeyPath`, `AuthCPClientCertPath`, `AuthCPClientKeyPath`, `AuthInfraCACertPath`, `AuthInfraCAKeyPath`, `AuthHostProxyClientCertPath`, `AuthHostProxyClientKeyPath`, `AuthHostProxySigningKeyPath`, `AuthHostProxySigningJWKPath`). `ensureSigningKeyAt` and `ensureClientLeaf` are the shared mint helpers (CLI, CP and host proxy identities); `LoadHostProxySigningKey` / `LoadHostProxyClientCert` load the host proxy's half.
 
 | File | Scope | Bind-mounted into CP? |
 |------|-------|------------------------|
@@ -64,6 +66,9 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 | OTel server cert + key | TLS identity for the monitoring OTel collector | No (used by `monitor init`, not the CP container) |
 | CP client cert + key | CP outbound mTLS identity (CN=ContainerCP, ClientAuth EKU) | Yes (RO) |
 | Infra intermediate CA cert + key | CP signs runtime leaves for Envoy/CoreDNS | Yes (RO) — cert + key both mounted |
+| Host proxy signing key (ECDSA) | ES256 signer of the host proxy's own Hydra client (`consts.ClientIDHostProxy`) | No |
+| Host proxy signing JWK | public JWK of that client | Yes (RO, `consts.CPHostProxyPubKeyPath`) — the CP registers it with scope `hostproxy:serve` |
+| Host proxy client cert + key | the host proxy's CLI-CA leaf (CN `consts.HostProxyClientName`, ClientAuth EKU) for its stream to the CP admin listener | No |
 
 ## Token exchange flow (moved to `adminclient/dial.go`)
 
@@ -110,8 +115,8 @@ type AssertionClaims struct {
 
 `RotateAuthMaterial(forceSigningKey bool)`:
 
-1. Removes CA cert + key, server cert + key, CLI client cert + key, OTel server cert + key, CP client cert + key, infra intermediate CA cert + key
-2. If `forceSigningKey`: also removes signing key + JWK (invalidates Hydra client registration)
+1. Removes CA cert + key, server cert + key, CLI client cert + key, OTel server cert + key, CP client cert + key, infra intermediate CA cert + key, host proxy client cert + key
+2. If `forceSigningKey`: also removes the CLI and host proxy signing keys + JWKs (invalidates the Hydra client registrations)
 3. Re-runs `EnsureAuthMaterial` to regenerate
 
 The CP container must be restarted after rotation to re-read bind-mounted material. `clawker auth rotate` command orchestrates this.

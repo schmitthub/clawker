@@ -244,10 +244,12 @@ request to an AgentService host action. The CP does ALL authorization:
   `controlplane/hostgateway.Gateway` keeps `session → (container, expiry)`
   and answers `ErrNotOwner` for an unknown, expired, or foreign session (one
   error, so a caller cannot probe), logging `event=host_callback_not_owner`.
-- The gateway forwards to the host proxy at
-  `https://host.docker.internal:<host_proxy.port>` with the CP client
-  cert (`event=host_action` per call). The host proxy keeps the egress check
-  on URLs, the redirect check, the port bind, and the browser open.
+- The gateway sends each action down the host proxy's
+  `HostProxyService.Connect` stream (`event=host_action` per call). The
+  host proxy dials out to the CP admin listener; the CP never dials the
+  host. No connected host proxy answers `Unavailable`. The host proxy
+  keeps the egress check on URLs, the redirect check, the port bind, and
+  the browser open.
 
 The host actions are `ScopePublic` like ExportTelemetry. E2E:
 `TestFirewall_HostActionsBehindCP`.

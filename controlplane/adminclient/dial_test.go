@@ -10,12 +10,19 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	josejwt "github.com/go-jose/go-jose/v4/jwt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // fakeHydra returns a TLS test server that answers any /oauth2/token POST with a
@@ -45,7 +52,7 @@ func TestTokenSource_MintsAndCaches(t *testing.T) {
 		t.Fatal(err)
 	}
 	url, tlsCfg, hits := fakeHydra(t)
-	ts := newTokenSource(key, url, tlsCfg)
+	ts := newTokenSource(key, consts.ClientIDCLI, string(adminv1.ScopeAdmin), url, tlsCfg)
 
 	tok, err := ts.token(context.Background())
 	if err != nil {
@@ -88,7 +95,7 @@ func TestStreamInterceptor_AttachesBearerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	url, tlsCfg, _ := fakeHydra(t)
-	ts := newTokenSource(key, url, tlsCfg)
+	ts := newTokenSource(key, consts.ClientIDCLI, string(adminv1.ScopeAdmin), url, tlsCfg)
 
 	var gotAuth []string
 	streamer := func(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
@@ -105,5 +112,50 @@ func TestStreamInterceptor_AttachesBearerToken(t *testing.T) {
 	}
 	if len(gotAuth) != 1 || gotAuth[0] != "Bearer tok" {
 		t.Fatalf("authorization metadata = %v, want [Bearer tok]", gotAuth)
+	}
+}
+
+// TestTokenSource_HostProxyIdentity: the host proxy's token request names
+// its own client (iss and sub of the assertion) and asks only for the
+// hostproxy:serve scope.
+func TestTokenSource_HostProxyIdentity(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var form url.Values
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if parseErr := r.ParseForm(); parseErr != nil {
+			t.Errorf("parse form: %v", parseErr)
+		}
+		form = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600}`)
+	}))
+	t.Cleanup(srv.Close)
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+
+	var tlsCfg tls.Config
+	tlsCfg.RootCAs = pool
+	tlsCfg.MinVersion = tls.VersionTLS12
+	ts := newTokenSource(key, consts.ClientIDHostProxy, string(hostproxyv1.ScopeServe), srv.URL, &tlsCfg)
+	if _, tokErr := ts.token(context.Background()); tokErr != nil {
+		t.Fatalf("token: %v", tokErr)
+	}
+
+	if got := form.Get("scope"); got != string(hostproxyv1.ScopeServe) {
+		t.Errorf("scope = %q, want %q", got, hostproxyv1.ScopeServe)
+	}
+	parsed, err := josejwt.ParseSigned(form.Get("client_assertion"), []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatalf("parse assertion: %v", err)
+	}
+	var claims josejwt.Claims
+	if claimsErr := parsed.Claims(&key.PublicKey, &claims); claimsErr != nil {
+		t.Fatalf("assertion claims: %v", claimsErr)
+	}
+	if claims.Issuer != consts.ClientIDHostProxy || claims.Subject != consts.ClientIDHostProxy {
+		t.Errorf("assertion iss/sub = %q/%q, want %q", claims.Issuer, claims.Subject, consts.ClientIDHostProxy)
 	}
 }

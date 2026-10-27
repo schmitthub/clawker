@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
+	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -22,19 +24,17 @@ const defaultGracePeriod = 60 * time.Second
 // This is invoked by Manager.EnsureRunning() when spawning a daemon subprocess.
 func NewCmdServe() *cobra.Command {
 	var (
-		port         int
 		pollInterval time.Duration
 		gracePeriod  time.Duration
 	)
 
 	cmd := &cobra.Command{
 		Use:    "serve",
-		Short:  "Run the host proxy server as a daemon",
-		Long:   "Internal command to run the host proxy server as a background daemon process.",
+		Short:  "Run the host proxy as a daemon",
+		Long:   "Internal command to run the host proxy as a background daemon process. It connects to the control plane and runs the host actions the control plane sends.",
 		Hidden: true,
 		Example: `  # Start the host proxy daemon (internal use only)
   clawker host-proxy serve
-  clawker host-proxy serve --port 18374
   clawker host-proxy serve --grace-period 2m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.NewConfig()
@@ -65,9 +65,6 @@ func NewCmdServe() *cobra.Command {
 			// Collect flag overrides — these take precedence over config values
 			// without mutating the config object.
 			var opts []hostproxy.DaemonOption
-			if cmd.Flags().Changed("port") {
-				opts = append(opts, hostproxy.WithDaemonPort(port))
-			}
 			if cmd.Flags().Changed("poll-interval") {
 				opts = append(opts, hostproxy.WithPollInterval(pollInterval))
 			}
@@ -75,7 +72,20 @@ func NewCmdServe() *cobra.Command {
 				opts = append(opts, hostproxy.WithGracePeriod(gracePeriod))
 			}
 
-			daemon, err := hostproxy.NewDaemon(cfg, log, opts...)
+			// The daemon dials out to the CP admin listener on host loopback.
+			cp := cfg.ControlPlaneSettings()
+			conn, err := adminclient.DialHostProxy(cp.AdminPort, cp.HydraPublicPort)
+			if err != nil {
+				log.Error().Err(err).Msg("failed to build the control plane client")
+				return fmt.Errorf("control plane client: %w", err)
+			}
+			defer func() {
+				if closeErr := conn.Close(); closeErr != nil {
+					log.Debug().Err(closeErr).Msg("close control plane connection")
+				}
+			}()
+
+			daemon, err := hostproxy.NewDaemon(cfg, log, hostproxyv1.NewHostProxyServiceClient(conn), opts...)
 			if err != nil {
 				log.Error().Err(err).Msg("failed to create daemon")
 				return err
@@ -92,7 +102,6 @@ func NewCmdServe() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&port, "port", 18374, "Port to listen on")
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 30*time.Second, "Container poll interval")
 	cmd.Flags().
 		DurationVar(&gracePeriod, "grace-period", defaultGracePeriod, "Initial grace period before container checking")

@@ -201,6 +201,7 @@ const (
 	cpAuthCLIDir     = cpAuthDir + "/" + authCLISubdir
 	cpAuthCPDir      = cpAuthDir + "/" + authCPSubdir
 	cpAuthInfraCADir = cpAuthDir + "/" + authInfraCASubdir
+	cpAuthHostProxy  = cpAuthDir + "/" + authHostProxySub
 
 	// CPMaxRestartRetries bounds Docker's on-failure restart loop so a
 	// persistently crashing CP stays down until the user runs
@@ -218,6 +219,10 @@ const (
 
 	// CPCLIPubKeyPath is the container-side path for the CLI's public signing key (JWK).
 	CPCLIPubKeyPath = cpAuthCLIDir + "/" + SigningJWKFile
+
+	// CPHostProxyPubKeyPath is the container-side path for the host
+	// proxy's public signing key (JWK), registered as its Hydra client.
+	CPHostProxyPubKeyPath = cpAuthHostProxy + "/" + SigningJWKFile
 
 	// CPClientCertPath / CPClientKeyPath are the container-side paths
 	// for the CP's outbound mTLS identity. CN equals ContainerCP and

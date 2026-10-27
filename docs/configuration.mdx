@@ -529,8 +529,6 @@ monitoring:
     # Tag telemetry with session ID to correlate events across a single run
     include_session_id: <boolean>  # default: true | required: false
 host_proxy:
-  # Local port the host proxy listens on (change if 18374 conflicts)
-  port: <integer>  # default: 18374 | required: false
   daemon:
     # How often to check if containers still need the proxy
     poll_interval: <duration>  # default: 30s | required: false
@@ -622,9 +620,6 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 ### host_proxy
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `port` | integer | `18374` | Local port the host proxy listens on (change if 18374 conflicts) |
 
 
 #### daemon

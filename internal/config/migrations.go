@@ -39,7 +39,7 @@ func SettingsMigrations() []storage.Migration[Settings] {
 	return []storage.Migration[Settings]{
 		migrateRemoveLegacyMonitoringKeys,
 		migrateDockerSocketToHost,
-		migrateHostProxyPortKeys,
+		migrateRemoveHostProxyPortKeys,
 	}
 }
 
@@ -91,56 +91,28 @@ const (
 	keyHostProxyPort    = "port"
 )
 
-// migrateHostProxyPortKeys merges host_proxy.manager.port and
-// host_proxy.daemon.port into host_proxy.port. The migration is silent: the
-// port in effect does not change.
-func migrateHostProxyPortKeys(s *storage.Store[Settings]) (bool, error) {
+// migrateRemoveHostProxyPortKeys removes host_proxy.manager (it held only
+// the port) and host_proxy.daemon.port. The host proxy dials out to the CP
+// and has no listener for host actions, so the keys have no effect. The
+// migration is silent.
+func migrateRemoveHostProxyPortKeys(s *storage.Store[Settings]) (bool, error) {
 	if !slices.Contains(s.Keys(), keyHostProxy) {
 		return false, nil
 	}
-	carried, err := carryHostProxyManagerPort(s)
-	if err != nil {
-		return false, err
-	}
-	removed, err := removeHostProxyDaemonPort(s)
-	if err != nil {
-		return false, err
-	}
-	return carried || removed, nil
-}
-
-// carryHostProxyManagerPort moves host_proxy.manager.port to host_proxy.port
-// unless host_proxy.port is already set, then removes host_proxy.manager. The
-// manager started the daemon on the manager port, so that value was in effect.
-func carryHostProxyManagerPort(s *storage.Store[Settings]) (bool, error) {
-	if !slices.Contains(s.Keys(keyHostProxy), keyHostProxyManager) {
-		return false, nil
-	}
-	port, err := storage.Get[any](s, keyHostProxy, keyHostProxyManager, keyHostProxyPort)
-	switch {
-	case err == nil && !slices.Contains(s.Keys(keyHostProxy), keyHostProxyPort):
-		if sErr := s.Set([]string{keyHostProxy, keyHostProxyPort}, port); sErr != nil {
-			return false, fmt.Errorf("setting host_proxy.%s: %w", keyHostProxyPort, sErr)
+	changed := false
+	if slices.Contains(s.Keys(keyHostProxy), keyHostProxyManager) {
+		if err := s.Remove(keyHostProxy, keyHostProxyManager); err != nil {
+			return false, fmt.Errorf("removing host_proxy.%s: %w", keyHostProxyManager, err)
 		}
-	case err != nil && !errors.Is(err, storage.ErrKeyNotFound):
-		return false, fmt.Errorf("reading host_proxy.%s.%s: %w", keyHostProxyManager, keyHostProxyPort, err)
+		changed = true
 	}
-	if rErr := s.Remove(keyHostProxy, keyHostProxyManager); rErr != nil {
-		return false, fmt.Errorf("removing host_proxy.%s: %w", keyHostProxyManager, rErr)
+	if slices.Contains(s.Keys(keyHostProxy, keyHostProxyDaemon), keyHostProxyPort) {
+		if err := s.Remove(keyHostProxy, keyHostProxyDaemon, keyHostProxyPort); err != nil {
+			return false, fmt.Errorf("removing host_proxy.%s.%s: %w", keyHostProxyDaemon, keyHostProxyPort, err)
+		}
+		changed = true
 	}
-	return true, nil
-}
-
-// removeHostProxyDaemonPort removes host_proxy.daemon.port. It was only the
-// default for a bare host-proxy serve, so it had no effect.
-func removeHostProxyDaemonPort(s *storage.Store[Settings]) (bool, error) {
-	if !slices.Contains(s.Keys(keyHostProxy, keyHostProxyDaemon), keyHostProxyPort) {
-		return false, nil
-	}
-	if rErr := s.Remove(keyHostProxy, keyHostProxyDaemon, keyHostProxyPort); rErr != nil {
-		return false, fmt.Errorf("removing host_proxy.%s.%s: %w", keyHostProxyDaemon, keyHostProxyPort, rErr)
-	}
-	return true, nil
+	return changed, nil
 }
 
 // legacyMonitoringKeys is the set of monitoring.* keys clawker no longer
