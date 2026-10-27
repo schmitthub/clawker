@@ -1,6 +1,8 @@
 # Host Proxy Package
 
-HTTP service mesh mediating interactions between containers and the host machine.
+HTTPS service on the host that runs host actions for agents: open a URL in the host browser, run the host git credential helper, and capture OAuth callbacks.
+
+**Agents never connect to it.** It serves mTLS only (server leaf `clawker-host-proxy` from `consts.AuthHostProxyDir`, signed by the CLI CA; client certs must chain to the CLI CA). Every action route is wrapped by `requireControlPlane` (`tls.go`), which admits only a client cert with CN `consts.ContainerCP` and logs `event=host_proxy_caller_rejected` otherwise; `/health` accepts any CLI-CA client (the CLI uses its client cert). The path is agent → clawkerd host relay → CP AgentService (all authorization: label grants and callback-session ownership) → `controlplane/hostgateway` → this server. This package keeps the egress check on URLs, the redirect check, the port bind, and the browser open.
 
 ## Architecture: Daemon Subprocess
 
@@ -17,7 +19,8 @@ The host proxy runs as a **daemon subprocess** that persists beyond CLI command 
 | `Daemon` | `daemon.go` | Background process with container watcher |
 | `SessionStore` | `session.go` | Generic session management with TTL |
 | `CallbackChannel` | `callback.go` | OAuth callback registration and capture |
-| `MockHostProxy` | `hostproxytest/` | Test mock implementing all endpoints |
+| `TLS` | `tls.go` | `ServerTLSConfig`, `ClientTLSConfig`, `requireControlPlane` |
+| `MockManager` | `hostproxytest/` | `Service` test double |
 
 ## Constraints
 
@@ -32,7 +35,7 @@ const DefaultCallbackTTL = 5 * time.Minute
 var ErrCallbackAlreadyReceived error
 ```
 
-Port comes from config (`host_proxy.daemon.port`, default 18374) — no more `DefaultPort` constant.
+Port comes from config. `Manager` spawns the daemon with `--port host_proxy.manager.port` (default 18374), so that is the bound port and the one the CP dials; `host_proxy.daemon.port` is only the default for a bare `host-proxy serve`.
 
 ## Types
 
@@ -73,7 +76,6 @@ func WithGracePeriod(d time.Duration) DaemonOption
 type Service interface {
     EnsureRunning() error
     IsRunning() bool
-    ProxyURL() string
     // Mirrors handleGitCredential's host prerequisites: `git` on PATH +
     // a configured credential helper. The command layer warns before
     // container start when the configured HTTPS lane cannot be served.
@@ -86,7 +88,7 @@ type Service interface {
 ```go
 func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error)       // validates port; returns error for invalid config
 func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
-func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server // rulesFilePath empty = no egress enforcement
+func NewServer(port int, log *logger.Logger, rulesFilePath string, tlsConfig *tls.Config) *Server // rulesFilePath empty = no egress enforcement; Start errors on a nil tlsConfig
 func NewSessionStore() *SessionStore  // Starts cleanup goroutine; must call Stop()
 func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChannel
 ```
@@ -97,23 +99,22 @@ func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChanne
 
 ## Core methods
 
-- **`Manager`** — `ProxyURL() string` (`http://host.docker.internal:<port>`), `IsRunning() bool` (PID file + health check), `Port() int`, `EnsureRunning() error` (spawns daemon if needed), `Stop()` (no-op — daemon self-terminates), `StopDaemon() error` (explicit stop).
+- **`Manager`** — `IsRunning() bool` (PID file + mTLS health check with the CLI client cert), `Port() int`, `EnsureRunning() error` (spawns daemon if needed), `Stop()` (no-op — daemon self-terminates), `StopDaemon() error` (explicit stop).
 - **`Daemon`** — `Run(ctx) error` blocks until signal or auto-exit. Package helpers: `IsDaemonRunning(pidFile)`, `GetDaemonPID(pidFile)`, `StopDaemon(pidFile)`.
 - **`SessionStore`** — `Create(sessionType, ttl, metadata) (*Session, error)`, `Get(id)`, `Delete(id)`, `Count() int`, `Stop()`, `SetOnDelete(fn)`.
 - **`CallbackChannel`** — `Register(port, path, ttl) (*Session, error)`, `Capture(sessionID, *http.Request) error`, `GetData(sessionID) (*CallbackData, bool)`, `GetPort`/`GetPath`/`Delete`/`IsReceived(sessionID)`.
-- **`Server`** — `Start()` (listens on IPv4+IPv6 loopback), `Stop(ctx)`, `IsRunning() bool`, `Port() int`.
+- **`Server`** — `Start()` (TLS listeners on IPv4+IPv6 loopback), `Stop(ctx)`, `IsRunning() bool`, `Port() int`.
 
 ## API Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/health` | GET | Health check |
-| `/open/url` | POST | Open URL in host browser (egress-checked) |
+| `/health` | GET | Health check (any CLI-CA client) |
+| `/open/url` | POST | Open URL in host browser (egress-checked; CP only, as are the rows below) |
 | `/git/credential` | POST | Git credential get/store/erase (injection-sanitized) |
-| `/callback/register` | POST | Register OAuth callback session |
+| `/callback/register` | POST | Start an OAuth flow: check the auth URL, bind the redirect port, open the browser |
 | `/callback/{session}/data` | GET | Poll for captured callback |
 | `/callback/{session}` | DELETE | Cleanup session |
-| `/cb/{session}/{path...}` | GET | Receive OAuth callbacks |
 
 ## Egress Enforcement (`egress_check.go`)
 
@@ -143,11 +144,11 @@ All stages poll at `consts.HostProxyReadyPollInterval` (1s); budgets derive from
 
 ## OAuth Callback Flow
 
-Container registers session via `/callback/register`. Server starts dynamic listener on requested port. Browser redirects to `localhost:PORT/path`, listener captures request. Container polls `/callback/{session}/data` to retrieve data.
+One call: `POST /callback/register {authUrl, ttlSeconds}`. The server egress-checks `authUrl`, takes the port and path from its `redirect_uri` (or `callback`) parameter, which must be `http://localhost|127.0.0.1:<port>` with port ≥ 1024 and no userinfo, caps the TTL at `DefaultCallbackTTL`, binds a listener on that port, opens the browser, and returns `{sessionId, port, expiresAt}`. The listener closes after the first capture. The container polls `/callback/{session}/data` (through the CP, which checks session ownership) and `callback-forwarder` replays the request to the local server.
 
 ## Git Credential Forwarding
 
-- **HTTPS**: `git-credential-clawker` → POST `/git/credential` → host `git credential fill` → OS Keychain
+- **HTTPS**: `git-credential-clawker` → clawkerd relay → CP `GitCredential` (needs the `dev.clawker.git_https` grant) → POST `/git/credential` → host `git credential fill|approve|reject` → OS Keychain
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
 - **SSH/GPG**: Handled by `internal/socketbridge` package (muxrpc over `docker exec`, not via host proxy)
 
@@ -159,28 +160,14 @@ For unit tests — no subprocess spawning, no network I/O:
 
 ```go
 mock := hostproxytest.NewMockManager()          // Starts not running; EnsureRunning transitions to running
-mock := hostproxytest.NewRunningMockManager(url) // Running with given URL
 mock := hostproxytest.NewFailingMockManager(err) // EnsureRunning returns error
-```
-
-### MockHostProxy (HTTP test server)
-
-For integration tests — real HTTP server with endpoint handlers:
-
-```go
-mock := hostproxytest.NewMockHostProxy(t)
-mock.URL() string
-mock.GetOpenedURLs() []string
-mock.GetGitCreds() []GitCredRequest
-mock.SetCallbackReady(sessionID, path, query)
-mock.SetHealthOK(ok bool)
 ```
 
 ## Container Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `host-open` | Opens URLs, detects OAuth, rewrites callbacks |
+| `host-open` | Opens URLs; for a localhost `redirect_uri`, one `/callback/register` call, then spawns `callback-forwarder` |
 | `callback-forwarder` | Polls proxy, forwards callbacks to local server |
 | `git-credential-clawker` | Git credential helper |
 | `clawker-socket-server` | Unix socket server for SSH/GPG agent forwarding (muxrpc protocol) |
