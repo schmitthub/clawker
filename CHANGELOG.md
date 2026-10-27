@@ -10,6 +10,25 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [2026.10.4] - 2026-10-26
+
+- **Security:** Hardening from the Mythos engagement, an adversarial attempt to escape clawker's default sandbox from inside an agent container. Clawker now closes each path the engagement found:
+  - DNS cannot bypass the firewall. Docker's embedded resolver also listened on a random port inside the container and forwarded queries to public resolvers, which skipped the firewall's DNS and gave a DNS exfiltration channel. The firewall now denies that resolver on every port; all DNS goes through the firewall's DNS server.
+  - ICMP cannot carry data out. Unprivileged ping sockets could send echo requests with any payload to public addresses. The firewall now denies ICMP sockets when they are created.
+  - Agents cannot reach each other or the control plane's internal ports. The firewall allows only the egress proxy, DNS, and the two control-plane ports agents need.
+  - Agents join only the clawker network, not Docker's default bridge.
+  - The firewall stays closed when the control plane stops. `clawker controlplane down` and some upgrade restarts used to remove enforcement from running agents; those agents now have no egress until the control plane is back.
+  - Host actions (open a browser, git HTTPS credentials, OAuth callbacks) go through the control plane. Agents no longer connect to the host proxy directly, and the host proxy accepts these requests only from the control plane over mTLS. The control plane checks the calling container and its project's `security.enable_host_proxy` and `security.git_credentials.forward_https` settings, and a container can read only the OAuth callbacks it registered.
+  - An OAuth callback listener opens only for a login URL that passes the firewall and redirects to `localhost` or `127.0.0.1` on port 1024 or higher. It lasts at most 5 minutes and closes after the first callback, so an agent cannot hold host ports or capture other applications' traffic.
+  - Agent telemetry cannot be forged. Agents send telemetry to a relay in the container, which forwards it to the control plane over the container's mTLS identity. The control plane replaces any `project`, `agent`, `container_id`, or `clawker.*` attributes the agent set with the verified values.
+  - The monitoring stack runs on its own network, publishes only on host loopback, and cannot be reached or resolved from agent containers.
+  - Agent containers run with `no-new-privileges`, so setuid binaries cannot raise privileges. `--security-opt no-new-privileges=false` turns it off for one container.
+  - `sudo` is no longer installed in agent images. Projects that need it can add it through `build.packages`.
+  - `/run/clawker` is owned by root. The root helper that places forwarded GPG and SSH agent sockets in the agent's home refuses symlinks, hard-link swaps, and foreign-owned or group- or world-writable directories.
+- **Changed:** The host proxy port is one setting, `host_proxy.port`. A port set in `host_proxy.manager.port` moves there automatically.
+- **Changed:** `OTEL_EXPORTER_OTLP_ENDPOINT` inside agent containers is `http://127.0.0.1:4318` (the in-container relay). `monitoring.otel_infra_port` is removed.
+- **Changed:** Run `clawker host-proxy stop` once to stop the old host proxy; the next agent start runs the new one. Run `clawker build`, then recreate your agent containers: containers created before this release cannot use host actions or the telemetry relay. Run `clawker monitor down` and `clawker monitor up` to move the monitoring stack. The control plane and firewall update on their next start.
+
 ## [2026.10.3] - 2026-10-24
 
 - **Fixed:** Worktrees are now created correctly in repositories that set `remote.pushDefault`. Before, `clawker run --worktree` and `clawker worktree add` failed with "reference name escapes the reference storage".
