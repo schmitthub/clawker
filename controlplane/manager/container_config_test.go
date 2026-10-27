@@ -468,19 +468,6 @@ func TestCPContainer_OtelClientCertMounts(t *testing.T) {
 	}
 }
 
-// TestCPContainer_ExtraHostsHostGateway — host.docker.internal is
-// always remapped via host-gateway. The firewall handler resolves the
-// name from the CP's network namespace to build the per-container
-// host-proxy bypass address.
-func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
-	testenv.New(t)
-	cfg := configmocks.NewBlankConfig()
-
-	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
-	require.NoError(t, err)
-	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
-}
-
 // TestCPContainer_OtelLogsEnv_Emitted — the OTLP endpoint env var lands
 // in the container config. The transport-specific env vars
 // (OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT with

@@ -13,7 +13,7 @@ clawker CLI
 internal/controlplane/adminServer  (embeds *firewall.Handler)
     │
     ▼
-firewall.Handler (13 RPCs)
+firewall.Handler (12 RPCs)
     │  pre-Submit validation; CA rotation holds the CAStore lock;
     │  rule-store writes and stack operations run inside a queued
     │  closure — Submit → wait on reply channel
@@ -34,14 +34,14 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 ```
 
 - **No host-side daemon**: `internal/firewall/` is gone. Lifecycle authority is the `clawker-controlplane` container (see `../CLAUDE.md` for startup sequencing). CP bringup is owned by the explicit bootstrap verbs (`controlplane up`, `firewall up`, container start) via `Manager.Start`; when the `AgentWatcher` observes drain-to-zero + grace, the CP self-shuts-down (INV-B2-007).
-- **Composite server**: `controlplane.adminServer` embeds `*firewall.Handler`; Go method promotion surfaces all 13 RPCs. Future domain handlers (monitor, hostproxy, clawkerd) embed alongside.
+- **Composite server**: `controlplane.adminServer` embeds `*firewall.Handler`; Go method promotion surfaces all 12 RPCs. Future domain handlers (monitor, hostproxy, clawkerd) embed alongside.
 - **Per-container RPCs carry only `container_id`**: path resolution is hidden behind the injected `ContainerResolver`. The wiring in `cmd/clawkercp/main.go::containerResolverFromDocker` calls `DetectCgroupDriver` once at CP startup and captures the driver string in the resolver closure; every RPC call goes through the resolver, which invokes `ResolveContainerID` and then resolves the cgroup path (INV-B2-016 drift guard): the conventional rootful layout (`EBPFCgroupPath`) when it exists on disk, otherwise a one-time discovery walk of `/sys/fs/cgroup` for the target container's own directory (rootless daemons park scopes under the user slice at a uid-dependent depth) with the found parent cached per resolver. A cgroup that exists nowhere while Docker says the container is alive is a loud error, never a fabricated path. The Handler itself holds no cgroup driver state.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management. Rule mutation itself lives on `EgressRulesStore` (`rules_store.go`); the Handler calls it and owns only the logging + RPC mapping around it. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
+| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 12 RPCs, bypass timer management. Rule mutation itself lives on `EgressRulesStore` (`rules_store.go`); the Handler calls it and owns only the logging + RPC mapping around it. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
 | `stack.go` | `Stack` — Envoy + CoreDNS container lifecycle via DooD; image build helpers (`drainPullStream`, `ensureEnvoyImage`, `ensureCorednsImage` — the CoreDNS image tag is `corednsImageRefFor(Dockerfile, binary)`, a content hash, so a cached image from an older release never short-circuits the build); health probing; `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Network attachment: each sibling joins `clawker-net` at its static IP and also joins the internal `clawker-telemetry` network (`consts.TelemetryNetwork`, ensured via `docker.Client.EnsureTelemetryNetwork` in the network guard) as a second endpoint with a dynamic address, so it reaches the collector as `otel-collector`. The siblings carry no extra-hosts entry. Sibling drift gate: `driftLabels()` stamps five labels on both containers — `labelInfraCertsReady` (telemetry certificate readiness), `labelSDSCertsReady` (SDS certificate readiness), `labelSDSPort` (`ControlPlaneSettings.SDSPort`, read by Envoy at startup), `labelStackBuildSHA` (`consts.CPBinarySHA`), and `labelBPFFSSource` (`consts.HostBPFFSSource`). `ensureContainer`/`reloadContainer` compare them against the running container and recreate on any mismatch (`event=firewall_container_spec_drift`). The build SHA covers every compiled-in staleness vector — pinned Envoy image const, embedded CoreDNS binary, config templates, containerSpec shape — so a CLI upgrade that replaces the CP also replaces the siblings instead of adopting stale ones. |
 | `status.go` | `Status` struct returned by `Stack.Status` (per-container up state, IPs, rule count) |
 | `cgroup.go` | `DetectCgroupDriver(ctx, *docker.Client)`, `EBPFCgroupPath(driver, cid)` (conventional rootful layout — fast path only), `cgroupPathResolver` (discovery fallback: walks the hierarchy for the container's own cgroup dir, caches the per-daemon parent — how rootless layouts resolve), `ResolveContainerID(ctx, *docker.Client, ref)`, `IsCanonicalContainerID` |
@@ -63,7 +63,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | `testdata/` | Golden files (e.g., `corefile_basic.golden`) |
 | `assets/` | `coredns-clawker` Linux binary (gitignored; built by `make coredns-binary`) |
 
-## Handler RPCs (B2 scope-corrected surface — 13 methods)
+## Handler RPCs (B2 scope-corrected surface — 12 methods)
 
 Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope diversification is intentionally not used.
 
@@ -81,7 +81,6 @@ Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope di
 | `FirewallReload` | global | Regenerate configs and restart the stack without rule mutation. |
 | `FirewallRotateCA` | global | Regenerate MITM CA + per-domain certs and `Stack.Reload`. |
 | `FirewallSyncRoutes` | global | Break-glass route re-sync. Routed through `reconcileStackClosure`, which rebuilds routes from the **current rules store** (not the caller-supplied proto rules — those are ignored so two coalesced SyncRoutes calls can't smuggle different inputs past the head-wins coalescer). The reported `applied` count is carried out on `StackReloadResult.RoutesApplied` from inside that closure, never re-read afterwards: a rule mutation queued behind the reconcile would land between the two and make the count describe a set this call never pushed. Zero when the stack was down (nothing synced). |
-| `FirewallResolveHostname` | global | DNS lookup from CP netns (used by container enroll for `host.docker.internal` resolution). |
 
 ## Types
 
@@ -106,7 +105,7 @@ func NewHandler(deps HandlerDeps) (*Handler, error)  // ErrNilEBPFManager / ErrN
 ```
 
 The `Queue` is a single-goroutine FIFO worker (see `queue.go`) that
-serializes all 13 firewall RPCs so rapid-fire rule mutations coalesce
+serializes all 12 firewall RPCs so rapid-fire rule mutations coalesce
 into one stack restart instead of colliding mid-restart. Rule-CRUD,
 Reload, RotateCA, and SyncRoutes submit `reconcileStackClosure`
 (coalescing kind `ActionReconcile`); per-container RPCs submit their

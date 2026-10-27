@@ -488,7 +488,6 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		CapAdd:        cpCfg.CapAdd,
 		SecurityOpt:   cpCfg.SecurityOpt,
 		RestartPolicy: cpCfg.RestartPolicy,
-		ExtraHosts:    cpCfg.ExtraHosts,
 	}
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
