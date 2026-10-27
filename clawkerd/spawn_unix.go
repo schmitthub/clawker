@@ -1041,9 +1041,10 @@ func stdinCttyFd(stdin io.Reader) int {
 // volume). Without O_TRUNC the file's mtime would update but its
 // "freshness" relative to the new clawkerd boot couldn't be asserted
 // — a race-prone source of "container reports healthy before user
-// CMD has actually started".
+// CMD has actually started". O_NOFOLLOW keeps a root-owned write from
+// being redirected through a symlink planted at the marker path.
 func touchReadyFile(path string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}

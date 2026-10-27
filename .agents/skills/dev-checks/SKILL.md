@@ -34,6 +34,7 @@ Host checks need the host Docker daemon or kernel capabilities:
 | Docker/BuildKit integration tests | `make test-whail` (`go test ./test/whail/... -v -timeout 5m`) |
 | Unit plus both integration suites | `make test-all` |
 | Privileged BPF tests on Linux | `make test-bpf` |
+| Socket server root tests on Linux | `make test-root` (in the dev container: `go test -c`, then run the binary in a Docker container) |
 
 - When `CLAWKER_AGENT` is set, never run `go test ./...`: the e2e suite tears down the host CP. Use `make test` or explicit unit package paths. The same applies to targets that pass `./...` to the test runner: `test-coverage`, `clawker-test-coverage`, `clawker-test-short`. Report host checks as pending until results exist.
 - Format changed Go files with `gofmt -w` and their paths.

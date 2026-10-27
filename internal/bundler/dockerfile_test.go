@@ -728,3 +728,16 @@ build:
 	require.NoError(t, err)
 	assert.Contains(t, string(optIn), "    sudo \\\n", "a user build.packages entry renders an install line")
 }
+
+// TestGenerateBase_RuntimeDirRootOwned locks the ruling that /run/clawker
+// (bootstrap dir and ready marker) is never chowned to the container user.
+func TestGenerateBase_RuntimeDirRootOwned(t *testing.T) {
+	base, err := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), t.TempDir()).GenerateBase()
+	require.NoError(t, err)
+	for line := range strings.SplitSeq(string(base), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") || !strings.Contains(line, "chown") {
+			continue
+		}
+		assert.NotContains(t, line, "/run/clawker", "runtime dir must stay root-owned")
+	}
+}

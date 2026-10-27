@@ -1,3 +1,5 @@
+//go:build linux
+
 // TRIPWIRE: stdlib only — compiled standalone in Docker (//go:embed, no go.mod
 // in the build stage). NEVER import clawker-module packages (e.g. internal/consts);
 // it breaks the image build. Inline literals here are intentional, exempt from
@@ -10,7 +12,7 @@
 // This allows socket forwarding without requiring network access from the
 // container to the host - all communication happens over the docker exec channel.
 //
-// Build: go build -o socket-forwarder clawkercp.go
+// Build: go build -o clawker-socket-server main.go
 // Usage: Launched via `docker exec -i <container> socket-forwarder`
 //
 // Environment:
@@ -25,6 +27,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -39,6 +42,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 )
 
 // ProtocolVersion is the muxrpc wire protocol version.
@@ -132,36 +136,295 @@ type Forwarder struct {
 	stdout   *bufio.Writer
 }
 
-// getTargetUserFromPath extracts the username from a path like /home/<user>/.gnupg
-// and returns the UID and GID for that user. Returns -1, -1 if user lookup fails.
-func getTargetUserFromPath(path string) (int, int) {
-	// Parse username from /home/<username>/... path
+// Linux openat(2) constants that package syscall does not export on every
+// architecture. The values are the same on amd64 and arm64.
+const (
+	atFDCWD     = -0x64    // AT_FDCWD
+	atEmptyPath = 0x1000   // AT_EMPTY_PATH
+	oPath       = 0x200000 // O_PATH
+)
+
+// Modes for entries this root process creates in the agent's home.
+const (
+	permBits    = 0o777 // permission bits of a mode
+	userDirMode = 0o700 // ~/.gnupg, ~/.ssh
+	userFile    = 0o600 // pubring.kbx, gpg.conf, gpg-agent.conf
+	socketUmask = 0o177 // yields a 0600 socket node at bind
+)
+
+// socketTarget is where a forwarded socket lives: the owning user's home, the
+// directory name under it, and the socket file name. Only the shape
+// /home/<user>/<dir>/<file> is accepted; every write is then made relative to
+// a directory descriptor so a symlink the agent planted in its home cannot
+// redirect a write made by this root process.
+type socketTarget struct {
+	home string
+	dir  string
+	file string
+	uid  int
+	gid  int
+}
+
+// resolveSocketTarget parses a socket path and resolves its owning user.
+func resolveSocketTarget(path string) (socketTarget, error) {
 	parts := strings.Split(path, "/")
-	if len(parts) < 3 || parts[1] != "home" {
-		logf("[socket-forwarder] warning: path %q not under /home/, cannot determine target user\n", path)
-		return -1, -1
+	if len(parts) != 5 || parts[0] != "" || parts[1] != "home" || parts[2] == "" || parts[3] == "" || parts[4] == "" {
+		return socketTarget{}, fmt.Errorf("socket path %q is not /home/<user>/<dir>/<file>", path)
 	}
-	username := parts[2]
-
-	// Look up user
-	u, err := user.Lookup(username)
+	u, err := user.Lookup(parts[2])
 	if err != nil {
-		logf("[socket-forwarder] warning: user lookup failed for %q: %v\n", username, err)
-		return -1, -1
+		return socketTarget{}, fmt.Errorf("user lookup for %q: %w", parts[2], err)
 	}
-
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
-		logf("[socket-forwarder] warning: failed to parse UID %q for user %s: %v\n", u.Uid, username, err)
-		return -1, -1
+		return socketTarget{}, fmt.Errorf("parse uid %q for user %s: %w", u.Uid, parts[2], err)
 	}
 	gid, err := strconv.Atoi(u.Gid)
 	if err != nil {
-		logf("[socket-forwarder] warning: failed to parse GID %q for user %s: %v\n", u.Gid, username, err)
-		return -1, -1
+		return socketTarget{}, fmt.Errorf("parse gid %q for user %s: %w", u.Gid, parts[2], err)
 	}
+	return socketTarget{home: "/home/" + parts[2], dir: parts[3], file: parts[4], uid: uid, gid: gid}, nil
+}
 
-	return uid, gid
+// userDir is a directory under the target user's home, opened without
+// following symlinks. File operations are relative to its descriptor.
+type userDir struct {
+	fd   int
+	path string
+	uid  int
+	gid  int
+}
+
+// checkOwnedDir refuses a directory that the target user does not own or
+// that group or other can write.
+func checkOwnedDir(fd int, path string, uid int) error {
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if int(st.Uid) != uid {
+		return fmt.Errorf("refusing %s: owned by uid %d, want %d", path, st.Uid, uid)
+	}
+	if st.Mode&0o022 != 0 {
+		return fmt.Errorf("refusing %s: group or other writable (mode %o)", path, st.Mode&permBits)
+	}
+	return nil
+}
+
+// openDirNoFollow opens name under dirFd as a directory. A symlink or a
+// non-directory at name is refused.
+func openDirNoFollow(dirFd int, name, path string) (int, error) {
+	fd, err := syscall.Openat(dirFd, name, syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	switch {
+	case errors.Is(err, syscall.ELOOP):
+		return -1, fmt.Errorf("refusing %s: is a symlink", path)
+	case errors.Is(err, syscall.ENOTDIR):
+		return -1, fmt.Errorf("refusing %s: not a directory", path)
+	case err != nil:
+		return -1, fmt.Errorf("open %s: %w", path, err)
+	}
+	return fd, nil
+}
+
+// openUserDir opens home/name for the user uid, creating it 0700 when absent.
+// Neither home nor name may be a symlink, and both must be owned by uid. Only
+// a directory this call created is chowned: an existing directory that uid
+// does not own is refused, never taken over.
+func openUserDir(home, name string, uid, gid int) (*userDir, error) {
+	homeFd, err := openDirNoFollow(atFDCWD, home, home)
+	if err != nil {
+		return nil, err
+	}
+	defer syscall.Close(homeFd)
+	if err = checkOwnedDir(homeFd, home, uid); err != nil {
+		return nil, err
+	}
+	path := home + "/" + name
+	created := false
+	fd, err := openDirNoFollow(homeFd, name, path)
+	if errors.Is(err, syscall.ENOENT) {
+		if err = syscall.Mkdirat(homeFd, name, userDirMode); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", path, err)
+		}
+		created = true
+		fd, err = openDirNoFollow(homeFd, name, path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &userDir{fd: fd, path: path, uid: uid, gid: gid}
+	if created {
+		if err = d.adoptCreated(); err != nil {
+			_ = d.Close()
+			return nil, err
+		}
+	}
+	if err = checkOwnedDir(fd, path, uid); err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+	return d, nil
+}
+
+// Close releases the directory descriptor.
+func (d *userDir) Close() error {
+	if err := syscall.Close(d.fd); err != nil {
+		return fmt.Errorf("close %s: %w", d.path, err)
+	}
+	return nil
+}
+
+// adoptCreated gives a directory that openUserDir just created to the user.
+// The user owns home and can rename an entry into its place between the mkdir
+// and the open, so the directory must be empty: chowning an empty directory
+// discloses nothing. The chown goes through the descriptor because a chown by
+// name could be redirected to an entry swapped in after the open.
+func (d *userDir) adoptCreated() error {
+	if err := d.requireEmpty(); err != nil {
+		return err
+	}
+	if err := syscall.Fchown(d.fd, d.uid, d.gid); err != nil {
+		return fmt.Errorf("chown %s: %w", d.path, err)
+	}
+	return nil
+}
+
+// requireEmpty refuses a directory that holds any entry. It reads through a
+// new open file description of the same directory, so the read neither
+// closes d.fd nor shares its directory offset.
+func (d *userDir) requireEmpty() error {
+	fd, err := syscall.Openat(d.fd, ".", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", d.path, err)
+	}
+	f := os.NewFile(uintptr(fd), d.path)
+	defer f.Close()
+	names, err := f.Readdirnames(1)
+	switch {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err != nil:
+		return fmt.Errorf("read %s: %w", d.path, err)
+	}
+	return fmt.Errorf("refusing %s: not empty (holds %s)", d.path, names[0])
+}
+
+// prepareEntry inspects name under the directory without following symlinks.
+// An entry of type want is unlinked so the caller can recreate it; any other
+// existing entry is refused.
+func (d *userDir) prepareEntry(name string, want uint32) error {
+	path := d.path + "/" + name
+	st, err := d.lstat(name)
+	switch {
+	case errors.Is(err, syscall.ENOENT):
+		return nil
+	case err != nil:
+		return err
+	}
+	if st.Mode&syscall.S_IFMT != want {
+		return fmt.Errorf("refusing %s: existing entry has mode %o", path, st.Mode&syscall.S_IFMT)
+	}
+	if err = syscall.Unlinkat(d.fd, name); err != nil {
+		return fmt.Errorf("unlink %s: %w", path, err)
+	}
+	return nil
+}
+
+// lstat returns the status of name under the directory without following a
+// symlink. An O_PATH|O_NOFOLLOW descriptor refers to the entry itself, so
+// fstat on it reports a symlink as a symlink. Package syscall has no fstatat
+// on amd64.
+func (d *userDir) lstat(name string) (syscall.Stat_t, error) {
+	path := d.path + "/" + name
+	var st syscall.Stat_t
+	fd, err := syscall.Openat(d.fd, name, oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return st, fmt.Errorf("stat %s: %w", path, err)
+	}
+	defer syscall.Close(fd)
+	if err = syscall.Fstat(fd, &st); err != nil {
+		return st, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return st, nil
+}
+
+// writeFile replaces the regular file name with data, mode 0600, owned by the
+// target user. A symlink or special file at name is refused.
+func (d *userDir) writeFile(name string, data []byte) error {
+	if err := d.prepareEntry(name, syscall.S_IFREG); err != nil {
+		return err
+	}
+	path := d.path + "/" + name
+	flags := syscall.O_WRONLY | syscall.O_CREAT | syscall.O_EXCL | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	fd, err := syscall.Openat(d.fd, name, flags, userFile)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	f := os.NewFile(uintptr(fd), path)
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err = f.Chown(d.uid, d.gid); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("chown %s: %w", path, err)
+	}
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	return nil
+}
+
+// chownSocketNode changes the owner of the socket node name. The listener
+// descriptor refers to the sockfs inode, not the filesystem node, so the node
+// is opened with O_PATH|O_NOFOLLOW, checked to be a socket, and chowned
+// through that descriptor. The worst a swap after the bind can reach is
+// another socket node.
+func (d *userDir) chownSocketNode(name string) error {
+	path := d.path + "/" + name
+	fd, err := syscall.Openat(d.fd, name, oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if err = syscall.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFSOCK {
+		return fmt.Errorf("refusing %s: not a socket after bind (mode %o)", path, st.Mode&syscall.S_IFMT)
+	}
+	if err = syscall.Fchownat(fd, "", d.uid, d.gid, atEmptyPath); err != nil {
+		return fmt.Errorf("chown %s: %w", path, err)
+	}
+	return nil
+}
+
+// listenUnix binds a Unix socket at name, mode 0600, owned by the target user.
+// The bind resolves through the open directory descriptor, and the umask
+// sets the mode at creation so no chmod on the path is needed afterwards.
+// The dir fd stays open only for this call; the next start unlinks the stale
+// socket node through prepareEntry.
+func (d *userDir) listenUnix(name string) (net.Listener, error) {
+	if err := d.prepareEntry(name, syscall.S_IFSOCK); err != nil {
+		return nil, err
+	}
+	path := d.path + "/" + name
+	old := syscall.Umask(socketUmask)
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "unix", fmt.Sprintf("/proc/self/fd/%d/%s", d.fd, name))
+	_ = syscall.Umask(old)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s: %w", path, err)
+	}
+	if ul, ok := l.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
+	if err = d.chownSocketNode(name); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 // killExistingGPGAgent kills any running gpg-agent for the given GNUPGHOME directory.
@@ -301,123 +564,72 @@ func run() int {
 }
 
 func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
-	// Find GPG socket path to determine .gnupg directory
-	var gnupgDir string
+	var gpgSock string
 	for _, s := range f.sockets {
 		if s.Type == "gpg-agent" {
-			gnupgDir = filepath.Dir(s.Path)
+			gpgSock = s.Path
 			break
 		}
 	}
-	if gnupgDir == "" {
+	if gpgSock == "" {
 		return fmt.Errorf("no GPG socket configured")
 	}
-
-	// Get target user from socket path (e.g., /home/<user>/.gnupg -> <user>)
-	uid, gid := getTargetUserFromPath(gnupgDir)
-
-	// Create .gnupg directory
-	if err := os.MkdirAll(gnupgDir, 0700); err != nil {
-		return fmt.Errorf("mkdir failed: %w", err)
+	target, err := resolveSocketTarget(gpgSock)
+	if err != nil {
+		return err
 	}
-	// Chown directory to target user
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(gnupgDir, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", gnupgDir, err)
-		}
+	dir, err := openUserDir(target.home, target.dir, target.uid, target.gid)
+	if err != nil {
+		return err
 	}
+	defer dir.Close()
 
-	// Write pubring.kbx
-	pubringPath := filepath.Join(gnupgDir, "pubring.kbx")
-	if err := os.WriteFile(pubringPath, pubkey, 0600); err != nil {
-		return fmt.Errorf("write failed: %w", err)
+	if err = dir.writeFile("pubring.kbx", pubkey); err != nil {
+		return err
 	}
-	// Chown file to target user
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(pubringPath, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", pubringPath, err)
-		}
-	}
+	logf("[socket-forwarder] wrote %d bytes to %s/pubring.kbx\n", len(pubkey), dir.path)
 
-	logf("[socket-forwarder] wrote %d bytes to %s\n", len(pubkey), pubringPath)
-
-	// Write gpg.conf with no-autostart to prevent GPG from spawning gpg-agent.
-	// Without this, any GPG operation (e.g., gpg --list-secret-keys) auto-starts
+	// gpg.conf with no-autostart prevents GPG from spawning gpg-agent.
+	// Without it, any GPG operation (e.g., gpg --list-secret-keys) auto-starts
 	// gpg-agent --daemon which rebinds S.gpg-agent, stealing the socket from
 	// our forwarding server.
-	gpgConfPath := filepath.Join(gnupgDir, "gpg.conf")
-	gpgConfContent := "# Written by clawker-socket-server to prevent gpg-agent auto-start.\n" +
+	gpgConf := "# Written by clawker-socket-server to prevent gpg-agent auto-start.\n" +
 		"# The clawker socket bridge handles agent forwarding to the host.\n" +
 		"no-autostart\n"
-	if err := os.WriteFile(gpgConfPath, []byte(gpgConfContent), 0600); err != nil {
-		return fmt.Errorf("write gpg.conf failed: %w", err)
+	if err = dir.writeFile("gpg.conf", []byte(gpgConf)); err != nil {
+		return err
 	}
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(gpgConfPath, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", gpgConfPath, err)
-		}
-	}
-	logf("[socket-forwarder] wrote %s (no-autostart)\n", gpgConfPath)
+	logf("[socket-forwarder] wrote %s/gpg.conf (no-autostart)\n", dir.path)
 
-	// Write gpg-agent.conf with sensible container defaults. Note: no-grab and
-	// disable-scdaemon are useful container settings but do NOT prevent gpg-agent
-	// from binding the standard socket (GnuPG 2.1+ mandates it). The real protection
-	// is no-autostart in gpg.conf above, plus killExistingGPGAgent() in main().
-	agentConfPath := filepath.Join(gnupgDir, "gpg-agent.conf")
-	agentConfContent := "# Written by clawker-socket-server — sensible container defaults.\n" +
+	// gpg-agent.conf carries sensible container defaults. no-grab and
+	// disable-scdaemon do NOT prevent gpg-agent from binding the standard
+	// socket (GnuPG 2.1+ mandates it). The real protection is no-autostart in
+	// gpg.conf above, plus killExistingGPGAgent() in run().
+	agentConf := "# Written by clawker-socket-server — sensible container defaults.\n" +
 		"# These do NOT prevent socket binding; see gpg.conf no-autostart for that.\n" +
 		"no-grab\n" +
 		"disable-scdaemon\n"
-	if err := os.WriteFile(agentConfPath, []byte(agentConfContent), 0600); err != nil {
-		return fmt.Errorf("write gpg-agent.conf failed: %w", err)
+	if err = dir.writeFile("gpg-agent.conf", []byte(agentConf)); err != nil {
+		return err
 	}
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(agentConfPath, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", agentConfPath, err)
-		}
-	}
-	logf("[socket-forwarder] wrote %s (no-grab, disable-scdaemon)\n", agentConfPath)
-
+	logf("[socket-forwarder] wrote %s/gpg-agent.conf (no-grab, disable-scdaemon)\n", dir.path)
 	return nil
 }
 
 func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error) {
-	// Create parent directory
-	dir := filepath.Dir(sock.Path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("mkdir failed: %w", err)
-	}
-
-	// Get target user from socket path
-	uid, gid := getTargetUserFromPath(sock.Path)
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(dir, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
-		}
-	}
-
-	// Remove existing socket
-	if err := os.Remove(sock.Path); err != nil && !os.IsNotExist(err) {
-		logf("[socket-forwarder] warning: failed to remove existing socket %s: %v\n", sock.Path, err)
-	}
-
-	// Create listener
-	listener, err := net.Listen("unix", sock.Path)
+	target, err := resolveSocketTarget(sock.Path)
 	if err != nil {
 		return nil, err
 	}
-
-	// Set permissions and ownership
-	if err := os.Chmod(sock.Path, 0600); err != nil {
-		listener.Close()
+	dir, err := openUserDir(target.home, target.dir, target.uid, target.gid)
+	if err != nil {
 		return nil, err
 	}
-	if uid >= 0 && gid >= 0 {
-		if err := os.Chown(sock.Path, uid, gid); err != nil {
-			logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
-		}
+	defer dir.Close()
+	listener, err := dir.listenUnix(target.file)
+	if err != nil {
+		return nil, err
 	}
-
 	logf("[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
 	return listener, nil
 }
