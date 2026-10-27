@@ -19,22 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AdminService_FirewallInit_FullMethodName            = "/clawker.admin.v1.AdminService/FirewallInit"
-	AdminService_FirewallRemove_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallRemove"
-	AdminService_FirewallEnable_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallEnable"
-	AdminService_FirewallDisable_FullMethodName         = "/clawker.admin.v1.AdminService/FirewallDisable"
-	AdminService_FirewallBypass_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallBypass"
-	AdminService_FirewallAddRules_FullMethodName        = "/clawker.admin.v1.AdminService/FirewallAddRules"
-	AdminService_FirewallRemoveRule_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallRemoveRule"
-	AdminService_FirewallListRules_FullMethodName       = "/clawker.admin.v1.AdminService/FirewallListRules"
-	AdminService_FirewallReload_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallReload"
-	AdminService_FirewallStatus_FullMethodName          = "/clawker.admin.v1.AdminService/FirewallStatus"
-	AdminService_FirewallRotateCA_FullMethodName        = "/clawker.admin.v1.AdminService/FirewallRotateCA"
-	AdminService_FirewallSyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallSyncRoutes"
-	AdminService_FirewallResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/FirewallResolveHostname"
-	AdminService_ListAgents_FullMethodName              = "/clawker.admin.v1.AdminService/ListAgents"
-	AdminService_GetSystemTime_FullMethodName           = "/clawker.admin.v1.AdminService/GetSystemTime"
-	AdminService_WatchSOS_FullMethodName                = "/clawker.admin.v1.AdminService/WatchSOS"
+	AdminService_FirewallInit_FullMethodName       = "/clawker.admin.v1.AdminService/FirewallInit"
+	AdminService_FirewallRemove_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallRemove"
+	AdminService_FirewallEnable_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallEnable"
+	AdminService_FirewallDisable_FullMethodName    = "/clawker.admin.v1.AdminService/FirewallDisable"
+	AdminService_FirewallBypass_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallBypass"
+	AdminService_FirewallAddRules_FullMethodName   = "/clawker.admin.v1.AdminService/FirewallAddRules"
+	AdminService_FirewallRemoveRule_FullMethodName = "/clawker.admin.v1.AdminService/FirewallRemoveRule"
+	AdminService_FirewallListRules_FullMethodName  = "/clawker.admin.v1.AdminService/FirewallListRules"
+	AdminService_FirewallReload_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallReload"
+	AdminService_FirewallStatus_FullMethodName     = "/clawker.admin.v1.AdminService/FirewallStatus"
+	AdminService_FirewallRotateCA_FullMethodName   = "/clawker.admin.v1.AdminService/FirewallRotateCA"
+	AdminService_FirewallSyncRoutes_FullMethodName = "/clawker.admin.v1.AdminService/FirewallSyncRoutes"
+	AdminService_ListAgents_FullMethodName         = "/clawker.admin.v1.AdminService/ListAgents"
+	AdminService_GetSystemTime_FullMethodName      = "/clawker.admin.v1.AdminService/GetSystemTime"
+	AdminService_WatchSOS_FullMethodName           = "/clawker.admin.v1.AdminService/WatchSOS"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -108,10 +107,6 @@ type AdminServiceClient interface {
 	FirewallRotateCA(ctx context.Context, in *FirewallRotateCARequest, opts ...grpc.CallOption) (*FirewallRotateCAResult, error)
 	// FirewallSyncRoutes atomically replaces the global route_map.
 	FirewallSyncRoutes(ctx context.Context, in *FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*FirewallSyncRoutesResult, error)
-	// FirewallResolveHostname performs a DNS lookup from inside the CP's
-	// network namespace — used to resolve host.docker.internal during
-	// per-container enroll.
-	FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResult, error)
 	// ListAgents returns a snapshot of every agent currently registered
 	// with the control plane. Used by `clawker controlplane agents` and
 	// diagnostic tooling. Read-only; uniform admin scope.
@@ -283,16 +278,6 @@ func (c *adminServiceClient) FirewallSyncRoutes(ctx context.Context, in *Firewal
 	return out, nil
 }
 
-func (c *adminServiceClient) FirewallResolveHostname(ctx context.Context, in *FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*FirewallResolveHostnameResult, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FirewallResolveHostnameResult)
-	err := c.cc.Invoke(ctx, AdminService_FirewallResolveHostname_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *adminServiceClient) ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAgentsResult)
@@ -403,10 +388,6 @@ type AdminServiceServer interface {
 	FirewallRotateCA(context.Context, *FirewallRotateCARequest) (*FirewallRotateCAResult, error)
 	// FirewallSyncRoutes atomically replaces the global route_map.
 	FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResult, error)
-	// FirewallResolveHostname performs a DNS lookup from inside the CP's
-	// network namespace — used to resolve host.docker.internal during
-	// per-container enroll.
-	FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error)
 	// ListAgents returns a snapshot of every agent currently registered
 	// with the control plane. Used by `clawker controlplane agents` and
 	// diagnostic tooling. Read-only; uniform admin scope.
@@ -493,9 +474,6 @@ func (UnimplementedAdminServiceServer) FirewallRotateCA(context.Context, *Firewa
 }
 func (UnimplementedAdminServiceServer) FirewallSyncRoutes(context.Context, *FirewallSyncRoutesRequest) (*FirewallSyncRoutesResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method FirewallSyncRoutes not implemented")
-}
-func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, *FirewallResolveHostnameRequest) (*FirewallResolveHostnameResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method FirewallResolveHostname not implemented")
 }
 func (UnimplementedAdminServiceServer) ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
@@ -743,24 +721,6 @@ func _AdminService_FirewallSyncRoutes_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AdminService_FirewallResolveHostname_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FirewallResolveHostnameRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AdminServiceServer).FirewallResolveHostname(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AdminService_FirewallResolveHostname_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).FirewallResolveHostname(ctx, req.(*FirewallResolveHostnameRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _AdminService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListAgentsRequest)
 	if err := dec(in); err != nil {
@@ -862,10 +822,6 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FirewallSyncRoutes",
 			Handler:    _AdminService_FirewallSyncRoutes_Handler,
-		},
-		{
-			MethodName: "FirewallResolveHostname",
-			Handler:    _AdminService_FirewallResolveHostname_Handler,
 		},
 		{
 			MethodName: "ListAgents",

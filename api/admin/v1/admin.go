@@ -61,7 +61,6 @@ func AdminMethodScopes() map[string]AdminScope {
 		svc + "FirewallStatus":          ScopeAdmin,
 		svc + "FirewallRotateCA":        ScopeAdmin,
 		svc + "FirewallSyncRoutes":      ScopeAdmin,
-		svc + "FirewallResolveHostname": ScopeAdmin,
 		svc + "ListAgents":              ScopeAdmin,
 		svc + "WatchSOS":                ScopeAdmin,
 	}
