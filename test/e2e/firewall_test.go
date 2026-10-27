@@ -807,6 +807,37 @@ if getent hosts api.anthropic.com >/dev/null; then echo dns=open; else echo dns=
 	assert.Contains(t, res.Stdout, "dns=open", "probe results:\n%s", res.Stdout)
 }
 
+// TestFirewall_CPNameResolves proves an enrolled agent resolves the CP by name.
+// clawkerd dials clawker-controlplane for Register, the host-action relay, and
+// the telemetry relay; after enrollment every query goes to CoreDNS, so CoreDNS
+// must answer the name. The zone forwards only the exact A query to Docker's
+// DNS: any other type gets an empty answer and any subdomain gets NXDOMAIN, so
+// no query name an agent picks can reach Docker's upstream resolvers.
+func TestFirewall_CPNameResolves(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "cp-name", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "cp-name") })
+
+	a := h.ExecInContainer("cp-name", "getent", "hosts", consts.ContainerCP)
+	require.NoError(t, a.Err, "CP name must resolve\nstdout: %s\nstderr: %s", a.Stdout, a.Stderr)
+	fields := strings.Fields(a.Stdout)
+	require.NotEmpty(t, fields, "CP name resolved to nothing")
+	assert.True(t, strings.HasSuffix(fields[0], fmt.Sprintf(".%d", consts.CPIPLastOctet)),
+		"CP name must resolve to the CP static IP, got %q", fields[0])
+
+	txt := h.ExecInContainer("cp-name", "dig", consts.ContainerCP, "TXT")
+	require.NoError(t, txt.Err, "dig TXT failed\nstdout: %s\nstderr: %s", txt.Stdout, txt.Stderr)
+	assert.Contains(t, txt.Stdout, "status: NOERROR", "non-A query must get an empty answer:\n%s", txt.Stdout)
+	assert.Contains(t, txt.Stdout, "ANSWER: 0", "non-A query must get an empty answer:\n%s", txt.Stdout)
+
+	sub := h.ExecInContainer("cp-name", "dig", "probe."+consts.ContainerCP, "A")
+	require.NoError(t, sub.Err, "dig subdomain failed\nstdout: %s\nstderr: %s", sub.Stdout, sub.Stderr)
+	assert.Contains(t, sub.Stdout, "status: NXDOMAIN", "CP subdomain must NXDOMAIN:\n%s", sub.Stdout)
+}
+
 // TestFirewall_ExactAllowBlocksSubdomain is the regression test for the DNS
 // subtree exfiltration fix. CoreDNS zones are suffix-authoritative, so before
 // the fix an exact allow rule (X) forwarded the entire *.X subtree upstream —
