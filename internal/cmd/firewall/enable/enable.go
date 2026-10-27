@@ -10,7 +10,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmd/firewall/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
@@ -19,7 +18,6 @@ import (
 // EnableOptions holds the options for the firewall enable command.
 type EnableOptions struct {
 	IOStreams      *iostreams.IOStreams
-	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	Agent          string
@@ -30,7 +28,6 @@ func NewCmdEnable(f *cmdutil.Factory, runF func(context.Context, *EnableOptions)
 	//nolint:exhaustruct // Agent is bound by the flag registered below
 	opts := &EnableOptions{
 		IOStreams:      f.IOStreams,
-		Config:         f.Config,
 		ProjectManager: f.ProjectManager,
 		AdminClient:    f.AdminClient,
 	}
@@ -78,23 +75,16 @@ func enableRun(ctx context.Context, opts *EnableOptions) error {
 		return fmt.Errorf("resolving container name: %w", err)
 	}
 
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
 	client, err := opts.AdminClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
 	// CP resolves container_id → cgroup_path internally via Docker +
-	// INV-B2-016 drift guard; the CLI carries the container ref and the
-	// project's host-proxy value, so this verb also applies a clawker.yaml
-	// edit to a running container.
+	// INV-B2-016 drift guard; the CLI only carries the container ref.
 	if _, rpcErr := shared.CallWithSpinner(ctx, ios, fmt.Sprintf("Enabling firewall for %s...", opts.Agent),
 		func(rpcCtx context.Context) (*adminv1.FirewallEnableResult, error) {
-			return client.FirewallEnable(rpcCtx, adminv1.NewFirewallEnableRequest(containerName, cfg.SecurityConfig()))
+			return client.FirewallEnable(rpcCtx, &adminv1.FirewallEnableRequest{ContainerId: containerName})
 		}); rpcErr != nil {
 		//nolint:wrapcheck // WrapRPCError already carries the header plus per-sentinel remediation
 		return shared.WrapRPCError(fmt.Sprintf("enabling firewall for %s", opts.Agent), rpcErr)

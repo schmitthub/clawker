@@ -33,7 +33,6 @@ const (
 	ActionEnable
 	ActionDisable
 	ActionBypass
-	ActionEvict
 )
 
 func (k ActionKind) String() string {
@@ -54,8 +53,6 @@ func (k ActionKind) String() string {
 		return "disable"
 	case ActionBypass:
 		return "bypass"
-	case ActionEvict:
-		return "evict"
 	default:
 		return "unknown"
 	}
@@ -85,8 +82,7 @@ func (k ActionKind) Coalesces() bool {
 		ActionRead,
 		ActionEnable,
 		ActionDisable,
-		ActionBypass,
-		ActionEvict:
+		ActionBypass:
 		return false
 	}
 	return false
