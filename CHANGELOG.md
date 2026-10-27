@@ -14,6 +14,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 - **Security:** Hardening from the Mythos engagement, an adversarial attempt to escape clawker's default sandbox from inside an agent container. Clawker now closes each path the engagement found:
   - DNS cannot bypass the firewall. Docker's embedded resolver also listened on a random port inside the container and forwarded queries to public resolvers, which skipped the firewall's DNS and gave a DNS exfiltration channel. The firewall now denies that resolver on every port; all DNS goes through the firewall's DNS server.
+  - Docker internal names do not resolve by default. The firewall's DNS server forwarded every name under `docker.internal` to Docker's resolver, which sends names it does not know to the host's resolvers: a second DNS exfiltration channel. Now only a rule for `host.docker.internal` opens that exact name, and no name below it.
   - ICMP cannot carry data out. Unprivileged ping sockets could send echo requests with any payload to public addresses. The firewall now denies ICMP sockets when they are created.
   - Agents cannot reach each other or the control plane's internal ports. The firewall allows only the egress proxy, DNS, and the two control-plane ports agents need.
   - Agents join only the clawker network, not Docker's default bridge.
@@ -25,6 +26,7 @@ Changed, Removed. Each release section lists those subsections directly.
   - Agent containers run with `no-new-privileges`, so setuid binaries cannot raise privileges. `--security-opt no-new-privileges=false` turns it off for one container.
   - `sudo` is no longer installed in agent images. Projects that need it can add it through `build.packages`.
   - `/run/clawker` is owned by root. The root helper that places forwarded GPG and SSH agent sockets in the agent's home refuses symlinks, hard-link swaps, and foreign-owned or group- or world-writable directories.
+  - The host proxy starts its daemon only from the running clawker executable. It no longer reads `CLAWKER_EXECUTABLE`, which let any process that set the variable choose the binary clawker starts.
 - **Changed:** The host proxy has no port setting. `host_proxy.manager.port` and `host_proxy.daemon.port` are removed from `settings.yaml` automatically.
 - **Changed:** `OTEL_EXPORTER_OTLP_ENDPOINT` inside agent containers is `http://127.0.0.1:4318` (the in-container relay). `monitoring.otel_infra_port` is removed.
 - **Changed:** Run `clawker host-proxy stop` once to stop the old host proxy; the next agent start runs the new one. Run `clawker build`, then recreate your agent containers: containers created before this release cannot use host actions or the telemetry relay. Run `clawker monitor down` and `clawker monitor up` to move the monitoring stack. The control plane and firewall update on their next start.
