@@ -14,7 +14,6 @@ import (
 	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // corefileTestIDs builds a deterministic IdentityResolver for Corefile
@@ -22,7 +21,8 @@ import (
 // assigned sequential identities from MinIdentity. Stable across runs so the
 // hand-edited goldens can pin exact dnsbpf directive arguments.
 func corefileTestIDs(rules []config.EgressRule) firewall.IdentityResolver {
-	dsts := append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+	dsts := make([]string, 0, 1+len(rules))
+	dsts = append(dsts, "docker.internal")
 	for _, r := range rules {
 		dsts = append(dsts, strings.TrimSuffix(strings.TrimPrefix(r.Dst, "."), "."))
 	}
@@ -95,23 +95,6 @@ func TestGenerateCorefile(t *testing.T) {
 			require.NoError(t, err, "golden file %s must exist — hand-edit to update", goldenPath)
 			assert.Equal(t, string(want), string(got))
 		})
-	}
-}
-
-// TestGenerateCorefile_MonitoringHostnamesEmitted asserts every hostname
-// in consts.MonitoringServiceHostnames produces a forward zone in the
-// generated Corefile. Drift guard: if a future commit adds an entry to
-// MonitoringServiceHostnames without coredns_config rendering it, this
-// test fails — keeping the firewall plane and the compose plane in
-// lockstep.
-func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
-	got, missed, err := firewall.GenerateCorefile(nil, 18902, corefileTestIDs(nil))
-	require.NoError(t, err)
-	assert.Empty(t, missed)
-
-	for _, host := range consts.MonitoringServiceHostnames {
-		zone := fmt.Sprintf("%s {", host)
-		assert.Contains(t, string(got), zone, "expected zone block for monitoring hostname %q", host)
 	}
 }
 

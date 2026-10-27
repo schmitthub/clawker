@@ -82,8 +82,6 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	networkName := cfg.ClawkerNetwork()
-
 	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
@@ -95,13 +93,14 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}
 
+	// The collector joins the telemetry network as external, so it must
+	// exist before compose runs, even when the control plane has not.
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	//nolint:exhaustruct // Name is the only required field; the embedded moby NetworkCreateOptions is optional and omitted at every EnsureNetwork call site.
-	if _, err = client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{Name: networkName}); err != nil {
-		return fmt.Errorf("failed to ensure Docker network '%s': %w", networkName, err)
+	if _, err = client.EnsureTelemetryNetwork(ctx); err != nil {
+		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}
 
 	// Reload IS the disruptive apply: remove the collector unconditionally so

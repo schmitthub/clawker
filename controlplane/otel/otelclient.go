@@ -31,14 +31,14 @@ var errorHandlerOnce sync.Once
 // (sysexec events, etc.) wire the SDK once instead of duplicating the
 // otlploggrpc setup.
 //
-// Trust lane: Endpoint MUST be the infra receiver (OtelInfraPort) and
+// Trust lane: Endpoint MUST be the infra receiver (consts.MonitoringOtelInfraPort) and
 // TLSConfig MUST be sourced from otelcerts.Service.LoadTLSConfig so
 // per-handshake cert rotation is honored. Plaintext fallback is
 // intentionally not supported; the agent lane has its own untrusted
 // receiver and infra emitters must not cross over.
 type OtelClientOptions struct {
 	// Endpoint is host:port; otlploggrpc.WithEndpoint accepts no
-	// scheme. Example: "host.docker.internal:4319".
+	// scheme. Example: "otel-collector:4319".
 	Endpoint string
 
 	// TLSConfig pins both the client leaf (via GetClientCertificate)

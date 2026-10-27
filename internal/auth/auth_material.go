@@ -733,37 +733,33 @@ func ReadJWK() (json.RawMessage, error) {
 // Two extra certs gate the monitoring stack's CP-only OTLP receiver:
 //
 //   - otel-server.{pem,key}: presented by the otel-collector container
-//     on its CP-only receiver. SANs cover the names CP uses to dial
-//     (host.docker.internal, localhost, 127.0.0.1) so a single cert
-//     works across Linux native (where host.docker.internal resolves
-//     to the bridge gateway) and Docker Desktop.
+//     on its infra and agent-gateway receivers. SANs cover the name
+//     the trusted senders dial on the telemetry network (otel-collector)
+//     plus localhost and 127.0.0.1 for host-side tools.
 //
 //   - cp-client.{pem,key}: presented by clawkercp when pushing OTLP.
 //     Subject "clawkercp" so the receiver can audit which client is
 //     pushing in case future scoping is added.
 //
-// Agents on the clawker network cannot reach the receiver because they lack
-// any cert signed by the CLI CA — the TLS handshake fails before any
-// data is accepted. No BPF rule needed; auth is the boundary.
+// Agents cannot reach the receiver: they never join the telemetry network,
+// and they hold no infra-chained cert, so the TLS handshake would fail
+// before any data is accepted.
 
-// otelServerCertSANs lists every name a trusted peer might dial. Hoisted
+// otelServerSANs lists every name a trusted peer might dial. Hoisted
 // out of the mint path so the on-disk cert can be checked against the
 // current SAN list at every CP start and re-minted when the list grows.
 //
-//   - host.docker.internal: CP dials this from the host-side 127.0.0.1
-//     publish.
+//   - otel-collector: every trusted sender (CP, CP gateway, Envoy ALS,
+//     the CoreDNS OTel plugin) dials the collector by its service name on
+//     the internal telemetry network and pins its SNI to it. The
+//     monitoring stack is not on the agent network.
 //   - localhost / 127.0.0.1: host-side debug, future tools.
-//   - otel-collector (consts.MonitoringServiceOtelCollector): the clawker network
-//     DNS name used by Envoy ALS and the CoreDNS OTel plugin dialing
-//     siblings over the docker network. Without this SAN the gRPC SNI
-//     check fails: "certificate is valid for ... not otel-collector".
-var (
-	otelServerDNSNames = []string{"host.docker.internal", "localhost", consts.MonitoringServiceOtelCollector}
-	otelServerIPs      = []net.IP{net.IPv4(127, 0, 0, 1)}
-)
+func otelServerSANs() ([]string, []net.IP) {
+	return []string{consts.MonitoringServiceOtelCollector, "localhost"}, []net.IP{net.ParseIP(consts.Localhost)}
+}
 
 // otelServerCertSANsCurrent reports whether the cert at certPath already
-// carries every entry in otelServerDNSNames/otelServerIPs. Returns false
+// carries every entry otelServerSANs returns. Returns false
 // for any read/parse failure so the caller re-mints — a cert we can't
 // parse is by definition not current.
 func otelServerCertSANsCurrent(certPath string) bool {
@@ -779,11 +775,12 @@ func otelServerCertSANsCurrent(certPath string) bool {
 	if err != nil {
 		return false
 	}
+	wantNames, wantIPs := otelServerSANs()
 	have := make(map[string]struct{}, len(cert.DNSNames))
 	for _, n := range cert.DNSNames {
 		have[n] = struct{}{}
 	}
-	for _, want := range otelServerDNSNames {
+	for _, want := range wantNames {
 		if _, ok := have[want]; !ok {
 			return false
 		}
@@ -792,7 +789,7 @@ func otelServerCertSANsCurrent(certPath string) bool {
 	for _, ip := range cert.IPAddresses {
 		haveIPs[ip.String()] = struct{}{}
 	}
-	for _, want := range otelServerIPs {
+	for _, want := range wantIPs {
 		if _, ok := haveIPs[want.String()]; !ok {
 			return false
 		}
@@ -834,6 +831,7 @@ func ensureOtelServerCert() error {
 	}
 
 	now := time.Now().UTC()
+	dnsNames, ips := otelServerSANs()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
@@ -844,8 +842,8 @@ func ensureOtelServerCert() error {
 		NotAfter:    now.AddDate(1, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    otelServerDNSNames,
-		IPAddresses: otelServerIPs,
+		DNSNames:    dnsNames,
+		IPAddresses: ips,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)

@@ -62,8 +62,6 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	networkName := cfg.ClawkerNetwork()
-
 	// Resolve monitor directory
 	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
@@ -136,19 +134,6 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 			"  Prometheus:            %s\n",
 			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)),
 		)
-	}
-
-	// Check network status. Any non-success collapses to "(not found)"
-	// in the user-visible output — log the underlying err at Debug so a
-	// daemon-down / permission-denied case is recoverable from the CP log
-	// rather than indistinguishable from "no such network".
-	fmt.Fprintln(ios.ErrOut)
-	networkCmd := exec.CommandContext(ctx, "docker", "network", "inspect", networkName, "--format", "{{.Name}}")
-	if networkOutput, err := networkCmd.Output(); err == nil {
-		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", strings.TrimSpace(string(networkOutput)), cs.Green("(active)"))
-	} else {
-		log.Debug().Err(err).Str("network", networkName).Msg("docker network inspect failed; reporting as not found")
-		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", networkName, cs.Red("(not found)"))
 	}
 
 	return nil

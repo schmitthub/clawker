@@ -324,15 +324,14 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	})
 	require.NoError(t, err, "OTEL server cert must be signed by CLI CA")
 	assert.Equal(t, "clawker-otel-collector", cert.Subject.CommonName)
-	// SANs cover both Linux native (host.docker.internal → bridge) and
-	// Docker Desktop. Both must verify or CP→collector dial breaks on
-	// one of the platforms.
-	assert.Contains(t, cert.DNSNames, "host.docker.internal")
-	assert.Contains(t, cert.DNSNames, "localhost")
-	// clawker network dial path (Envoy ALS, CoreDNS otel plugin) verifies SNI
-	// against this SAN — drop it and gRPC handshakes fail with
-	// "certificate is valid for ..., not otel-collector".
+	// Every trusted sender (CP, CP gateway, Envoy ALS, the CoreDNS otel
+	// plugin) dials the collector by service name on the telemetry network
+	// and pins its SNI to that name.
 	assert.Contains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)
+	assert.Contains(t, cert.DNSNames, "localhost")
+	// No sender dials the host gateway any more: on a native Linux daemon
+	// that name is the bridge IP, where the collector publishes nothing.
+	assert.NotContains(t, cert.DNSNames, consts.DockerHostInternal)
 }
 
 // Tests that ensureOtelServerCert re-mints when the on-disk cert is
@@ -347,8 +346,8 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 	require.NoError(t, err)
 
 	// Overwrite the cert with one that has a strict subset of the
-	// current SAN list (drops "otel-collector"). Reuse the CA so chain
-	// verification still works; only the SANs differ.
+	// current SAN list (drops "otel-collector"). Reuse the CA so
+	// chain verification still works; only the SANs differ.
 	caCert, caKey, err := loadCA()
 	require.NoError(t, err)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -362,7 +361,7 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"host.docker.internal", "localhost"},
+		DNSNames:     []string{"localhost"},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)

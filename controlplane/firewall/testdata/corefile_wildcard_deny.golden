@@ -29,7 +29,7 @@ somedomain.com {
     template IN AAAA . {
         rcode NOERROR
     }
-    dnsbpf 262
+    dnsbpf 260
     forward . 1.1.1.2 1.0.0.2
 }
 
@@ -58,26 +58,6 @@ docker.internal {
         rcode NOERROR
     }
     dnsbpf 258
-    forward . 127.0.0.11
-}
-
-otel-collector {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf 260
-    forward . 127.0.0.11
-}
-
-prometheus {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf 261
     forward . 127.0.0.11
 }
 

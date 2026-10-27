@@ -7,6 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -109,8 +113,6 @@ func TestRenderTemplate_Compose(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  otel_infra_port: 5319
-  otel_agent_ingest_port: 5320
   prometheus_port: 10090
   prometheus_metrics_port: 9889
   opensearch_port: 19200
@@ -180,8 +182,8 @@ docker:
 	// metrics to whatever network the host is on. If you change this
 	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelInfraPort, data.OtelInfraPort),
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelAgentIngestPort, data.OtelAgentIngestPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelGRPCPort, data.OtelGRPCPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelCollectorPort, data.OtelCollectorPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.PrometheusPort, data.PrometheusPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchPort, data.OpenSearchPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
@@ -193,6 +195,59 @@ docker:
 			)
 		}
 	}
+
+	// Every published port is a loopback publish: a `- "<port>:<port>"`
+	// entry without the 127.0.0.1 prefix exposes the service on every
+	// host interface.
+	inPorts := false
+	for line := range strings.SplitSeq(result, "\n") {
+		entry := strings.TrimSpace(line)
+		switch {
+		case entry == "ports:":
+			inPorts = true
+		case entry == "" || strings.HasPrefix(entry, "#"):
+		case !strings.HasPrefix(entry, "-"):
+			inPorts = false
+		case inPorts && !strings.HasPrefix(entry, `- "`+consts.Localhost+":"):
+			t.Errorf("compose.yaml publishes %s without a loopback bind", entry)
+		}
+	}
+
+	// The mTLS receivers have no host sender: the control plane, Envoy,
+	// and CoreDNS reach them over the telemetry network, so they are not
+	// published on the host at all.
+	for _, port := range []int{data.OtelInfraPort, data.OtelAgentIngestPort} {
+		if strings.Contains(result, fmt.Sprintf(":%d:%d", port, port)) {
+			t.Errorf("compose.yaml publishes mTLS receiver port %d on the host", port)
+		}
+	}
+
+	// No service joins the agent network. Only the collector joins the
+	// telemetry network, which the control plane creates as an internal
+	// network, so the compose file must reference it as external.
+	if strings.Contains(result, consts.Network) {
+		t.Errorf("compose.yaml must not contain %q: monitoring services stay off the agent network", consts.Network)
+	}
+	var doc struct {
+		Services map[string]struct {
+			Networks []string `yaml:"networks"`
+		} `yaml:"services"`
+		Networks map[string]struct {
+			External bool   `yaml:"external"`
+			Name     string `yaml:"name"`
+		} `yaml:"networks"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(result), &doc))
+	for name, svc := range doc.Services {
+		if name == data.OtelCollectorService {
+			assert.ElementsMatch(t, []string{"default", "telemetry"}, svc.Networks, "collector networks")
+			continue
+		}
+		assert.Empty(t, svc.Networks, "service %s must stay on the default compose network", name)
+	}
+	require.Contains(t, doc.Networks, "telemetry")
+	assert.True(t, doc.Networks["telemetry"].External, "telemetry network is created outside compose")
+	assert.Equal(t, consts.TelemetryNetwork, doc.Networks["telemetry"].Name)
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
@@ -200,8 +255,6 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  otel_infra_port: 5319
-  otel_agent_ingest_port: 5320
   prometheus_metrics_port: 9889
   opensearch_port: 9200
 `)
@@ -259,11 +312,11 @@ monitoring:
 		"receivers: [routing/trusted]",
 		"receivers: [routing/untrusted]",
 		// gRPC variant of the trusted receiver is what Envoy ALS dials.
-		"0.0.0.0:5319",
-		// CP gateway lane: the receiver follows the configured port and
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelInfraPort),
+		// CP gateway lane: the receiver listens on its fixed port and
 		// the two processors exist. Pipeline wiring is locked by the
 		// otel-config golden files.
-		"0.0.0.0:5320",
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelAgentIngestPort),
 		"resource/agent_gateway:",
 		"transform/agent_gateway_metrics:",
 	}
@@ -273,10 +326,20 @@ monitoring:
 		}
 	}
 
+	// Only the host CLI lane routes service.name=clawker-cli. The gateway
+	// connector carries no such route, so an agent that declares that
+	// name cannot land records in the clawker-cli index.
+	if got := strings.Count(result, `== "clawker-cli"`); got != 1 {
+		t.Errorf("otel-config.yaml routes clawker-cli %d times, want exactly 1 (routing/untrusted only)", got)
+	}
+
 	// Zero active units → zero unit lanes anywhere in the collector
-	// config. Unmatched service names (any inactive unit's traffic)
-	// fall to the debug-only unrouted pipeline.
-	for _, absent := range []string{"claude-code", "logs/unit_"} {
+	// config, and no routing/agents connector (the collector rejects an
+	// empty routing table); the gateway log pipeline exports to debug.
+	// Unmatched service names (any inactive unit's traffic) fall to the
+	// debug-only unrouted pipeline. The with-lanes shape is locked by the
+	// otel-config goldens.
+	for _, absent := range []string{"claude-code", "logs/unit_", "routing/agents:", "[routing/agents]"} {
 		if strings.Contains(result, absent) {
 			t.Errorf("otel-config.yaml with no active units should not contain %q", absent)
 		}

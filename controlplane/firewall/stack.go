@@ -67,14 +67,6 @@ const (
 	// flip must recreate the Envoy container, not just restart it.
 	labelSDSCertsReady = "dev.clawker.firewall.sds_certs_ready"
 
-	// labelOtelInfraPort encodes the create-time monitoring.otel_infra_port
-	// value. CoreDNS receives the port via CLAWKER_COREDNS_OTEL_ENDPOINT
-	// env at ContainerCreate; Docker preserves env across ContainerRestart,
-	// so a setting change while certs remain ready would leave CoreDNS
-	// exporting to the stale port. Including the port in drift labels
-	// forces a recreate (not just a restart) when it changes.
-	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
-
 	// labelSDSPort records ControlPlaneSettings.SDSPort. Envoy reads
 	// sdsClusterName at startup. A port change must replace a surviving
 	// container so it connects to the current SDS listener.
@@ -109,12 +101,12 @@ type Stack struct {
 	// corednsImage is the content-addressed CoreDNS image reference for
 	// this binary; used for inspect, build, and the container spec.
 	corednsImage string
-	cfg       config.Config
-	log       *logger.Logger
-	store     EgressRulesStore
-	ca        *CAStore
-	otelCerts OtelCertProvisioner
-	sdsCerts  SDSCertProvisioner
+	cfg          config.Config
+	log          *logger.Logger
+	store        EgressRulesStore
+	ca           *CAStore
+	otelCerts    OtelCertProvisioner
+	sdsCerts     SDSCertProvisioner
 	// idFor answers dst→identity for Corefile generation (dnsbpf
 	// directives). Never nil — NewStack substitutes a fail-closed stub.
 	idFor IdentityResolver
@@ -489,8 +481,8 @@ func (s *Stack) discoverOrEmpty() NetworkInfo {
 
 // --- Internal helpers ---
 
-// ensureNetworkAndDiscover creates the clawker network if missing and returns the
-// discovered topology. The CLI is the primary owner of network creation;
+// ensureNetworkAndDiscover creates the clawker and telemetry networks if
+// missing and returns the discovered clawker network topology. The CLI is the primary owner of network creation;
 // the defensive guard here protects against a stale CP image that starts
 // before bootstrap has run EnsureNetwork host-side.
 func (s *Stack) ensureNetworkAndDiscover(ctx context.Context) (*NetworkInfo, error) {
@@ -498,6 +490,9 @@ func (s *Stack) ensureNetworkAndDiscover(ctx context.Context) (*NetworkInfo, err
 		Name: s.cfg.ClawkerNetwork(),
 	}); err != nil {
 		return nil, fmt.Errorf("ensure clawker-net: %w", err)
+	}
+	if _, err := s.docker.EnsureTelemetryNetwork(ctx); err != nil {
+		return nil, fmt.Errorf("firewall stack: %w", err)
 	}
 	netInfo, err := DiscoverNetwork(ctx, s.docker, s.cfg)
 	if err != nil {
@@ -742,7 +737,7 @@ func (s *Stack) alsConfig() ALSConfig {
 	if !s.infraCertsReady {
 		return ALSConfig{}
 	}
-	return ALSConfig{Port: int(s.cfg.MonitoringConfig().OtelInfraPort), MTLS: true}
+	return ALSConfig{Port: consts.MonitoringOtelInfraPort, MTLS: true}
 }
 
 // sdsConfig returns the on-demand certificate SDS lane config, gated on
@@ -895,8 +890,9 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	//
 	// CoreDNS log shipping: the custom `otel` plugin (cmd/coredns-clawker
 	// /plugins/otel) emits one OTLP log record per query over mTLS to
-	// the CP-only receiver at otel-collector:OtelInfraPort. CLAWKER_COREDNS_
-	// OTEL_ENDPOINT in container env (set by container_env below) wires
+	// the infra receiver at otel-collector:MonitoringOtelInfraPort over the
+	// telemetry network (the monitoring stack is not on the agent
+	// network). CLAWKER_COREDNS_OTEL_ENDPOINT in container env wires
 	// the plugin to the receiver; the cert + key + CA bind-mount at
 	// /etc/clawker/auth/coredns/ matches the plugin's hardcoded
 	// defaults (see plugins/otel/setup.go). Gated on infraCertsReady so
@@ -936,7 +932,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// paths below.
 		env = append(env, fmt.Sprintf(consts.EnvCoreDNSOtelEndpoint+"=%s:%d",
 			consts.MonitoringServiceOtelCollector,
-			s.cfg.MonitoringConfig().OtelInfraPort))
+			consts.MonitoringOtelInfraPort))
 	}
 	return containerSpec{
 		image:     s.corednsImage,
@@ -968,7 +964,6 @@ func (s *Stack) driftLabels() map[string]string {
 	return map[string]string{
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
 		labelSDSCertsReady:   strconv.FormatBool(s.sdsCertsReady),
-		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.MonitoringConfig().OtelInfraPort)),
 		labelSDSPort:         strconv.Itoa(s.cfg.ControlPlaneSettings().SDSPort),
 		labelStackBuildSHA:   consts.CPBinarySHA,
 		labelBPFFSSource:     consts.HostBPFFSSource(),
@@ -1036,8 +1031,6 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 			Str("container", name).
 			Str("desired_infra_certs_ready", spec.labels[labelInfraCertsReady]).
 			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
-			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
-			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
 			Str("desired_sds_port", spec.labels[labelSDSPort]).
 			Str("running_sds_port", summary.Labels[labelSDSPort]).
 			Str("desired_stack_build_sha", spec.labels[labelStackBuildSHA]).
@@ -1056,6 +1049,10 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 				NetworkID:  spec.networkID,
 				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
 			},
+			// The trusted telemetry lane to the collector's mTLS
+			// receivers. Dynamic address: nothing dials the siblings
+			// on this network.
+			consts.TelemetryNetwork: new(network.EndpointSettings),
 		},
 	}
 	containerCfg := &container.Config{Image: spec.image, Cmd: spec.cmd, Env: spec.env}

@@ -67,7 +67,8 @@ type Container struct {
 
 | Method | Signature |
 |--------|-----------|
-| `IsMonitoringActive` | `(ctx context.Context) bool` — checks for otel-collector on the clawker network |
+| `IsMonitoringActive` | `(ctx context.Context) bool` — true when a running `otel-collector` container exists (the stack lives on its own compose network, so no network check) |
+| `EnsureTelemetryNetwork` | `(ctx context.Context) (string, error)` — creates the internal `consts.TelemetryNetwork` (`clawker-telemetry`, managed labels, `internal: true`) when absent and returns its ID. The CP, Envoy, CoreDNS, and `otel-collector` join it; agents never do. CP bootstrap, the firewall `Stack`, and `monitor up`/`reload` all call this one helper |
 | `ListContainers` | `(ctx context.Context, includeAll bool) ([]Container, error)` — all managed containers |
 | `ListContainersByProject` | `(ctx context.Context, project string, includeAll bool) ([]Container, error)` — project-scoped |
 | `FindContainerByAgent` | `(ctx context.Context, project, agent string) (string, *container.Summary, error)` — returns (name, summary, err); not-found = `(name, nil, nil)` |

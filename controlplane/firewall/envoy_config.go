@@ -560,16 +560,19 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // only emits it when als.MTLS is true; infra services must never push OTLP
 // across the untrusted lane.
 //
-// STRICT_DNS resolves the collector's clawker network DNS name
-// (consts.MonitoringServiceOtelCollector) on every refresh; h2 is
-// required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
-// leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
-// and validates the collector's server cert against the CLI root CA.
-// SNI is set to that same service name so Envoy presents the expected hostname
-// in the ClientHello, and match_typed_subject_alt_names pins the upstream cert
-// to that SAN — defense-in-depth on top of the CLI-root trust boundary so a different
-// CLI-root-chained leaf (a future infra service) can't impersonate the collector
-// for this cluster.
+// STRICT_DNS resolves the collector's service name
+// (consts.MonitoringServiceOtelCollector) through Docker's embedded DNS on
+// every refresh: Envoy and the collector share the internal telemetry
+// network, the same lane the CP uses, while the monitoring stack stays off
+// the agent network. h2 is required because OTLP/gRPC runs on HTTP/2. The upstream
+// TLS context loads the leaf+intermediate chain bind-mounted at
+// /etc/envoy/otel-tls/client.{pem,key} and validates the collector's server
+// cert against the CLI root CA. SNI is set to that same name so Envoy
+// presents the expected hostname in the ClientHello, and
+// match_typed_subject_alt_names pins the upstream cert to that SAN —
+// defense-in-depth on top of the CLI-root trust boundary so a different
+// CLI-root-chained leaf (a future infra service) can't impersonate the
+// collector for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
 	return buildInfraGRPCCluster(otelCollectorALSClusterName, consts.MonitoringServiceOtelCollector, als.Port,
 		infraClientTLS{cert: envoyOtelTLSCertFile, key: envoyOtelTLSKeyFile, ca: envoyOtelTLSCAFile})

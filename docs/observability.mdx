@@ -106,7 +106,7 @@ If netlogger is degraded, the kernel records continue to land in the ringbuf and
 netlogger emits on the **trusted infra lane** — the same OTLP/gRPC + mTLS path the CP zerolog bridge, the Envoy access logger, and the CoreDNS otel plugin use. Identity reuse:
 
 - Cert: per-handshake ephemeral leaf minted by `otelcerts.Service` (`LoadTLSConfig("netlogger")`), chained through the **infra intermediate CA** — not the CLI root.
-- Endpoint: the collector's `otlp/infra` receiver on `OtelInfraPort` (not the unauth'd `otel-collector:4317` agent lane).
+- Endpoint: the collector's `otlp/infra` receiver at `otel-collector:4319` (not the unauthenticated host CLI receiver). The control plane, Envoy, and CoreDNS reach it over an internal telemetry network that agents never join. The receiver is not published on the host.
 - The OTLP endpoint **must** be `https://` (or bare host:port). A plaintext `http://` endpoint is rejected at boot — pushing infra telemetry over plaintext would smuggle records onto the agent-lane receiver, defeating the trust-lane separation.
 
 The control plane also forwards agent telemetry to the collector on this lane (its own `otlp/agents` receiver, `ingest_source=cp_gateway`). Agent processes export to a loopback OTLP/HTTP endpoint served by clawkerd inside the container; clawkerd carries each batch to the control plane over its mTLS leaf, and the control plane overwrites the `project`, `agent`, and `container_id` resource attributes with the identity it verified against the agent registry. When the monitoring stack is down the control plane drops those batches after three failed forwards and probes once a minute, so telemetry resumes when the stack comes up.
@@ -115,7 +115,7 @@ Agent containers cannot forge `service.name=ebpf-egress` records onto the truste
 
 ## Configuration
 
-netlogger inherits its endpoint from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` resolution path used by the CP zerolog bridge — when `clawker monitor up` is running, the CP boot sequence wires the collector's `OtelInfraPort` automatically. No netlogger-specific knobs ship; the BatchProcessor sizing, retry cap (10s vs. SDK default 1 min), and circuit-breaker threshold are CP-level constants.
+netlogger inherits its endpoint from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` resolution path used by the CP zerolog bridge — when `clawker monitor up` is running, the CP boot sequence wires the collector's infra receiver automatically. No netlogger-specific knobs ship; the BatchProcessor sizing, retry cap (10s vs. SDK default 1 min), and circuit-breaker threshold are CP-level constants.
 
 To point netlogger at a custom collector (for a centralized SIEM, or to bypass the local stack entirely), override `OTEL_EXPORTER_OTLP_ENDPOINT` in the CP container's environment and ensure the receiver presents a server cert chained through the infra intermediate. Plaintext endpoints are rejected by design — see [Trust Lane](#trust-lane) above.
 

@@ -25,7 +25,7 @@ processor goroutine       (parseEvent → enrich via LabelCache + ReverseDNSMap 
 Sink                      (otelSink in production, nopSink for tests / degraded boot)
         │
         ▼
-*sdklog.LoggerProvider → BatchProcessor → circuitExporter → otlploggrpc → otel-collector (mTLS, OtelInfraPort)
+*sdklog.LoggerProvider → BatchProcessor → circuitExporter → otlploggrpc → otel-collector (mTLS, MonitoringOtelInfraPort)
 ```
 
 The reader MUST NOT block on the queue. Back-pressure from the queue into the kernel converts userspace queue drops (counted by `QueueDropped`) into kernel-fault drops (counted by `events_drops` in BPF), which are more expensive to attribute and harder to alert on. Drop-newest at the queue boundary is the bounded-back-pressure half of the contract.
@@ -47,7 +47,7 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 
 ## OTel sink + provider wiring
 
-**Resource attribution.** `service.name=ebpf-egress` so the OS routing/connector pipeline drops netlogger records into their own data stream, separate from `clawkercp` (the CP zerolog bridge). Identity-layer reuse stays: same `otelcerts.Service`, same per-handshake leaf mint, same gRPC endpoint on `OtelInfraPort`.
+**Resource attribution.** `service.name=ebpf-egress` so the OS routing/connector pipeline drops netlogger records into their own data stream, separate from `clawkercp` (the CP zerolog bridge). Identity-layer reuse stays: same `otelcerts.Service`, same per-handshake leaf mint, same gRPC endpoint on `consts.MonitoringOtelInfraPort`.
 
 **Instrumentation scope + event taxonomy.** Records carry scope name `clawker.netlogger`. `event.name` is per-emit-site so dashboards can filter by record kind without inspecting `flags`:
 
@@ -88,7 +88,7 @@ Attribute keys today:
 
 **Address representation.** Follows the Cilium / Tetragon convention: BPF's `struct egress_event.dst_ip` is a flat 16-byte slot in network byte order. IPv4 destinations occupy the first 4 bytes (the same shape as `ctx->user_ip4`) with the remaining 12 bytes zero; IPv6 destinations fill all 16 bytes. `EgressFlagIPv6` / `EgressFlagIPv4Mapped` / `EgressFlagNoDst` discriminate. Userspace `parseEvent` switches on flags: NoDst leaves the address invalid, IPv6 decodes via `netip.AddrFrom16`, default decodes the low 4 bytes via `netip.AddrFrom4`. `netip.Addr.String()` produces the right shape for either family, and OS `type: ip` mapping accepts both string forms — single attribute name `dst_ip` handles all cases (no `dst_ipv4`/`dst_ipv6` split).
 
-**Trust lane.** Endpoint is the infra OTel receiver (`OtelInfraPort`). Plaintext endpoints are rejected at CP-main wiring time (`event=netlogger_unavailable` with `step=OTLP endpoint is plaintext`) — infra emitters never cross into the untrusted agent lane.
+**Trust lane.** Endpoint is the infra OTel receiver (`consts.MonitoringOtelInfraPort`). Plaintext endpoints are rejected at CP-main wiring time (`event=netlogger_unavailable` with `step=OTLP endpoint is plaintext`) — infra emitters never cross into the untrusted agent lane.
 
 **Collector-unavailable posture.**
 

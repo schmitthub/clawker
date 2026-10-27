@@ -18,7 +18,7 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 
 ## Architecture
 
-The monitoring stack runs as four long-lived Docker Compose services on the `clawker-net` network, plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
+The monitoring stack runs as four long-lived Docker Compose services on their own Compose network (the collector also joins an internal telemetry network), plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
 
 ```
 Claude Code (in container)                Control plane (host)
@@ -40,24 +40,24 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
-| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC), 4320 (control-plane gateway) | Routes telemetry to backends. Agent telemetry arrives on the control-plane gateway receiver with `project`, `agent`, and `container_id` set from the agent's verified identity (`ingest_source=cp_gateway`) |
+| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC), 4320 (control-plane gateway, not published on the host) | Routes telemetry to backends. Agent telemetry arrives on the control-plane gateway receiver with `project`, `agent`, and `container_id` set from the agent's verified identity (`ingest_source=cp_gateway`) |
 | **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawkercp` (clawkercp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs), `clawker-ebpf-egress` (eBPF per-decision egress events) log indices, plus the `traces`/`clawker` (SS4O) trace index |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 | **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs after OpenSearch + Prometheus are reachable, before the collector starts; applies templates, ISM, datasource, workspace, saved objects, then exits |
 
-All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
+All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the stack's own Compose network; none of them joins the `clawker-net` agent network, and every published port binds `127.0.0.1`. The collector also joins an internal telemetry network. Only clawker's control plane and firewall containers join that network; agents never join it. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
 
 ### Service Hostnames
 
-The monitoring services have fixed, stable hostnames on `clawker-net`. Agent containers resolve `otel-collector` and `prometheus` through the firewall's DNS; agent telemetry itself reaches the collector through the control plane, and agents never query OpenSearch directly. `opensearch-node` and `opensearch-dashboards` are deliberately left out of that forwarded set — other containers on `clawker-net` that do need them reach them via Docker's embedded resolver.
+The monitoring services have fixed, stable hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) that resolve only inside the stack's own Compose network. Agent containers cannot resolve or reach any of them: agent telemetry reaches the collector through the control plane, and the firewall's DNS forwards no monitoring hostname. The control plane, Envoy, and CoreDNS deliver their own telemetry to `otel-collector` over the internal telemetry network.
 
 ### How Agents Connect
 
 Infrastructure telemetry (egress, DNS, CLI, control plane) is emitted host-side for every harness. Agent-session telemetry never leaves the container directly: the SDK exports to a loopback OTLP/HTTP endpoint served by the container's clawkerd daemon, which carries each batch to the control plane over its own mTLS identity. The control plane verifies the sender, overwrites the `project`, `agent`, and `container_id` resource attributes with the identity it resolved, and forwards the batch to the collector. Agent-session OTEL endpoints are baked into images whose harness bundle declares them — the claude bundle ships a full OTLP env block. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — `http://127.0.0.1:4318`, the loopback relay inside the container (baked into image). The Claude Code SDK appends `/v1/metrics`, `/v1/logs`, `/v1/traces` per signal
-- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — baked to `otlp`, overridden to `none` at container creation when the `otel-collector` container is not detected as running on `clawker-net`
+- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — baked to `otlp`, overridden to `none` at container creation when no running `otel-collector` container is detected
 - `CLAUDE_CODE_ENABLE_TELEMETRY` — always `1` (baked into the image; not conditionally toggled — the exporter overrides above are what turn telemetry off)
 - `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` — set to `1` (gates Claude Code's span export; both this and `CLAUDE_CODE_ENABLE_TELEMETRY` must be `1` for traces to flow)
 - `OTEL_RESOURCE_ATTRIBUTES` — tags with `project=` and `agent=` for local SDK use; the stored values always come from the control plane, so a process inside the container cannot relabel its telemetry
@@ -235,4 +235,4 @@ clawker monitor down
 clawker monitor down --volumes
 ```
 
-Without `--volumes`, monitoring data persists across restarts (named volume `clawker-opensearch` for indices, `clawker-prometheus` for TSDB) — as do the monitoring extensions seeded into the stack, so subsequent `monitor up` runs from any project keep them. `--volumes` clears both the telemetry data and the seeded extensions, resetting the stack. The `clawker-net` network is preserved for other Clawker services (firewall, agents).
+Without `--volumes`, monitoring data persists across restarts (named volume `clawker-opensearch` for indices, `clawker-prometheus` for TSDB) — as do the monitoring extensions seeded into the stack, so subsequent `monitor up` runs from any project keep them. `--volumes` clears both the telemetry data and the seeded extensions, resetting the stack. The `clawker-net` agent network is not part of the stack and is untouched.

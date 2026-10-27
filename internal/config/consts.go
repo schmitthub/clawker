@@ -8,7 +8,6 @@
 // should import internal/consts directly.
 //
 // What stays here (genuinely config-backed):
-//   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL/OtelCollectorURL — read MonitoringConfig() ports
 //   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
 //     ParseMode lives in schema.go)
 
@@ -254,45 +253,3 @@ func (c *configImpl) ContainerUID() int { return consts.ContainerUID() }
 
 // Deprecated: use consts.ContainerGID().
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID() }
-
-// OpenSearchURL returns the OpenSearch REST API URL on the clawker network
-// (e.g. http://opensearch-node:9200). **In-cluster only** — the
-// hostname is Docker-DNS-resolvable from containers attached to
-// the clawker network, NOT from the host. For host-side display, build a
-// http://127.0.0.1:<port> URL from MonitoringConfig().OpenSearchPort
-// directly (the settings port drives both the in-cluster listener and
-// the host publish, so the port number matches).
-func (c *configImpl) OpenSearchURL() string {
-	return consts.ServiceURL(consts.MonitoringServiceOpenSearchNode, c.MonitoringConfig().OpenSearchPort, false)
-}
-
-// OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL on
-// the clawker network. **In-cluster only** — see [OpenSearchURL] for the host
-// access pattern.
-func (c *configImpl) OpenSearchDashboardsURL() string {
-	return consts.ServiceURL(
-		consts.MonitoringServiceOpenSearchDashboards,
-		c.MonitoringConfig().OpenSearchDashboardsPort,
-		false,
-	)
-}
-
-// PrometheusURL returns the Prometheus UI URL on the clawker network.
-// **In-cluster only** — see [OpenSearchURL] for the host access
-// pattern.
-func (c *configImpl) PrometheusURL() string {
-	return consts.ServiceURL(consts.MonitoringServicePrometheus, c.MonitoringConfig().PrometheusPort, false)
-}
-
-// OtelCollectorURL returns the OTLP collector base URL on the clawker network
-// (no path). **In-cluster only** — agents on the clawker network wire this as
-// OTEL_EXPORTER_OTLP_ENDPOINT; the OTel SDK derives /v1/metrics,
-// /v1/logs, and /v1/traces by appending each signal's standard OTLP
-// path. Single base covers every current and future signal. Default
-// routes via the collector so Prometheus retains metric metadata
-// (its /api/v1/metadata excludes OTLP-ingested series); direct OTLP
-// push to Prometheus' native receiver remains an alternate path via
-// [PrometheusURL] + Telemetry.PrometheusOTLPPath.
-func (c *configImpl) OtelCollectorURL() string {
-	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
-}

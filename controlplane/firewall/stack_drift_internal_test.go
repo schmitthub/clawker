@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -186,4 +188,32 @@ func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStack_ensureContainer_JoinsTelemetryNetwork pins the create-time
+// network attachment: each sibling joins the clawker network at its static
+// IP and the telemetry network with a dynamic address. Without the second
+// endpoint Envoy and CoreDNS cannot resolve or reach the collector.
+func TestStack_ensureContainer_JoinsTelemetryNetwork(t *testing.T) {
+	fake, s, _ := newDriftFixture(t)
+	fake.SetupContainerList() // no sibling yet: create path
+
+	var got map[string]*network.EndpointSettings
+	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		got = opts.NetworkingConfig.EndpointsConfig
+		var res client.ContainerCreateResult
+		res.ID = dockermocks.FakeContainerID
+		return res, nil
+	}
+
+	var spec containerSpec
+	spec.image = "img:test"
+	spec.staticIP = "172.20.0.2"
+	spec.networkID = "net-test"
+	spec.labels = s.driftLabels()
+	require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
+	require.Contains(t, got, consts.Network)
+	assert.Equal(t, "172.20.0.2", got[consts.Network].IPAMConfig.IPv4Address.String())
+	require.Contains(t, got, consts.TelemetryNetwork)
+	assert.Nil(t, got[consts.TelemetryNetwork].IPAMConfig, "telemetry endpoint takes a dynamic address")
 }

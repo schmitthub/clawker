@@ -85,7 +85,7 @@ type OtelOptions struct {
 }
 ```
 
-Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawkercp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/AGENTS.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
+Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`consts.MonitoringOtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawkercp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/AGENTS.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
 
 ## Constructors
 
