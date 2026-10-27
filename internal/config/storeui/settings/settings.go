@@ -16,7 +16,6 @@ import (
 func Overrides() []storeui.Override {
 	return []storeui.Override{
 		// Host proxy — internals are read-only
-		readOnly("host_proxy.port"),
 		readOnly("host_proxy.daemon.poll_interval"),
 		readOnly("host_proxy.daemon.grace_period"),
 		readOnly("host_proxy.daemon.max_consecutive_errs"),

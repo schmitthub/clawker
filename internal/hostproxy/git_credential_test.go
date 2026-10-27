@@ -1,269 +1,123 @@
 package hostproxy
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/logger"
 )
-
-func TestHandleGitCredential(t *testing.T) {
-	tests := []struct {
-		name       string
-		body       string
-		wantStatus int
-		wantError  string
-	}{
-		{
-			name:       "invalid JSON",
-			body:       "not json",
-			wantStatus: http.StatusBadRequest,
-			wantError:  "invalid JSON request body",
-		},
-		{
-			name:       "missing action",
-			body:       `{"protocol": "https", "host": "github.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "action must be 'get', 'store', or 'erase'",
-		},
-		{
-			name:       "empty action",
-			body:       `{"action": "", "protocol": "https", "host": "github.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "action must be 'get', 'store', or 'erase'",
-		},
-		{
-			name:       "invalid action",
-			body:       `{"action": "invalid", "protocol": "https", "host": "github.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "action must be 'get', 'store', or 'erase'",
-		},
-		{
-			name:       "missing protocol",
-			body:       `{"action": "get", "host": "github.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "protocol is required",
-		},
-		{
-			name:       "missing host",
-			body:       `{"action": "get", "protocol": "https"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "host is required",
-		},
-		{
-			name:       "empty protocol",
-			body:       `{"action": "get", "protocol": "", "host": "github.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "protocol is required",
-		},
-		{
-			name:       "empty host",
-			body:       `{"action": "get", "protocol": "https", "host": ""}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "host is required",
-		},
-		{
-			name:       "newline in host",
-			body:       `{"action":"get","protocol":"https","host":"evil.com\nusername=victim\npassword=stolen"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-		{
-			name:       "carriage return in host",
-			body:       `{"action":"get","protocol":"https","host":"evil.com\r\ninjected=true"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-		{
-			name:       "null byte in protocol",
-			body:       "{\"action\":\"get\",\"protocol\":\"https\\u0000injected\",\"host\":\"github.com\"}",
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-		{
-			name:       "newline in username",
-			body:       `{"action":"store","protocol":"https","host":"github.com","username":"user\npassword=pwned"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-		{
-			name:       "newline in password",
-			body:       `{"action":"store","protocol":"https","host":"github.com","username":"user","password":"pass\nhost=evil.com"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-		{
-			name:       "newline in path",
-			body:       `{"action":"get","protocol":"https","host":"github.com","path":"repo\nusername=hacker"}`,
-			wantStatus: http.StatusBadRequest,
-			wantError:  "credential fields must not contain newlines or null bytes",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &Server{log: logger.Nop()}
-			req := httptest.NewRequest(http.MethodPost, "/git/credential", bytes.NewBufferString(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-
-			s.handleGitCredential(w, req)
-
-			resp := w.Result()
-			if resp.StatusCode != tt.wantStatus {
-				t.Errorf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
-			}
-
-			var result gitCredentialResponse
-			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
-			}
-
-			if result.Success {
-				t.Error("expected success to be false")
-			}
-
-			if result.Error != tt.wantError {
-				t.Errorf("expected error %q, got %q", tt.wantError, result.Error)
-			}
-		})
-	}
-}
-
-func TestHandleGitCredentialBodySizeLimit(t *testing.T) {
-	s := &Server{log: logger.Nop()}
-
-	// Create a body larger than maxRequestBodySize (1MB)
-	largeBody := make([]byte, maxRequestBodySize+1)
-	for i := range largeBody {
-		largeBody[i] = 'a'
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/git/credential", bytes.NewReader(largeBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	s.handleGitCredential(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected status 400 for oversized body, got %d", resp.StatusCode)
-	}
-
-	var result gitCredentialResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if result.Success {
-		t.Error("expected success to be false")
-	}
-}
 
 func TestFormatGitCredentialInput(t *testing.T) {
 	tests := []struct {
 		name     string
-		req      gitCredentialRequest
+		req      *agentv1.GitCredentialRequest
 		expected string
 	}{
 		{
-			name: "minimal request",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https",
-				Host:     "github.com",
-			},
+			name:     "minimal request",
+			req:      gitReq(agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET, "https", "github.com", "", "", ""),
 			expected: "protocol=https\nhost=github.com\n\n",
 		},
 		{
 			name: "with path",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https",
-				Host:     "github.com",
-				Path:     "user/repo.git",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET,
+				"https",
+				"github.com",
+				"user/repo.git",
+				"",
+				"",
+			),
 			expected: "protocol=https\nhost=github.com\npath=user/repo.git\n\n",
 		},
 		{
 			name: "with username",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https",
-				Host:     "github.com",
-				Username: "testuser",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET,
+				"https",
+				"github.com",
+				"",
+				"testuser",
+				"",
+			),
 			expected: "protocol=https\nhost=github.com\nusername=testuser\n\n",
 		},
 		{
 			name: "with password (for store)",
-			req: gitCredentialRequest{
-				Action:   "store",
-				Protocol: "https",
-				Host:     "github.com",
-				Username: "testuser",
-				Password: "secretpass",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_STORE,
+				"https",
+				"github.com",
+				"",
+				"testuser",
+				"secretpass",
+			),
 			expected: "protocol=https\nhost=github.com\nusername=testuser\npassword=secretpass\n\n",
 		},
 		{
 			name: "full request",
-			req: gitCredentialRequest{
-				Action:   "store",
-				Protocol: "https",
-				Host:     "github.com",
-				Path:     "user/repo.git",
-				Username: "testuser",
-				Password: "secretpass",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_STORE,
+				"https",
+				"github.com",
+				"user/repo.git",
+				"testuser",
+				"secretpass",
+			),
 			expected: "protocol=https\nhost=github.com\npath=user/repo.git\nusername=testuser\npassword=secretpass\n\n",
 		},
 		{
 			name: "strips newlines from host",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https",
-				Host:     "evil.com\nusername=victim\npassword=stolen",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET,
+				"https",
+				"evil.com\nusername=victim\npassword=stolen",
+				"",
+				"",
+				"",
+			),
 			expected: "protocol=https\nhost=evil.comusername=victimpassword=stolen\n\n",
 		},
 		{
 			name: "strips carriage returns",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https",
-				Host:     "evil.com\r\nusername=victim",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET,
+				"https",
+				"evil.com\r\nusername=victim",
+				"",
+				"",
+				"",
+			),
 			expected: "protocol=https\nhost=evil.comusername=victim\n\n",
 		},
 		{
 			name: "strips null bytes",
-			req: gitCredentialRequest{
-				Action:   "get",
-				Protocol: "https\x00injected",
-				Host:     "github.com",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET,
+				"https\x00injected",
+				"github.com",
+				"",
+				"",
+				"",
+			),
 			expected: "protocol=httpsinjected\nhost=github.com\n\n",
 		},
 		{
 			name: "strips newlines from all fields",
-			req: gitCredentialRequest{
-				Action:   "store",
-				Protocol: "https\nhost=evil.com",
-				Host:     "github.com\npassword=stolen",
-				Path:     "repo\nusername=hacker",
-				Username: "user\npassword=pwned",
-				Password: "pass\nhost=attacker.com",
-			},
+			req: gitReq(
+				agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_STORE,
+				"https\nhost=evil.com",
+				"github.com\npassword=stolen",
+				"repo\nusername=hacker",
+				"user\npassword=pwned",
+				"pass\nhost=attacker.com",
+			),
 			expected: "protocol=httpshost=evil.com\nhost=github.compassword=stolen\npath=repousername=hacker\nusername=userpassword=pwned\npassword=passhost=attacker.com\n\n",
 		},
 	}

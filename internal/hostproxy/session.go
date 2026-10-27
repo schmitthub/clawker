@@ -1,5 +1,3 @@
-// Package hostproxy provides a host-side HTTP server that containers can call
-// to perform actions on the host, such as opening URLs in the browser.
 package hostproxy
 
 import (

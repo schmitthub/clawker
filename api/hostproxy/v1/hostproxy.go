@@ -11,6 +11,11 @@ const ServiceName = "clawker.hostproxy.v1.HostProxyService"
 // auth interceptor.
 const ServicePrefix = "/" + ServiceName + "/"
 
+// AcceptedHeader is the response header key the CP sends when it accepts
+// a Connect stream. A rejected stream ends trailers-only, without it, so
+// the host proxy reads the header to know the CP will send it requests.
+const AcceptedHeader = "clawker-hostproxy-accepted"
+
 // HostProxyScope is the OAuth2 scope type for HostProxyService RPCs. It is
 // a distinct named type so the compiler rejects a scope of another service
 // in HostProxyMethodScopes. Convert with string() at OAuth2/Hydra

@@ -46,6 +46,7 @@ type OryStack struct {
 	subMgr     *subprocess.SubprocessManager
 	caCertPath string
 	jwkPath    string
+	hpJWKPath  string // host proxy public JWK (its own Hydra client)
 	log        *logger.Logger
 	caCertPool *x509.CertPool
 	caTLS      *tls.Config
@@ -57,7 +58,12 @@ type OryStack struct {
 // any subprocess — call Start for that.
 //
 // Returns an error (never panics) if the CA cert cannot be read or parsed.
-func NewOryStack(cfg config.Config, subMgr *subprocess.SubprocessManager, caCertPath, jwkPath string, log *logger.Logger) (*OryStack, error) {
+func NewOryStack(
+	cfg config.Config,
+	subMgr *subprocess.SubprocessManager,
+	caCertPath, jwkPath, hostProxyJWKPath string,
+	log *logger.Logger,
+) (*OryStack, error) {
 	// Build CLI CA cert pool — used for health checks, Hydra introspection,
 	// client registration, and mTLS client cert verification.
 	caCertPEM, err := os.ReadFile(caCertPath)
@@ -79,6 +85,7 @@ func NewOryStack(cfg config.Config, subMgr *subprocess.SubprocessManager, caCert
 		subMgr:     subMgr,
 		caCertPath: caCertPath,
 		jwkPath:    jwkPath,
+		hpJWKPath:  hostProxyJWKPath,
 		log:        log,
 		caCertPool: caCertPool,
 		caTLS:      caTLS,
@@ -129,14 +136,24 @@ func (s *OryStack) Start(ctx context.Context) error {
 	}
 
 	if err := s.subMgr.WaitHealthy(ctx, "kratos", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: s.caTLS,
+		URL: fmt.Sprintf(
+			"https://"+consts.Localhost+":%d/health/alive",
+			cp.KratosPublicPort,
+		),
+		Interval: healthCheckInterval,
+		Timeout:  healthCheckTimeout,
+		TLS:      s.caTLS,
 	}); err != nil {
 		return fmt.Errorf("kratos health: %w", err)
 	}
 	if err := s.subMgr.WaitHealthy(ctx, "hydra", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: s.caTLS,
+		URL: fmt.Sprintf(
+			"https://"+consts.Localhost+":%d/health/alive",
+			cp.HydraPublicPort,
+		),
+		Interval: healthCheckInterval,
+		Timeout:  healthCheckTimeout,
+		TLS:      s.caTLS,
 	}); err != nil {
 		return fmt.Errorf("hydra health: %w", err)
 	}
@@ -145,8 +162,13 @@ func (s *OryStack) Start(ctx context.Context) error {
 	// but client registration goes to the admin port — a separate listener
 	// that may take longer under resource pressure. Wait for it explicitly.
 	if err := s.subMgr.WaitHealthy(ctx, "hydra", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: s.caTLS,
+		URL: fmt.Sprintf(
+			"https://"+consts.Localhost+":%d/health/alive",
+			cp.HydraAdminPort,
+		),
+		Interval: healthCheckInterval,
+		Timeout:  healthCheckTimeout,
+		TLS:      s.caTLS,
 	}); err != nil {
 		return fmt.Errorf("hydra admin health: %w", err)
 	}
@@ -166,7 +188,14 @@ func (s *OryStack) Start(ctx context.Context) error {
 	if err := RegisterAgentClient(ctx, hydraAdminURL, jwkData, s.caTLS); err != nil {
 		return fmt.Errorf("register agent client: %w", err)
 	}
-	s.log.Info().Msg("CLI + agent clients registered with Hydra")
+	hpJWKData, err := os.ReadFile(s.hpJWKPath)
+	if err != nil {
+		return fmt.Errorf("read host proxy JWK %s: %w", s.hpJWKPath, err)
+	}
+	if regErr := RegisterHostProxyClient(ctx, hydraAdminURL, hpJWKData, s.caTLS); regErr != nil {
+		return fmt.Errorf("register host proxy client: %w", regErr)
+	}
+	s.log.Info().Msg("CLI, agent and host proxy clients registered with Hydra")
 
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
 	// gRPC (CLI + agents) bypasses Oathkeeper entirely — it uses
