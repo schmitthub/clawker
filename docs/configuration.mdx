@@ -529,12 +529,9 @@ monitoring:
     # Tag telemetry with session ID to correlate events across a single run
     include_session_id: <boolean>  # default: true | required: false
 host_proxy:
-  manager:
-    # Local port the host proxy listens on (change if 18374 conflicts)
-    port: <integer>  # default: 18374 | required: false
+  # Local port the host proxy listens on (change if 18374 conflicts)
+  port: <integer>  # default: 18374 | required: false
   daemon:
-    # Local port the proxy daemon binds to
-    port: <integer>  # default: 18374 | required: false
     # How often to check if containers still need the proxy
     poll_interval: <duration>  # default: 30s | required: false
     # How long to keep the proxy alive after the last container stops
@@ -625,10 +622,6 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 ### host_proxy
 
-
-
-#### manager
-
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `port` | integer | `18374` | Local port the host proxy listens on (change if 18374 conflicts) |
@@ -638,7 +631,6 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `port` | integer | `18374` | Local port the proxy daemon binds to |
 | `poll_interval` | duration | `30s` | How often to check if containers still need the proxy |
 | `grace_period` | duration | `60s` | How long to keep the proxy alive after the last container stops |
 | `max_consecutive_errs` | integer | `10` | Restart the proxy daemon after this many consecutive failures |

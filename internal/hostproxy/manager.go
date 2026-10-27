@@ -55,9 +55,9 @@ type Manager struct {
 }
 
 // NewManager creates a new host proxy manager.
-// Port is read and validated from cfg.HostProxyConfig().Manager.Port at construction time.
+// Port is read and validated from cfg.HostProxyConfig().Port at construction time.
 func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error) {
-	port := cfg.HostProxyConfig().Manager.Port
+	port := cfg.HostProxyConfig().Port
 	if err := validatePort(port, "host proxy manager"); err != nil {
 		return nil, err
 	}
