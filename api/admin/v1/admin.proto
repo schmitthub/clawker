@@ -192,14 +192,8 @@ message FirewallRemoveResult {}
 
 message FirewallEnableRequest {
   string container_id = 1;
-  // host_proxy is the enrolling project's security.enable_host_proxy value.
-  // The CP persists it per container and replays it on restart; the eBPF
-  // host-proxy bypass is installed only when it is true. The CP never reads
-  // project config itself: clawker.yaml lives in the host project tree.
-  // Container start sets it. Callers that re-enable an already enrolled
-  // container (firewall enable, bypass stop and expiry) leave it unset, and
-  // the CP replays the stored record; no record means no bypass.
-  optional bool host_proxy = 2;
+  reserved 2;
+  reserved "host_proxy";
 }
 message FirewallEnableResult {}
 

@@ -66,8 +66,8 @@ Factories in tests are `&cmdutil.Factory{...}` struct literals — never `factor
 | `refresh` | `FirewallAddRules` | config-driven sibling of `add` |
 | `prune` | `FirewallRemoveRule{all:true}` then `FirewallAddRules` | `all` mutually exclusive with dst/proto/port/path (InvalidArgument); empty store → NOT_FOUND, re-sync still runs |
 | `reload` | `FirewallReload` | bringup deadline |
-| `enable`/`disable` | `FirewallEnable`/`FirewallDisable` | `--agent` → container ref; `enable` sends the project's `enable_host_proxy` via `adminv1.NewFirewallEnableRequest`, so it also applies a `clawker.yaml` edit to a running container |
-| `bypass` | `FirewallBypass` (+ `FirewallEnable` on `--stop`/Ctrl+C/expiry, each sending the project's `enable_host_proxy`) | dead-man timer CP-side |
+| `enable`/`disable` | `FirewallEnable`/`FirewallDisable` | `--agent` → container ref |
+| `bypass` | `FirewallBypass` (+ `FirewallEnable` on `--stop`/Ctrl+C/expiry) | dead-man timer CP-side |
 | `rotate-ca` | `FirewallRotateCA` | quick deadline |
 
 The hidden `serve` subcommand is intentionally absent — the firewall has no host-side daemon; lifecycle is owned by the CP container (`firewall_test.go` pins this).

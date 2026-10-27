@@ -22,16 +22,14 @@ import (
 // agent, so a missing or malformed CP IP is an error, not a zero field.
 func TestNewContainerConfig_ControlPlaneFields(t *testing.T) {
 	params := ContainerConfigParams{
-		EnvoyIP:       "172.20.0.200",
-		CoreDNSIP:     "172.20.0.201",
-		GatewayIP:     "172.20.0.1",
-		CIDR:          "172.20.0.0/16",
-		HostProxyIP:   "",
-		HostProxyPort: 0,
-		EgressPort:    10000,
-		CPIP:          "172.20.0.202",
-		CPAgentPort:   7444,
-		CPHydraPort:   4444,
+		EnvoyIP:     "172.20.0.200",
+		CoreDNSIP:   "172.20.0.201",
+		GatewayIP:   "172.20.0.1",
+		CIDR:        "172.20.0.0/16",
+		EgressPort:  10000,
+		CPIP:        "172.20.0.202",
+		CPAgentPort: 7444,
+		CPHydraPort: 4444,
 	}
 	cfg, err := NewContainerConfig(params)
 	if err != nil {
@@ -42,9 +40,6 @@ func TestNewContainerConfig_ControlPlaneFields(t *testing.T) {
 	}
 	if cfg.CpAgentPort != 7444 || cfg.CpHydraPort != 4444 {
 		t.Errorf("CP ports = %d/%d, want 7444/4444", cfg.CpAgentPort, cfg.CpHydraPort)
-	}
-	if cfg.HostProxyIp != 0 || cfg.HostProxyPort != 0 {
-		t.Errorf("host proxy must stay zero when the lane is off: %d/%d", cfg.HostProxyIp, cfg.HostProxyPort)
 	}
 
 	params.CPIP = ""
@@ -62,6 +57,17 @@ func TestEgressEvent_SizeMatchesABI(t *testing.T) {
 	t.Parallel()
 	if got := binary.Size(EgressEvent{}); got != 48 {
 		t.Fatalf("EgressEvent on-wire size = %d; want 48 — C struct egress_event has drifted from the Go side", got)
+	}
+}
+
+// TestContainerConfig_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct container_config) == 32). A size drift makes
+// Install write a misaligned container_map value.
+func TestContainerConfig_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	if got := binary.Size(new(clawkerContainerConfig)); got != 32 {
+		t.Fatalf("container_config on-wire size = %d; want 32 — C struct container_config has drifted from the Go side",
+			got)
 	}
 }
 
