@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/netip"
 	"testing"
 
@@ -37,10 +38,11 @@ type inspectFixture struct {
 	project     string
 	agentName   string
 	ip          string
-	networksNil bool // true → NetworkSettings == nil entirely
-	configNil   bool // true → Config == nil (and therefore Labels nil)
-	omitProject bool // true → drop dev.clawker.project label (empty-project agent)
-	omitAgent   bool // true → drop dev.clawker.agent label (malformed)
+	networksNil bool              // true → NetworkSettings == nil entirely
+	configNil   bool              // true → Config == nil (and therefore Labels nil)
+	omitProject bool              // true → drop dev.clawker.project label (empty-project agent)
+	omitAgent   bool              // true → drop dev.clawker.agent label (malformed)
+	labels      map[string]string // extra labels, e.g. host-action grants
 }
 
 func makeInspect(f inspectFixture) mobyclient.ContainerInspectResult {
@@ -53,6 +55,7 @@ func makeInspect(f inspectFixture) mobyclient.ContainerInspectResult {
 		if !f.omitAgent {
 			labels[consts.LabelAgent] = f.agentName
 		}
+		maps.Copy(labels, f.labels)
 		resp.Config = &mobycontainer.Config{Labels: labels}
 	}
 	if !f.networksNil {
@@ -352,4 +355,48 @@ func TestContainerByPeerIP_InspectError_WithOtherCleanNoMatch(t *testing.T) {
 // Compile-time guard: mobyclient.APIClient must satisfy peerLookupAPI.
 // Catches a moby signature drift before it becomes a runtime wiring
 // failure in NewMobyPeerLookup.
-var _ peerLookupAPI = (mobyclient.APIClient)(nil)
+var _ peerLookupAPI = mobyclient.APIClient(nil)
+
+// TestContainerByPeerIP_HostActionGrants pins the grant labels the CP
+// authorizes host actions from: only a value that parses as true grants
+// the action; absent, false and junk values are no grant.
+func TestContainerByPeerIP_HostActionGrants(t *testing.T) {
+	cases := []struct {
+		name          string
+		labels        map[string]string
+		wantHostProxy bool
+		wantGitHTTPS  bool
+	}{
+		{"absent", nil, false, false},
+		{"both true", map[string]string{consts.LabelHostProxy: "true", consts.LabelGitHTTPS: "true"}, true, true},
+		{
+			"host proxy only",
+			map[string]string{consts.LabelHostProxy: "true", consts.LabelGitHTTPS: "false"},
+			true, false,
+		},
+		{"junk value", map[string]string{consts.LabelHostProxy: "yes", consts.LabelGitHTTPS: ""}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := inspectFixture{
+				containerID: "abc", project: "proj", agentName: "agent-a", ip: "10.0.0.5",
+				networksNil: false, configNil: false, omitProject: false, omitAgent: false,
+				labels: tc.labels,
+			}
+			api := &fakePeerLookupAPI{
+				listFn: func(context.Context, mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+					summary := new(mobycontainer.Summary)
+					summary.ID = fx.containerID
+					return mobyclient.ContainerListResult{Items: []mobycontainer.Summary{*summary}}, nil
+				},
+				inspectFn: func(context.Context, string, mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+					return makeInspect(fx), nil
+				},
+			}
+			got, err := newTestLookup(api).LookupByIP(context.Background(), netip.MustParseAddr(fx.ip))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantHostProxy, got.HostProxy)
+			assert.Equal(t, tc.wantGitHTTPS, got.GitHTTPS)
+		})
+	}
+}

@@ -68,6 +68,15 @@ const (
 	// against the bare mount-point directory would hand the container an
 	// empty workspace.
 	LabelIDMapRoots = LabelPrefix + "idmap.roots"
+
+	// LabelHostProxy and LabelGitHTTPS are the container's host-action
+	// grants, stamped by the CLI at create from security.enable_host_proxy
+	// and security.git_credentials.forward_https. The CP reads them to
+	// authorize the AgentService host actions. The value is a bool string;
+	// anything that does not parse as true is no grant. A config change
+	// takes effect at the next create.
+	LabelHostProxy = LabelPrefix + "host_proxy"
+	LabelGitHTTPS  = LabelPrefix + "git_https"
 )
 
 // Infrastructure volume-name purpose suffixes. Volume names compose as
