@@ -35,6 +35,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
+	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/controlplane/server"
@@ -977,7 +978,8 @@ func buildEnforcement(
 	)
 	if err != nil {
 		return enforcement{}, cleanup, fmt.Errorf(
-			"firewall stack: %w", err,
+			"firewall stack: %w",
+			err,
 		)
 	}
 
@@ -1151,6 +1153,7 @@ type grpcStackDeps struct {
 	enrollments       fwhandler.EnrollmentStore
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
+	otelGateway       agent.OtelForwarder
 	agentPeerLookup   *agent.MobyPeerLookup
 	lister            *agent.ContainerLister
 	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
@@ -1168,6 +1171,76 @@ type grpcStackDeps struct {
 // agent listener up only when the IdentityInterceptor resolves), then starts
 // serving on the buffered serveFailed channel. It returns those handles plus a
 // belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
+// buildOtelGateway constructs the agent telemetry gateway the ExportTelemetry RPC
+// forwards through: one mTLS client connection to the collector's
+// otlp/agents receiver at host.docker.internal:<OtelAgentIngestPort>,
+// presenting the same infra leaf the CP's own log bridge uses. The dial
+// is lazy, so a monitoring stack that is not running never delays boot.
+//
+// Degrade contract (§3.4): a missing issuer or a constructor failure
+// returns a true nil interface and logs event=otel_gateway_unavailable;
+// ExportTelemetry answers Unavailable and the clawkerd relay retries. The returned
+// cleanup is always callable.
+//
+//nolint:ireturn // returns the OtelForwarder interface by design — nil-tolerant degrade contract
+func buildOtelGateway(
+	cfg config.Config,
+	otelCertsSvc *otelcerts.Service,
+	log *logger.Logger,
+) (agent.OtelForwarder, func()) {
+	noop := func() {}
+	if otelCertsSvc == nil {
+		log.Error().
+			Str("event", "otel_gateway_unavailable").
+			Str("component", "otel-gateway").
+			Msg("no infra leaf issuer — agent telemetry gateway disabled; AgentService.ExportTelemetry answers Unavailable, Register and every other surface continue")
+		return nil, noop
+	}
+	tlsCfg, err := otelCertsSvc.LoadTLSConfig("cp")
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "otel_gateway_unavailable").
+			Str("component", "otel-gateway").
+			Msg("infra client TLS config failed — agent telemetry gateway disabled; AgentService.ExportTelemetry answers Unavailable")
+		return nil, noop
+	}
+	endpoint := net.JoinHostPort(
+		consts.DockerHostInternal,
+		strconv.Itoa(int(cfg.MonitoringConfig().OtelAgentIngestPort)),
+	)
+	gw, err := otelgateway.New(otelgateway.Options{
+		Endpoint:       endpoint,
+		TLSConfig:      tlsCfg,
+		Log:            log.With("component", "otel-gateway"),
+		ForwardTimeout: 0,
+		TripThreshold:  0,
+		ProbeInterval:  0,
+		MaxMessages:    0,
+		MaxConcurrent:  0,
+	})
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "otel_gateway_unavailable").
+			Str("component", "otel-gateway").
+			Str("endpoint", endpoint).
+			Msg("gateway construction failed — agent telemetry gateway disabled; AgentService.ExportTelemetry answers Unavailable")
+		return nil, noop
+	}
+	log.Info().
+		Str("event", "otel_gateway_ready").
+		Str("component", "otel-gateway").
+		Str("endpoint", endpoint).
+		Msg("agent telemetry gateway ready; collector connection dials on first ExportTelemetry")
+	cleanup := func() {
+		if cerr := gw.Close(); cerr != nil {
+			log.Warn().Err(cerr).Str("component", "otel-gateway").Msg("gateway close failed")
+		}
+	}
+	// Success arm only: boxing a typed-nil *Gateway would pass the
+	// handler's nil check and panic on dispatch.
+	return gw, cleanup
+}
+
 func buildGRPCStack(d grpcStackDeps) (
 	actionQueue *fwhandler.ActionQueue,
 	handler *fwhandler.Handler,
@@ -1209,6 +1282,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Recovery:       d.orchestrator,
 		Ready:          d.orchestrator.IsReady,
 		PeerLookup:     d.agentPeerLookup,
+		OtelGateway:    d.otelGateway,
 		ServerCertPath: d.serverCertPath,
 		ServerKeyPath:  d.serverKeyPath,
 		CACertPool:     d.caCertPool,
@@ -1641,6 +1715,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 
+	// agent telemetry gateway (AgentService.ExportTelemetry → collector agent
+	// receiver). Degrades to nil with event=otel_gateway_unavailable; the
+	// deferred close runs after the gRPC servers stop (LIFO).
+	otelGateway, gatewayCleanup := buildOtelGateway(cfg, otelCertsSvc, log)
+	defer gatewayCleanup()
+
 	// firewall handler + gRPC servers (admin + agent listeners) — see
 	// buildGRPCStack. The ActionQueue Close is drain step 1 (injected via
 	// HandlerDeps); grpcCleanup is the belt-and-braces close for non-drain
@@ -1656,6 +1736,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		enrollments:       enf.enrollments,
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
+		otelGateway:       otelGateway,
 		agentPeerLookup:   agentPeerLookup,
 		lister:            lister,
 		enrolledTopic:     enrolledTopic,

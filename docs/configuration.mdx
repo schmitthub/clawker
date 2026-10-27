@@ -505,6 +505,8 @@ monitoring:
   otel_grpc_port: <integer>  # default: 4317 | required: false
   # Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS)
   otel_infra_port: <integer>  # default: 4319 | required: false
+  # Port the OTel collector listens on for agent telemetry forwarded by the control plane
+  otel_agent_ingest_port: <integer>  # default: 4320 | required: false
   # Host port for the OpenSearch REST API (logs + traces backend)
   opensearch_port: <integer>  # default: 9200 | required: false
   # Host port for the OpenSearch Dashboards UI
@@ -606,6 +608,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `otel_collector_host` | string | `localhost` | Hostname for reaching the collector from the host |
 | `otel_grpc_port` | integer | `4317` | Host port for the OTEL gRPC receiver |
 | `otel_infra_port` | integer | `4319` | Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS) |
+| `otel_agent_ingest_port` | integer | `4320` | Port the OTel collector listens on for agent telemetry forwarded by the control plane |
 | `opensearch_port` | integer | `9200` | Host port for the OpenSearch REST API (logs + traces backend) |
 | `opensearch_dashboards_port` | integer | `5601` | Host port for the OpenSearch Dashboards UI |
 | `opensearch_heap_mb` | integer | `512` | JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads |

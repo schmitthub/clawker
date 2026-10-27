@@ -40,7 +40,7 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
-| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
+| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC), 4320 (control-plane gateway) | Receives telemetry from agents and routes it to backends. The control plane forwards agent telemetry on its own receiver with `project`, `agent`, and `container_id` set from the agent's verified identity (`ingest_source=cp_gateway`) |
 | **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawkercp` (clawkercp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs), `clawker-ebpf-egress` (eBPF per-decision egress events) log indices, plus the `traces`/`clawker` (SS4O) trace index |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
