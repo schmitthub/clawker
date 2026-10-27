@@ -76,6 +76,21 @@ docker.internal {
     forward . 127.0.0.11
 }
 
+clawker-controlplane {
+    otel
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    acl {
+        allow type A
+        filter
+    }
+    template IN ANY . {
+        match "[.]clawker-controlplane[.]$"
+        rcode NXDOMAIN
+        fallthrough
+    }
+    forward . 127.0.0.11
+}
+
 . {
     otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"

@@ -127,6 +127,7 @@ Highlights (not exhaustive — see the file):
 | `TestFirewall_PathRules*` / `_TLSPathRules*` | HTTP and TLS MITM path rule enforcement |
 | `TestFirewall_WildcardSANCerts` | `.clawker.dev` admits three project-owned Worker Custom Domains with deep hostnames; one request per host verifies TLS, reaches upstream, and returns HTTP 200 |
 | `TestFirewall_SSHTCPMapping` / `_HTTPDomainDetection` / `_ICMPBlocked` | Non-TLS protocol routing and blocking |
+| `TestFirewall_CPNameResolves` | An enrolled agent resolves `clawker-controlplane` to the CP static IP; a TXT query gets an empty answer and a subdomain NXDOMAIN |
 | `TestFirewall_Identity*` | Route identities stable across rule churn and CP restart |
 | `TestFirewall_HostProxyReachable` / `_HostProxyPerContainer` / `_IntraSubnetAllowlist` / `_FirewallDisabled` | Host-proxy carve-out; the carve-out follows each project's `enable_host_proxy` and survives a CP restart; in-subnet allowlist (another container denied on TCP and UDP, CP agent + Hydra ports open, CP health port denied, DNS intact); disabled-firewall behavior (CP still boots — CP ≠ firewall) |
 
