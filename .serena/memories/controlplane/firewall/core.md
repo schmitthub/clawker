@@ -4,6 +4,7 @@
 - `controlplane/firewall/ebpf/` owns enforcement. `internal/dnsbpf/` is the CoreDNS plugin; `cmd/coredns-clawker/` builds the custom DNS binary.
 - `internal/bundler.EgressRules` composes harness-required rules with project rules. CLI callers send them through AdminService.
 - Mutations pass through the firewall action queue. Do not bypass its serialized reconciliation.
+- The host-proxy eBPF bypass is per container. The CLI sends the project's `enable_host_proxy` on `FirewallEnable`; the CP persists it in the `EnrollmentStore` (`enrollments.yaml`, beside the identity table) and replays it on restart. No record means no bypass. CP's own config never decides it: `clawker.yaml` is not visible to the CP. Every enrollment write (the enable write and the destroy evict) runs on the ActionQueue with the install it decides; the store carries no lock.
 
 ## Rules and identity
 

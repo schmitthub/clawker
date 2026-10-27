@@ -594,8 +594,16 @@ func (*FirewallRemoveResult) Descriptor() ([]byte, []int) {
 }
 
 type FirewallEnableRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// host_proxy is the enrolling project's security.enable_host_proxy value.
+	// The CP persists it per container and replays it on restart; the eBPF
+	// host-proxy bypass is installed only when it is true. The CP never reads
+	// project config itself: clawker.yaml lives in the host project tree.
+	// Container start sets it. Callers that re-enable an already enrolled
+	// container (firewall enable, bypass stop and expiry) leave it unset, and
+	// the CP replays the stored record; no record means no bypass.
+	HostProxy     *bool `protobuf:"varint,2,opt,name=host_proxy,json=hostProxy,proto3,oneof" json:"host_proxy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -635,6 +643,13 @@ func (x *FirewallEnableRequest) GetContainerId() string {
 		return x.ContainerId
 	}
 	return ""
+}
+
+func (x *FirewallEnableRequest) GetHostProxy() bool {
+	if x != nil && x.HostProxy != nil {
+		return *x.HostProxy
+	}
+	return false
 }
 
 type FirewallEnableResult struct {
@@ -2030,9 +2045,12 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"network_id\x18\x03 \x01(\tR\tnetworkId\"\x17\n" +
 	"\x15FirewallRemoveRequest\"\x16\n" +
-	"\x14FirewallRemoveResult\":\n" +
+	"\x14FirewallRemoveResult\"m\n" +
 	"\x15FirewallEnableRequest\x12!\n" +
-	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\"\x16\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12\"\n" +
+	"\n" +
+	"host_proxy\x18\x02 \x01(\bH\x00R\thostProxy\x88\x01\x01B\r\n" +
+	"\v_host_proxy\"\x16\n" +
 	"\x14FirewallEnableResult\";\n" +
 	"\x16FirewallDisableRequest\x12!\n" +
 	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\"\x17\n" +
@@ -2244,6 +2262,7 @@ func file_admin_v1_admin_proto_init() {
 	if File_admin_v1_admin_proto != nil {
 		return
 	}
+	file_admin_v1_admin_proto_msgTypes[7].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

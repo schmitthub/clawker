@@ -888,6 +888,18 @@ func buildIdentityAllocator(cfg config.Config) (*fwhandler.IdentityAllocator, er
 	return alloc, nil
 }
 
+// enforcement holds the handles buildEnforcement constructs.
+type enforcement struct {
+	dockerCli         *docker.Client
+	containerResolver fwhandler.ContainerResolver
+	rulesStore        fwhandler.EgressRulesStore
+	caStore           *fwhandler.CAStore
+	stack             *fwhandler.Stack
+	ebpfMgr           *ebpf.Manager
+	identityAlloc     *fwhandler.IdentityAllocator
+	enrollments       fwhandler.EnrollmentStore
+}
+
 // buildEnforcement builds the Docker client, cgroup-driver detection +
 // container resolver, the firewall rules store + Stack, and the eBPF load +
 // defensive stale-bypass cleanup. The eBPF Load and CleanupStaleBypass are
@@ -895,75 +907,76 @@ func buildIdentityAllocator(cfg config.Config) (*fwhandler.IdentityAllocator, er
 // BEFORE SetReady (exit code 1) WITHOUT an eBPF flush, so agents enrolled by a
 // previous CP stay fail-closed against pinned state.
 //
-// The returned cleanup closes the Docker client and the eBPF manager; run()
-// joins its error into retErr so the on-failure restart policy investigates a
-// partial teardown rather than silently blessing it.
-//
-//nolint:nonamedreturns // 8-value return with per-arm partial results — the names document which handles are live on each failure arm
+// The returned cleanup is non-nil on every arm, failure included: it closes the
+// Docker client and the eBPF manager that exist so far. run() joins its error
+// into retErr so the on-failure restart policy investigates a partial teardown
+// rather than silently blessing it. On failure the enforcement value is empty.
 func buildEnforcement(
 	ctx context.Context,
 	cfg config.Config,
 	log *logger.Logger,
 	otelCerts fwhandler.OtelCertProvisioner,
 	sdsCerts fwhandler.SDSCertProvisioner,
-) (
-	dockerCli *docker.Client,
-	containerResolver fwhandler.ContainerResolver,
-	rulesStore fwhandler.EgressRulesStore,
-	caStore *fwhandler.CAStore,
-	stack *fwhandler.Stack,
-	ebpfMgr *ebpf.Manager,
-	identityAlloc *fwhandler.IdentityAllocator,
-	cleanup func() error,
-	err error,
-) {
+) (enforcement, func() error, error) {
 	// Docker client serves the container resolver, the firewall stack (Envoy +
 	// CoreDNS siblings over DooD), and the AgentWatcher poll loop. WithEnvHost:
 	// the socket is bind-mounted at the conventional path and DOCKER_HOST is
 	// pinned on this container; the host-side resolution chain (settings,
 	// docker context) names the wrong side of the mount in here.
-	dockerCli, err = docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
+	dockerCli, err := docker.NewClient(ctx, cfg, log, docker.WithEnvHost())
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+		return enforcement{}, func() error { return nil }, fmt.Errorf("docker client: %w", err)
 	}
-	cleanup = func() error { dockerCli.Close(); return nil }
+	cleanup := dockerCli.Close
 
 	// Cgroup driver queried once and cached on the resolver. BPF cgroup
 	// paths resolve inside it: conventional rootful layout first, one-time
 	// hierarchy discovery (cached parent) for rootless daemons.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return dockerCli, nil, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+		return enforcement{}, cleanup, fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
-	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
+	containerResolver := fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
 
 	// Firewall stack handle. Host bootstrap owns EnsureRunning; the drain path
 	// owns Stop. Degraded mode (nil otelCerts) was logged as
 	// event=otelcerts_unavailable in bootLogging.
-	rulesStore, err = fwhandler.NewRulesStore(cfg)
+	rulesStore, err := fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return dockerCli, containerResolver, nil, nil, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+		return enforcement{}, cleanup, fmt.Errorf("rules store: %w", err)
 	}
 	// Domain leaves are read by the Envoy sibling, which the stack runs as
 	// consts.EnvoyUID — the same reader identity sdscerts provisions for.
-	caStore, err = fwhandler.NewCAStore(
+	caStore, err := fwhandler.NewCAStore(
 		consts.FirewallCertSubdir,
 		sdscerts.FileOwner{UID: consts.EnvoyUID, GID: consts.EnvoyGID},
 	)
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, nil, nil, nil, nil, cleanup, fmt.Errorf("CA store: %w", err)
+		return enforcement{}, cleanup, fmt.Errorf(
+			"CA store: %w", err,
+		)
 	}
 	// Sticky route-identity allocator (pre-SetReady startup gate on corruption).
 	//nolint:contextcheck // the identity table lives in internal/storage, whose lock/write API carries no context
-	if identityAlloc, err = buildIdentityAllocator(cfg); err != nil {
-		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, nil, cleanup, err
+	identityAlloc, err := buildIdentityAllocator(cfg)
+	if err != nil {
+		return enforcement{}, cleanup, err
 	}
-	stack, err = fwhandler.NewStack(
+	// Per-container enrollment records (host-proxy bypass pushed by the CLI
+	// at FirewallEnable, replayed by the re-enrollment sweep). Beside the
+	// identity table; a table that no longer decodes is a startup gate.
+	enrollments, err := fwhandler.NewEnrollmentStore(cfg)
+	if err != nil {
+		return enforcement{}, cleanup, fmt.Errorf(
+			"enrollment store: %w", err,
+		)
+	}
+	stack, err := fwhandler.NewStack(
 		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
 	)
 	if err != nil {
-		return dockerCli, containerResolver, rulesStore, caStore, nil, nil, identityAlloc, cleanup, fmt.Errorf(
+		return enforcement{}, cleanup, fmt.Errorf(
 			"firewall stack: %w", err,
 		)
 	}
@@ -971,11 +984,19 @@ func buildEnforcement(
 	// Construction only: the manager exists but loads nothing here. BPF
 	// pins are created by the ebpfLoadFlow startup step, after the admin
 	// listener is serving — never as a construction side effect. Closing
-	// an unloaded manager is a no-op, so the joined cleanup is installed
-	// now and covers every arm.
-	ebpfMgr = ebpf.NewManager(log)
-	cleanup = enforcementCleanup(dockerCli, ebpfMgr, log)
-	return dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, cleanup, nil
+	// an unloaded manager is a no-op, so the joined cleanup returned here
+	// is safe on every later failure arm of run().
+	ebpfMgr := ebpf.NewManager(log)
+	return enforcement{
+		dockerCli:         dockerCli,
+		containerResolver: containerResolver,
+		rulesStore:        rulesStore,
+		caStore:           caStore,
+		stack:             stack,
+		ebpfMgr:           ebpfMgr,
+		identityAlloc:     identityAlloc,
+		enrollments:       enrollments,
+	}, enforcementCleanup(dockerCli, ebpfMgr, log), nil
 }
 
 // bpffsHandoffSocketPath places the handoff socket in the firewall data
@@ -1127,6 +1148,7 @@ type grpcStackDeps struct {
 	rulesStore        fwhandler.EgressRulesStore
 	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
+	enrollments       fwhandler.EnrollmentStore
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	agentPeerLookup   *agent.MobyPeerLookup
@@ -1174,6 +1196,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Queue:         actionQueue,
 		EnrolledTopic: d.enrolledTopic,
 		Identity:      d.identityAlloc,
+		Enrollments:   d.enrollments,
 		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
 	})
 	if err != nil {
@@ -1575,7 +1598,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		sdsCerts = sdsSvc
 	}
 
-	dockerCli, containerResolver, rulesStore, caStore, stack, ebpfMgr, identityAlloc, enforcementCleanup, err := buildEnforcement(
+	enf, enforcementCleanup, err := buildEnforcement(
 		signalCtx,
 		cfg,
 		log,
@@ -1611,7 +1634,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// agent registry (sqlite) + peer lookup + lister + worldview
 	// Repository with its two subscriptions wired — see buildAgentInfra.
-	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(log, dockerCli, cfg, agentTopic, dockerTopic)
+	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(
+		log, enf.dockerCli, cfg, agentTopic, dockerTopic,
+	)
 	if err != nil {
 		return err
 	}
@@ -1623,12 +1648,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	actionQueue, handler, grpcStack, serveFailed, grpcCleanup, err := buildGRPCStack(grpcStackDeps{
 		log:               log,
 		cfg:               cfg,
-		ebpfMgr:           ebpfMgr,
-		stack:             stack,
-		rulesStore:        rulesStore,
-		caStore:           caStore,
-		identityAlloc:     identityAlloc,
-		containerResolver: containerResolver,
+		ebpfMgr:           enf.ebpfMgr,
+		stack:             enf.stack,
+		rulesStore:        enf.rulesStore,
+		caStore:           enf.caStore,
+		identityAlloc:     enf.identityAlloc,
+		enrollments:       enf.enrollments,
+		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		agentPeerLookup:   agentPeerLookup,
 		lister:            lister,
@@ -1644,6 +1670,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 	defer grpcCleanup()
+
+	// A destroyed container's enrollment record is dropped on the same
+	// docker event the agent registry evicts on. The removal runs on the
+	// handler's ActionQueue, so the subscription waits for the handler; the
+	// docker watcher starts later, so no destroy event is missed.
+	handler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic)
 
 	// The admin listener socket is already bound, so the /healthz grpc-admin
 	// probe's dial would succeed from here on regardless of whether anything
@@ -1683,7 +1715,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// publishes an SOS, serves the delegation handoff, and ends the boot
 	// with errBPFFSDelegated so a fresh CP starts against the delegated
 	// filesystem.
-	if err = orchestrator.ebpfLoadFlow(signalCtx, ebpfMgr, log); err != nil {
+	if err = orchestrator.ebpfLoadFlow(signalCtx, enf.ebpfMgr, log); err != nil {
 		return err
 	}
 
@@ -1691,7 +1723,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// firewall bringup gate so Envoy can fetch per-SNI secrets from its
 	// first boot. Degrades (event=sds_unavailable), never gates startup;
 	// stopSDS is nil on a degraded start.
-	stopSDS := startSDSServer(signalCtx, cfg, log, rulesStore, caStore, serverCertPath, serverKeyPath)
+	stopSDS := startSDSServer(signalCtx, cfg, log, enf.rulesStore, enf.caStore, serverCertPath, serverKeyPath)
 	if stopSDS != nil {
 		defer stopSDS()
 	}
@@ -1707,7 +1739,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// dockerevents feeder — the sole producer of DockerEvent (see
 	// startFeeder). feederCancel is the drain sequence's stop-before-topic-close
 	// handle; deferred here as belt-and-braces for non-drain exit.
-	feederCancel, feederDone, err := startFeeder(watcherCtx, cfg, log, dockerCli, dockerTopic, serveFailed)
+	feederCancel, feederDone, err := startFeeder(watcherCtx, cfg, log, enf.dockerCli, dockerTopic, serveFailed)
 	if err != nil {
 		return err
 	}
@@ -1723,10 +1755,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log:           log,
 		busLog:        busLog,
 		cfg:           cfg,
-		ebpfMgr:       ebpfMgr,
-		dockerCli:     dockerCli,
+		ebpfMgr:       enf.ebpfMgr,
+		dockerCli:     enf.dockerCli,
 		otelCertsSvc:  otelCertsSvc,
-		identityAlloc: identityAlloc,
+		identityAlloc: enf.identityAlloc,
 		handler:       handler,
 		agentRepo:     agentRepo,
 		dockerTopic:   dockerTopic,
@@ -1753,11 +1785,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		actionQueue:       actionQueue,
 		grpcStack:         grpcStack,
 		handler:           handler,
-		stack:             stack,
+		stack:             enf.stack,
 		netloggerSvc:      netloggerSvc,
 		netloggerProvider: netloggerProvider,
 		stopDNSGC:         stopDNSGC,
-		ebpfMgr:           ebpfMgr,
+		ebpfMgr:           enf.ebpfMgr,
 		feederCancel:      feederCancel,
 		feederDone:        feederDone,
 		dockerTopic:       dockerTopic,
@@ -1796,7 +1828,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// no-op until agent.Start succeeds, so deferring it is always safe.
 	agentCleanup := startAgentDialer(watcherCtx, agentDialerDeps{
 		log:         log,
-		dockerCli:   dockerCli,
+		dockerCli:   enf.dockerCli,
 		agentTopic:  agentTopic,
 		dockerTopic: dockerTopic,
 		agentReg:    agentReg,
