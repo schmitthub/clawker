@@ -12,7 +12,7 @@
 //
 // Environment variables:
 //
-//	CLAWKER_HOST_PROXY: Host proxy URL (default: http://host.docker.internal:18374)
+//	CLAWKER_HOST_PROXY: clawkerd host-action relay URL (http://127.0.0.1:18374)
 //	CALLBACK_SESSION: Session ID to poll for
 //	CALLBACK_PORT: Local port to forward callback to
 //	CB_FORWARDER_TIMEOUT: Timeout in seconds (default: 300)
@@ -40,7 +40,7 @@ type CallbackData struct {
 	Query      string            `json:"query"`
 	Headers    map[string]string `json:"headers,omitempty"`
 	Body       string            `json:"body,omitempty"`
-	ReceivedAt string            `json:"received_at"`
+	ReceivedAt string            `json:"receivedAt"`
 }
 
 // CallbackDataResponse matches the response from GET /callback/{session}/data.
@@ -107,8 +107,8 @@ func main() {
 		os.Exit(1)
 	}
 	if *proxyURL == "" {
-		// Default to host.docker.internal for Docker containers
-		*proxyURL = "http://host.docker.internal:18374"
+		// Default to the clawkerd host-action relay on the container loopback
+		*proxyURL = "http://127.0.0.1:18374"
 	}
 
 	// Ensure proxyURL doesn't have trailing slash

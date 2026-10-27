@@ -85,11 +85,6 @@ service AdminService {
   // FirewallSyncRoutes atomically replaces the global route_map.
   rpc FirewallSyncRoutes(FirewallSyncRoutesRequest) returns (FirewallSyncRoutesResult);
 
-  // FirewallResolveHostname performs a DNS lookup from inside the CP's
-  // network namespace — used to resolve host.docker.internal during
-  // per-container enroll.
-  rpc FirewallResolveHostname(FirewallResolveHostnameRequest) returns (FirewallResolveHostnameResult);
-
   // ListAgents returns a snapshot of every agent currently registered
   // with the control plane. Used by `clawker controlplane agents` and
   // diagnostic tooling. Read-only; uniform admin scope.
@@ -192,14 +187,8 @@ message FirewallRemoveResult {}
 
 message FirewallEnableRequest {
   string container_id = 1;
-  // host_proxy is the enrolling project's security.enable_host_proxy value.
-  // The CP persists it per container and replays it on restart; the eBPF
-  // host-proxy bypass is installed only when it is true. The CP never reads
-  // project config itself: clawker.yaml lives in the host project tree.
-  // Container start sets it. Callers that re-enable an already enrolled
-  // container (firewall enable, bypass stop and expiry) leave it unset, and
-  // the CP replays the stored record; no record means no bypass.
-  optional bool host_proxy = 2;
+  reserved 2;
+  reserved "host_proxy";
 }
 message FirewallEnableResult {}
 
@@ -329,13 +318,6 @@ message FirewallSyncRoutesRequest {
 }
 message FirewallSyncRoutesResult {
   uint32 applied = 1;
-}
-
-message FirewallResolveHostnameRequest {
-  string hostname = 1;
-}
-message FirewallResolveHostnameResult {
-  repeated string addresses = 1;
 }
 
 message ListAgentsRequest {}

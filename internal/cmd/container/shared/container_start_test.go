@@ -14,10 +14,7 @@ import (
 	mobyClient "github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 
-	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
 	cpmanagermocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/bundle"
@@ -303,50 +300,6 @@ func TestBootstrapServicesPostStart_ForwarderPrechecks(t *testing.T) {
 
 		assert.Contains(t, errOut.String(), "HTTPS credential forwarding is configured")
 	})
-}
-
-// TestBootstrapServicesPostStart_SendsProjectHostProxy pins the value the
-// CLI pushes on FirewallEnable: the project's security.enable_host_proxy,
-// which the CP persists per container and uses for the eBPF bypass. The CP
-// cannot read clawker.yaml itself, so a wrong or missing value here is the
-// cross-project host-proxy leak.
-func TestBootstrapServicesPostStart_SendsProjectHostProxy(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name        string
-		projectYAML string
-		want        bool
-	}{
-		{"disabled", `security: { enable_host_proxy: false }`, false},
-		{"enabled", `security: { enable_host_proxy: true }`, true},
-		{"default is enabled", ``, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			admin := new(adminv1mocks.AdminServiceClientMock)
-			admin.FirewallEnableFunc = func(
-				context.Context, *adminv1.FirewallEnableRequest, ...grpc.CallOption,
-			) (*adminv1.FirewallEnableResult, error) {
-				return new(adminv1.FirewallEnableResult), nil
-			}
-			var opts CommandOpts
-			opts.IOStreams = testIOStreams()
-			opts.Config = testRuntimeConfig(tc.projectYAML, `firewall: { enable: true }`)
-			opts.AdminClient = func(context.Context) (adminv1.AdminServiceClient, error) { return admin, nil }
-
-			err := BootstrapServicesPostStart(context.Background(), "ctr-1", opts)
-			require.NoError(t, err)
-
-			calls := admin.FirewallEnableCalls()
-			require.Len(t, calls, 1)
-			assert.Equal(t, "ctr-1", calls[0].In.GetContainerId())
-			require.NotNil(t, calls[0].In.HostProxy, "container start must always send the value")
-			assert.Equal(t, tc.want, calls[0].In.GetHostProxy(),
-				"FirewallEnable must carry the project's enable_host_proxy")
-		})
-	}
 }
 
 // TestBootstrapServicesPostStart_ForwarderPrechecks_HostHome covers the

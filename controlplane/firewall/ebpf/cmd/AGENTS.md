@@ -18,14 +18,14 @@ Do **not** wire new consumers to it. Adding new call sites is a signal that the 
 | Subcommand | Args | Purpose |
 |---|---|---|
 | `init` | — | `Manager.Load()` — parse embedded ELF, pin maps + programs to `/sys/fs/bpf/clawker/`, and clean up stale links. Calling it again re-runs `cleanupStaleLinks()` which removes links for dead cgroups while preserving enforcement on live containers. Only run during disaster recovery when the CP is down and you need to re-pin. (In normal operation the CP calls `Manager.Load()` directly; it does not exec this binary.) |
-| `enable` | `<cgroupPath> <configJSON>` | Manual container enrollment. Populates `container_map[cgroupID]` and attaches programs. JSON keys (camelCase): `envoyIp`, `corednsIp`, `gatewayIp`, `cidr`, `hostProxyIp`, `hostProxyPort`, `egressPort`, `cpIp`, `cpAgentPort`, `cpHydraPort` (`cpIp` required — it is the in-subnet allowlist's CP row). |
+| `enable` | `<cgroupPath> <configJSON>` | Manual container enrollment. Populates `container_map[cgroupID]` and attaches programs. JSON keys (camelCase): `envoyIp`, `corednsIp`, `gatewayIp`, `cidr`, `egressPort`, `cpIp`, `cpAgentPort`, `cpHydraPort` (`cpIp` required — it is the in-subnet allowlist's CP row). |
 | `disable` | `<cgroupPath>` | Detach programs, delete `container_map` entry, clear bypass flag. |
 | `bypass` | `<cgroupPath>` | Set `bypass_map[cgroupID] = 1`. |
 | `unbypass` | `<cgroupPath>` | Clear the bypass flag. |
 | `sync-routes` | `<routesJSON>` | Replace the global `route_map` atomically. |
 | `dns-update` | `<ip> <identity> <ttl>` | Write a single `dns_cache` entry. Break-glass only; the CoreDNS `dnsbpf` plugin is the real writer. |
 | `gc-dns` | — | Iterate `dns_cache`, delete expired entries, print count. |
-| `dump` | `<cgroupPath>` | Print the `container_map` entry for one cgroup (envoy/coredns/gateway IPs, net_addr/net_mask, host_proxy, egress_port). |
+| `dump` | `<cgroupPath>` | Print the `container_map` entry for one cgroup (envoy/coredns/gateway IPs, net_addr/net_mask, egress_port, CP IP and ports). |
 | `dump-routes` | `[--json]` | Dump the global `route_map` (every `{identity, dst_port, l4_proto}` → `envoy_port`). |
 | `dump-containers` | `[--json]` | Dump the full `container_map` (every cgroup → BPF container_config). |
 | `dump-bypass` | `[--json]` | Dump the `bypass_map` (every cgroup → bypass flag). |

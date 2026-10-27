@@ -17,12 +17,10 @@ import (
 )
 
 // corefileTestIDs builds a deterministic IdentityResolver for Corefile
-// golden tests: reserved internal hosts then rule dsts (normalized), sorted,
-// assigned sequential identities from MinIdentity. Stable across runs so the
+// golden tests: rule dsts (normalized), sorted, assigned sequential identities from MinIdentity. Stable across runs so the
 // hand-edited goldens can pin exact dnsbpf directive arguments.
 func corefileTestIDs(rules []config.EgressRule) firewall.IdentityResolver {
-	dsts := make([]string, 0, 1+len(rules))
-	dsts = append(dsts, "docker.internal")
+	dsts := make([]string, 0, len(rules))
 	for _, r := range rules {
 		dsts = append(dsts, strings.TrimSuffix(strings.TrimPrefix(r.Dst, "."), "."))
 	}
@@ -81,6 +79,25 @@ func TestGenerateCorefile(t *testing.T) {
 				{Dst: ".github.com", Action: "allow"},
 			},
 			goldenFile: "corefile_wildcard_deny.golden",
+		},
+		{
+			// Only Docker's embedded DNS knows host.docker.internal, so a
+			// rule for it forwards there. The zone is exact even for a
+			// wildcard rule: Docker DNS sends names it does not know to the
+			// host resolvers, so a forwarded subtree would carry data out.
+			// With no such rule, nothing under docker.internal resolves.
+			name: "host.docker.internal rule gets an exact zone on Docker DNS",
+			rules: []config.EgressRule{
+				{
+					Dst: ".host.docker.internal", Proto: "tcp", Port: "8080", Action: "allow",
+					PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+				},
+				{
+					Dst: "github.com", Proto: "https", Port: "443", Action: "allow",
+					PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+				},
+			},
+			goldenFile: "corefile_docker_host.golden",
 		},
 	}
 

@@ -12,6 +12,9 @@ import (
 // Upstream DNS servers: Cloudflare malware-blocking resolvers.
 var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 
+// dockerEmbeddedDNS is the resolver Docker serves inside each container.
+const dockerEmbeddedDNS = "127.0.0.11"
+
 // corefileLogFormat is the custom log format for DNS query logging.
 // Uses logfmt-compatible key=value pairs for `docker logs clawker-coredns`
 // triage only — the OpenSearch pipeline ingests DNS events from the
@@ -96,25 +99,8 @@ func GenerateCorefile(
 	tracking, missedDsts := missTrackingResolver(idFor)
 	var b strings.Builder
 
-	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
-	// CoreDNS runs on the clawker network, so its 127.0.0.11 can resolve
-	// host.docker.internal for all containers on the same network.
-	// This zone ensures Docker networking works when resolv.conf points to CoreDNS.
-	// It is reserved — egress rules matching the name are skipped from the
-	// per-domain zones to avoid duplicate zone definitions that crash CoreDNS.
-	//
-	// No monitoring service name is forwarded: the monitoring stack lives off
-	// the agent network, so a forward zone for one of its names would resolve
-	// nothing and would advertise a service agents must never reach.
-	internalHosts := []string{"docker.internal"} // covers Docker magic hostnames incl. the host gateway name
-
-	// Reserved zones — internal hosts get their own zones forwarding to Docker DNS.
-	// Egress rules matching these names are skipped to avoid duplicate CoreDNS zones.
-	reserved := make(map[string]bool, len(internalHosts)+1)
-	for _, host := range internalHosts {
-		reserved[host] = true
-	}
-	reserved[consts.ContainerCP] = true
+	// The CP name has its own zone (writeCPZone), so a rule for it gets none.
+	reserved := map[string]bool{consts.ContainerCP: true}
 
 	wildcard, denySeen, denyDomains := classifyZoneRules(rules, reserved)
 	allowDomains := collectAllowDomains(rules, reserved, denySeen)
@@ -122,7 +108,15 @@ func GenerateCorefile(
 	// Per-domain forward zones. Exact-only domains additionally NXDOMAIN every
 	// subdomain (see writeAllowZone); wildcard domains forward the whole subtree.
 	for _, domain := range allowDomains {
-		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain], tracking)
+		upstreams, exactOnly := upstreamDNS, !wildcard[domain]
+		if domain == consts.DockerHostInternal {
+			// Only Docker's embedded DNS knows this name. The zone is exact
+			// even for a wildcard rule: Docker DNS sends names it does not
+			// know to the host resolvers, so a forwarded subtree would be a
+			// DNS exfiltration path. With no rule, nothing resolves.
+			upstreams, exactOnly = []string{dockerEmbeddedDNS}, true
+		}
+		writeAllowZone(&b, domain, upstreams, exactOnly, tracking)
 	}
 
 	// Deny zones: NXDOMAIN the domain and its entire subtree, beating any
@@ -131,11 +125,6 @@ func GenerateCorefile(
 		writeDenyZone(&b, domain)
 	}
 
-	// Internal host forward zones (Docker DNS). Never exact-scoped — e.g.
-	// host.docker.internal is a subdomain of docker.internal and must resolve.
-	for _, host := range internalHosts {
-		writeAllowZone(&b, host, []string{"127.0.0.11"}, false, tracking)
-	}
 	writeCPZone(&b)
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
@@ -225,9 +214,7 @@ func subdomainRegex(domain string) string {
 // template is ordered before the AAAA template so subdomains are NXDOMAINed for
 // every qtype.
 //
-// When exactOnly is false the whole subtree is forwarded (wildcard rules and
-// internal hosts such as docker.internal, whose host.docker.internal subdomain
-// must resolve).
+// When exactOnly is false the whole subtree is forwarded (wildcard rules).
 //
 // AAAA queries return NODATA (NOERROR with no answer) because the eBPF connect6
 // hook blocks all IPv6 to prevent dual-stack firewall bypass. Returning AAAA
@@ -279,7 +266,7 @@ func writeCPZone(b *strings.Builder) {
 	b.WriteString("        rcode NXDOMAIN\n")
 	b.WriteString("        fallthrough\n")
 	b.WriteString("    }\n")
-	b.WriteString("    forward . 127.0.0.11\n")
+	b.WriteString("    forward . " + dockerEmbeddedDNS + "\n")
 	b.WriteString("}\n\n")
 }
 

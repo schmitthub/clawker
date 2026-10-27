@@ -1178,17 +1178,15 @@ func (m *Manager) DumpContainers() ([]ContainerEntry, error) {
 		out = append(out, ContainerEntry{
 			CgroupID: cgroupID,
 			Config: ContainerConfig{
-				EnvoyIP:       cfg.EnvoyIp,
-				CoreDNSIP:     cfg.CorednsIp,
-				GatewayIP:     cfg.GatewayIp,
-				NetAddr:       cfg.NetAddr,
-				NetMask:       cfg.NetMask,
-				HostProxyIP:   cfg.HostProxyIp,
-				HostProxyPort: cfg.HostProxyPort,
-				EgressPort:    cfg.EgressPort,
-				CPIP:          cfg.CpIp,
-				CPAgentPort:   cfg.CpAgentPort,
-				CPHydraPort:   cfg.CpHydraPort,
+				EnvoyIP:     cfg.EnvoyIp,
+				CoreDNSIP:   cfg.CorednsIp,
+				GatewayIP:   cfg.GatewayIp,
+				NetAddr:     cfg.NetAddr,
+				NetMask:     cfg.NetMask,
+				CPIP:        cfg.CpIp,
+				EgressPort:  cfg.EgressPort,
+				CPAgentPort: cfg.CpAgentPort,
+				CPHydraPort: cfg.CpHydraPort,
 			},
 		})
 	}
@@ -1264,16 +1262,13 @@ type Route struct {
 const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
 // ContainerConfigParams are the inputs of NewContainerConfig. IPs are
-// dotted strings; ports are host byte order. HostProxyIP empty with
-// HostProxyPort zero means the host-proxy lane is off for this container.
+// dotted strings; ports are host byte order.
 type ContainerConfigParams struct {
-	EnvoyIP       string
-	CoreDNSIP     string
-	GatewayIP     string
-	CIDR          string
-	HostProxyIP   string
-	HostProxyPort uint16
-	EgressPort    uint16
+	EnvoyIP    string
+	CoreDNSIP  string
+	GatewayIP  string
+	CIDR       string
+	EgressPort uint16
 	// CPIP and the two ports are the only control-plane endpoints an agent
 	// may dial inside the subnet (Register + Export, and the Hydra token
 	// endpoint). CPIP is required: without it every agent would be cut
@@ -1307,26 +1302,17 @@ func NewContainerConfig(p ContainerConfigParams) (clawkerContainerConfig, error)
 		return clawkerContainerConfig{}, fmt.Errorf("cpIP: %w", err)
 	}
 
-	cfg := clawkerContainerConfig{
-		EnvoyIp:       IPToUint32(envoy),
-		CorednsIp:     IPToUint32(coredns),
-		GatewayIp:     IPToUint32(gateway),
-		NetAddr:       netAddr,
-		NetMask:       netMask,
-		HostProxyPort: p.HostProxyPort,
-		EgressPort:    p.EgressPort,
-		CpIp:          IPToUint32(cp),
-		CpAgentPort:   p.CPAgentPort,
-		CpHydraPort:   p.CPHydraPort,
-	}
-	if p.HostProxyIP != "" {
-		hp, hpErr := parseIP(p.HostProxyIP)
-		if hpErr != nil {
-			return clawkerContainerConfig{}, fmt.Errorf("hostProxyIP: %w", hpErr)
-		}
-		cfg.HostProxyIp = IPToUint32(hp)
-	}
-	return cfg, nil
+	return clawkerContainerConfig{
+		EnvoyIp:     IPToUint32(envoy),
+		CorednsIp:   IPToUint32(coredns),
+		GatewayIp:   IPToUint32(gateway),
+		NetAddr:     netAddr,
+		NetMask:     netMask,
+		CpIp:        IPToUint32(cp),
+		EgressPort:  p.EgressPort,
+		CpAgentPort: p.CPAgentPort,
+		CpHydraPort: p.CPHydraPort,
+	}, nil
 }
 
 // cgroupRoot is the only legitimate filesystem root for cgroup v2 paths.

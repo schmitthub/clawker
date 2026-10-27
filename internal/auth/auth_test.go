@@ -215,7 +215,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 14)
+	require.Len(t, status, 18)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
@@ -241,7 +241,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 14)
+	require.Len(t, status, 18)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)
@@ -676,4 +676,52 @@ func TestBuildSignedAssertion_DifferentJTIs(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEqual(t, first, second)
+}
+
+// TestHostProxyIdentity: the host proxy dials the CP admin listener with
+// its own CLI-CA client leaf (CN pinned by the CP) and its own ES256 key,
+// whose public JWK the CP registers as the clawker-hostproxy Hydra client.
+func TestHostProxyIdentity(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+
+	tlsCert, err := LoadHostProxyClientCert()
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+	require.NoError(t, err)
+	opts := new(x509.VerifyOptions)
+	opts.Roots = pool
+	opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	_, err = cert.Verify(*opts)
+	require.NoError(t, err, "host proxy client leaf must chain to the CLI CA with the client-auth EKU")
+	assert.Equal(t, consts.HostProxyClientName, cert.Subject.CommonName)
+
+	keyPath, err := consts.AuthHostProxyClientKeyPath()
+	require.NoError(t, err)
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "client key must be owner-only")
+
+	signingKey, err := LoadHostProxySigningKey()
+	require.NoError(t, err)
+	cliKey, err := LoadSigningKey()
+	require.NoError(t, err)
+	assert.False(t, signingKey.Equal(cliKey), "the host proxy must not share the CLI signing key")
+
+	jwkPath, err := consts.AuthHostProxySigningJWKPath()
+	require.NoError(t, err)
+	raw, err := os.ReadFile(jwkPath)
+	require.NoError(t, err)
+	var jwk struct {
+		X string `json:"x"`
+		Y string `json:"y"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &jwk))
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(signingKey.X.Bytes()), jwk.X)
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(signingKey.Y.Bytes()), jwk.Y)
 }

@@ -395,6 +395,38 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 }
 
+// TestMigrateRemoveHostProxyPortKeys: the host proxy has no listener for
+// host actions (it dials out to the CP), so host_proxy.manager.port and
+// host_proxy.daemon.port have no effect. They are removed silently.
+func TestMigrateRemoveHostProxyPortKeys(t *testing.T) {
+	t.Run("removes both port keys silently and keeps the other daemon keys", func(t *testing.T) {
+		const in = `host_proxy:
+  manager:
+    port: 19000
+  daemon:
+    port: 18374
+    poll_interval: 45s
+`
+		var after string
+		notice := captureStderr(t, func() { after = loadSettings(t, in) })
+		assert.NotContains(t, after, "manager:", "legacy manager block must be gone")
+		assert.NotContains(t, after, "19000")
+		assert.NotContains(t, after, "18374")
+		assert.Contains(t, after, "poll_interval: 45s", "other daemon keys must be kept")
+		assert.Empty(t, notice, "the migration must not print a notice")
+	})
+
+	t.Run("a manager block alone is removed", func(t *testing.T) {
+		const in = `host_proxy:
+  manager:
+    port: 19000
+`
+		after := loadSettings(t, in)
+		assert.NotContains(t, after, "manager:")
+		assert.NotContains(t, after, "19000")
+	})
+}
+
 // TestMigrateDockerSocketToHost covers the docker.socket → docker.host rename.
 // The key always held a daemon address; only its name was wrong.
 func TestMigrateDockerSocketToHost(t *testing.T) {

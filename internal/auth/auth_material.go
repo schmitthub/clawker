@@ -48,6 +48,11 @@ import (
 //	infra-ca/
 //	  infra-ca.pem       ← infra intermediate CA cert (bind-mounted into CP)
 //	  infra-ca.key       ← infra intermediate CA key (0600, bind-mounted into CP)
+//	hostproxy/
+//	  signing.key        ← host proxy ES256 private key (0600, NEVER enters any container)
+//	  signing-jwk.json   ← host proxy public JWK (bind-mounted into CP for Hydra)
+//	  client.pem         ← host proxy mTLS client cert signed by CLI CA (host-only)
+//	  client.key         ← host proxy mTLS client key (0600, host-only)
 
 // EnsureAuthMaterial checks for existing auth material and creates any
 // that is missing. Idempotent — safe to call on every CLI invocation.
@@ -61,6 +66,7 @@ import (
 //  5. OTel server cert — for the monitoring collector's CP-only OTLP receiver
 //  6. CP client cert — CP's outbound mTLS identity for OTLP push and Session dials
 //  7. Infra intermediate CA — signed by the CLI CA, CP mints short-lived infra leaves from it
+//  8. Host proxy identity — its own signing key and client cert for its stream to the CP
 func EnsureAuthMaterial() error {
 	if err := consts.EnsureAuthDirs(); err != nil {
 		return fmt.Errorf("ensure auth dirs: %w", err)
@@ -85,6 +91,9 @@ func EnsureAuthMaterial() error {
 	}
 	if err := ensureInfraIntermediateCA(); err != nil {
 		return fmt.Errorf("infra intermediate CA: %w", err)
+	}
+	if err := ensureHostProxyIdentity(); err != nil {
+		return fmt.Errorf("host proxy identity: %w", err)
 	}
 	return nil
 }
@@ -121,6 +130,12 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	if err := removeIfExists(consts.AuthOtelServerKeyPath); err != nil {
 		return fmt.Errorf("remove otel server key: %w", err)
 	}
+	if err := removeIfExists(consts.AuthHostProxyClientCertPath); err != nil {
+		return fmt.Errorf("remove host proxy client cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthHostProxyClientKeyPath); err != nil {
+		return fmt.Errorf("remove host proxy client key: %w", err)
+	}
 	if err := removeIfExists(consts.AuthCPClientCertPath); err != nil {
 		return fmt.Errorf("remove cp client cert: %w", err)
 	}
@@ -140,6 +155,12 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 		}
 		if err := removeIfExists(consts.AuthCLISigningJWKPath); err != nil {
 			return fmt.Errorf("remove signing JWK: %w", err)
+		}
+		if err := removeIfExists(consts.AuthHostProxySigningKeyPath); err != nil {
+			return fmt.Errorf("remove host proxy signing key: %w", err)
+		}
+		if err := removeIfExists(consts.AuthHostProxySigningJWKPath); err != nil {
+			return fmt.Errorf("remove host proxy signing JWK: %w", err)
 		}
 	}
 
@@ -180,6 +201,10 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"CP client key", consts.AuthCPClientKeyPath, false},
 		{"Infra intermediate CA certificate", consts.AuthInfraCACertPath, true},
 		{"Infra intermediate CA key", consts.AuthInfraCAKeyPath, false},
+		{"Host proxy client certificate", consts.AuthHostProxyClientCertPath, true},
+		{"Host proxy client key", consts.AuthHostProxyClientKeyPath, false},
+		{"Host proxy signing key", consts.AuthHostProxySigningKeyPath, false},
+		{"Host proxy signing JWK", consts.AuthHostProxySigningJWKPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -392,11 +417,17 @@ func CACert() (*x509.Certificate, error) {
 // --- Signing key (ES256 for private_key_jwt) ---
 
 func ensureSigningKey() error {
-	keyPath, err := consts.AuthCLISigningKeyPath()
+	return ensureSigningKeyAt(consts.AuthCLISigningKeyPath, consts.AuthCLISigningJWKPath)
+}
+
+// ensureSigningKeyAt creates an ES256 key and its public JWK at the given
+// paths, or rewrites the JWK when only the key exists.
+func ensureSigningKeyAt(keyPathFn, jwkPathFn func() (string, error)) error {
+	keyPath, err := keyPathFn()
 	if err != nil {
 		return err
 	}
-	jwkPath, err := consts.AuthCLISigningJWKPath()
+	jwkPath, err := jwkPathFn()
 	if err != nil {
 		return err
 	}
@@ -418,11 +449,11 @@ func ensureSigningKey() error {
 		return fmt.Errorf("generate: %w", err)
 	}
 
-	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
-		return fmt.Errorf("write key: %w", err)
+	if writeErr := writeECDSAKey(keyPath, key, privateKeyMode); writeErr != nil {
+		return fmt.Errorf("write key: %w", writeErr)
 	}
-	if err := writeJWK(jwkPath, &key.PublicKey); err != nil {
-		return fmt.Errorf("write jwk: %w", err)
+	if writeErr := writeJWK(jwkPath, &key.PublicKey); writeErr != nil {
+		return fmt.Errorf("write jwk: %w", writeErr)
 	}
 	return nil
 }
@@ -500,14 +531,71 @@ func ensureServerCert() error {
 	return nil
 }
 
+// serialNumberBits is the size of a random certificate serial number.
+const serialNumberBits = 128
+
+// privateKeyMode is the file mode of a private key only its owner reads.
+const privateKeyMode = 0o600
+
+// --- Host proxy identity (client leaf + signing key) ---
+
+// ensureHostProxyIdentity creates the host proxy's own identity for its
+// stream to the CP admin listener: a CLI-CA client leaf with CN
+// consts.HostProxyClientName and an ES256 signing key whose JWK the CP
+// registers as the consts.ClientIDHostProxy Hydra client.
+func ensureHostProxyIdentity() error {
+	if err := ensureSigningKeyAt(consts.AuthHostProxySigningKeyPath, consts.AuthHostProxySigningJWKPath); err != nil {
+		return fmt.Errorf("signing key: %w", err)
+	}
+	if err := ensureClientLeaf(
+		consts.AuthHostProxyClientCertPath, consts.AuthHostProxyClientKeyPath, consts.HostProxyClientName,
+	); err != nil {
+		return fmt.Errorf("client cert: %w", err)
+	}
+	return nil
+}
+
+// LoadHostProxySigningKey reads the host proxy's ES256 private key.
+func LoadHostProxySigningKey() (*ecdsa.PrivateKey, error) {
+	keyPath, err := consts.AuthHostProxySigningKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("host proxy signing key path: %w", err)
+	}
+	return loadECDSAKey(keyPath)
+}
+
+// LoadHostProxyClientCert reads the host proxy's mTLS client leaf.
+func LoadHostProxyClientCert() (tls.Certificate, error) {
+	certPath, err := consts.AuthHostProxyClientCertPath()
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("host proxy client cert path: %w", err)
+	}
+	keyPath, err := consts.AuthHostProxyClientKeyPath()
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("host proxy client key path: %w", err)
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("load host proxy client cert: %w", err)
+	}
+	return cert, nil
+}
+
 // --- CLI mTLS client cert (signed by CLI CA) ---
 
 func ensureClientCert() error {
-	certPath, err := consts.AuthCLIClientCertPath()
+	return ensureClientLeaf(consts.AuthCLIClientCertPath, consts.AuthCLIClientKeyPath, "clawker-cli")
+}
+
+// ensureClientLeaf creates a one-year client-auth leaf with CN cn, signed
+// by the CLI CA, unless the cert and key already exist. The key is 0o600:
+// the CP container runs as root, so it reads a 0o600 bind-mount as is.
+func ensureClientLeaf(certPathFn, keyPathFn func() (string, error), cn string) error {
+	certPath, err := certPathFn()
 	if err != nil {
 		return err
 	}
-	keyPath, err := consts.AuthCLIClientKeyPath()
+	keyPath, err := keyPathFn()
 	if err != nil {
 		return err
 	}
@@ -528,7 +616,7 @@ func ensureClientCert() error {
 		return fmt.Errorf("generate key: %w", err)
 	}
 
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), serialNumberBits))
 	if err != nil {
 		return fmt.Errorf("generate serial: %w", err)
 	}
@@ -537,7 +625,7 @@ func ensureClientCert() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker-cli",
+			CommonName:   cn,
 			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
@@ -552,11 +640,11 @@ func ensureClientCert() error {
 		return fmt.Errorf("sign cert: %w", err)
 	}
 
-	if err := writeCert(certPath, certDER); err != nil {
-		return fmt.Errorf("write cert: %w", err)
+	if writeErr := writeCert(certPath, certDER); writeErr != nil {
+		return fmt.Errorf("write cert: %w", writeErr)
 	}
-	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
-		return fmt.Errorf("write key: %w", err)
+	if writeErr := writeECDSAKey(keyPath, key, privateKeyMode); writeErr != nil {
+		return fmt.Errorf("write key: %w", writeErr)
 	}
 	return nil
 }
@@ -865,62 +953,5 @@ func ensureOtelServerCert() error {
 }
 
 func ensureCPClientCert() error {
-	certPath, err := consts.AuthCPClientCertPath()
-	if err != nil {
-		return err
-	}
-	keyPath, err := consts.AuthCPClientKeyPath()
-	if err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(certPath); err == nil {
-		if _, err := os.Stat(keyPath); err == nil {
-			return nil
-		}
-	}
-
-	caCert, caKey, err := loadCA()
-	if err != nil {
-		return fmt.Errorf("load CA for signing: %w", err)
-	}
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return fmt.Errorf("generate serial: %w", err)
-	}
-
-	now := time.Now().UTC()
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			CommonName:   consts.ContainerCP,
-			Organization: []string{certOrganization},
-		},
-		NotBefore:   now.Add(-5 * time.Minute),
-		NotAfter:    now.AddDate(1, 0, 0),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
-	if err != nil {
-		return fmt.Errorf("sign cert: %w", err)
-	}
-
-	if err := writeCert(certPath, certDER); err != nil {
-		return fmt.Errorf("write cert: %w", err)
-	}
-	// Tight perms: the CP container runs as root (no USER directive on
-	// distroless/static, no Config.User in BuildCPContainerConfig), so
-	// a 0o600 host file is readable in-container without loosening.
-	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
-		return fmt.Errorf("write key: %w", err)
-	}
-	return nil
+	return ensureClientLeaf(consts.AuthCPClientCertPath, consts.AuthCPClientKeyPath, consts.ContainerCP)
 }

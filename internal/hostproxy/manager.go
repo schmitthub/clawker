@@ -2,20 +2,15 @@ package hostproxy
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -24,50 +19,35 @@ import (
 // that don't spawn daemon subprocesses.
 //
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-// schemeHTTP is the URL scheme used for the host proxy's loopback HTTP endpoints.
-const schemeHTTP = "http"
 
 type Service interface {
 	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
 	EnsureRunning() error
 	// IsRunning returns whether the host proxy is currently running.
 	IsRunning() bool
-	// ProxyURL returns the URL containers should use to reach the host proxy.
-	ProxyURL() string
-	// PrecheckGitCredential reports whether the host can serve the
-	// /git/credential endpoint: the same `git` binary the handler execs
+	// PrecheckGitCredential reports whether the host can serve the git
+	// credential action: the same `git` binary the handler execs
 	// must be on PATH with a credential helper configured. Callers warn
 	// the user before container start, so an in-container credential
 	// failure has a visible cause.
 	PrecheckGitCredential(ctx context.Context) error
 }
 
-// validatePort checks that a port number is in the valid TCP range.
-func validatePort(port int, label string) error {
-	if port <= 0 || port > 65535 {
-		return fmt.Errorf("invalid %s port %d: must be between 1 and 65535", label, port)
-	}
-	return nil
-}
-
 // Manager manages the lifecycle of the host proxy daemon.
 // It spawns a daemon subprocess that persists beyond CLI lifetime,
 // enabling containers to use the proxy even after the CLI exits.
 type Manager struct {
-	cfg  config.Config
-	log  *logger.Logger
-	port int
-	mu   sync.Mutex
+	cfg config.Config
+	log *logger.Logger
+	mu  sync.Mutex
 }
 
 // NewManager creates a new host proxy manager.
-// Port is read and validated from cfg.HostProxyConfig().Manager.Port at construction time.
 func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error) {
-	port := cfg.HostProxyConfig().Manager.Port
-	if err := validatePort(port, "host proxy manager"); err != nil {
-		return nil, err
+	if cfg == nil {
+		return nil, errors.New("host proxy manager: config is required")
 	}
-	return &Manager{cfg: cfg, log: log, port: port}, nil
+	return &Manager{cfg: cfg, log: log, mu: sync.Mutex{}}, nil
 }
 
 // EnsureRunning ensures the host proxy daemon is running.
@@ -76,15 +56,8 @@ func (m *Manager) EnsureRunning() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if daemon is already running via PID file + health check
 	if m.isDaemonRunning() {
-		m.log.Debug().Int("port", m.port).Msg("host proxy daemon already running")
-		return nil
-	}
-
-	// Check if something is on the port (might be a daemon we didn't start)
-	if m.isPortInUse() {
-		m.log.Debug().Int("port", m.port).Msg("host proxy already running on port")
+		m.log.Debug().Msg("host proxy daemon already running")
 		return nil
 	}
 
@@ -105,9 +78,6 @@ func (m *Manager) StopDaemon() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.cfg == nil {
-		return nil
-	}
 	pidFile, err := m.cfg.HostProxyPIDFilePath()
 	if err != nil {
 		return fmt.Errorf("failed to get PID file path: %w", err)
@@ -119,43 +89,17 @@ func (m *Manager) StopDaemon() error {
 func (m *Manager) IsRunning() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.isDaemonRunning() || m.isPortInUse()
+	return m.isDaemonRunning()
 }
 
-// Port returns the port the host proxy daemon is configured to use.
-func (m *Manager) Port() int {
-	return m.port
-}
-
-// ProxyURL returns the URL containers should use to reach the host proxy.
-// This uses host.docker.internal which Docker automatically resolves to the host.
-func (m *Manager) ProxyURL() string {
-	host := net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(m.port))
-	u := url.URL{
-		Scheme: schemeHTTP,
-		Host:   host,
-	}
-	return u.String()
-}
-
-// isDaemonRunning checks if the daemon is running via PID file and health check.
+// isDaemonRunning checks the PID file names a live process. The daemon
+// writes it only while it holds the single-instance lock.
 func (m *Manager) isDaemonRunning() bool {
-	if m.cfg == nil {
-		return false
-	}
-
 	pidFile, err := m.cfg.HostProxyPIDFilePath()
 	if err != nil {
 		return false
 	}
-
-	// Check PID file
-	if !IsDaemonRunning(pidFile) {
-		return false
-	}
-
-	// Verify with health check
-	return m.isPortInUse()
+	return IsDaemonRunning(pidFile)
 }
 
 // startDaemon spawns a daemon subprocess.
@@ -165,11 +109,7 @@ func (m *Manager) startDaemon() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Build command arguments — port passed explicitly to ensure manager and daemon agree
-	args := []string{
-		"host-proxy", "serve",
-		"--port", strconv.Itoa(m.port),
-	}
+	args := []string{"host-proxy", "serve"}
 
 	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -202,100 +142,34 @@ func (m *Manager) startDaemon() error {
 		m.log.Debug().Err(err).Msg("failed to release daemon process (non-fatal)")
 	}
 
-	m.log.Debug().Int("port", m.port).Int("pid", cmd.Process.Pid).Msg("started host proxy daemon")
+	m.log.Debug().Int("pid", cmd.Process.Pid).Msg("started host proxy daemon")
 
-	// Wait for health check with retry
-	if err := m.waitForHealthy(3 * time.Second); err != nil {
-		return fmt.Errorf("daemon started but not responding: %w", err)
+	// The daemon writes its PID file once it holds the single-instance
+	// lock. It then connects to the CP by itself and keeps reconnecting.
+	if waitErr := m.waitForPIDFile(daemonStartTimeout); waitErr != nil {
+		return fmt.Errorf("daemon started but did not take its lock: %w", waitErr)
 	}
-
-	m.log.Debug().Msg("host proxy daemon health check passed")
 	return nil
 }
 
-// waitForHealthy waits for the daemon to respond to health checks.
-func (m *Manager) waitForHealthy(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
+// daemonStartTimeout bounds the wait for a new daemon's PID file.
+const daemonStartTimeout = 3 * time.Second
 
+// waitForPIDFile waits until the PID file names a live process.
+func (m *Manager) waitForPIDFile(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if err := m.healthCheck(); err == nil {
+		if m.isDaemonRunning() {
 			return nil
-		} else {
-			lastErr = err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	if lastErr != nil {
-		return lastErr
-	}
-	return fmt.Errorf("timeout waiting for daemon to become healthy")
-}
-
-// isPortInUse checks if the configured port is already in use by a clawker host proxy.
-// It verifies both the status code and service identifier to avoid mistaking
-// another service for the clawker host proxy.
-func (m *Manager) isPortInUse() bool {
-	client := &http.Client{
-		Timeout: 500 * time.Millisecond,
-	}
-
-	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-
-	// Verify it's actually a clawker host proxy by checking the service identifier
-	var health healthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return false
-	}
-
-	return health.Service == "clawker-host-proxy"
-}
-
-// healthCheck verifies the daemon is responding to requests.
-func (m *Manager) healthCheck() error {
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-
-	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
-	if err != nil {
-		return fmt.Errorf("build health check request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return nil
+	return fmt.Errorf("no live host proxy daemon after %s", timeout)
 }
 
 // openDaemonLogFile opens the daemon log file for writing.
 // HostProxyLogFilePath already ensures the logs directory exists via subdirPath().
 func (m *Manager) openDaemonLogFile() (*os.File, error) {
-	if m.cfg == nil {
-		return nil, fmt.Errorf("config not available for log file path")
-	}
-
 	logPath, err := m.cfg.HostProxyLogFilePath()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get log file path: %w", err)

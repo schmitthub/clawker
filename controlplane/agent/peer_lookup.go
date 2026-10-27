@@ -19,6 +19,11 @@ type ResolvedContainer struct {
 	ContainerID string
 	Project     auth.ProjectSlug
 	AgentName   auth.AgentName
+	// HostProxy and GitHTTPS are the host-action grants read from the
+	// consts.LabelHostProxy and consts.LabelGitHTTPS labels. False when a
+	// label is absent or does not parse as true.
+	HostProxy bool
+	GitHTTPS  bool
 }
 
 // ErrNoContainerForPeerIP is returned when no `purpose=agent`

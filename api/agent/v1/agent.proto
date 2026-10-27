@@ -61,6 +61,39 @@ service AgentService {
   // Unavailable (collector forward failed; the relay answers the SDK
   // with a retryable status).
   rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResult);
+
+  // Host actions. clawkerd serves the agent's host-proxy HTTP paths on
+  // loopback and relays each request here. The CP is the only path to the
+  // host proxy: it resolves the peer to a registered container, applies
+  // that container's policy (its labels) and the egress rules, then calls
+  // the host proxy over mTLS. Agents cannot reach the host proxy directly.
+  //
+  // Public scope: no bearer token, same gate as ExportTelemetry, plus the
+  // per-container policy. Failure modes: PermissionDenied (identity
+  // rejected, host proxy not enabled for this container, action not
+  // granted, egress denied, callback session owned by another container),
+  // InvalidArgument (malformed request), NotFound (unknown callback
+  // session), Unavailable (host proxy unreachable).
+
+  // OpenURL opens a URL in the host browser after the egress check.
+  rpc OpenURL(OpenURLRequest) returns (OpenURLResult);
+
+  // GitCredential runs one git credential helper action on the host.
+  // Needs the container's HTTPS git credential grant.
+  rpc GitCredential(GitCredentialRequest) returns (GitCredentialResult);
+
+  // RegisterCallback is the one-shot OAuth flow: the host proxy checks
+  // auth_url against the egress rules, takes the callback port and path
+  // from its localhost redirect_uri, binds that port, opens auth_url in
+  // the host browser and captures the first callback. The session belongs
+  // to the calling container.
+  rpc RegisterCallback(RegisterCallbackRequest) returns (RegisterCallbackResult);
+
+  // GetCallbackData polls a callback session the caller owns.
+  rpc GetCallbackData(GetCallbackDataRequest) returns (GetCallbackDataResult);
+
+  // DeleteCallback ends a callback session the caller owns.
+  rpc DeleteCallback(DeleteCallbackRequest) returns (DeleteCallbackResult);
 }
 
 // Signal names which OTLP collector service request the body encodes.
@@ -101,3 +134,82 @@ message RegisterRequest {
 // Welcome is the success response. Empty — the act of returning
 // without error is the signal.
 message Welcome {}
+
+message OpenURLRequest {
+  string url = 1;
+}
+
+message OpenURLResult {}
+
+// GitCredentialAction is the git credential helper operation.
+enum GitCredentialAction {
+  GIT_CREDENTIAL_ACTION_UNSPECIFIED = 0;
+  GIT_CREDENTIAL_ACTION_GET = 1;
+  GIT_CREDENTIAL_ACTION_STORE = 2;
+  GIT_CREDENTIAL_ACTION_ERASE = 3;
+}
+
+// GitCredentialRequest carries the git credential protocol fields.
+// password is set only for store and erase.
+message GitCredentialRequest {
+  GitCredentialAction action = 1;
+  string protocol = 2;
+  string host = 3;
+  string path = 4;
+  string username = 5;
+  string password = 6;
+}
+
+// GitCredentialResult carries the credential for get. It is empty for
+// store and erase, and for a get that found no credential.
+message GitCredentialResult {
+  string protocol = 1;
+  string host = 2;
+  string username = 3;
+  string password = 4;
+}
+
+// RegisterCallbackRequest carries the authorization URL the agent wants
+// to open. Its redirect_uri (or callback) parameter must be
+// http://localhost:<port> or http://127.0.0.1:<port>.
+message RegisterCallbackRequest {
+  string auth_url = 1;
+  // ttl_seconds is the session lifetime. Zero selects the default; the
+  // host proxy caps it.
+  int32 ttl_seconds = 2;
+}
+
+message RegisterCallbackResult {
+  string session_id = 1;
+  // port is the localhost callback port the host proxy bound. The agent
+  // forwards the captured callback to this port in the container.
+  int32 port = 2;
+  int64 expires_at_unix = 3;
+}
+
+message GetCallbackDataRequest {
+  string session_id = 1;
+}
+
+// GetCallbackDataResult reports whether the browser callback arrived and,
+// when it did, the captured request.
+message GetCallbackDataResult {
+  bool received = 1;
+  CallbackData callback = 2;
+}
+
+// CallbackData is the captured browser callback request.
+message CallbackData {
+  string method = 1;
+  string path = 2;
+  string query = 3;
+  map<string, string> headers = 4;
+  string body = 5;
+  int64 received_at_unix = 6;
+}
+
+message DeleteCallbackRequest {
+  string session_id = 1;
+}
+
+message DeleteCallbackResult {}

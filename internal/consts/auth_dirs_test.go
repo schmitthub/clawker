@@ -28,6 +28,7 @@ func TestEnsureAuthDirsCoversAllAccessors(t *testing.T) {
 		"AuthOtelDir":    AuthOtelDir,
 		"AuthCPDir":      AuthCPDir,
 		"AuthInfraCADir": AuthInfraCADir,
+		"AuthHostProxy":  AuthHostProxyDir,
 	}
 	if len(accessors) != len(authSubdirs) {
 		t.Errorf(

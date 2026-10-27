@@ -34,6 +34,7 @@ import (
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
+	"github.com/schmitthub/clawker/controlplane/hostgateway"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
@@ -899,7 +900,6 @@ type enforcement struct {
 	stack             *fwhandler.Stack
 	ebpfMgr           *ebpf.Manager
 	identityAlloc     *fwhandler.IdentityAllocator
-	enrollments       fwhandler.EnrollmentStore
 }
 
 // buildEnforcement builds the Docker client, cgroup-driver detection +
@@ -965,15 +965,6 @@ func buildEnforcement(
 	if err != nil {
 		return enforcement{}, cleanup, err
 	}
-	// Per-container enrollment records (host-proxy bypass pushed by the CLI
-	// at FirewallEnable, replayed by the re-enrollment sweep). Beside the
-	// identity table; a table that no longer decodes is a startup gate.
-	enrollments, err := fwhandler.NewEnrollmentStore(cfg)
-	if err != nil {
-		return enforcement{}, cleanup, fmt.Errorf(
-			"enrollment store: %w", err,
-		)
-	}
 	stack, err := fwhandler.NewStack(
 		dockerCli, cfg, log, rulesStore, otelCerts, sdsCerts, identityAlloc.IdentityFor, caStore,
 	)
@@ -998,7 +989,6 @@ func buildEnforcement(
 		stack:             stack,
 		ebpfMgr:           ebpfMgr,
 		identityAlloc:     identityAlloc,
-		enrollments:       enrollments,
 	}, enforcementCleanup(dockerCli, ebpfMgr, log), nil
 }
 
@@ -1151,10 +1141,10 @@ type grpcStackDeps struct {
 	rulesStore        fwhandler.EgressRulesStore
 	caStore           *fwhandler.CAStore
 	identityAlloc     *fwhandler.IdentityAllocator
-	enrollments       fwhandler.EnrollmentStore
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	otelGateway       agent.OtelForwarder
+	hostGateway       *hostgateway.Gateway
 	agentPeerLookup   *agent.MobyPeerLookup
 	lister            *agent.ContainerLister
 	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
@@ -1166,12 +1156,6 @@ type grpcStackDeps struct {
 	serverKeyPath     string
 }
 
-// buildGRPCStack constructs the firewall ActionQueue (the single-goroutine FIFO
-// worker every Firewall* RPC runs through — drain step 1, injected via
-// HandlerDeps), the firewall Handler, and the gRPC stack (admin always up;
-// agent listener up only when the IdentityInterceptor resolves), then starts
-// serving on the buffered serveFailed channel. It returns those handles plus a
-// belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
 // buildOtelGateway constructs the agent telemetry gateway the ExportTelemetry RPC
 // forwards through: one mTLS client connection to the collector's
 // otlp/agents receiver at otel-collector:<MonitoringOtelAgentIngestPort> over the
@@ -1241,6 +1225,12 @@ func buildOtelGateway(
 	return gw, cleanup
 }
 
+// buildGRPCStack constructs the firewall ActionQueue (the single-goroutine FIFO
+// worker every Firewall* RPC runs through — drain step 1, injected via
+// HandlerDeps), the firewall Handler, and the gRPC stack (admin always up;
+// agent listener up only when the IdentityInterceptor resolves), then starts
+// serving on the buffered serveFailed channel. It returns those handles plus a
+// belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
 func buildGRPCStack(d grpcStackDeps) (
 	actionQueue *fwhandler.ActionQueue,
 	handler *fwhandler.Handler,
@@ -1269,7 +1259,6 @@ func buildGRPCStack(d grpcStackDeps) (
 		Queue:         actionQueue,
 		EnrolledTopic: d.enrolledTopic,
 		Identity:      d.identityAlloc,
-		Enrollments:   d.enrollments,
 		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
 	})
 	if err != nil {
@@ -1283,6 +1272,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Ready:          d.orchestrator.IsReady,
 		PeerLookup:     d.agentPeerLookup,
 		OtelGateway:    d.otelGateway,
+		HostGateway:    d.hostGateway,
 		ServerCertPath: d.serverCertPath,
 		ServerKeyPath:  d.serverKeyPath,
 		CACertPool:     d.caCertPool,
@@ -1645,7 +1635,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// CA surface reused everywhere downstream, never rebuilt) come from
 	// caCertPath up front. Subprocess bringup is a startup-flow step below,
 	// after the admin listener is serving.
-	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
+	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, consts.CPHostProxyPubKeyPath, log)
 	if err != nil {
 		return fmt.Errorf("ory stack: %w", err)
 	}
@@ -1733,10 +1723,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		rulesStore:        enf.rulesStore,
 		caStore:           enf.caStore,
 		identityAlloc:     enf.identityAlloc,
-		enrollments:       enf.enrollments,
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		otelGateway:       otelGateway,
+		hostGateway:       hostgateway.New(log.With("component", "host-gateway")),
 		agentPeerLookup:   agentPeerLookup,
 		lister:            lister,
 		enrolledTopic:     enrolledTopic,
@@ -1751,12 +1741,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 	defer grpcCleanup()
-
-	// A destroyed container's enrollment record is dropped on the same
-	// docker event the agent registry evicts on. The removal runs on the
-	// handler's ActionQueue, so the subscription waits for the handler; the
-	// docker watcher starts later, so no destroy event is missed.
-	handler.SubscribeEnrollmentEvict(watcherCtx, dockerTopic)
 
 	// The admin listener socket is already bound, so the /healthz grpc-admin
 	// probe's dial would succeed from here on regardless of whether anything

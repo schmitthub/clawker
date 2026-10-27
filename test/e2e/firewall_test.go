@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -558,109 +557,95 @@ func clawkerNetIP(t *testing.T, container string) string {
 	return ip
 }
 
-func TestFirewall_HostProxyReachable(t *testing.T) {
+// TestFirewall_HostActionsBehindCP proves agents reach the host proxy only
+// through the clawkerd relay and the CP, which authorizes every action from
+// the container's labels and owns callback sessions. The host proxy has no
+// listener for actions: it dials out to the CP and holds a stream.
+//   - a granted agent's git erase reaches the host (an .invalid host, so no
+//     helper prompts and nothing is removed);
+//   - open/url to a host the firewall denies is refused before any browser;
+//   - a callback session the agent does not own is refused;
+//   - enable_host_proxy: false and forward_https: false are refused at the CP;
+//   - after a CP restart the host proxy reconnects and the granted agent
+//     reaches the host again.
+//
+// No case opens a browser: the only open/url targets a denied host.
+func TestFirewall_HostActionsBehindCP(t *testing.T) {
 	h := harness.New(t, firewallFactoryOpts, func(o *harness.FactoryOptions) {
 		o.HostProxy = hostproxy.NewManager
 	})
 	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
-	fwSetup(t, h, `
-`)
 
-	// Agent container with real host proxy — should reach /health via targeted eBPF RETURN.
-	healthRes := h.RunInContainer("hp-test",
-		"sh", "-c",
-		`curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "$CLAWKER_HOST_PROXY/health"`)
-	require.NoError(t, healthRes.Err,
-		"host proxy /health should be reachable through firewall\nstdout: %s\nstderr: %s",
-		healthRes.Stdout, healthRes.Stderr)
-	assert.Contains(t, healthRes.Stdout, "200",
-		"should get HTTP 200 from host proxy health endpoint")
+	setup := h.NewIsolatedFS(nil)
+	harness.EnsureNoControlPlane(t, 30*time.Second)
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "\n")
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
 
-	// Non-proxy host port should still be blocked (CIDR bypass doesn't cover host).
-	blockedRes := h.RunInContainer("hp-test",
-		"curl", "-s", "--max-time", "3", "--connect-timeout", "2",
-		"-o", "/dev/null", "-w", "%{http_code}",
-		"http://host.docker.internal:9999")
-	assert.NotNil(t, blockedRes.Err, "non-proxy host port should be blocked by firewall")
-}
-
-// TestFirewall_HostProxyPerContainer proves the host-proxy bypass follows
-// the enrolling project's enable_host_proxy, not the host-level default: a
-// container whose project disabled the lane cannot reach the daemon port
-// while a container with the lane enabled can; both decisions survive a
-// bypass stop and a CP restart (the persisted enrollment record is
-// replayed); and `firewall enable` applies a clawker.yaml edit to a running
-// container. A stub HTTP server on the configured daemon port stands in for
-// the daemon so a failed request can only mean the firewall refused it.
-func TestFirewall_HostProxyPerContainer(t *testing.T) {
-	h := harness.New(t, firewallFactoryOpts)
-	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
-	setup := fwSetup(t, h, "security: { enable_host_proxy: false }\n")
-
-	// Stand-in for the host proxy daemon, bound to loopback as the daemon
-	// is; the container reaches it through host.docker.internal.
-	stub, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "listening for the host proxy stub")
-	stubSrv := new(http.Server)
-	stubSrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	go func() { _ = stubSrv.Serve(stub) }()
-	t.Cleanup(func() { _ = stubSrv.Close() })
-	stubAddr, ok := stub.Addr().(*net.TCPAddr)
-	require.True(t, ok, "tcp listener address is %T", stub.Addr())
-	stubPort := stubAddr.Port
-	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { daemon: { port: %d } }\n", stubPort))
-
-	probe := func(agent string) string {
+	// start runs a detached agent and waits for the user CMD, which
+	// clawkerd spawns only after Register: the CP refuses an
+	// unregistered peer.
+	start := func(agent string) {
 		t.Helper()
-		res := h.ExecInContainer(agent, "curl", "-s", "--max-time", "5", "--connect-timeout", "3",
-			"-o", "/dev/null", "-w", "%{http_code}",
-			fmt.Sprintf("http://host.docker.internal:%d/", stubPort))
+		marker := "/tmp/" + agent + "-ready"
+		res := h.Run("container", "run", "--detach", "--agent", agent, "@",
+			"sh", "-c", "touch "+marker+" && exec sleep infinity")
+		require.NoError(t, res.Err, "start %s failed\nstdout: %s\nstderr: %s", agent, res.Stdout, res.Stderr)
+		require.Eventually(t, func() bool {
+			return h.ExecInContainer(agent, "test", "-f", marker).Err == nil
+		}, 3*time.Minute, time.Second, "%s never finished boot", agent)
+	}
+	// relay sends one request to the clawkerd relay and returns the HTTP
+	// status. The address is fixed: CLAWKER_HOST_PROXY is unset for an
+	// agent without the host proxy grant.
+	relay := func(agent, method, path, body string) string {
+		t.Helper()
+		args := []string{
+			"curl", "-s", "--max-time", "30", "-o", "/dev/null", "-w", "%{http_code}",
+			"-X", method, consts.AgentHostRelayURL + path,
+		}
+		if body != "" {
+			args = append(args, "-H", "Content-Type: application/json", "-d", body)
+		}
+		res := h.ExecInContainer(agent, args...)
 		return strings.TrimSpace(res.Stdout)
 	}
+	const gitErase = `{"action":"erase","protocol":"https","host":"clawker-e2e.invalid"}`
 
-	// Project lane off: enrolled with no bypass.
-	offRes := h.Run("container", "run", "--detach", "--agent", "hp-off", "@", "sleep", "infinity")
-	require.NoError(t, offRes.Err, "start hp-off failed\nstdout: %s\nstderr: %s", offRes.Stdout, offRes.Stderr)
-	assert.NotEqual(t, "200", probe("hp-off"), "project with enable_host_proxy=false must not reach the daemon port")
+	start("ha-on")
 
-	// Same host, project lane on: enrolled with the bypass. This is the
-	// positive control that proves the stub is reachable at all.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: true }\n")
-	onRes := h.Run("container", "run", "--detach", "--agent", "hp-on", "@", "sleep", "infinity")
-	require.NoError(t, onRes.Err, "start hp-on failed\nstdout: %s\nstderr: %s", onRes.Stdout, onRes.Stderr)
-	require.Equal(t, "200", probe("hp-on"), "project with enable_host_proxy=true must reach the daemon port")
+	// Positive control: the CP reaches the host proxy for a granted agent.
+	require.Equal(t, "200", relay("ha-on", "POST", "/git/credential", gitErase),
+		"granted git erase must reach the host proxy through the CP")
+	assert.Equal(t, "403", relay("ha-on", "POST", "/open/url", `{"url":"https://denied.clawker-e2e.invalid/"}`),
+		"open/url to a denied host must be refused")
+	assert.Equal(t, "403", relay("ha-on", "GET", "/callback/0123456789abcdef0123456789abcdef/data", ""),
+		"a callback session the agent does not own must be refused")
 
-	// The disabled container stays closed while the enabled one runs.
-	assert.NotEqual(t, "200", probe("hp-off"),
-		"disabled container must not inherit the bypass from a sibling with the lane on")
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir,
+		"security: { git_credentials: { forward_https: false } }\n")
+	start("ha-nogit")
+	assert.Equal(t, "403", relay("ha-nogit", "POST", "/git/credential", gitErase),
+		"forward_https: false must refuse git credentials")
 
-	// A bypass stop re-enables with the project's value, so the lane stays
-	// on for hp-on (the project still enables it).
-	bypassRes := h.Run("firewall", "bypass", "5s", "--agent", "hp-on", "--non-interactive")
-	require.NoError(t, bypassRes.Err, "bypass failed\nstdout: %s\nstderr: %s", bypassRes.Stdout, bypassRes.Stderr)
-	stopRes := h.Run("firewall", "bypass", "--stop", "--agent", "hp-on")
-	require.NoError(t, stopRes.Err, "bypass --stop failed\nstdout: %s\nstderr: %s", stopRes.Stdout, stopRes.Stderr)
-	assert.Equal(t, "200", probe("hp-on"), "bypass --stop must keep the project's host-proxy lane")
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: false }\n")
+	start("ha-off")
+	assert.Equal(t, "403", relay("ha-off", "POST", "/git/credential", gitErase),
+		"enable_host_proxy: false must refuse every host action")
+	assert.Equal(t, "403", relay("ha-off", "POST", "/open/url", `{"url":"https://denied.clawker-e2e.invalid/"}`),
+		"enable_host_proxy: false must refuse open/url before the egress check")
 
-	// CP restart: the startup FirewallInit gate re-enrolls both running
-	// containers from their persisted records before the CP reports ready.
+	// The host proxy dials out to the CP. After a CP restart it reconnects
+	// by itself, and the granted agent reaches the host again.
 	downRes := h.Run("controlplane", "down")
 	require.NoError(t, downRes.Err, "controlplane down failed\nstdout: %s\nstderr: %s", downRes.Stdout, downRes.Stderr)
 	upRes := h.Run("controlplane", "up")
 	require.NoError(t, upRes.Err, "controlplane up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
-
-	assert.NotEqual(t, "200", probe("hp-off"), "disabled container must stay closed after a CP restart")
-	assert.Equal(t, "200", probe("hp-on"), "enabled container must keep its bypass after a CP restart")
-
-	// A clawker.yaml edit reaches a running container through firewall
-	// enable, which sends the project's current value.
-	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: false }\n")
-	enableRes := h.Run("firewall", "enable", "--agent", "hp-on")
-	require.NoError(t, enableRes.Err, "firewall enable failed\nstdout: %s\nstderr: %s",
-		enableRes.Stdout, enableRes.Stderr)
-	assert.NotEqual(t, "200", probe("hp-on"), "firewall enable must apply the project's disabled lane")
+	require.Eventually(t, func() bool {
+		return relay("ha-on", "POST", "/git/credential", gitErase) == "200"
+	}, 2*time.Minute, 2*time.Second, "the host proxy must reconnect to the restarted CP")
 }
 
 // TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`
@@ -757,13 +742,26 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 		h.Run("container", "stop", "--agent", "dns-test")
 	})
 
-	// Verify host.docker.internal resolves (docker.internal zone → Docker DNS).
-	hostRes := h.ExecInContainer("dns-test", "getent", "hosts", "host.docker.internal")
-	t.Logf("host.docker.internal: stdout=%q stderr=%q err=%v", hostRes.Stdout, hostRes.Stderr, hostRes.Err)
-	require.NoError(t, hostRes.Err,
-		"host.docker.internal should resolve through CoreDNS → Docker DNS\nstdout: %s\nstderr: %s",
-		hostRes.Stdout, hostRes.Stderr)
-	assert.NotEmpty(t, strings.TrimSpace(hostRes.Stdout), "should get an IP for host.docker.internal")
+	// With no rule, nothing under docker.internal resolves: Docker DNS
+	// sends names it does not know to the host resolvers, so an open
+	// subtree would be a DNS exfiltration path.
+	for _, name := range []string{"host.docker.internal", "gateway.docker.internal", "x.host.docker.internal"} {
+		res := h.ExecInContainer("dns-test", "getent", "hosts", name)
+		t.Logf("%s without rule: stdout=%q err=%v", name, res.Stdout, res.Err)
+		require.Errorf(t, res.Err, "%s must not resolve without a rule", name)
+	}
+
+	// A rule for host.docker.internal opens only that exact name, through
+	// Docker DNS.
+	addRes := h.Run("firewall", "add", "host.docker.internal", "--proto", "tcp", "--port", "8080")
+	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s", addRes.Stdout, addRes.Stderr)
+	require.Eventually(t, func() bool {
+		res := h.ExecInContainer("dns-test", "getent", "hosts", "host.docker.internal")
+		return res.Err == nil && strings.TrimSpace(res.Stdout) != ""
+	}, 30*time.Second, time.Second, "host.docker.internal should resolve after the rule is added")
+	subRes := h.ExecInContainer("dns-test", "getent", "hosts", "x.host.docker.internal")
+	t.Logf("x.host.docker.internal with rule: stdout=%q err=%v", subRes.Stdout, subRes.Err)
+	require.Error(t, subRes.Err, "a name below host.docker.internal must not resolve")
 
 	// If monitoring stack is running (otel-collector on the clawker network), verify it resolves.
 	otelRes := h.ExecInContainer("dns-test", "getent", "hosts", "otel-collector")

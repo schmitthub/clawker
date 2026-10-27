@@ -14,20 +14,13 @@ var _ hostproxy.Service = (*MockManager)(nil)
 type MockManager struct {
 	EnsureErr   error  // Error returned by EnsureRunning
 	Running     bool   // Value returned by IsRunning
-	URL         string // Value returned by ProxyURL
 	PrecheckErr error  // Error returned by PrecheckGitCredential
 }
 
 // NewMockManager returns a MockManager that starts not running.
 // EnsureRunning transitions it to running (since EnsureErr is nil).
 func NewMockManager() *MockManager {
-	return &MockManager{URL: "http://host.docker.internal:18374"}
-}
-
-// NewRunningMockManager returns a MockManager that reports as running
-// with the given proxy URL.
-func NewRunningMockManager(url string) *MockManager {
-	return &MockManager{Running: true, URL: url}
+	return &MockManager{}
 }
 
 // NewFailingMockManager returns a MockManager whose EnsureRunning returns the given error.
@@ -42,7 +35,6 @@ func (m *MockManager) EnsureRunning() error {
 	return m.EnsureErr
 }
 func (m *MockManager) IsRunning() bool  { return m.Running }
-func (m *MockManager) ProxyURL() string { return m.URL }
 func (m *MockManager) PrecheckGitCredential(context.Context) error {
 	return m.PrecheckErr
 }

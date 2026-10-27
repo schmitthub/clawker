@@ -188,38 +188,6 @@ func assertCode(t *testing.T, err error, want codes.Code) {
 // FirewallEnable
 // ---------------------------------------------------------------------------
 
-// TestHandler_FirewallEnable_NoEnrollmentStore_Internal: a handler without
-// the store is a wiring fault and must fail loud instead of enrolling a
-// container whose record can never be replayed.
-func TestHandler_FirewallEnable_NoEnrollmentStore_Internal(t *testing.T) {
-	mock := noopMock()
-	q := NewActionQueue(nil)
-	t.Cleanup(func() { _ = q.Close() })
-	h, err := NewHandler(HandlerDeps{
-		EBPF:          mock,
-		Stack:         new(fakeStack),
-		Store:         nil,
-		Cfg:           testConfig(),
-		Resolver:      nopResolver,
-		Log:           nil,
-		Queue:         q,
-		EnrolledTopic: nil,
-		CA:            nil,
-		Identity:      nil,
-		ListAgents:    nil,
-		Enrollments:   nil,
-	})
-	require.NoError(t, err)
-	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
-
-	_, err = h.FirewallEnable(context.Background(), &adminv1.FirewallEnableRequest{
-		ContainerId: "ctr-1",
-		HostProxy:   new(true),
-	})
-	assertCode(t, err, codes.Internal)
-	assert.Empty(t, mock.InstallCalls())
-}
-
 // ---------------------------------------------------------------------------
 // FirewallDisable
 // ---------------------------------------------------------------------------
@@ -233,10 +201,6 @@ func TestHandler_FirewallEnable_NoEnrollmentStore_Internal(t *testing.T) {
 // `TestAdminHandler_SyncRoutes_EBPFError`). Duplicating them here would
 // only add a thin direct-call layer over the same ebpf mock — no new
 // surface.
-
-// ---------------------------------------------------------------------------
-// FirewallResolveHostname
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // FirewallInit / FirewallReload / FirewallStatus — drive the fake stack.
@@ -362,9 +326,6 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 		ListAgents:    func(_ context.Context) ([]string, error) { return agents, nil },
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(path string) (uint64, error) {
 		for cid, p := range cgroupPaths {
 			if p == path {
@@ -436,9 +397,6 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 		ListAgents: func(_ context.Context) ([]string, error) { return []string{"broken", "healthy"}, nil },
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(path string) (uint64, error) {
 		if path == "/test/cgroup/broken" {
 			return 111, nil
@@ -686,9 +644,6 @@ func ruleStoreHandlerWithCfg(
 		Identity: alloc,
 	})
 	require.NoError(t, err)
-	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
-		return []string{"192.168.65.254"}, nil
-	}
 	h.cgroupIDFn = func(string) (uint64, error) { return testCgroupID, nil }
 	return h, stack, cfg
 }
@@ -848,14 +803,14 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
 }
 
-// TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts asserts the
-// reconcile-path identity sync allocates one sticky identity per rule dst
-// (domains, wildcards normalized, IP literals — allow AND deny alike, so an
-// action flip never renumbers) plus every reserved internal host, and that
+// TestHandler_IdentityTable_CoversRuleDsts asserts the reconcile-path
+// identity sync allocates one sticky identity per rule dst (domains,
+// wildcards normalized, IP literals — allow AND deny alike, so an action
+// flip never renumbers) and nothing else, and that
 // the snapshot the netlogger IdentitySource serves reverse-resolves each of
 // them. This is the attribution guarantee: dnsbpf writes and route_map keys
 // both come from this one table.
-func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
+func TestHandler_IdentityTable_CoversRuleDsts(t *testing.T) {
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
 
@@ -869,10 +824,10 @@ func TestHandler_IdentityTable_CoversRuleDstsAndReservedHosts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	wantDsts := []string{"github.com", "example.com", "45.79.112.203", "blocked.test", "docker.internal"}
-	// The monitoring stack is off the agent network: its service names
-	// are not reserved hosts and get no route identity.
-	for _, name := range []string{consts.MonitoringServiceOtelCollector, consts.MonitoringServicePrometheus} {
+	wantDsts := []string{"github.com", "example.com", "45.79.112.203", "blocked.test"}
+	// Names no rule names get no route identity: docker.internal resolves
+	// only through a rule, and the monitoring stack is off the agent network.
+	for _, name := range []string{"docker.internal", consts.DockerHostInternal, consts.MonitoringServiceOtelCollector, consts.MonitoringServicePrometheus} {
 		_, ok := h.identity.IdentityFor(name)
 		assert.Falsef(t, ok, "monitoring name %q must not get a route identity", name)
 	}

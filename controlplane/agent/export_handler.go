@@ -46,7 +46,7 @@ func (h *Handler) ExportTelemetry(
 		return nil, status.Errorf(codes.ResourceExhausted, "export: body over the size cap")
 	}
 
-	resolved, err := h.verifyTelemetryPeer(ctx)
+	resolved, err := h.verifyRegisteredPeer(ctx, "export", exportIdentityRejected)
 	if err != nil {
 		return nil, err
 	}
@@ -77,24 +77,26 @@ func (h *Handler) ExportTelemetry(
 	return &agentv1.ExportTelemetryResult{}, nil
 }
 
-// verifyTelemetryPeer reads the interceptor-resolved container and checks
-// the live peer cert against the registry row Register wrote. The
-// returned error is already a gRPC status.
-func (h *Handler) verifyTelemetryPeer(ctx context.Context) (ResolvedContainer, error) {
+// verifyRegisteredPeer reads the interceptor-resolved container and checks
+// the live peer cert against the registry row Register wrote. lane names
+// the RPC family in the event names (agent_<lane>_*); rejected is the
+// uniform PermissionDenied message. The returned error is already a gRPC
+// status.
+func (h *Handler) verifyRegisteredPeer(ctx context.Context, lane, rejected string) (ResolvedContainer, error) {
 	resolved, ok := ResolvedContainerFromContext(ctx)
 	if !ok {
 		h.Log.Error().
-			Str("event", "agent_export_no_resolved_container").
+			Str("event", "agent_"+lane+"_no_resolved_container").
 			Msg("middleware did not attach ResolvedContainer to ctx — wiring bug")
-		return ResolvedContainer{}, status.Errorf(codes.Internal, "export: identity not resolved")
+		return ResolvedContainer{}, status.Errorf(codes.Internal, "%s: identity not resolved", lane)
 	}
 	leaf, err := peerLeafFromContext(ctx)
 	if err != nil {
 		h.Log.Warn().Err(err).
-			Str("event", "agent_export_peer_cert_missing").
+			Str("event", "agent_"+lane+"_peer_cert_missing").
 			Str("container_id", resolved.ContainerID).
 			Msg("ctx carried resolved container but no peer cert — defensive reject")
-		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, exportIdentityRejected)
+		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, "%s", rejected)
 	}
 	thumbprint := sha256.Sum256(leaf.Raw)
 
@@ -102,22 +104,22 @@ func (h *Handler) verifyTelemetryPeer(ctx context.Context) (ResolvedContainer, e
 	switch {
 	case errors.Is(err, ErrUnknownAgent):
 		h.Log.Warn().
-			Str("event", "agent_export_unregistered").
+			Str("event", "agent_"+lane+"_unregistered").
 			Str("container_id", resolved.ContainerID).
-			Msg("ExportTelemetry from a container with no registry row; Register has not completed")
-		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, exportIdentityRejected)
+			Msg("request from a container with no registry row; Register has not completed")
+		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, "%s", rejected)
 	case err != nil:
 		h.Log.Warn().Err(err).
-			Str("event", "agent_export_lookup_error").
+			Str("event", "agent_"+lane+"_lookup_error").
 			Str("container_id", resolved.ContainerID).
 			Msg("registry lookup failed")
-		return ResolvedContainer{}, status.Errorf(codes.Internal, "export: lookup failed")
+		return ResolvedContainer{}, status.Errorf(codes.Internal, "%s: lookup failed", lane)
 	case subtle.ConstantTimeCompare(entry.Thumbprint[:], thumbprint[:]) != 1:
 		h.Log.Warn().
-			Str("event", "agent_export_thumbprint_mismatch").
+			Str("event", "agent_"+lane+"_thumbprint_mismatch").
 			Str("container_id", resolved.ContainerID).
 			Msg("peer cert thumbprint does not match the registry row")
-		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, exportIdentityRejected)
+		return ResolvedContainer{}, status.Errorf(codes.PermissionDenied, "%s", rejected)
 	}
 	return resolved, nil
 }

@@ -157,7 +157,8 @@ PROTO_SOURCES := \
 	buf.gen.yaml \
 	$(wildcard api/admin/v1/*.proto) \
 	$(wildcard api/agent/v1/*.proto) \
-	$(wildcard api/clawkerd/v1/*.proto)
+	$(wildcard api/clawkerd/v1/*.proto) \
+	$(wildcard api/hostproxy/v1/*.proto)
 
 PROTO_GENERATED := \
 	api/admin/v1/admin.pb.go \
@@ -165,7 +166,9 @@ PROTO_GENERATED := \
 	api/agent/v1/agent.pb.go \
 	api/agent/v1/agent_grpc.pb.go \
 	api/clawkerd/v1/clawkerd.pb.go \
-	api/clawkerd/v1/clawkerd_grpc.pb.go
+	api/clawkerd/v1/clawkerd_grpc.pb.go \
+	api/hostproxy/v1/hostproxy.pb.go \
+	api/hostproxy/v1/hostproxy_grpc.pb.go
 
 # bpf2go-generated Go wrappers + compiled BPF bytecode extracted to the host
 # tree so host-side `go test` / `go vet` / `gopls` can compile
@@ -287,8 +290,8 @@ bpf-deps:
 # package — manager.go references types declared in the generated wrappers.
 # proto: regenerate Go code from .proto files via buf.
 #
-# The generated files (admin.pb.go, admin_grpc.pb.go, agent.pb.go,
-# agent_grpc.pb.go) are committed to the repo — this matches the
+# The generated files (the .pb.go and _grpc.pb.go of every service)
+# are committed to the repo — this matches the
 # Kubernetes/containerd/gRPC-go convention and keeps normal `go build`
 # invocations free of codegen setup. But to make proto edits painless,
 # the generated files are declared as file targets whose source deps
@@ -320,7 +323,7 @@ proto: proto-tools
 
 # File-target rule: Make regenerates PROTO_GENERATED whenever any source is
 # newer (edited .proto, updated buf config). A single `buf generate` produces
-# all six files. The grouped-target operator `&:` only works on GNU Make 4.3+
+# all eight files. The grouped-target operator `&:` only works on GNU Make 4.3+
 # (Apple's default `/usr/bin/make` is 3.81), so use the canonical-target
 # pattern: one representative file gets the recipe, the rest depend on it.
 # If any are deleted/stale, Make rebuilds via the chain and the recipe fires
