@@ -2,6 +2,8 @@
 
 Part of `mem:plans/sandbox-hardening/initiative` (Task 3).
 
+> SUPERSEDED 2026-10-26 by `mem:plans/hostproxy-behind-cp/plan`: the eBPF host-proxy lane, the `EnrollmentStore`, and `FirewallEnableRequest.host_proxy` are removed. Kept as history only.
+
 ## Problem
 
 `controlplane/firewall/handler.go` `resolveHostProxy` (~1354) reads `h.cfg.SecurityConfig().HostProxyEnabled()`. `h.cfg` is CP's own `config.NewConfig()` (`internal/controlplane/cmd.go` ~1521); inside the CP container the project store resolves only the config-dir layer plus defaults (`enable_host_proxy` defaults true), never the per-project `clawker.yaml`, which lives in the project tree on the host. So every enrolled cgroup receives `host_proxy_ip/port` and the eBPF bypass at `common.h` ~862 admits it. Verified: a project with `enable_host_proxy: false` and `forward_https: false` pulled a host GitHub credential and opened the host browser once another agent's daemon was running.
