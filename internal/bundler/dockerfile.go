@@ -160,13 +160,13 @@ type DockerfileContext struct {
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
 
-	// OTEL telemetry endpoint — populated from cfg.OtelCollectorURL().
-	// Wired into the container as OTEL_EXPORTER_OTLP_ENDPOINT (base URL,
-	// no path); the OTel SDK appends /v1/{metrics,logs,traces} per
-	// signal. Defaults to the otel-collector OTLP/HTTP receiver so
-	// Prometheus retains metric metadata for OpenSearch Dashboards
-	// (/api/v1/metadata excludes OTLP-ingested series).
-	OtelEndpoint             string // e.g. "http://otel-collector:4318"
+	// OTEL telemetry endpoint — consts.AgentOTLPRelayURL, the loopback
+	// OTLP/HTTP relay clawkerd serves inside the container. Wired in as
+	// OTEL_EXPORTER_OTLP_ENDPOINT (base URL, no path); the OTel SDK
+	// appends /v1/{metrics,logs,traces} per signal. clawkerd carries
+	// each batch to the control plane, which stamps the verified
+	// identity and forwards to the collector.
+	OtelEndpoint             string // e.g. "http://127.0.0.1:4318"
 	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
 	OtelMetricExportInterval int    // milliseconds, e.g. 10000
 
@@ -672,7 +672,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		ManagedPrompt:            managedPromptContext(bundle.Manifest.ManagedPrompt),
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
-		OtelEndpoint:             g.cfg.OtelCollectorURL(),
+		OtelEndpoint:             consts.AgentOTLPRelayURL,
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
 		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
 		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,

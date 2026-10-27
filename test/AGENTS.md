@@ -61,7 +61,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 
 | Function | Signature | Purpose |
 |----------|-----------|---------|
-| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, registers cleanup |
+| `NewIsolatedFS` | `(h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult` | Creates isolated XDG dirs, links the real `~/.docker/cli-plugins` into the empty isolated `DOCKER_CONFIG` (Docker Desktop keeps `docker compose` only there), registers cleanup |
 | `Chdir` | `(r *SetupResult) Chdir(t, dir)` | Changes working directory with cleanup to restore |
 | `Run` | `(h *Harness) Run(args ...string) *RunResult` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer` | `(h *Harness) RunInContainer(agent, cmd...) *RunResult` | `container run --rm --agent <agent> @ <cmd>` |
@@ -128,6 +128,10 @@ Highlights (not exhaustive — see the file):
 | `TestFirewall_HostProxyReachable` / `_HostProxyPerContainer` / `_IntraNetworkBypass` / `_FirewallDisabled` | Host-proxy carve-out; the carve-out follows each project's `enable_host_proxy` and survives a CP restart; intra-net bypass; disabled-firewall behavior (CP still boots — CP ≠ firewall) |
 
 Tests drive the full CLI pipeline via `h.Run()`. The CP AdminService is reached indirectly through the production CLI code path. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup removes firewall and CP containers by purpose label before removing test resources.
+
+## Telemetry Relay E2E Test (`test/e2e/telemetry_relay_internal_test.go`)
+
+`TestTelemetryRelay_E2E` runs `monitor up`, starts an agent container, and posts one OTLP metrics batch from inside it to the clawkerd relay (`consts.AgentOTLPRelayAddr`). The batch crosses the real path: relay, CP AgentService over mTLS (identity gate and registry), OTel gateway, collector agent lane. The batch resource claims a false `project`, `agent`, and `container_id`. The test queries Prometheus on the host for the batch's nonce and requires the CP-resolved values and `ingest_source=cp_gateway`. The file is `package e2e` (an `_internal_test.go` file) because it uses `newFirewallHarness`.
 
 ## Debugging Resource Leaks
 

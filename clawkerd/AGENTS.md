@@ -20,7 +20,7 @@ Mirrors the `controlplane` binary split (thin `cmd` → internal entrypoint → 
 
 ## Role
 
-CP is the host daemon; clawkerd is the per-container daemon. They communicate over the per-container gRPC listener on clawker-net (CP-dialed). The Session bidi-stream is the command dispatch channel. clawkerd has ONE outbound call: the CP-triggered Register handshake that mTLS-dials CP's AgentService to write the identity row. Otherwise clawkerd only serves.
+CP is the host daemon; clawkerd is the per-container daemon. They communicate over the per-container gRPC listener on clawker-net (CP-dialed). The Session bidi-stream is the command dispatch channel. clawkerd has two outbound paths to CP's AgentService, both over its mTLS leaf: the CP-triggered Register handshake that writes the identity row (bearer-gated, one-time), and the `AgentService.ExportTelemetry` connection the OTLP relay keeps open for the process lifetime (public scope, no bearer). Otherwise clawkerd only serves.
 
 ## Boot Sequence
 
@@ -33,7 +33,9 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
 
 2. Resolve env: `CLAWKER_AGENT` (required), `CLAWKER_PROJECT` (empty = global-scope agent, 2-segment naming), `CLAWKER_USER` (defaults to `consts.ContainerUser`). `CLAWKER_USER` is resolved against `/etc/passwd` to fill `SysProcAttr.Credential` for the spawn child.
 
-3. Start listener on `consts.DefaultClawkerdPort` (`:7700`). This is the entire RPC surface.
+3. Start listener on `consts.DefaultClawkerdPort` (`:7700`). This is the entire inbound RPC surface.
+
+   Then start the OTLP relay (`otlp_relay.go`, `StartTelemetryRelay`) on `consts.AgentOTLPRelayAddr` (`127.0.0.1:4318`). It degrades to nil with `event=otlp_relay_unavailable` when `CLAWKER_CP_AGENT_ADDR` is unset, the leaf does not parse, or the bind fails; the daemon continues without telemetry.
 
 4. Build `spawnState` (in `spawn.go` + `spawn_unix.go`) and a `spawnEntry` closure that captures the resolved `ExecUser` + argv. Thread the closure through `StartClawkerdListener` → `clawkerdServer` → `runSession` → `session` as a constructor argument so a wiring bug fails loud at construction (nil-thunk rejected at `StartClawkerdListener`) rather than via a package-level mutable global. The entrypoint (`internal/clawkerd/cmd.go`) also passes the `spawnState` (`spawn`) down the same chain as the `state agentState` (used for HelloAck and `AgentInitialized`); unlike `spawnEntry`/`onFatal`/`requestExit`, `state` is intentionally **nil-tolerant** and is NOT rejected at `StartClawkerdListener` (test fixtures leave it unset). Spawn does NOT fire here — `handleAgentReady` invokes the closure when CP dispatches `AgentReady` as the terminal step of CP-driven boot.
 
@@ -103,6 +105,16 @@ The `Command_Hello` dispatch case replies `HelloAck{Initialized, CmdRunning}`, b
 
 `handleAgentReady` is the terminal step of CP-driven *boot*. Calls `s.spawnEntry` (the thunk threaded through `clawkerdServer` → `runSession` → `session` from `main()`); replies `Done{0}` on success, `Done{0}` on `errAlreadySpawned` (reconnect idempotency), `Error{IO_ERROR}` on any other spawn failure or on a nil thunk (production rejects nil at `StartClawkerdListener` construction). `spawnState.Run`'s CAS is the source of truth for "already spawned".
 
+### OTLP Relay (agent → CP telemetry)
+
+`otlp_relay.go` serves the OTLP/HTTP paths the agent SDK exports to (`POST /v1/{logs,metrics,traces}`, `application/x-protobuf`, optional `gzip`) on loopback only. Each body is carried unchanged in one unary `AgentService.ExportTelemetry` call over a `grpc.ClientConn` dialed with the bootstrap leaf and no bearer (ExportTelemetry is public scope: mTLS plus the CP identity interceptor plus the registry thumbprint check in the CP handler). The relay holds no identity logic and never reads the batch.
+
+- Caps: body at `agentv1.ExportTelemetryMaxBodyBytes` (4 MiB) after gzip decoding, so a small compressed body cannot expand past what the CP listener accepts; one forward is bounded by `relayExportTimeout` (15 s, longer than the CP gateway's own forward timeout so a slow collector surfaces as the CP's verdict). Reads are bounded by `relayReadHeaderTimeout` (5 s) and `relayReadTimeout` (10 s, the whole request, and idle keep-alive connections through the `IdleTimeout` fallback), so a client that stalls an upload cannot hold a PID1 goroutine and its body buffer.
+- Verdict mapping (`relayHTTPStatus`): `Unavailable`/`DeadlineExceeded`/`Canceled` → `503` + `Retry-After` (the SDK's bounded retry backs off); `PermissionDenied`/`Unauthenticated` → `403`; `InvalidArgument` → `400`; `ResourceExhausted` → `413`; anything else → `500` (the Node OTLP exporter retries 429/502/503/504 only). Client faults (`404`, `405`, `415`, `413`, `400`) are answered before any forward.
+- No register gate: a restarted container skips Register (registry hit at Hello), so "wait for RegisterDone" would block forever; the CP answers `PermissionDenied` for an unregistered peer and the user CMD only spawns after `AgentReady`, which follows Register.
+- Monitoring is optional: with the CP gateway breaker open the CP answers success and the relay returns `200`; with the CP itself away the SDK sees `503` and gives up after its own retry budget. Rejections log at most once per minute (`event=otlp_relay_rejected`, `event=otlp_relay_cp_unavailable`).
+- Shutdown runs after the child exited (`relayShutdownGrace` in `internal/clawkerd/cmd.go`) with a context that outlives the daemon's signal context.
+
 ### AgentInitialized Handler
 
 `handleAgentInitialized` is the terminal step of CP-driven *init* (distinct from `AgentReady`, the terminal step of *boot*). Like Hello, it runs synchronously on the receive loop. It calls `state.MarkInitialized()` (persists the writable-layer init marker — nil-tolerant) and replies `Done{0}`. This is what makes init one-time: the persisted marker is what `Initialized()` reads at the next Hello.
@@ -120,7 +132,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 
 ## What It Does NOT Do
 
-- No proactive outbound dial — only the one-time CP-triggered Register handshake
+- No proactive outbound dial beyond the CP-triggered Register handshake and the ExportTelemetry connection the OTLP relay holds (lazy dial, gRPC-managed reconnect)
 - No heartbeat — CP knows liveness via Docker events + dialer overseer events
 - No init-script execution — CP-driven `Session.ShellCommand` runs the post-init plan; clawkerd just dispatches
 - No reconnect logic — clawkerd is the SERVER; reconnect with backoff lives in `controlplane/agent/dialer.go` on the CP side
@@ -137,7 +149,8 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 | `recover.go` | Resilience-contract `recoverGoroutine` helper: structured-log + onPanic hook for every long-lived goroutine in clawkerd (no build tag — shared by spawn_unix's reaper/forwarder/watchdog AND listener.go's Serve AND session.go's sender/worker/drainer/register handler). |
 | `progress.go` | User-facing TTY progress reporter: two plain status lines per init step (Active form, then ✓/✗ Done) plus boot/closing banners. No animation — per-step shell scripts complete in milliseconds, below the threshold animation would be perceptible. Writes to `os.Stdout` (the attached TTY for the agent container) via TIOCGPGRP-detected isTTY which toggles ANSI color codes and the info-icon glyph (cyan `ℹ` on a TTY, `[info]` ASCII fallback off-TTY); per-step `✓`/`✗` glyphs are emitted unchanged in both modes. Wired by `internal/clawkerd/cmd.go` → `StartClawkerdListener` → `clawkerdServer` → `runSession` → `session`. Init step boundaries hooked in `session.dispatch` (Command_Shell with `init-` prefix → StartStep) and `session.runSender` (terminal Done/Error → EndStep, via `settleInitStep`, fired only after `stream.Send` succeeds); `handleAgentReady` calls `Final` immediately before spawn so the subsequent `spawnEntry` transfers the TTY foreground to the user CMD without visual collision. `WriteOutput` echoes raw captured command output to the same console under the shared mutex (suppressed once stopped, so a post-spawn command can't garble the user CMD's TTY); `settleInitStep` reads `Done.final_exit_code` and passes the result to `EndStep`, so a non-zero exit renders the red ✗ instead of the green ✓. |
 | `user.go` | `ExecUser` + `ResolveUser` wrapping `github.com/moby/sys/user.GetExecUser` (passwd snapshot read once into bytes; group file via explicit path reader) for `name`/`name:group`/`uid`/`uid:gid` spec parsing |
-| `register.go` | CP-triggered Register handshake: Hydra token exchange + `AgentService.Register` mTLS dial |
+| `register.go` | CP-triggered Register handshake: Hydra token exchange + `AgentService.Register` mTLS dial (`buildDialTLSConfig` is shared with the relay) |
+| `otlp_relay.go` | `StartTelemetryRelay` orchestrator (degrade to nil), `OTLPRelay` loopback OTLP/HTTP receiver → `AgentService.ExportTelemetry`, HTTP verdict mapping, rate-limited rejection log |
 | `bootstrap_test.go` | `ReadBootstrap` happy path, per-file missing variants, empty-file rejection |
 | `listener_test.go` | `pinPeerCNToCP` unit tests + `runSession` audit-log integration test (bufconn TLS) + bad-CN / no-cert / untrusted-CA / plain-TCP rejection |
 | `progress_test.go` | `parseInitStep` table tests + `progressReporter` output/mute/nil-safety |
@@ -153,9 +166,9 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 Structured zerolog via `internal/logger.New()` writing to `/var/log/clawker/clawkerd.log` (50MB rotation, 7d retain, 3 backups). clawkerd as PID 1 inherits Docker's stdout/stderr — Go runtime panics land there but NOT the rotated log (lumberjack is unsafe for multi-writer access). Every log line carries `agent=<name>` + `project=<slug>` for multi-agent filterability.
 
 Levels:
-- **ERROR** — bootstrap-file read failure, listener bind failure, unrecoverable Serve return, spawn-goroutine panic recovery, agent-ready spawn failure
-- **WARN** — pipe-close failures during pipeline teardown, signal forward failures (non-ESRCH), reaper main-already-reaped fallback, Stop SIGTERM/SIGKILL forward failures
-- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_initialized`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown` (when run() returns nil; logged at ERROR when run() returns non-nil)
+- **ERROR** — bootstrap-file read failure, listener bind failure, `otlp_relay_unavailable` (leaf or bind failure), `otlp_relay_serve_failed`, unrecoverable Serve return, spawn-goroutine panic recovery, agent-ready spawn failure
+- **WARN** — `otlp_relay_unavailable` (no CP address), `otlp_relay_rejected` / `otlp_relay_cp_unavailable` (rate-limited, one per minute), pipe-close failures during pipeline teardown, signal forward failures (non-ESRCH), reaper main-already-reaped fallback, Stop SIGTERM/SIGKILL forward failures
+- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `otlp_relay_ready`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_initialized`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown` (when run() returns nil; logged at ERROR when run() returns non-nil)
 - **DEBUG** — orphan-reap events, signal-after-exit filter
 
 The single allowed `os.Stderr` write is the logger init failure path in `main`.
