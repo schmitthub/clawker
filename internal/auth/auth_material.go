@@ -86,6 +86,9 @@ func EnsureAuthMaterial() error {
 	if err := ensureInfraIntermediateCA(); err != nil {
 		return fmt.Errorf("infra intermediate CA: %w", err)
 	}
+	if err := ensureHostProxyServerCert(); err != nil {
+		return fmt.Errorf("host proxy server cert: %w", err)
+	}
 	return nil
 }
 
@@ -120,6 +123,12 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	}
 	if err := removeIfExists(consts.AuthOtelServerKeyPath); err != nil {
 		return fmt.Errorf("remove otel server key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthHostProxyServerCertPath); err != nil {
+		return fmt.Errorf("remove host proxy server cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthHostProxyServerKeyPath); err != nil {
+		return fmt.Errorf("remove host proxy server key: %w", err)
 	}
 	if err := removeIfExists(consts.AuthCPClientCertPath); err != nil {
 		return fmt.Errorf("remove cp client cert: %w", err)
@@ -496,6 +505,68 @@ func ensureServerCert() error {
 	}
 	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
 		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
+}
+
+// serialNumberBits is the size of a random certificate serial number.
+const serialNumberBits = 128
+
+// privateKeyMode is the file mode of a private key only its owner reads.
+const privateKeyMode = 0o600
+
+// ensureHostProxyServerCert mints the host proxy's server leaf, signed by
+// the CLI CA. The CP dials the host proxy at host.docker.internal and
+// verifies this cert; the CLI dials it at localhost for health checks.
+func ensureHostProxyServerCert() error {
+	certPath, err := consts.AuthHostProxyServerCertPath()
+	if err != nil {
+		return fmt.Errorf("host proxy server cert path: %w", err)
+	}
+	keyPath, err := consts.AuthHostProxyServerKeyPath()
+	if err != nil {
+		return fmt.Errorf("host proxy server key path: %w", err)
+	}
+	if _, statErr := os.Stat(certPath); statErr == nil {
+		if _, keyErr := os.Stat(keyPath); keyErr == nil {
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load CA for signing: %w", err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), serialNumberBits))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := new(x509.Certificate)
+	tmpl.SerialNumber = serial
+	tmpl.Subject.CommonName = consts.HostProxyServerName
+	tmpl.Subject.Organization = []string{certOrganization}
+	tmpl.NotBefore = now.Add(-5 * time.Minute)
+	tmpl.NotAfter = now.AddDate(1, 0, 0)
+	tmpl.KeyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
+	tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	tmpl.DNSNames = []string{"localhost", consts.DockerHostInternal}
+	tmpl.IPAddresses = []net.IP{net.ParseIP(consts.Localhost), net.IPv6loopback}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign cert: %w", err)
+	}
+	if writeErr := writeCert(certPath, certDER); writeErr != nil {
+		return fmt.Errorf("write cert: %w", writeErr)
+	}
+	if writeErr := writeECDSAKey(keyPath, key, privateKeyMode); writeErr != nil {
+		return fmt.Errorf("write key: %w", writeErr)
 	}
 	return nil
 }

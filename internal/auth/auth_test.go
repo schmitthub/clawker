@@ -677,3 +677,34 @@ func TestBuildSignedAssertion_DifferentJTIs(t *testing.T) {
 
 	assert.NotEqual(t, first, second)
 }
+
+// TestHostProxyServerCertSignedByCA: the CP dials the host proxy at
+// host.docker.internal and verifies its server cert against the CLI CA.
+func TestHostProxyServerCertSignedByCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	caCert, err := CACert()
+	require.NoError(t, err)
+
+	certPath, err := consts.AuthHostProxyServerCertPath()
+	require.NoError(t, err)
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	opts := new(x509.VerifyOptions)
+	opts.Roots = pool
+	opts.DNSName = consts.DockerHostInternal
+	opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	_, err = cert.Verify(*opts)
+	require.NoError(t, err, "host proxy server cert must be signed by CLI CA for host.docker.internal")
+	assert.Equal(t, consts.HostProxyServerName, cert.Subject.CommonName)
+	assert.Contains(t, cert.DNSNames, "localhost")
+}

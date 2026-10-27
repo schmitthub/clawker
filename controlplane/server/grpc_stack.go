@@ -22,6 +22,7 @@ import (
 	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/controlplane/auth"
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
+	"github.com/schmitthub/clawker/controlplane/hostgateway"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -104,6 +105,11 @@ type GRPCDeps struct {
 	// at wiring): ExportTelemetry answers Unavailable, every other surface is
 	// unaffected.
 	OtelGateway agent.OtelForwarder
+
+	// HostGateway forwards authorized AgentService host actions to the host
+	// proxy. nil is the degraded state (event=host_gateway_unavailable at
+	// wiring): the host actions answer Unavailable.
+	HostGateway *hostgateway.Gateway
 
 	// ServerCertPath / ServerKeyPath locate the CP server leaf used for
 	// both the admin and agent listeners (same mTLS material).
@@ -498,6 +504,11 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 	// The same handler serves ExportTelemetry; the gateway is optional (nil =
 	// degraded, ExportTelemetry answers Unavailable).
 	registerHandler.OtelGateway = deps.OtelGateway
+	// Assign only a non-nil gateway: a typed-nil pointer in the interface
+	// would pass the handler's nil check.
+	if deps.HostGateway != nil {
+		registerHandler.HostGateway = deps.HostGateway
+	}
 	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	stack.agentServer = agentServer

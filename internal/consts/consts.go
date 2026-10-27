@@ -421,6 +421,7 @@ const (
 	authOtelSubdir    = "otel"
 	authCPSubdir      = "cp"
 	authInfraCASubdir = "infra-ca"
+	authHostProxySub  = "hostproxy"
 )
 
 // authSubdirs enumerates every auth subdirectory. EnsureAuthDirs creates
@@ -429,7 +430,7 @@ const (
 // from subdirPathUnder.
 var authSubdirs = []string{
 	authCASubdir, authCLISubdir, authTLSSubdir,
-	authOtelSubdir, authCPSubdir, authInfraCASubdir,
+	authOtelSubdir, authCPSubdir, authInfraCASubdir, authHostProxySub,
 }
 
 // Auth material file basenames. Same drift contract as the subdir
@@ -522,6 +523,9 @@ const (
 	// pin the peer CN to this constant; agent identity is read from
 	// the SAN and verified against label-derived ground truth.
 	ContainerClawkerd = "clawker-clawkerd"
+
+	// HostProxyServerName is the host proxy's server certificate CN.
+	HostProxyServerName = "clawker-host-proxy"
 )
 
 // Container images.
@@ -1311,6 +1315,33 @@ func AuthInfraCAKeyPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, InfraCAKeyFile), nil
+}
+
+// AuthHostProxyDir ensures and returns the auth/hostproxy directory under
+// the XDG data dir. Holds the host proxy's mTLS server identity. The CP
+// dials the host proxy at host.docker.internal with its CP client cert.
+func AuthHostProxyDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, authHostProxySub), DataDir())
+}
+
+// AuthHostProxyServerCertPath returns the path to the host proxy's
+// server certificate.
+func AuthHostProxyServerCertPath() (string, error) {
+	dir, err := AuthHostProxyDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ServerCertFile), nil
+}
+
+// AuthHostProxyServerKeyPath returns the path to the host proxy's server
+// private key.
+func AuthHostProxyServerKeyPath() (string, error) {
+	dir, err := AuthHostProxyDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ServerKeyFile), nil
 }
 
 // AuthCPDir ensures and returns the auth/cp directory under the

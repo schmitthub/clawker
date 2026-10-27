@@ -4,12 +4,14 @@ package hostproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -39,6 +41,7 @@ type Server struct {
 	port             int
 	log              *logger.Logger
 	rulesFilePath    string             // egress rules file path; empty = skip check (firewall disabled)
+	tlsConfig        *tls.Config        // mTLS server config; Start refuses to serve without it
 	browserFunc      func(string) error // opens URL in host browser; defaults to openBrowser
 	listeners        []net.Listener     // IPv4 and optionally IPv6 listeners
 	servers          []*http.Server     // One server per listener
@@ -51,12 +54,15 @@ type Server struct {
 }
 
 // NewServer creates a new host proxy server on the specified port.
-func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server {
+// tlsConfig is the mTLS server config (ServerTLSConfig); Start fails
+// without it.
+func NewServer(port int, log *logger.Logger, rulesFilePath string, tlsConfig *tls.Config) *Server {
 	sessionStore := NewSessionStore()
 	s := &Server{
 		port:             port,
 		log:              log,
 		rulesFilePath:    rulesFilePath,
+		tlsConfig:        tlsConfig,
 		browserFunc:      openBrowser,
 		sessionStore:     sessionStore,
 		callbackChannel:  NewCallbackChannel(sessionStore, log),
@@ -94,19 +100,20 @@ func (s *Server) Start() error {
 	if s.running {
 		return nil
 	}
+	if s.tlsConfig == nil {
+		return errors.New("host proxy: no TLS config; the host proxy serves mTLS only")
+	}
 
+	// /health answers any client the TLS layer admitted (the CLI checks it
+	// with its own cert). Host actions answer only the CP.
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /open/url", s.handleOpenURL)
 	mux.HandleFunc("GET /health", s.handleHealth)
-
-	// Git credential forwarding endpoint
-	mux.HandleFunc("POST /git/credential", s.handleGitCredential)
-
-	// Callback channel endpoints for OAuth flow
-	mux.HandleFunc("POST /callback/register", s.handleCallbackRegister)
-	mux.HandleFunc("GET /callback/{session}/data", s.handleCallbackGetData)
-	mux.HandleFunc("DELETE /callback/{session}", s.handleCallbackDelete)
-	mux.HandleFunc("GET /cb/{session}/{path...}", s.handleCallbackCapture)
+	cp := func(h http.HandlerFunc) http.HandlerFunc { return requireControlPlane(s.log, h) }
+	mux.HandleFunc("POST /open/url", cp(s.handleOpenURL))
+	mux.HandleFunc("POST /git/credential", cp(s.handleGitCredential))
+	mux.HandleFunc("POST /callback/register", cp(s.handleCallbackRegister))
+	mux.HandleFunc("GET /callback/{session}/data", cp(s.handleCallbackGetData))
+	mux.HandleFunc("DELETE /callback/{session}", cp(s.handleCallbackDelete))
 
 	// Bind to localhost only for security - both IPv4 and IPv6
 	// This is necessary because Docker Desktop's host.docker.internal can
@@ -135,7 +142,7 @@ func (s *Server) Start() error {
 			IdleTimeout:  60 * time.Second,
 		}
 
-		listeners = append(listeners, listener)
+		listeners = append(listeners, tls.NewListener(listener, s.tlsConfig))
 		servers = append(servers, server)
 		listenedAddrs = append(listenedAddrs, addr)
 	}
@@ -347,6 +354,10 @@ func (s *Server) handleDynamicCallback(port int, w http.ResponseWriter, r *http.
 	}
 
 	s.writeCallbackSuccessPage(w)
+	// One-shot: the first callback is captured, so release the host port.
+	// The session keeps the data for the agent to poll. Close off the
+	// handler goroutine: Shutdown waits for in-flight handlers.
+	go s.closeDynamicListener(port)
 }
 
 // IsRunning returns whether the server is currently running.
@@ -412,44 +423,19 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce egress rules if configured (firewall enabled).
-	if s.rulesFilePath != "" {
-		if err := CheckURLAgainstEgressRules(req.URL, s.rulesFilePath); err != nil {
-			if errors.Is(err, errEgressRulesInvalid) {
-				// Present-but-corrupt rules file (e.g. tampered after the daemon
-				// started). Not a policy decision — log loudly with the real
-				// cause and fail closed, mirroring Envoy rejecting an invalid
-				// config rather than the soft per-request deny below.
-				s.log.Error().Err(err).Str("url", req.URL).Msg("egress rules file invalid; denying all URL opens until fixed")
-				s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
-					Success: false,
-					URL:     req.URL,
-					Error:   errEgressRulesUnavailable,
-				})
-				return
-			}
-			s.log.Warn().Err(err).Str("url", req.URL).Msg("blocked by egress rules")
-			s.writeJSON(w, http.StatusForbidden, openURLResponse{
-				Success: false,
-				URL:     req.URL,
-				Error:   "blocked by egress policy",
-			})
-			return
-		}
+	if status, msg := s.checkEgress(req.URL); status != http.StatusOK {
+		s.writeJSON(w, status, openURLResponse{Success: false, URL: req.URL, Error: msg})
+		return
 	}
 
 	s.log.Debug().Str("url", req.URL).Msg("opening URL in browser")
 
-	browserFn := s.browserFunc
-	if browserFn == nil {
-		browserFn = openBrowser
-	}
-	if err := browserFn(req.URL); err != nil {
-		s.log.Error().Err(err).Str("url", req.URL).Msg("failed to open URL in browser")
+	if openErr := s.openInBrowser(req.URL); openErr != nil {
+		s.log.Error().Err(openErr).Str("url", req.URL).Msg("failed to open URL in browser")
 		s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
 			Success: false,
 			URL:     req.URL,
-			Error:   err.Error(),
+			Error:   openErr.Error(),
 		})
 		return
 	}
@@ -458,6 +444,38 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		URL:     req.URL,
 	})
+}
+
+// checkEgress applies the egress rules to a URL the host browser will
+// open. It returns [http.StatusOK] when allowed (or the firewall is off),
+// otherwise the status and message to answer with.
+func (s *Server) checkEgress(rawURL string) (int, string) {
+	if s.rulesFilePath == "" {
+		return http.StatusOK, ""
+	}
+	err := CheckURLAgainstEgressRules(rawURL, s.rulesFilePath)
+	switch {
+	case err == nil:
+		return http.StatusOK, ""
+	case errors.Is(err, errEgressRulesInvalid):
+		// Present-but-corrupt rules file (e.g. tampered after the daemon
+		// started). Not a policy decision — log loudly with the real cause
+		// and fail closed, mirroring Envoy rejecting an invalid config
+		// rather than the soft per-request deny below.
+		s.log.Error().Err(err).Str("url", rawURL).Msg("egress rules file invalid; denying all URL opens until fixed")
+		return http.StatusInternalServerError, errEgressRulesUnavailable
+	default:
+		s.log.Warn().Err(err).Str("url", rawURL).Msg("blocked by egress rules")
+		return http.StatusForbidden, "blocked by egress policy"
+	}
+}
+
+// openInBrowser opens a URL with the configured browser function.
+func (s *Server) openInBrowser(rawURL string) error {
+	if s.browserFunc == nil {
+		return openBrowser(rawURL)
+	}
+	return s.browserFunc(rawURL)
 }
 
 // healthResponse is the JSON response body for the /health endpoint.
@@ -487,88 +505,123 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 
 // callbackRegisterRequest is the JSON request body for POST /callback/register.
 type callbackRegisterRequest struct {
-	Port           int    `json:"port"`
-	Path           string `json:"path,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	AuthURL    string `json:"authUrl"`
+	TTLSeconds int    `json:"ttlSeconds,omitempty"`
 }
 
 // callbackRegisterResponse is the JSON response body for POST /callback/register.
 type callbackRegisterResponse struct {
-	Success           bool   `json:"success"`
-	SessionID         string `json:"session_id,omitempty"`
-	ProxyCallbackBase string `json:"proxy_callback_base,omitempty"`
-	ExpiresAt         string `json:"expires_at,omitempty"`
-	Error             string `json:"error,omitempty"`
+	Success   bool   `json:"success"`
+	SessionID string `json:"sessionId,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
-// handleCallbackRegister handles POST /callback/register requests.
-// It creates a new callback session and starts a dynamic listener on the
-// specified port to capture OAuth callbacks.
+// registerFailure is a failed register answer.
+func registerFailure(msg string) callbackRegisterResponse {
+	return callbackRegisterResponse{Success: false, SessionID: "", Port: 0, ExpiresAt: "", Error: msg}
+}
+
+// minCallbackPort keeps the callback listener off privileged ports.
+const minCallbackPort = 1024
+
+// callbackTarget extracts the localhost callback port and path from the
+// auth URL's redirect_uri (or callback) parameter. Only an http redirect
+// to localhost or 127.0.0.1 on an unprivileged port is accepted.
+func callbackTarget(authURL string) (int, string, error) {
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid auth URL: %w", err)
+	}
+	q := parsed.Query()
+	raw := q.Get("redirect_uri")
+	if raw == "" {
+		raw = q.Get("callback")
+	}
+	if raw == "" {
+		return 0, "", errors.New("auth URL has no redirect_uri")
+	}
+	redirect, err := url.Parse(raw)
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid redirect_uri: %w", err)
+	}
+	host := redirect.Hostname()
+	if redirect.Scheme != "http" || redirect.User != nil || (host != "localhost" && host != consts.Localhost) {
+		return 0, "", errors.New("redirect_uri must be http://localhost:<port> or http://127.0.0.1:<port>")
+	}
+	port, err := strconv.Atoi(redirect.Port())
+	if err != nil || port < minCallbackPort || port > 65535 {
+		return 0, "", fmt.Errorf("redirect_uri port must be between %d and 65535", minCallbackPort)
+	}
+	path := redirect.Path
+	if path == "" {
+		path = "/callback"
+	}
+	return port, path, nil
+}
+
+// handleCallbackRegister handles POST /callback/register: the one-shot
+// OAuth flow. It egress-checks the auth URL, takes the callback port and
+// path from its localhost redirect, binds that port, and opens the auth
+// URL in the host browser. The listener closes after the first callback.
 func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	var req callbackRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.log.Debug().Err(err).Msg("failed to decode callback register request")
-		s.writeJSON(w, http.StatusBadRequest, callbackRegisterResponse{
-			Success: false,
-			Error:   "invalid JSON request body",
-		})
+		s.writeJSON(w, http.StatusBadRequest, registerFailure("invalid JSON request body"))
 		return
 	}
 
-	if req.Port <= 0 || req.Port > 65535 {
-		s.writeJSON(w, http.StatusBadRequest, callbackRegisterResponse{
-			Success: false,
-			Error:   "port must be between 1 and 65535",
-		})
+	port, path, err := callbackTarget(req.AuthURL)
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, registerFailure(err.Error()))
+		return
+	}
+	if status, msg := s.checkEgress(req.AuthURL); status != http.StatusOK {
+		s.writeJSON(w, status, registerFailure(msg))
 		return
 	}
 
 	ttl := DefaultCallbackTTL
-	if req.TimeoutSeconds > 0 {
-		ttl = min(time.Duration(req.TimeoutSeconds)*time.Second, 30*time.Minute)
+	if req.TTLSeconds > 0 {
+		ttl = min(time.Duration(req.TTLSeconds)*time.Second, DefaultCallbackTTL)
 	}
 
-	path := req.Path
-	if path == "" {
-		path = "/callback"
-	}
-
-	session, err := s.callbackChannel.Register(req.Port, path, ttl)
+	session, err := s.callbackChannel.Register(port, path, ttl)
 	if err != nil {
 		s.log.Error().Err(err).Msg("failed to register callback session")
-		s.writeJSON(w, http.StatusInternalServerError, callbackRegisterResponse{
-			Success: false,
-			Error:   "failed to create session",
-		})
+		s.writeJSON(w, http.StatusInternalServerError, registerFailure("failed to create session"))
 		return
 	}
-
-	// Start a dynamic listener on the callback port
-	// This allows the host to capture OAuth callbacks on the same port
-	// that the in-container agent expects, without rewriting the redirect_uri
-	if err := s.startDynamicListener(req.Port, session.ID); err != nil {
-		s.log.Error().Err(err).Int("port", req.Port).Msg("failed to start dynamic listener")
-		// Clean up the session since we couldn't start the listener
+	if listenErr := s.startDynamicListener(port, session.ID); listenErr != nil {
+		s.log.Error().Err(listenErr).Int("port", port).Msg("failed to start dynamic listener")
 		s.callbackChannel.Delete(session.ID)
-		s.writeJSON(w, http.StatusInternalServerError, callbackRegisterResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to start listener on port %d: %v", req.Port, err),
-		})
+		msg := fmt.Sprintf("failed to start listener on port %d", port)
+		s.writeJSON(w, http.StatusInternalServerError, registerFailure(msg))
+		return
+	}
+	if openErr := s.openInBrowser(req.AuthURL); openErr != nil {
+		s.log.Error().Err(openErr).Msg("failed to open auth URL in browser")
+		s.callbackChannel.Delete(session.ID)
+		s.writeJSON(w, http.StatusInternalServerError, registerFailure("failed to open browser"))
 		return
 	}
 
-	s.log.Debug().
+	s.log.Info().
+		Str("event", "host_proxy_callback_registered").
 		Str("session_id", session.ID).
-		Int("port", req.Port).
+		Int("port", port).
 		Str("path", path).
-		Msg("registered callback session with dynamic listener")
+		Msg("callback session registered and auth URL opened")
 
 	s.writeJSON(w, http.StatusOK, callbackRegisterResponse{
 		Success:   true,
 		SessionID: session.ID,
+		Port:      port,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
+		Error:     "",
 	})
 }
 
@@ -637,42 +690,6 @@ func (s *Server) handleCallbackDelete(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, callbackDeleteResponse{
 		Success: true,
 	})
-}
-
-// handleCallbackCapture handles GET /cb/{session}/{path...} requests.
-// This is the catch-all endpoint that receives OAuth callbacks from the browser.
-func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("session")
-	if sessionID == "" {
-		http.Error(w, "Invalid callback URL", http.StatusBadRequest)
-		return
-	}
-
-	err := s.callbackChannel.Capture(sessionID, r)
-	if err != nil {
-		// ErrCallbackAlreadyReceived is expected (browsers often send duplicate requests)
-		// Handle it silently by showing success page
-		if errors.Is(err, ErrCallbackAlreadyReceived) {
-			s.writeCallbackSuccessPage(w)
-			return
-		}
-
-		// Log actual errors
-		s.log.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
-
-		// Check if session doesn't exist
-		if s.sessionStore.Get(sessionID) == nil {
-			http.Error(w, "Session not found or expired", http.StatusNotFound)
-			return
-		}
-
-		// Some other error - show error page
-		s.writeCallbackErrorPage(w, "An error occurred. Please try again.")
-		return
-	}
-
-	// Return a user-friendly HTML page indicating success
-	s.writeCallbackSuccessPage(w)
 }
 
 // writeCallbackSuccessPage writes an HTML success page for OAuth callbacks.

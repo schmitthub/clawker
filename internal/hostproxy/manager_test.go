@@ -1,6 +1,7 @@
 package hostproxy
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // newMockConfigWithPort creates a mock config with a custom manager port.
@@ -212,6 +215,10 @@ func TestIsProcessAlive(t *testing.T) {
 
 // TestManagerHealthCheck tests the health check functionality.
 func TestManagerHealthCheck(t *testing.T) {
+	testenv.New(t)
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		t.Fatalf("auth material: %v", err)
+	}
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
 	m, err := NewManager(cfg, logger.Nop())
@@ -225,16 +232,7 @@ func TestManagerHealthCheck(t *testing.T) {
 	}
 
 	// Start a mock server
-	server := &http.Server{
-		Addr: fmt.Sprintf(consts.Localhost+":%d", port),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok","service":"clawker-host-proxy"}`))
-		}),
-	}
-	go server.ListenAndServe()
-	defer server.Close()
+	serveHealthTLS(t, port, "clawker-host-proxy")
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
@@ -247,6 +245,10 @@ func TestManagerHealthCheck(t *testing.T) {
 
 // TestManagerIsPortInUse tests port detection.
 func TestManagerIsPortInUse(t *testing.T) {
+	testenv.New(t)
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		t.Fatalf("auth material: %v", err)
+	}
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
 	m, err := NewManager(cfg, logger.Nop())
@@ -260,16 +262,7 @@ func TestManagerIsPortInUse(t *testing.T) {
 	}
 
 	// Start a mock clawker host proxy
-	server := &http.Server{
-		Addr: fmt.Sprintf(consts.Localhost+":%d", port),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok","service":"clawker-host-proxy"}`))
-		}),
-	}
-	go server.ListenAndServe()
-	defer server.Close()
+	serveHealthTLS(t, port, "clawker-host-proxy")
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
@@ -282,6 +275,10 @@ func TestManagerIsPortInUse(t *testing.T) {
 
 // TestManagerIsPortInUseWithWrongService tests that we detect non-clawker services.
 func TestManagerIsPortInUseWithWrongService(t *testing.T) {
+	testenv.New(t)
+	if err := auth.EnsureAuthMaterial(); err != nil {
+		t.Fatalf("auth material: %v", err)
+	}
 	port := getFreeMgrPort(t)
 	cfg := newMockConfigWithPort(t, port)
 	m, err := NewManager(cfg, logger.Nop())
@@ -290,16 +287,7 @@ func TestManagerIsPortInUseWithWrongService(t *testing.T) {
 	}
 
 	// Start a server that returns a different service identifier
-	server := &http.Server{
-		Addr: fmt.Sprintf(consts.Localhost+":%d", port),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok","service":"some-other-service"}`))
-		}),
-	}
-	go server.ListenAndServe()
-	defer server.Close()
+	serveHealthTLS(t, port, "some-other-service")
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
@@ -328,4 +316,28 @@ func TestValidatePort(t *testing.T) {
 			t.Errorf("validatePort(%d): got err=%v, wantErr=%v", tt.port, err, tt.wantErr)
 		}
 	}
+}
+
+// serveHealthTLS serves a /health answer naming service on port, over the
+// host proxy's real mTLS config. The test env holds fresh auth material.
+func serveHealthTLS(t *testing.T, port int, service string) {
+	t.Helper()
+	tlsCfg, err := ServerTLSConfig()
+	if err != nil {
+		t.Fatalf("server TLS config: %v", err)
+	}
+	ln, err := tls.Listen("tcp", fmt.Sprintf(consts.Localhost+":%d", port), tlsCfg)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"status":"ok","service":%q}`, service)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
 }

@@ -237,16 +237,7 @@ func (m *Manager) waitForHealthy(timeout time.Duration) error {
 // It verifies both the status code and service identifier to avoid mistaking
 // another service for the clawker host proxy.
 func (m *Manager) isPortInUse() bool {
-	client := &http.Client{
-		Timeout: 500 * time.Millisecond,
-	}
-
-	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
+	resp, err := m.getHealth(portProbeTimeout)
 	if err != nil {
 		return false
 	}
@@ -265,18 +256,46 @@ func (m *Manager) isPortInUse() bool {
 	return health.Service == "clawker-host-proxy"
 }
 
-// healthCheck verifies the daemon is responding to requests.
-func (m *Manager) healthCheck() error {
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
+// Health probe budgets: the port probe only asks whether a host proxy
+// answers; the health check waits for a starting daemon.
+const (
+	portProbeTimeout   = 500 * time.Millisecond
+	healthCheckTimeout = 2 * time.Second
+)
 
-	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
+// getHealth calls the daemon's /health over mTLS with the CLI client cert.
+func (m *Manager) getHealth(timeout time.Duration) (*http.Response, error) {
+	certPath, err := consts.AuthCLIClientCertPath()
+	if err != nil {
+		return nil, fmt.Errorf("CLI client cert path: %w", err)
+	}
+	keyPath, err := consts.AuthCLIClientKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("CLI client key path: %w", err)
+	}
+	tlsCfg, err := ClientTLSConfig(certPath, keyPath)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
+	healthURL := fmt.Sprintf("https://localhost:%d/health", m.port)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
 	if err != nil {
-		return fmt.Errorf("build health check request: %w", err)
+		return nil, fmt.Errorf("build health check request: %w", err)
 	}
 	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host proxy health: %w", err)
+	}
+	return resp, nil
+}
+
+// healthCheck verifies the daemon is responding to requests.
+func (m *Manager) healthCheck() error {
+	resp, err := m.getHealth(healthCheckTimeout)
 	if err != nil {
 		return err
 	}

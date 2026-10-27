@@ -34,6 +34,7 @@ import (
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/delegation"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
+	"github.com/schmitthub/clawker/controlplane/hostgateway"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
@@ -1155,6 +1156,7 @@ type grpcStackDeps struct {
 	containerResolver fwhandler.ContainerResolver
 	agentReg          agent.Registry
 	otelGateway       agent.OtelForwarder
+	hostGateway       *hostgateway.Gateway
 	agentPeerLookup   *agent.MobyPeerLookup
 	lister            *agent.ContainerLister
 	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
@@ -1172,6 +1174,56 @@ type grpcStackDeps struct {
 // agent listener up only when the IdentityInterceptor resolves), then starts
 // serving on the buffered serveFailed channel. It returns those handles plus a
 // belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
+// buildHostGateway constructs the host gateway the AgentService host actions
+// forward through: an HTTPS client to the host proxy at
+// host.docker.internal:<port>, presenting the CP client cert and trusting
+// the CLI CA. No connection is made here, so a host proxy that is not
+// running never delays boot.
+//
+// Degrade contract: a client cert that does not load or a constructor
+// failure returns nil and logs event=host_gateway_unavailable; the host
+// actions answer Unavailable and every other surface continues.
+func buildHostGateway(
+	certPath, keyPath string, caPool *x509.CertPool, port int, log *logger.Logger,
+) *hostgateway.Gateway {
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "host_gateway_unavailable").
+			Str("component", "host-gateway").
+			Msg("CP client cert did not load — host actions answer Unavailable; every other surface continues")
+		return nil
+	}
+	var tlsCfg tls.Config
+	tlsCfg.MinVersion = tls.VersionTLS13
+	tlsCfg.Certificates = []tls.Certificate{cert}
+	tlsCfg.RootCAs = caPool
+	transport := new(http.Transport)
+	transport.TLSClientConfig = &tlsCfg
+	client := new(http.Client)
+	client.Timeout = hostGatewayTimeout
+	client.Transport = transport
+	baseURL := "https://" + net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(port))
+	gw, err := hostgateway.New(baseURL, client, log.With("component", "host-gateway"))
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "host_gateway_unavailable").
+			Str("component", "host-gateway").
+			Msg("host gateway construction failed — host actions answer Unavailable")
+		return nil
+	}
+	log.Info().
+		Str("event", "host_gateway_ready").
+		Str("component", "host-gateway").
+		Str("base_url", baseURL).
+		Msg("host gateway ready; the host proxy is dialed on the first host action")
+	return gw
+}
+
+// hostGatewayTimeout bounds one host-proxy call. A git credential helper
+// can prompt the OS keychain, so it is longer than a plain request.
+const hostGatewayTimeout = 60 * time.Second
+
 // buildOtelGateway constructs the agent telemetry gateway the ExportTelemetry RPC
 // forwards through: one mTLS client connection to the collector's
 // otlp/agents receiver at otel-collector:<MonitoringOtelAgentIngestPort> over the
@@ -1283,6 +1335,7 @@ func buildGRPCStack(d grpcStackDeps) (
 		Ready:          d.orchestrator.IsReady,
 		PeerLookup:     d.agentPeerLookup,
 		OtelGateway:    d.otelGateway,
+		HostGateway:    d.hostGateway,
 		ServerCertPath: d.serverCertPath,
 		ServerKeyPath:  d.serverKeyPath,
 		CACertPool:     d.caCertPool,
@@ -1737,7 +1790,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		otelGateway:       otelGateway,
-		agentPeerLookup:   agentPeerLookup,
+		hostGateway: buildHostGateway(consts.CPClientCertPath, consts.CPClientKeyPath, caCertPool,
+			cfg.HostProxyConfig().Daemon.Port, log),
+		agentPeerLookup: agentPeerLookup,
 		lister:            lister,
 		enrolledTopic:     enrolledTopic,
 		orchestrator:      orchestrator,
