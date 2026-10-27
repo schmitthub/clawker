@@ -24,9 +24,11 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
@@ -325,6 +327,18 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 	return tok, nil
 }
 
+// checkRejected clears the cached token when err is Unauthenticated, so the
+// next call mints a new one. The CP's Hydra keeps tokens in memory: after a
+// CP restart, a cached token is rejected until it expires. It returns err.
+func (ts *tokenSource) checkRejected(err error) error {
+	if status.Code(err) == codes.Unauthenticated {
+		ts.mu.Lock()
+		ts.cached = ""
+		ts.mu.Unlock()
+	}
+	return err
+}
+
 // unaryInterceptor returns a gRPC interceptor that fetches a fresh token
 // on every call (cache-hit is fast, only re-fetches when near expiry).
 func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
@@ -334,7 +348,7 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 			return fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
-		return invoker(ctx, method, req, reply, cc, opts...)
+		return ts.checkRejected(invoker(ctx, method, req, reply, cc, opts...))
 	}
 }
 
@@ -359,8 +373,30 @@ func (ts *tokenSource) streamInterceptor() grpc.StreamClientInterceptor {
 			return nil, fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
-		return streamer(ctx, desc, cc, method, opts...)
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, ts.checkRejected(err)
+		}
+		return &authStream{ClientStream: stream, ts: ts}, nil
 	}
+}
+
+// authStream reports the stream's status to its token source. A stream the
+// CP refuses ends trailers-only: the refusal comes from Header or RecvMsg,
+// not from opening the stream.
+type authStream struct {
+	grpc.ClientStream
+
+	ts *tokenSource
+}
+
+func (s *authStream) Header() (metadata.MD, error) {
+	md, err := s.ClientStream.Header()
+	return md, s.ts.checkRejected(err)
+}
+
+func (s *authStream) RecvMsg(m any) error {
+	return s.ts.checkRejected(s.ClientStream.RecvMsg(m))
 }
 
 // probeCPTime dials a short-lived mTLS connection (no bearer token —

@@ -17,8 +17,11 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
@@ -157,5 +160,93 @@ func TestTokenSource_HostProxyIdentity(t *testing.T) {
 	}
 	if claims.Issuer != consts.ClientIDHostProxy || claims.Subject != consts.ClientIDHostProxy {
 		t.Errorf("assertion iss/sub = %q/%q, want %q", claims.Issuer, claims.Subject, consts.ClientIDHostProxy)
+	}
+}
+
+// refusedStream is a grpc.ClientStream whose Header and RecvMsg return err,
+// as a stream the CP refuses ends trailers-only with its status.
+type refusedStream struct {
+	grpc.ClientStream
+
+	err error
+}
+
+func (s refusedStream) Header() (metadata.MD, error) { return nil, s.err }
+func (s refusedStream) RecvMsg(any) error            { return s.err }
+
+// newFakeHydraTokenSource returns a token source for the host proxy client
+// that mints from fakeHydra, and the Hydra hit counter.
+func newFakeHydraTokenSource(t *testing.T) (*tokenSource, *atomic.Int32) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tokenURL, tlsCfg, hits := fakeHydra(t)
+	return newTokenSource(key, consts.ClientIDHostProxy, string(hostproxyv1.ScopeServe), tokenURL, tlsCfg), hits
+}
+
+func readHeader(s grpc.ClientStream) error {
+	_, err := s.Header()
+	return err
+}
+
+func readMsg(s grpc.ClientStream) error { return s.RecvMsg(nil) }
+
+// TestStreamInterceptor_RejectedTokenMintsNew: the CP's Hydra keeps tokens in
+// memory, so a restarted CP rejects a cached token as Unauthenticated. The
+// next stream must carry a new token, or the host proxy never reconnects.
+// Other refusals keep the cached token.
+func TestStreamInterceptor_RejectedTokenMintsNew(t *testing.T) {
+	tests := []struct {
+		name     string
+		read     func(grpc.ClientStream) error
+		code     codes.Code
+		wantHits int32
+	}{
+		{name: "header unauthenticated", read: readHeader, code: codes.Unauthenticated, wantHits: 2},
+		{name: "recv unauthenticated", read: readMsg, code: codes.Unauthenticated, wantHits: 2},
+		{name: "header unavailable", read: readHeader, code: codes.Unavailable, wantHits: 1},
+		{name: "recv permission denied", read: readMsg, code: codes.PermissionDenied, wantHits: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, hits := newFakeHydraTokenSource(t)
+			streamer := func(context.Context, *grpc.StreamDesc, *grpc.ClientConn, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+				return refusedStream{ClientStream: nil, err: status.Error(tt.code, "refused")}, nil
+			}
+
+			stream, err := ts.streamInterceptor()(context.Background(), nil, nil, "/m", streamer)
+			require.NoError(t, err)
+			require.Equal(t, tt.code, status.Code(tt.read(stream)))
+			_, err = ts.streamInterceptor()(context.Background(), nil, nil, "/m", streamer)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantHits, hits.Load(), "hydra hits")
+		})
+	}
+}
+
+// TestUnaryInterceptor_RejectedTokenMintsNew is the unary twin: the CLI's
+// next call after an Unauthenticated reply carries a new token.
+func TestUnaryInterceptor_RejectedTokenMintsNew(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     codes.Code
+		wantHits int32
+	}{
+		{name: "unauthenticated", code: codes.Unauthenticated, wantHits: 2},
+		{name: "unavailable", code: codes.Unavailable, wantHits: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, hits := newFakeHydraTokenSource(t)
+			invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+				return status.Error(tt.code, "refused")
+			}
+
+			for range 2 {
+				err := ts.unaryInterceptor()(context.Background(), "/m", nil, nil, nil, invoker)
+				require.Equal(t, tt.code, status.Code(err))
+			}
+			require.Equal(t, tt.wantHits, hits.Load(), "hydra hits")
+		})
 	}
 }
