@@ -29,7 +29,7 @@ Agents cannot reach the host proxy directly. Every host action goes agent -> cla
 ## Steps (tests first in each)
 
 1. Proto: `AgentService` RPCs `OpenURL`, `GitCredential`, `RegisterCallback`, `GetCallbackData`, `DeleteCallback`. Public scope like `ExportTelemetry`.
-2. CP `controlplane/hostgateway` + `controlplane/agent/host_handler.go`: peer -> container + thumbprint; grants from labels; `enable_host_proxy` off -> PermissionDenied; `GitCredential` needs `forward_https`; callback sessions owned by the registering container. The egress check stays in the host proxy (ruling). The CP dials `host_proxy.manager.port` (the port the CLI spawns the daemon on).
+2. CP `controlplane/hostgateway` + `controlplane/agent/host_handler.go`: peer -> container + thumbprint; grants from labels; `enable_host_proxy` off -> PermissionDenied; `GitCredential` needs `forward_https`; callback sessions owned by the registering container. The egress check stays in the host proxy (ruling). The CP dials `host_proxy.port` (the one host proxy port setting).
 3. Host proxy: mTLS listener, client cert chained to the clawker CA (CP for actions, CLI for health/status); register-and-open as one action; one-shot listener.
 4. clawkerd: loopback relay serving the current HTTP paths, mapped to the RPCs; `CLAWKER_HOST_PROXY` points at it. `host-open.sh` uses the single register-and-open call.
 5. Remove the eBPF host-proxy lane (BPF C fields and branch) and #593's `host_proxy` enrollment plumbing (`FirewallEnableRequest.host_proxy`, `EnrollmentStore` field). Run `make clawker` after BPF edits.
