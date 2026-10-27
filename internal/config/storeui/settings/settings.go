@@ -16,11 +16,29 @@ import (
 func Overrides() []storeui.Override {
 	return []storeui.Override{
 		// Host proxy — internals are read-only
-		{Path: "host_proxy.manager.port", ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.port", ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.poll_interval", ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.grace_period", ReadOnly: storeui.Ptr(true)},
-		{Path: "host_proxy.daemon.max_consecutive_errs", ReadOnly: storeui.Ptr(true)},
+		readOnly("host_proxy.port"),
+		readOnly("host_proxy.daemon.poll_interval"),
+		readOnly("host_proxy.daemon.grace_period"),
+		readOnly("host_proxy.daemon.max_consecutive_errs"),
+	}
+}
+
+// readOnly returns an override that marks the field at path read-only and
+// keeps all other field metadata from the schema tags.
+func readOnly(path string) storeui.Override {
+	return storeui.Override{
+		Path:        path,
+		Label:       nil,
+		Description: nil,
+		Default:     nil,
+		Kind:        nil,
+		Options:     nil,
+		Validator:   nil,
+		Required:    nil,
+		ReadOnly:    new(true),
+		Order:       nil,
+		Hidden:      false,
+		Editor:      nil,
 	}
 }
 

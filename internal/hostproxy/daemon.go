@@ -89,9 +89,10 @@ func WithGracePeriod(period time.Duration) DaemonOption {
 // It creates a Docker client internally. Tests that need a mock docker client
 // construct &Daemon{...} directly (the pattern used by watchContainers tests).
 func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Daemon, error) {
-	daemonCfg := cfg.HostProxyConfig().Daemon
+	hpCfg := cfg.HostProxyConfig()
+	daemonCfg := hpCfg.Daemon
 
-	if err := validatePort(daemonCfg.Port, "host proxy daemon"); err != nil {
+	if err := validatePort(hpCfg.Port, "host proxy daemon"); err != nil {
 		return nil, err
 	}
 	if daemonCfg.PollInterval <= 0 {
@@ -139,7 +140,7 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	d := &Daemon{
 		cfg:                cfg,
 		log:                log,
-		server:             NewServer(daemonCfg.Port, log, rulesFilePath, tlsConfig),
+		server:             NewServer(hpCfg.Port, log, rulesFilePath, tlsConfig),
 		docker:             dockerClient,
 		pidFile:            pidFile,
 		pollInterval:       daemonCfg.PollInterval,

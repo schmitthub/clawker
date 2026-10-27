@@ -1776,10 +1776,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		otelGateway:       otelGateway,
-		// The CLI's host proxy manager spawns the daemon with --port set to
-		// the manager port, so that is the port the daemon binds.
 		hostGateway: buildHostGateway(consts.CPClientCertPath, consts.CPClientKeyPath, caCertPool,
-			cfg.HostProxyConfig().Manager.Port, log),
+			cfg.HostProxyConfig().Port, log),
 		agentPeerLookup: agentPeerLookup,
 		lister:          lister,
 		enrolledTopic:   enrolledTopic,

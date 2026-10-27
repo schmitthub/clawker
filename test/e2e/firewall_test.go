@@ -586,7 +586,7 @@ func TestFirewall_HostActionsBehindCP(t *testing.T) {
 
 	setup := h.NewIsolatedFS(nil)
 	harness.EnsureNoControlPlane(t, 30*time.Second)
-	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { manager: { port: %d } }\n", port))
+	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { port: %d }\n", port))
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "\n")
 	regRes := h.Run("project", "register", "testproject")
 	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)

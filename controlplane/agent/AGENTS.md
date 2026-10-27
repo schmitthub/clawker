@@ -245,7 +245,7 @@ request to an AgentService host action. The CP does ALL authorization:
   and answers `ErrNotOwner` for an unknown, expired, or foreign session (one
   error, so a caller cannot probe), logging `event=host_callback_not_owner`.
 - The gateway forwards to the host proxy at
-  `https://host.docker.internal:<host_proxy.manager.port>` with the CP client
+  `https://host.docker.internal:<host_proxy.port>` with the CP client
   cert (`event=host_action` per call). The host proxy keeps the egress check
   on URLs, the redirect check, the port bind, and the browser open.
 

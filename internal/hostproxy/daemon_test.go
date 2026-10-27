@@ -41,9 +41,6 @@ func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
 	hpCfg := cfg.HostProxyConfig().Daemon
 
 	// Verify the config defaults match what we expect
-	if hpCfg.Port != 18374 {
-		t.Errorf("expected default daemon port 18374, got %d", hpCfg.Port)
-	}
 	if hpCfg.PollInterval != 30*time.Second {
 		t.Errorf("expected default poll interval 30s, got %v", hpCfg.PollInterval)
 	}
@@ -56,7 +53,7 @@ func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesPort(t *testing.T) {
-	cfg := configmocks.NewFromString("", `host_proxy: { daemon: { port: 0 } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { port: 0 }`)
 	_, err := NewDaemon(cfg, logger.Nop())
 	if err == nil {
 		t.Fatal("expected error for port 0")

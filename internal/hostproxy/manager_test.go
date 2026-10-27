@@ -18,10 +18,10 @@ import (
 	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-// newMockConfigWithPort creates a mock config with a custom manager port.
+// newMockConfigWithPort creates a mock config with a custom host proxy port.
 func newMockConfigWithPort(t *testing.T, port int) config.Config {
 	t.Helper()
-	return configmocks.NewFromString("", fmt.Sprintf(`host_proxy: { manager: { port: %d }, daemon: { port: %d } }`, port, port))
+	return configmocks.NewFromString("", fmt.Sprintf(`host_proxy: { port: %d }`, port))
 }
 
 // getFreeMgrPort returns an available TCP port for manager tests.
@@ -70,7 +70,7 @@ func TestManagerDefaultPort(t *testing.T) {
 }
 
 func TestManagerInvalidPort(t *testing.T) {
-	cfg := configmocks.NewFromString("", `host_proxy: { manager: { port: 0 } }`)
+	cfg := configmocks.NewFromString("", `host_proxy: { port: 0 }`)
 	_, err := NewManager(cfg, logger.Nop())
 	if err == nil {
 		t.Fatal("expected error for invalid port 0")
