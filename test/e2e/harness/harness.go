@@ -7,9 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -123,9 +121,6 @@ func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 		opts.ProjectDir = "testproject"
 	}
 
-	// Build the clawker binary so the hostproxy daemon can spawn it.
-	ensureClawkerBinary(h.T)
-
 	// Docker CLI plugin discovery (`docker compose`) and registry auth live
 	// under the real user's ~/.docker. testenv re-points HOME at the temp
 	// base, which would silently strip the compose plugin from the monitor
@@ -191,31 +186,6 @@ func (r *SetupResult) Chdir(t *testing.T, dir string) {
 		t.Fatalf("harness: chdir to %s: %v", dir, err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(r.ProjectDir) })
-}
-
-// clawkerBinaryOnce ensures the clawker binary is built exactly once per test process.
-var clawkerBinaryOnce sync.Once
-
-// ensureClawkerBinary builds the clawker binary and sets CLAWKER_EXECUTABLE
-// so the hostproxy daemon can spawn it. Built once per test process.
-func ensureClawkerBinary(t *testing.T) {
-	t.Helper()
-	clawkerBinaryOnce.Do(func() {
-		// Find the repo root (test/e2e/harness → ../../..).
-		_, thisFile, _, _ := runtime.Caller(0)
-		repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-
-		binPath := filepath.Join(repoRoot, "bin", "clawker")
-		cmd := exec.CommandContext(context.Background(), "go", "build", "-o", binPath, "./cmd/clawker")
-		cmd.Dir = repoRoot
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("harness: building clawker binary: %s (%v)", string(out), err)
-		}
-	})
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	t.Setenv(consts.EnvExecutable, filepath.Join(repoRoot, "bin", "clawker"))
 }
 
 // cleanupTestEnvironment is the single cleanup entrypoint for all e2e tests.

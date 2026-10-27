@@ -243,7 +243,7 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 
 | Function | Purpose |
 |----------|---------|
-| `NewIsolatedFS(opts)` | Creates isolated XDG dirs, builds clawker binary, registers cleanup |
+| `NewIsolatedFS(opts)` | Creates isolated XDG dirs, registers cleanup |
 | `Run(args...)` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer(agent, cmd...)` | `container run --rm --agent <agent> @ <cmd>` |
 | `ExecInContainer(agent, cmd...)` | `container exec --user claude --agent <agent> <cmd>` |

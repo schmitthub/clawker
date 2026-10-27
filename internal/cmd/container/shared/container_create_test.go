@@ -717,10 +717,10 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 
 		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
 		require.NoError(t, err)
-		assert.Equal(t, []string{"seccomp=unconfined", "label=disable"}, hostCfg.SecurityOpt)
+		assert.Equal(t, []string{"seccomp=unconfined", "label=disable", "no-new-privileges"}, hostCfg.SecurityOpt)
 	})
 
-	t.Run("empty security options are not set", func(t *testing.T) {
+	t.Run("no security flags set only the no-new-privileges default", func(t *testing.T) {
 		opts := NewContainerOptions()
 		opts.Image = "alpine"
 
@@ -729,7 +729,25 @@ func TestContainerOptions_BuildConfigs_Security(t *testing.T) {
 		assert.Nil(t, hostCfg.CapAdd)
 		assert.Nil(t, hostCfg.CapDrop)
 		assert.False(t, hostCfg.Privileged)
-		assert.Nil(t, hostCfg.SecurityOpt)
+		assert.Equal(t, []string{"no-new-privileges"}, hostCfg.SecurityOpt,
+			"no-new-privileges is the default security option")
+	})
+
+	t.Run("user no-new-privileges setting replaces the default", func(t *testing.T) {
+		for _, opt := range []string{
+			"no-new-privileges=false",
+			"no-new-privileges:false",
+			"no-new-privileges=true",
+			"no-new-privileges",
+		} {
+			opts := NewContainerOptions()
+			opts.Image = "alpine"
+			opts.SecurityOpt = []string{opt}
+
+			_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
+			require.NoError(t, err)
+			assert.Equal(t, []string{opt}, hostCfg.SecurityOpt, "user option %q must be kept alone", opt)
+		}
 	})
 }
 
