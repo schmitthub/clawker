@@ -121,12 +121,6 @@
             }
           },
           "type": "object"
-        },
-        "port": {
-          "default": 18374,
-          "description": "Local port the host proxy listens on (change if 18374 conflicts)",
-          "title": "Port",
-          "type": "integer"
         }
       },
       "type": "object"

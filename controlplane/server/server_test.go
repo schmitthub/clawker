@@ -16,10 +16,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
+	cpauth "github.com/schmitthub/clawker/controlplane/auth"
+	authmocks "github.com/schmitthub/clawker/controlplane/auth/mocks"
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -474,4 +479,76 @@ func TestGRPCStack_ServeAdmin_SingleShot(t *testing.T) {
 		t.Fatalf("unexpected serve failure: %v", err)
 	default:
 	}
+}
+
+// TestAdminAuthRouting: the admin listener serves AdminService and
+// HostProxyService. A HostProxyService call is checked against the host
+// proxy scope and client ID; every other call against the admin scope.
+// Neither token opens the other service. The calls go through a real
+// gRPC server; a call the auth link admits reaches the Unimplemented
+// handler.
+func TestAdminAuthRouting(t *testing.T) {
+	result := func(scope, clientID string) *cpauth.IntrospectionResult {
+		return &cpauth.IntrospectionResult{Active: true, Scope: scope, ClientID: clientID, Sub: clientID, Exp: 0}
+	}
+	introspector := &authmocks.IntrospectorMock{
+		IntrospectFunc: func(_ context.Context, token, _ string) (*cpauth.IntrospectionResult, error) {
+			switch token {
+			case "cli":
+				return result(string(adminv1.ScopeAdmin), consts.ClientIDCLI), nil
+			case "hostproxy":
+				return result(string(hostproxyv1.ScopeServe), consts.ClientIDHostProxy), nil
+			case "hostproxy-wrong-client":
+				return result(string(hostproxyv1.ScopeServe), consts.ClientIDCLI), nil
+			}
+			return result("", ""), errors.New("unknown token")
+		},
+	}
+	authn := newAdminAuth(introspector, logger.Nop())
+	// In-process bufconn server: this test covers the auth link, not the
+	// transport.
+	srv := grpc.NewServer(
+		grpc.Creds(insecure.NewCredentials()),
+		grpc.ChainUnaryInterceptor(authn.unary()),
+		grpc.ChainStreamInterceptor(authn.stream()),
+	)
+	adminv1.RegisterAdminServiceServer(srv, adminv1.UnimplementedAdminServiceServer{})
+	hostproxyv1.RegisterHostProxyServiceServer(srv, hostproxyv1.UnimplementedHostProxyServiceServer{})
+	lis := bufconn.Listen(1 << 20)
+	go func() {
+		if serveErr := srv.Serve(lis); serveErr != nil {
+			t.Logf("serve: %v", serveErr)
+		}
+	}()
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient("passthrough:///admin",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Logf("close: %v", closeErr)
+		}
+	})
+
+	withToken := func(token string) context.Context {
+		return metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+token)
+	}
+	connect := func(token string) codes.Code {
+		stream, openErr := hostproxyv1.NewHostProxyServiceClient(conn).Connect(withToken(token))
+		require.NoError(t, openErr)
+		_, recvErr := stream.Recv()
+		return status.Code(recvErr)
+	}
+	listAgents := func(token string) codes.Code {
+		_, callErr := adminv1.NewAdminServiceClient(conn).ListAgents(withToken(token), &adminv1.ListAgentsRequest{})
+		return status.Code(callErr)
+	}
+
+	assert.Equal(t, codes.Unimplemented, connect("hostproxy"), "the host proxy token opens Connect")
+	assert.Equal(t, codes.PermissionDenied, connect("cli"), "the admin token must not open Connect")
+	assert.Equal(t, codes.PermissionDenied, connect("hostproxy-wrong-client"),
+		"a hostproxy:serve token from another client must not open Connect")
+	assert.Equal(t, codes.PermissionDenied, listAgents("hostproxy"), "the host proxy token must not reach an admin RPC")
+	assert.Equal(t, codes.Unimplemented, listAgents("cli"), "the admin token reaches admin RPCs")
 }

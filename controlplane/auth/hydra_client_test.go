@@ -12,6 +12,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -147,6 +148,37 @@ func TestRegisterAgentClient_PayloadShape(t *testing.T) {
 	}
 	if v, _ := captured["scope"].(string); v != string(agentv1.ScopeSelfRegister) {
 		t.Errorf("scope = %q, want %q", v, string(agentv1.ScopeSelfRegister))
+	}
+}
+
+// RegisterHostProxyClient: the host proxy's own client, with only the
+// hostproxy:serve scope.
+func TestRegisterHostProxyClient_PayloadShape(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if jsonErr := json.Unmarshal(body, &captured); jsonErr != nil {
+			t.Fatalf("unmarshal body: %v", jsonErr)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	jwk := `{"kty":"EC","crv":"P-256","x":"test","y":"test"}`
+	if err := RegisterHostProxyClient(context.Background(), srv.URL, []byte(jwk), nil); err != nil {
+		t.Fatalf("RegisterHostProxyClient: %v", err)
+	}
+
+	if id, _ := captured["client_id"].(string); id != consts.ClientIDHostProxy {
+		t.Errorf("client_id = %q, want %q", id, consts.ClientIDHostProxy)
+	}
+	if v, _ := captured["scope"].(string); v != string(hostproxyv1.ScopeServe) {
+		t.Errorf("scope = %q, want %q", v, string(hostproxyv1.ScopeServe))
 	}
 }
 
