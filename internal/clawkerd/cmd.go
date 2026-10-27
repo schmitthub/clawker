@@ -278,6 +278,16 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	)
 	defer relay.Shutdown(context.WithoutCancel(ctx), relayShutdownGrace)
 
+	// Host action relay: the container scripts call this loopback endpoint
+	// as CLAWKER_HOST_PROXY and clawkerd carries each request to an
+	// AgentService host action. The CP authorizes it and calls the host
+	// proxy. Optional subsystem with the same degrade contract
+	// (event=host_relay_unavailable).
+	hostRelay := daemon.StartHostRelay(
+		ctx, boot, os.Getenv(consts.EnvClawkerdAgentAddr), consts.AgentHostRelayAddr, log,
+	)
+	defer hostRelay.Shutdown(context.WithoutCancel(ctx), relayShutdownGrace)
+
 	log.Info().Str("event", "daemon_idle").Msg("entering daemon idle loop; CP may dial Session at any time")
 
 	// Wait for either signal-driven shutdown, listener fatal, OR main
