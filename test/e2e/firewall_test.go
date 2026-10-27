@@ -557,6 +557,104 @@ func clawkerNetIP(t *testing.T, container string) string {
 	return ip
 }
 
+// TestFirewall_HostActionsBehindCP proves agents reach the host proxy only
+// through the clawkerd relay and the CP, which authorizes every action from
+// the container's labels and owns callback sessions:
+//   - a direct dial to the host proxy port never reaches the host proxy;
+//   - a granted agent's git erase reaches the host (an .invalid host, so no
+//     helper prompts and nothing is removed);
+//   - open/url to a host the firewall denies is refused before any browser;
+//   - a callback session the agent does not own is refused;
+//   - enable_host_proxy: false and forward_https: false are refused at the CP.
+//
+// No case opens a browser: the only open/url targets a denied host.
+func TestFirewall_HostActionsBehindCP(t *testing.T) {
+	h := harness.New(t, firewallFactoryOpts, func(o *harness.FactoryOptions) {
+		o.HostProxy = hostproxy.NewManager
+	})
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+
+	// A free port, so a host proxy from a live session cannot collide. The
+	// harness caches the host proxy manager on first use, so the setting is
+	// written before any command runs (fwSetup's register and build).
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err, "picking a host proxy port")
+	addr, ok := l.Addr().(*net.TCPAddr)
+	require.True(t, ok, "tcp listener address is %T", l.Addr())
+	port := addr.Port
+	require.NoError(t, l.Close(), "releasing the host proxy port")
+
+	setup := h.NewIsolatedFS(nil)
+	harness.EnsureNoControlPlane(t, 30*time.Second)
+	setup.WriteYAML(t, testenv.Settings, "", fmt.Sprintf("host_proxy: { manager: { port: %d } }\n", port))
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "\n")
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
+
+	// start runs a detached agent and waits for the user CMD, which
+	// clawkerd spawns only after Register: the CP refuses an
+	// unregistered peer.
+	start := func(agent string) {
+		t.Helper()
+		marker := "/tmp/" + agent + "-ready"
+		res := h.Run("container", "run", "--detach", "--agent", agent, "@",
+			"sh", "-c", "touch "+marker+" && exec sleep infinity")
+		require.NoError(t, res.Err, "start %s failed\nstdout: %s\nstderr: %s", agent, res.Stdout, res.Stderr)
+		require.Eventually(t, func() bool {
+			return h.ExecInContainer(agent, "test", "-f", marker).Err == nil
+		}, 3*time.Minute, time.Second, "%s never finished boot", agent)
+	}
+	// relay sends one request to the clawkerd relay and returns the HTTP
+	// status. The address is fixed: CLAWKER_HOST_PROXY is unset for an
+	// agent without the host proxy grant.
+	relay := func(agent, method, path, body string) string {
+		t.Helper()
+		args := []string{
+			"curl", "-s", "--max-time", "30", "-o", "/dev/null", "-w", "%{http_code}",
+			"-X", method, consts.AgentHostRelayURL + path,
+		}
+		if body != "" {
+			args = append(args, "-H", "Content-Type: application/json", "-d", body)
+		}
+		res := h.ExecInContainer(agent, args...)
+		return strings.TrimSpace(res.Stdout)
+	}
+	const gitErase = `{"action":"erase","protocol":"https","host":"clawker-e2e.invalid"}`
+
+	start("ha-on")
+
+	// Direct dial: the TLS handshake must never come from the host proxy.
+	require.NoError(t, h.ExecInContainer("ha-on", "sh", "-c", "command -v openssl").Err,
+		"openssl is the direct-dial probe; without it the check below proves nothing")
+	direct := h.ExecInContainer("ha-on", "sh", "-c", fmt.Sprintf(
+		"openssl s_client -connect host.docker.internal:%d -servername host.docker.internal </dev/null 2>&1", port))
+	assert.NotContains(t, direct.Stdout, consts.HostProxyServerName,
+		"a direct dial reached the host proxy:\n%s", direct.Stdout)
+
+	// Positive control: the CP reaches the host proxy for a granted agent.
+	require.Equal(t, "200", relay("ha-on", "POST", "/git/credential", gitErase),
+		"granted git erase must reach the host proxy through the CP")
+	assert.Equal(t, "403", relay("ha-on", "POST", "/open/url", `{"url":"https://denied.clawker-e2e.invalid/"}`),
+		"open/url to a denied host must be refused")
+	assert.Equal(t, "403", relay("ha-on", "GET", "/callback/0123456789abcdef0123456789abcdef/data", ""),
+		"a callback session the agent does not own must be refused")
+
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir,
+		"security: { git_credentials: { forward_https: false } }\n")
+	start("ha-nogit")
+	assert.Equal(t, "403", relay("ha-nogit", "POST", "/git/credential", gitErase),
+		"forward_https: false must refuse git credentials")
+
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, "security: { enable_host_proxy: false }\n")
+	start("ha-off")
+	assert.Equal(t, "403", relay("ha-off", "POST", "/git/credential", gitErase),
+		"enable_host_proxy: false must refuse every host action")
+	assert.Equal(t, "403", relay("ha-off", "POST", "/open/url", `{"url":"https://denied.clawker-e2e.invalid/"}`),
+		"enable_host_proxy: false must refuse open/url before the egress check")
+}
+
 // TestFirewall_ControlPlaneDownFailsClosed proves that `controlplane down`
 // with a running agent keeps the agent enrolled: the drain stops Envoy and
 // CoreDNS but keeps the eBPF state of live cgroups, so the agent has no
