@@ -1,4 +1,4 @@
-> Retained plan (2026-10-26). Approved by operator. Status: NOT STARTED. Branch `feat/hostproxy-behind-cp` exists locally from `chore/adversarial-host-listen` (#599) with no commits. Check source before reuse.
+> Retained plan (2026-10-26). Approved by operator. Status: IN PROGRESS. Steps 1-3 committed on local branch `feat/hostproxy-behind-cp`; step 4 (clawkerd relay) in the working tree. Ruling: the CP does all authorization (label grants, callback-session ownership) in `controlplane/hostgateway` + `controlplane/agent/host_handler.go`; the host proxy keeps the egress check, redirect validation, port bind and browser open. Check source before reuse.
 
 # Host proxy behind the CP
 

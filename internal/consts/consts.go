@@ -671,6 +671,15 @@ const (
 	// AgentOTLPRelayURL is the OTEL_EXPORTER_OTLP_ENDPOINT value baked
 	// into harness images (base URL; the SDK appends /v1/<signal>).
 	AgentOTLPRelayURL = "http://" + AgentOTLPRelayAddr
+	// AgentHostRelayAddr is the loopback address clawkerd's host-action
+	// relay listens on inside the agent container. The container scripts
+	// call it as CLAWKER_HOST_PROXY; clawkerd carries each request to an
+	// AgentService host action over its mTLS leaf. The agent cannot reach
+	// the host proxy itself.
+	AgentHostRelayAddr = Localhost + ":18374"
+	// AgentHostRelayURL is the CLAWKER_HOST_PROXY value for agents with
+	// the host-proxy grant.
+	AgentHostRelayURL = "http://" + AgentHostRelayAddr
 )
 
 // gRPC keepalive parameters for the CP↔clawkerd Session channel.
