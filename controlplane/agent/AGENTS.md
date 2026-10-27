@@ -72,15 +72,17 @@ now unexported helpers behind `Start`.
 | `boot_steps.go` | `bootPlan` — the static every-start boot step list (docker-socket/pre-run) the Executor runs on each start |
 | `lister.go` | `ContainerLister` + `ListOpts` + `NewContainerLister` — Docker lookup of `purpose=agent` container IDs, used by `Start`/`DialAllRunning` |
 | `repository.go` | `AgentStore` (the `AgentEventState` worldview map) + `Repository` aggregator. `Subscribe`/`SubscribeDockerEvents` wire the stores to the agent + docker topics; `project` is the sole mutation path that folds an `AgentEvent` into the worldview |
-| `register_handler.go` | `Handler` (the AgentService server: Register + ExportTelemetry) — Register consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row. Declares the `OtelForwarder` interface (`Handler.OtelGateway`, nil = degraded) |
-| `export_handler.go` | `Handler.ExportTelemetry` — the agent telemetry lane. Reads the resolved container, captures the live peer thumbprint, compares it against the registry row (`verifyTelemetryPeer`), then hands the body + CP-resolved `otelgateway.Identity` to `Handler.OtelGateway`. Status map: identity rejections `PermissionDenied` (uniform envelope, per-reason `event=agent_export_*`), unknown signal / undecodable body / `otelgateway.ErrCollectorRejected` `InvalidArgument`, body over `agentv1.ExportTelemetryMaxBodyBytes` `ResourceExhausted`, nil or failing gateway `Unavailable` |
+| `register_handler.go` | `Handler` (the AgentService server: Register, ExportTelemetry, and the host actions) — Register consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row. Declares the `OtelForwarder` interface (`Handler.OtelGateway`, nil = degraded) and the `HostForwarder` interface (`Handler.HostGateway`, nil = degraded) |
+| `export_handler.go` | `Handler.ExportTelemetry` — the agent telemetry lane. Reads the resolved container, captures the live peer thumbprint, compares it against the registry row (`verifyRegisteredPeer`, shared with the host actions), then hands the body + CP-resolved `otelgateway.Identity` to `Handler.OtelGateway`. Status map: identity rejections `PermissionDenied` (uniform envelope, per-reason `event=agent_export_*`), unknown signal / undecodable body / `otelgateway.ErrCollectorRejected` `InvalidArgument`, body over `agentv1.ExportTelemetryMaxBodyBytes` `ResourceExhausted`, nil or failing gateway `Unavailable` |
 | `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabel`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver. `ErrInvalidAgentLabel` fires only on a missing/malformed `dev.clawker.agent` label; a missing `dev.clawker.project` label is the legitimate global-scope-agent signal (2-segment naming) and resolves cleanly |
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
 | `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |
 | `exec.go` | `Executor` + static `plan()` of `ShellCommand` exec steps dispatched to clawkerd over the Session. |
 | `mocks/registry_mock.go` | moq-generated `RegistryMock` (test-only file in the `agent/mocks` subpackage so dependents can import it) |
+| `host_handler.go` | The host actions `OpenURL`, `GitCredential`, `RegisterCallback`, `GetCallbackData`, `DeleteCallback`. Each validates the request, then `authorizeHost`: registry thumbprint check, then the container's grants from `ResolvedContainer.HostProxy` / `GitHTTPS` (`PermissionDenied`, `event=agent_host_not_granted`), then a nil-gateway check (`Unavailable`). `hostStatus` maps `hostgateway` errors: not owner / denied → `PermissionDenied`, invalid → `InvalidArgument`, not found → `NotFound`, git helper failure → `FailedPrecondition`, anything else → `Unavailable` |
 | `mocks/otel_forwarder_mock.go` | moq-generated `OtelForwarderMock` for ExportTelemetry handler tests |
+| `mocks/host_forwarder_mock.go` | moq-generated `HostForwarderMock` for the host action handler tests |
 
 ## Identity contract
 
@@ -226,11 +228,36 @@ Register and cannot mint a second token; mTLS + the interceptor + the
 thumbprint check are the gate. The agent listener caps messages at
 `agentv1.ExportTelemetryMaxMessageBytes`.
 
+## Host actions (agent → host proxy)
+
+Agents never connect to the host proxy. clawkerd serves a loopback relay
+(`consts.AgentHostRelayAddr`, the old host proxy HTTP paths) and maps each
+request to an AgentService host action. The CP does ALL authorization:
+
+- Grants come from the container labels the CLI writes at create:
+  `consts.LabelHostProxy` (`dev.clawker.host_proxy`) for every action and
+  `consts.LabelGitHTTPS` (`dev.clawker.git_https`) for `GitCredential`.
+  `MobyPeerLookup` reads them into `ResolvedContainer` with
+  `strconv.ParseBool`; any other value is no grant. A config change applies
+  at the next container create.
+- Callback sessions belong to the container that registered them.
+  `controlplane/hostgateway.Gateway` keeps `session → (container, expiry)`
+  and answers `ErrNotOwner` for an unknown, expired, or foreign session (one
+  error, so a caller cannot probe), logging `event=host_callback_not_owner`.
+- The gateway forwards to the host proxy at
+  `https://host.docker.internal:<host_proxy.manager.port>` with the CP client
+  cert (`event=host_action` per call). The host proxy keeps the egress check
+  on URLs, the redirect check, the port bind, and the browser open.
+
+The host actions are `ScopePublic` like ExportTelemetry. E2E:
+`TestFirewall_HostActionsBehindCP`.
+
 ## Method scopes + interceptor
 
 - `agentv1.AgentMethodScopes()` (in `api/agent/v1`, beside the proto
   bindings) maps `/clawker.agent.v1.AgentService/Register` →
-  `agentv1.ScopeSelfRegister` and `/ExportTelemetry` → `consts.ScopePublic`.
+  `agentv1.ScopeSelfRegister`; `/ExportTelemetry` and the five host actions →
+  `consts.ScopePublic`.
   AuthInterceptor on the agent listener fails closed on unmapped
   methods; `TestAgentMethodScopes_CoversAllRPCs` pins the map to the
   service descriptor.
@@ -248,7 +275,7 @@ thumbprint check are the gate. The agent listener caps messages at
      AgentFullName and constant-time compares it against the cert's
      `urn:clawker:agent:` URI SAN.
 - On success, the interceptor attaches the resolved
-  `ResolvedContainer{ContainerID, Project, AgentName}` to ctx via
+  `ResolvedContainer{ContainerID, Project, AgentName, HostProxy, GitHTTPS}` to ctx via
   `WithResolvedContainer`. Handlers read it via
   `ResolvedContainerFromContext`; the Register handler additionally
   cross-checks the cert's `urn:clawker:container:` SAN and the RPC
@@ -258,6 +285,8 @@ thumbprint check are the gate. The agent listener caps messages at
 
 **Uses**: `controlplane/otelgateway` (`Identity` and the error values — the
 telemetry gateway contract; otelgateway never imports this package),
+`controlplane/hostgateway` (`Identity` and the error values — the host
+action contract; hostgateway never imports this package),
 `internal/auth` (AgentFullName, NewAgentName,
 NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert),
 `internal/consts` (Network, LabelAgent/Project/Purpose,
@@ -283,6 +312,9 @@ on adminServer for ListAgents).
   `mocks/otel_forwarder_mock.go`; `export_handler_test.go` builds a
   registered-container fixture (leaf + matching registry row) with the
   same helpers the Register tests use.
+- `HostForwarder` — moq-generated `HostForwarderMock` in
+  `mocks/host_forwarder_mock.go`; `host_handler_test.go` reuses the
+  registered-container fixture.
 - `ContainerByPeerIP` — hand-rolled `fakePeerLookup` in
   `identity_interceptor_test.go`; the Register handler's tests stub
   the resolved container via `WithResolvedContainer` directly.

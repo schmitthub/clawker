@@ -1,15 +1,15 @@
 # Hostproxy Internals Package
 
-Container-side scripts and binaries that communicate with the clawker host proxy server and socketbridge. These are embedded at Docker image build time and run inside containers.
+Container-side scripts and binaries that communicate with the clawker host proxy (through the clawkerd host relay and the CP; never directly) and socketbridge. These are embedded at Docker image build time and run inside containers.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `embed.go` | `go:embed` directives + exported vars |
-| `host-open.sh` | BROWSER handler — opens URLs via host proxy, intercepts OAuth callbacks |
-| `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
-| `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port with dual-stack fallback |
+| `host-open.sh` | BROWSER handler — `POST /open/url` through the clawkerd relay; a URL with a localhost `redirect_uri`/`callback` is one `POST /callback/register {authUrl, ttlSeconds}` (the host proxy opens the browser), then `callback-forwarder` |
+| `git-credential-clawker.sh` | Git credential helper — `POST /git/credential` through the clawkerd relay |
+| `cmd/callback-forwarder/main.go` | OAuth callback polling — polls the clawkerd relay (`CLAWKER_HOST_PROXY`, default `http://127.0.0.1:18374`), forwards to local port with dual-stack fallback |
 | `cmd/callback-forwarder/main_test.go` | Unit tests for callback-forwarder (URL building, IPv4/IPv6 fallback, error aggregation) |
 | `cmd/clawker-socket-server/main.go` | Unix socket server — creates SSH/GPG sockets with symlink-safe `*at` writes, forwards via muxrpc protocol over stdin/stdout |
 | `cmd/clawker-socket-server/main_test.go` | Unit tests for the symlink-safe home-directory writes (Linux only); root tests (`make test-root`) set up for a distinct agent uid and check access as that uid |
