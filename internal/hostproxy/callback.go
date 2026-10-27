@@ -36,7 +36,7 @@ type CallbackData struct {
 	Query      string            `json:"query"`
 	Headers    map[string]string `json:"headers,omitempty"`
 	Body       string            `json:"body,omitempty"`
-	ReceivedAt time.Time         `json:"received_at"`
+	ReceivedAt time.Time         `json:"receivedAt"`
 }
 
 // CallbackChannel handles OAuth callback routing.
