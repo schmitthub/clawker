@@ -35,7 +35,7 @@ const DefaultCallbackTTL = 5 * time.Minute
 var ErrCallbackAlreadyReceived error
 ```
 
-Port comes from config. `Manager` spawns the daemon with `--port host_proxy.manager.port` (default 18374), so that is the bound port and the one the CP dials; `host_proxy.daemon.port` is only the default for a bare `host-proxy serve`.
+Port comes from config: `host_proxy.port` (default 18374). The daemon binds it, `Manager` spawns the daemon with it, and the CP dials it. The `serve --port` flag overrides it for one run.
 
 ## Types
 

@@ -437,18 +437,12 @@ func (f *FirewallSettings) FirewallEnabled() bool {
 
 // HostProxyConfig configures the host proxy.
 type HostProxyConfig struct {
-	Manager HostProxyManagerConfig `yaml:"manager,omitempty"`
-	Daemon  HostProxyDaemonConfig  `yaml:"daemon,omitempty"`
-}
-
-// HostProxyManagerConfig configures the host proxy manager.
-type HostProxyManagerConfig struct {
-	Port int `yaml:"port" label:"Manager Port" desc:"Local port the host proxy listens on (change if 18374 conflicts)" default:"18374"`
+	Port   int                   `yaml:"port"             label:"Port" desc:"Local port the host proxy listens on (change if 18374 conflicts)" default:"18374"`
+	Daemon HostProxyDaemonConfig `yaml:"daemon,omitempty"`
 }
 
 // HostProxyDaemonConfig defines configuration for the host proxy daemon.
 type HostProxyDaemonConfig struct {
-	Port               int           `yaml:"port"                           label:"Daemon Port"            desc:"Local port the proxy daemon binds to"                            default:"18374"`
 	PollInterval       time.Duration `yaml:"poll_interval,omitempty"        label:"Poll Interval"          desc:"How often to check if containers still need the proxy"           default:"30s"`
 	GracePeriod        time.Duration `yaml:"grace_period,omitempty"         label:"Grace Period"           desc:"How long to keep the proxy alive after the last container stops" default:"60s"`
 	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" label:"Max Consecutive Errors" desc:"Restart the proxy daemon after this many consecutive failures"   default:"10"`

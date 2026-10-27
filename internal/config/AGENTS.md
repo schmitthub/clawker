@@ -155,7 +155,7 @@ const ModeSnapshot Mode = "snapshot"
 
 `Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc`, `label`, and `default` struct tags — the single source of truth for field metadata. Critical fields also carry `required:"true"`. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc`, `label`, and `default` tags (and `required:"true"` if the field must always have a value).
 
-**Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyManagerConfig`, `HostProxyDaemonConfig`
+**Top-level**: `Project`, `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig`, `TelemetryConfig`, `HostProxyConfig`, `HostProxyDaemonConfig`
 
 **Build**: `BuildConfig`, `DockerInstructions`, `CopyInstruction`, `ArgDefinition`, `InjectConfig`, `HarnessBuildOverlay`, `HarnessOverlayInject`
 
