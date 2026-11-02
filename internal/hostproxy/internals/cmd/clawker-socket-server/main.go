@@ -378,8 +378,8 @@ func (d *userDir) writeFile(name string, data []byte) error {
 // chownSocketNode changes the owner of the socket node name. The listener
 // descriptor refers to the sockfs inode, not the filesystem node, so the node
 // is opened with O_PATH|O_NOFOLLOW, checked to be a socket, and chowned
-// through that descriptor. The worst a swap after the bind can reach is
-// another socket node.
+// through that descriptor. A swap after the bind can only reach another
+// socket node, and a hard-linked one is refused by its link count.
 func (d *userDir) chownSocketNode(name string) error {
 	path := d.path + "/" + name
 	fd, err := syscall.Openat(d.fd, name, oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
@@ -393,6 +393,12 @@ func (d *userDir) chownSocketNode(name string) error {
 	}
 	if st.Mode&syscall.S_IFMT != syscall.S_IFSOCK {
 		return fmt.Errorf("refusing %s: not a socket after bind (mode %o)", path, st.Mode&syscall.S_IFMT)
+	}
+	// The node bound a moment ago has one link. A hard link to another
+	// root-owned socket on the same filesystem has two or more, and
+	// chowning it would hand that socket to the agent.
+	if st.Nlink != 1 {
+		return fmt.Errorf("refusing %s: socket node has %d links after bind", path, st.Nlink)
 	}
 	if err = syscall.Fchownat(fd, "", d.uid, d.gid, atEmptyPath); err != nil {
 		return fmt.Errorf("chown %s: %w", path, err)
