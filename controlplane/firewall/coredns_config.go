@@ -242,6 +242,14 @@ func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exact
 	if id, ok := idFor(domain); ok {
 		fmt.Fprintf(b, "    dnsbpf %d\n", id)
 	}
+	if domain == consts.DockerHostInternal {
+		// The CoreDNS container's /etc/hosts maps the name to the Docker
+		// host-gateway (hostGatewayHosts). That is the only source on Linux
+		// Docker Engine; Docker Desktop also answers through Docker DNS.
+		b.WriteString("    hosts {\n")
+		b.WriteString("        fallthrough\n")
+		b.WriteString("    }\n")
+	}
 	fmt.Fprintf(b, "    forward . %s\n", strings.Join(upstreams, " "))
 	b.WriteString("}\n\n")
 }

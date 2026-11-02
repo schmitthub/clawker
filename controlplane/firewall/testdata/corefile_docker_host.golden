@@ -10,6 +10,9 @@ host.docker.internal {
         rcode NOERROR
     }
     dnsbpf 257
+    hosts {
+        fallthrough
+    }
     forward . 127.0.0.11
 }
 
