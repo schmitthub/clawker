@@ -92,8 +92,9 @@ func (m *Manager) IsRunning() bool {
 	return m.isDaemonRunning()
 }
 
-// isDaemonRunning checks the PID file names a live process. The daemon
-// writes it only while it holds the single-instance lock.
+// isDaemonRunning checks a daemon holds the PID file lock. The daemon
+// takes it for its whole life, so a stale file from an unclean exit does
+// not count as running.
 func (m *Manager) isDaemonRunning() bool {
 	pidFile, err := m.cfg.HostProxyPIDFilePath()
 	if err != nil {

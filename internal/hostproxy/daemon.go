@@ -15,7 +15,6 @@ import (
 
 	"github.com/moby/moby/client"
 
-	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -85,13 +84,13 @@ func WithGracePeriod(period time.Duration) DaemonOption {
 }
 
 // NewDaemon creates a new daemon that reads all settings from cfg.HostProxyConfig().
-// cpClient is the HostProxyService client on the CP admin listener; the
-// daemon opens its stream on Run. Optional DaemonOption values override
+// dial opens a connection to the CP admin listener; the daemon calls it
+// for every stream attempt on Run. Optional DaemonOption values override
 // individual config settings (used by CLI flags). It creates a Docker
 // client internally. Tests that need a mock docker client construct
 // &Daemon{...} directly (the pattern used by watchContainers tests).
 func NewDaemon(
-	cfg config.Config, log *logger.Logger, cpClient hostproxyv1.HostProxyServiceClient, opts ...DaemonOption,
+	cfg config.Config, log *logger.Logger, dial Dialer, opts ...DaemonOption,
 ) (*Daemon, error) {
 	daemonCfg := cfg.HostProxyConfig().Daemon
 
@@ -153,7 +152,7 @@ func NewDaemon(
 	d.firewallRunningProbe = d.firewallContainerRunning
 	d.envoyHealthProbe = d.envoyHealthy
 	d.actions = NewActions(log, rulesFilePath)
-	d.connector = NewConnector(cpClient, d.actions, log)
+	d.connector = NewConnector(dial, d.actions, log)
 
 	for _, opt := range opts {
 		opt(d)
@@ -505,14 +504,20 @@ func isProcessAlive(pid int) bool {
 	return err == nil
 }
 
-// IsDaemonRunning checks if a daemon is running by checking the PID file
-// and verifying the process is alive.
+// IsDaemonRunning reports whether a daemon holds the PID file lock. The
+// lock, not the PID, is the liveness signal: a file left by an unclean
+// exit names a PID another process may reuse, and the kernel drops the
+// lock with the holder. A lock this probe can take means no daemon.
 func IsDaemonRunning(pidFile string) bool {
-	pid, err := readPIDFile(pidFile)
+	f, err := os.OpenFile(pidFile, os.O_RDONLY, 0)
 	if err != nil {
 		return false
 	}
-	return isProcessAlive(pid)
+	defer func() {
+		_ = f.Close() // Read-only probe; closing also releases a lock this probe took.
+	}()
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	return errors.Is(err, syscall.EWOULDBLOCK)
 }
 
 // GetDaemonPID returns the PID of the running daemon, or 0 if not running.

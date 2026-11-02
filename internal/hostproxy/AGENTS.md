@@ -2,13 +2,13 @@
 
 Runs host actions for agents: open a URL in the host browser, run the host git credential helper, and capture OAuth callbacks.
 
-**Agents never connect to it, and it has no listener for actions.** The daemon dials out to the CP admin listener (`127.0.0.1:<control_plane.admin_port>`, host-published by the CP container; works on macOS, rootful Linux, and rootless Linux) and holds one `HostProxyService.Connect` stream (`api/hostproxy/v1`). The CP sends each authorized action down the stream; `Connector` runs it on `Actions` and sends the result back. Identity: the host proxy's own CLI-CA client leaf (CN `consts.HostProxyClientName`, `auth.LoadHostProxyClientCert`) and its own Hydra client (`consts.ClientIDHostProxy`, signing key `auth.LoadHostProxySigningKey`, scope `hostproxy:serve`), on the connection from `controlplane/adminclient.DialHostProxy`, which the `serve` command wraps with `hostproxyv1.NewHostProxyServiceClient`. The path is agent → clawkerd host relay → CP AgentService (all authorization: label grants and callback-session ownership) → `controlplane/hostgateway` → this stream. This package keeps the egress check on URLs, the redirect check, the callback port bind, and the browser open. The only host ports it binds are the short-lived OAuth callback listeners on loopback.
+**Agents never connect to it, and it has no listener for actions.** The daemon dials out to the CP admin listener (`127.0.0.1:<control_plane.admin_port>`, host-published by the CP container; works on macOS, rootful Linux, and rootless Linux) and holds one `HostProxyService.Connect` stream (`api/hostproxy/v1`). The CP sends each authorized action down the stream; `Connector` runs it on `Actions` and sends the result back. Identity: the host proxy's own CLI-CA client leaf (CN `consts.HostProxyClientName`, `auth.LoadHostProxyClientCert`) and its own Hydra client (`consts.ClientIDHostProxy`, signing key `auth.LoadHostProxySigningKey`, scope `hostproxy:serve`), on a connection from `controlplane/adminclient.DialHostProxy`. The `serve` command passes that dial as a `Dialer`; `Connector` calls it for every stream attempt and closes the connection when the stream ends, so the identity is re-read from disk on each reconnect and `clawker auth rotate --force` takes effect after the CP restart with no daemon restart. The path is agent → clawkerd host relay → CP AgentService (all authorization: label grants and callback-session ownership) → `controlplane/hostgateway` → this stream. This package keeps the egress check on URLs, the redirect check, the callback port bind, and the browser open. The only host ports it binds are the short-lived OAuth callback listeners on loopback.
 
 ## Architecture: Daemon Subprocess
 
-The host proxy runs as a **daemon subprocess** that persists beyond CLI command lifetime. `Manager.EnsureRunning()` spawns `clawker host-proxy serve` as a detached process if not already running, then waits (`daemonStartTimeout`, 3s) until the PID file names a live process. The daemon holds an exclusive `flock` on the PID file for its whole life (`lockPIDFile`): a second daemon gets `errDaemonAlreadyRunning` and exits, so a check-then-start race between two CLI commands cannot leave two daemons. The kernel drops the lock when the process dies. The daemon polls Docker every 30s and auto-exits when no clawker containers are running (after 60s grace period) or after 10 consecutive Docker errors.
+The host proxy runs as a **daemon subprocess** that persists beyond CLI command lifetime. `Manager.EnsureRunning()` spawns `clawker host-proxy serve` as a detached process if not already running, then waits (`daemonStartTimeout`, 3s) until a daemon holds the PID file lock. The daemon holds an exclusive `flock` on the PID file for its whole life (`lockPIDFile`): a second daemon gets `errDaemonAlreadyRunning` and exits, so a check-then-start race between two CLI commands cannot leave two daemons. The kernel drops the lock when the process dies. `IsDaemonRunning` probes that lock (`LOCK_EX|LOCK_NB`; `EWOULDBLOCK` means a daemon holds it), never the PID: a file left by an unclean exit names a PID another process can reuse. The daemon polls Docker every 30s and auto-exits when no clawker containers are running (after 60s grace period) or after 10 consecutive Docker errors.
 
-`Connector.Run` reconnects with backoff (0.5s doubling to 30s; back to 0.5s after a stream that stayed up a minute) when the stream ends: CP restart, network fault, or a newer stream replaced it (the CP keeps one stream; the newest wins). The CP accepts a stream by sending the `hostproxyv1.AcceptedHeader` response header; a refused stream (wrong CN, scope, or client ID) ends trailers-only. Keepalive pings (`consts.HostProxyKeepaliveTime`) find a dead connection while the stream idles; the admin server's enforcement policy allows them (`consts.AdminKeepaliveMinClientPing`). With no host proxy connected, the CP answers host actions `Unavailable`.
+`Connector.Run` reconnects with backoff (0.5s doubling to 30s; back to 0.5s after a stream that stayed up a minute) when the stream ends: CP restart, network fault, or a newer stream replaced it (the CP keeps one stream; the newest wins). The CP accepts a stream by sending the `hostproxyv1.AcceptedHeader` response header; a refused stream (wrong CN, scope, or client ID) ends trailers-only. Keepalive pings (`consts.HostProxyKeepaliveTime`) find a dead connection while the stream idles; the admin server's enforcement policy allows them (`consts.AdminKeepaliveMinClientPing`). With no host proxy connected, the CP answers host actions `Unavailable`. Each `HostActionRequest` carries the CP's `deadline_unix_ms`; the connector derives the action context from it, and a `cancel` request for an earlier id ends that action with no result, so a stalled helper or a stuck browser opener (`openBrowser` runs under the action context) never outlives the call the CP gave up on.
 
 **Hidden CLI:** `clawker host-proxy serve|status|stop`
 
@@ -88,9 +88,9 @@ type Service interface {
 
 ```go
 func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error)       // errors on a nil config
-func NewDaemon(cfg config.Config, log *logger.Logger, cpClient hostproxyv1.HostProxyServiceClient, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
+func NewDaemon(cfg config.Config, log *logger.Logger, dial Dialer, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig(); dial opens the CP connection per stream attempt
 func NewActions(log *logger.Logger, rulesFilePath string) *Actions  // rulesFilePath empty = no egress enforcement; Close releases listeners + session store
-func NewConnector(client hostproxyv1.HostProxyServiceClient, actions *Actions, log *logger.Logger) *Connector
+func NewConnector(dial Dialer, actions *Actions, log *logger.Logger) *Connector // type Dialer func() (*grpc.ClientConn, error)
 func NewSessionStore() *SessionStore  // Starts cleanup goroutine; must call Stop()
 func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChannel
 ```
@@ -101,7 +101,7 @@ func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChanne
 
 ## Core methods
 
-- **`Manager`** — `IsRunning() bool` (the PID file names a live process; there is no port to probe), `EnsureRunning() error` (spawns daemon if needed), `Stop()` (no-op — daemon self-terminates), `StopDaemon() error` (explicit stop).
+- **`Manager`** — `IsRunning() bool` (a daemon holds the PID file lock; there is no port to probe), `EnsureRunning() error` (spawns daemon if needed), `Stop()` (no-op — daemon self-terminates), `StopDaemon() error` (explicit stop).
 - **`Daemon`** — `Run(ctx) error` takes the PID lock, starts the connector, blocks until signal or auto-exit. Package helpers: `IsDaemonRunning(pidFile)`, `GetDaemonPID(pidFile)`, `StopDaemon(pidFile)`.
 - **`Actions`** — `Handle(ctx, *HostActionRequest) *HostActionResult` (echoes the request id), `Close(ctx)`.
 - **`Connector`** — `Run(ctx)` until ctx ends.
@@ -116,7 +116,7 @@ Each action is one `HostActionRequest` oneof (the AgentService request messages)
 |--------|----------------|
 | `open_url` | `OpenURLResult`; `InvalidArgument` (empty, unparseable, not http/https), `PermissionDenied` (egress deny), `Internal` (broken rules file, browser failure) |
 | `git_credential` | `GitCredentialResult` (credentials for get); `InvalidArgument` (bad action, missing field, injection characters), `FailedPrecondition` (the host `git credential` command failed) |
-| `register_callback` | `RegisterCallbackResult` (session, port, expiry); `InvalidArgument` (redirect check), `PermissionDenied` (egress deny), `Internal` (session, listener, or browser failure) |
+| `register_callback` | `RegisterCallbackResult` (session, port, expiry); `InvalidArgument` (auth URL not http/https, redirect check), `PermissionDenied` (egress deny), `Internal` (session, listener, or browser failure) |
 | `get_callback_data` | `GetCallbackDataResult`; `NotFound` (unknown or expired session) |
 | `delete_callback` | `DeleteCallbackResult` (idempotent) |
 
@@ -148,7 +148,7 @@ All stages poll at `consts.HostProxyReadyPollInterval` (1s); budgets derive from
 
 ## OAuth Callback Flow
 
-One action: `register_callback {auth_url, ttl_seconds}`. The host proxy egress-checks `auth_url`, takes the port and path from its `redirect_uri` (or `callback`) parameter, which must be `http://localhost|127.0.0.1:<port>` with port ≥ 1024 and no userinfo, caps the TTL at `DefaultCallbackTTL`, binds a listener on that port, opens the browser, and returns the session id, port and expiry. The listener closes after the first capture. The container polls `/callback/{session}/data` on the clawkerd relay (through the CP, which checks session ownership, as `get_callback_data`) and `callback-forwarder` replays the request to the local server.
+One action: `register_callback {auth_url, ttl_seconds}`. The host proxy requires an http or https `auth_url` (the firewall-off path skips the egress check, so this is the only guard against a `file:` or custom-scheme URL reaching the host browser opener), egress-checks it, takes the port and path from its `redirect_uri` (or `callback`) parameter, which must be `http://localhost|127.0.0.1:<port>` with port ≥ 1024 and no userinfo, caps the TTL at `DefaultCallbackTTL`, binds a listener on that port, opens the browser, and returns the session id, port and expiry. The listener closes after the first capture. A later session may bind the same port; a session's expiry closes a listener only while that session still owns it. The container polls `/callback/{session}/data` on the clawkerd relay (through the CP, which checks session ownership, as `get_callback_data`) and `callback-forwarder` replays the request to the local server.
 
 ## Git Credential Forwarding
 

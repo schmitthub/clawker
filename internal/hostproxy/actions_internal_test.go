@@ -40,7 +40,7 @@ func newTestActions(t *testing.T, rulesFile string) (*Actions, *[]string) {
 	t.Helper()
 	a := NewActions(logger.Nop(), rulesFile)
 	opened := new([]string)
-	a.browserFunc = func(u string) error { *opened = append(*opened, u); return nil }
+	a.browserFunc = func(_ context.Context, u string) error { *opened = append(*opened, u); return nil }
 	t.Cleanup(func() { a.Close(context.Background()) })
 	return a, opened
 }
@@ -53,33 +53,43 @@ func codeOf(res *hostproxyv1.HostActionResult) codes.Code {
 }
 
 func openURL(u string) *hostproxyv1.HostActionRequest {
-	return &hostproxyv1.HostActionRequest{Id: 1, Action: &hostproxyv1.HostActionRequest_OpenUrl{
+	return &hostproxyv1.HostActionRequest{Id: 1, DeadlineUnixMs: 0, Action: &hostproxyv1.HostActionRequest_OpenUrl{
 		OpenUrl: &agentv1.OpenURLRequest{Url: u},
 	}}
 }
 
 func registerCallback(authURL string, ttl int32) *hostproxyv1.HostActionRequest {
-	return &hostproxyv1.HostActionRequest{Id: 2, Action: &hostproxyv1.HostActionRequest_RegisterCallback{
-		RegisterCallback: &agentv1.RegisterCallbackRequest{AuthUrl: authURL, TtlSeconds: ttl},
-	}}
+	return &hostproxyv1.HostActionRequest{
+		Id: 2, DeadlineUnixMs: 0,
+		Action: &hostproxyv1.HostActionRequest_RegisterCallback{
+			RegisterCallback: &agentv1.RegisterCallbackRequest{AuthUrl: authURL, TtlSeconds: ttl},
+		},
+	}
 }
 
 func getCallbackData(id string) *hostproxyv1.HostActionRequest {
-	return &hostproxyv1.HostActionRequest{Id: 3, Action: &hostproxyv1.HostActionRequest_GetCallbackData{
-		GetCallbackData: &agentv1.GetCallbackDataRequest{SessionId: id},
-	}}
+	return &hostproxyv1.HostActionRequest{
+		Id: 3, DeadlineUnixMs: 0,
+		Action: &hostproxyv1.HostActionRequest_GetCallbackData{
+			GetCallbackData: &agentv1.GetCallbackDataRequest{SessionId: id},
+		},
+	}
 }
 
 func deleteCallback(id string) *hostproxyv1.HostActionRequest {
-	return &hostproxyv1.HostActionRequest{Id: 4, Action: &hostproxyv1.HostActionRequest_DeleteCallback{
-		DeleteCallback: &agentv1.DeleteCallbackRequest{SessionId: id},
-	}}
+	return &hostproxyv1.HostActionRequest{
+		Id: 4, DeadlineUnixMs: 0,
+		Action: &hostproxyv1.HostActionRequest_DeleteCallback{
+			DeleteCallback: &agentv1.DeleteCallbackRequest{SessionId: id},
+		},
+	}
 }
 
 func gitCredential(req *agentv1.GitCredentialRequest) *hostproxyv1.HostActionRequest {
 	return &hostproxyv1.HostActionRequest{
-		Id:     5,
-		Action: &hostproxyv1.HostActionRequest_GitCredential{GitCredential: req},
+		Id:             5,
+		DeadlineUnixMs: 0,
+		Action:         &hostproxyv1.HostActionRequest_GitCredential{GitCredential: req},
 	}
 }
 
@@ -92,7 +102,7 @@ func TestActions_EchoesID(t *testing.T) {
 
 func TestActions_UnknownAction(t *testing.T) {
 	a, _ := newTestActions(t, "")
-	res := a.Handle(context.Background(), &hostproxyv1.HostActionRequest{Id: 1, Action: nil})
+	res := a.Handle(context.Background(), &hostproxyv1.HostActionRequest{Id: 1, DeadlineUnixMs: 0, Action: nil})
 	assert.Equal(t, codes.InvalidArgument, codeOf(res))
 }
 
@@ -186,7 +196,7 @@ func TestActions_OpenURL_BrokenRulesFails(t *testing.T) {
 
 func TestActions_OpenURL_BrowserFailure(t *testing.T) {
 	a, _ := newTestActions(t, "")
-	a.browserFunc = func(string) error { return errors.New("no browser") }
+	a.browserFunc = func(context.Context, string) error { return errors.New("no browser") }
 	assert.Equal(t, codes.Internal, codeOf(a.Handle(context.Background(), openURL("https://example.test/"))))
 }
 
@@ -224,6 +234,8 @@ func TestActions_RegisterCallback_Rejects(t *testing.T) {
 	port := getFreePort(t)
 	for name, authURL := range map[string]string{
 		"no redirect":     "https://auth.example.com/authorize",
+		"file scheme":     "file:///tmp/host-file.html?redirect_uri=http%3A%2F%2Flocalhost%3A40000%2Fcb",
+		"custom scheme":   "vscode://open?redirect_uri=http%3A%2F%2Flocalhost%3A40000%2Fcb",
 		"remote redirect": authURLFor("evil.example.com", port),
 		"privileged port": authURLFor("localhost", 80),
 		"https redirect":  "https://a.example.com/?redirect_uri=https%3A%2F%2Flocalhost%3A40000%2Fcb",
@@ -267,7 +279,7 @@ func TestActions_RegisterCallback_TTLCapped(t *testing.T) {
 // open, the session and its listener are removed.
 func TestActions_RegisterCallback_BrowserFailure(t *testing.T) {
 	a, _ := newTestActions(t, "")
-	a.browserFunc = func(string) error { return errors.New("no browser") }
+	a.browserFunc = func(context.Context, string) error { return errors.New("no browser") }
 	port := getFreePort(t)
 	res := a.Handle(context.Background(), registerCallback(authURLFor("localhost", port), 0))
 	assert.Equal(t, codes.Internal, codeOf(res))
@@ -465,4 +477,41 @@ func TestActions_GitCredential_HelperFailure(t *testing.T) {
 		gitReq(agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET, "https", "clawker-test.invalid", "", "", ""),
 	))
 	assert.Equal(t, codes.FailedPrecondition, codeOf(res), res.GetError().GetMessage())
+}
+
+// TestActions_SessionExpiryKeepsNewerListener: after the one-shot capture
+// freed the port, a second flow may bind it. The first session's expiry
+// must not close the second flow's listener.
+func TestActions_SessionExpiryKeepsNewerListener(t *testing.T) {
+	a, _ := newTestActions(t, "")
+	port := getFreePort(t)
+	authURL := authURLFor("localhost", port)
+
+	first := a.Handle(context.Background(), registerCallback(authURL, 120))
+	require.Equal(t, codes.OK, codeOf(first), first.GetError().GetMessage())
+	firstID := first.GetRegisterCallback().GetSessionId()
+
+	// The browser callback frees the port; the session keeps its data.
+	addr := net.JoinHostPort(consts.Localhost, strconv.Itoa(port))
+	resp, err := http.Get(fmt.Sprintf("http://%s/callback?code=x", addr))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Eventually(t, func() bool {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		_, bound := a.dynamicListeners[port]
+		return !bound
+	}, 5*time.Second, 10*time.Millisecond, "the listener must close after the first capture")
+
+	second := a.Handle(context.Background(), registerCallback(authURL, 120))
+	require.Equal(t, codes.OK, codeOf(second), second.GetError().GetMessage())
+	secondID := second.GetRegisterCallback().GetSessionId()
+
+	a.sessionStore.Delete(firstID)
+
+	a.mu.RLock()
+	dl, bound := a.dynamicListeners[port]
+	a.mu.RUnlock()
+	require.True(t, bound, "the second flow's listener must survive the first session's deletion")
+	assert.Equal(t, secondID, dl.sessionID)
 }
