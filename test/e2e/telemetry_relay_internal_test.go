@@ -41,13 +41,15 @@ const relayProbeMetric = "clawker_e2e_relay_probe"
 func TestTelemetryRelay_E2E(t *testing.T) {
 	h := newFirewallHarness(t)
 
-	upRes := h.Run("monitor", "up")
-	require.NoError(t, upRes.Err, "monitor up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
+	// Registered before `monitor up`: a partial start must still be torn
+	// down, and the shared sweep skips these unlabeled containers.
 	t.Cleanup(func() {
 		if res := h.Run("monitor", "down", "--volumes"); res.Err != nil {
 			t.Logf("monitor down: %v\nstderr: %s", res.Err, res.Stderr)
 		}
 	})
+	upRes := h.Run("monitor", "up")
+	require.NoError(t, upRes.Err, "monitor up failed\nstdout: %s\nstderr: %s", upRes.Stdout, upRes.Stderr)
 
 	agent := "relay-" + randomHex(t, 4)
 	nonce := randomHex(t, 8)

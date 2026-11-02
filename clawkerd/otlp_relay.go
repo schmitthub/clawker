@@ -45,6 +45,12 @@ const (
 	// PID1 goroutine and its body buffer. With IdleTimeout unset it also
 	// bounds idle keep-alive connections.
 	relayReadTimeout = 10 * time.Second
+	// relayMaxInflight caps requests holding a body buffer at once. Each
+	// one can hold ExportTelemetryMaxBodyBytes while it waits on the CP,
+	// and anything in the container can reach the loopback listener, so
+	// an unbounded count could exhaust PID1's memory. Over the cap the
+	// SDK sees a retryable 503.
+	relayMaxInflight = 8
 )
 
 // exportClient is the slice of AgentServiceClient the relay needs.
@@ -70,6 +76,7 @@ type OTLPRelay struct {
 
 	mu      sync.Mutex
 	nextLog time.Time
+	slots   chan struct{}
 }
 
 // StartTelemetryRelay dials the CP agent listener with the bootstrap
@@ -137,6 +144,7 @@ func newOTLPRelay(ctx context.Context, listenAddr string, client exportClient, l
 		log:     log,
 		mu:      sync.Mutex{},
 		nextLog: time.Time{},
+		slots:   make(chan struct{}, relayMaxInflight),
 	}
 	srv := new(http.Server)
 	srv.Handler = r
@@ -195,6 +203,14 @@ func (r *OTLPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 		return
 	}
+	select {
+	case r.slots <- struct{}{}:
+		defer func() { <-r.slots }()
+	default:
+		w.Header().Set("Retry-After", strconv.Itoa(relayRetryAfterSeconds))
+		http.Error(w, "relay busy", http.StatusServiceUnavailable)
+		return
+	}
 	body, code := readRelayBody(w, req)
 	if code != 0 {
 		http.Error(w, http.StatusText(code), code)
@@ -228,14 +244,18 @@ func signalForPath(path string) agentv1.Signal {
 
 // readRelayBody reads at most ExportTelemetryMaxBodyBytes, decoding gzip when
 // declared. The cap applies to the decoded size so a small compressed
-// body cannot expand past what the CP listener accepts. A non-zero
-// return code is the HTTP status to answer with.
+// body cannot expand past what the CP listener accepts. The compressed
+// input itself is not capped: gzip adds a few bytes of framing, so a
+// decoded body right at the cap would otherwise be refused, and the
+// decoded limit already bounds how much input the reader pulls. A
+// non-zero return code is the HTTP status to answer with.
 func readRelayBody(w http.ResponseWriter, req *http.Request) ([]byte, int) {
-	var rd io.Reader = http.MaxBytesReader(w, req.Body, agentv1.ExportTelemetryMaxBodyBytes)
+	var rd io.Reader
 	switch req.Header.Get("Content-Encoding") {
 	case "", "identity":
+		rd = http.MaxBytesReader(w, req.Body, agentv1.ExportTelemetryMaxBodyBytes)
 	case "gzip":
-		gz, err := gzip.NewReader(rd)
+		gz, err := gzip.NewReader(req.Body)
 		if err != nil {
 			return nil, http.StatusBadRequest
 		}
