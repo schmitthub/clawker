@@ -687,7 +687,7 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 # uses go:embed on assets/clawkercp + assets/ebpf-manager, and
 # controlplane/firewall uses go:embed on assets/coredns-clawker —
 # tests that compile those packages will fail without the binaries on disk.
-test: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -700,13 +700,13 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
