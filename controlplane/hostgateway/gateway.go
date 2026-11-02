@@ -13,6 +13,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,7 +132,20 @@ func (g *Gateway) Connect(srv hostproxyv1.HostProxyService_ConnectServer) error 
 	g.log.Info().Str("event", "host_proxy_connected").Bool("replaced", old != nil).Msg("host proxy stream connected")
 
 	recvDone := make(chan error, 1)
-	go func() { recvDone <- hs.recvLoop() }()
+	go func() {
+		// The gRPC recovery interceptor covers the handler goroutine only;
+		// a panic here would take down the CP (PID 1 of its container).
+		defer func() {
+			if r := recover(); r != nil {
+				g.log.Error().
+					Str("event", "host_gateway_recv_panic").
+					Str("stack", string(debug.Stack())).
+					Msgf("host proxy receive loop panicked: %v", r)
+				recvDone <- fmt.Errorf("receive loop panic: %v", r)
+			}
+		}()
+		recvDone <- hs.recvLoop()
+	}()
 	var err error
 	select {
 	case err = <-recvDone:
@@ -173,7 +187,7 @@ func isHostProxyPeer(ctx context.Context) bool {
 
 // OpenURL asks the host proxy to open rawURL in the host browser.
 func (g *Gateway) OpenURL(ctx context.Context, id Identity, rawURL string) error {
-	req := &hostproxyv1.HostActionRequest{Id: 0, Action: &hostproxyv1.HostActionRequest_OpenUrl{
+	req := &hostproxyv1.HostActionRequest{Id: 0, DeadlineUnixMs: 0, Action: &hostproxyv1.HostActionRequest_OpenUrl{
 		OpenUrl: &agentv1.OpenURLRequest{Url: rawURL},
 	}}
 	res, err := g.call(ctx, id, req)
@@ -193,7 +207,7 @@ func (g *Gateway) GitCredential(
 	res, err := g.call(
 		ctx,
 		id,
-		&hostproxyv1.HostActionRequest{Id: 0, Action: &hostproxyv1.HostActionRequest_GitCredential{
+		&hostproxyv1.HostActionRequest{Id: 0, DeadlineUnixMs: 0, Action: &hostproxyv1.HostActionRequest_GitCredential{
 			GitCredential: req,
 		}},
 	)
@@ -215,9 +229,10 @@ func (g *Gateway) RegisterCallback(
 	res, err := g.call(
 		ctx,
 		id,
-		&hostproxyv1.HostActionRequest{Id: 0, Action: &hostproxyv1.HostActionRequest_RegisterCallback{
-			RegisterCallback: req,
-		}},
+		&hostproxyv1.HostActionRequest{
+			Id: 0, DeadlineUnixMs: 0,
+			Action: &hostproxyv1.HostActionRequest_RegisterCallback{RegisterCallback: req},
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -249,7 +264,7 @@ func (g *Gateway) GetCallbackData(
 	res, err := g.call(
 		ctx,
 		id,
-		&hostproxyv1.HostActionRequest{Id: 0, Action: &hostproxyv1.HostActionRequest_GetCallbackData{
+		&hostproxyv1.HostActionRequest{Id: 0, DeadlineUnixMs: 0, Action: &hostproxyv1.HostActionRequest_GetCallbackData{
 			GetCallbackData: &agentv1.GetCallbackDataRequest{SessionId: sessionID},
 		}},
 	)
@@ -274,7 +289,7 @@ func (g *Gateway) DeleteCallback(ctx context.Context, id Identity, sessionID str
 	res, err := g.call(
 		ctx,
 		id,
-		&hostproxyv1.HostActionRequest{Id: 0, Action: &hostproxyv1.HostActionRequest_DeleteCallback{
+		&hostproxyv1.HostActionRequest{Id: 0, DeadlineUnixMs: 0, Action: &hostproxyv1.HostActionRequest_DeleteCallback{
 			DeleteCallback: &agentv1.DeleteCallbackRequest{SessionId: sessionID},
 		}},
 	)
@@ -335,6 +350,9 @@ func (g *Gateway) call(
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	req.Id = g.nextID.Add(1)
+	if deadline, ok := ctx.Deadline(); ok {
+		req.DeadlineUnixMs = deadline.UnixMilli()
+	}
 	res, err := hs.roundTrip(ctx, req)
 	action := actionName(req)
 	if err != nil {
@@ -455,6 +473,17 @@ func (hs *hostStream) roundTrip(
 	case <-hs.done:
 		return nil, fmt.Errorf("host proxy stream ended: %w", hs.err)
 	case <-ctx.Done():
+		// Tell the host proxy to end the action; nobody waits for its result.
+		hs.sendMu.Lock()
+		cancelErr := hs.srv.Send(&hostproxyv1.HostActionRequest{
+			Id:             req.GetId(),
+			Action:         &hostproxyv1.HostActionRequest_Cancel{Cancel: &hostproxyv1.CancelAction{}},
+			DeadlineUnixMs: 0,
+		})
+		hs.sendMu.Unlock()
+		if cancelErr != nil {
+			return nil, fmt.Errorf("waiting for host proxy: %w (cancel not sent: %w)", ctx.Err(), cancelErr)
+		}
 		return nil, fmt.Errorf("waiting for host proxy: %w", ctx.Err())
 	}
 }

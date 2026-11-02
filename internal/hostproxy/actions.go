@@ -54,8 +54,8 @@ type dynamicListener struct {
 // browser.
 type Actions struct {
 	log              *logger.Logger
-	rulesFilePath    string             // egress rules file path; empty = skip check (firewall disabled)
-	browserFunc      func(string) error // opens URL in host browser; defaults to openBrowser
+	rulesFilePath    string                              // egress rules file path; empty = skip check (firewall disabled)
+	browserFunc      func(context.Context, string) error // opens URL in host browser; defaults to openBrowser
 	mu               sync.RWMutex
 	closed           bool
 	sessionStore     *SessionStore
@@ -95,8 +95,9 @@ func NewActions(log *logger.Logger, rulesFilePath string) *Actions {
 			return
 		}
 		// Session expiry runs on the store's cleanup goroutine; there is
-		// no caller context.
-		a.closeDynamicListener(context.Background(), port)
+		// no caller context. Only this session's listener closes: after
+		// the one-shot capture freed the port, a newer session may own it.
+		a.closeSessionListener(context.Background(), port, session.ID)
 	})
 	return a
 }
@@ -128,7 +129,7 @@ func (s *Actions) Handle(ctx context.Context, req *hostproxyv1.HostActionRequest
 func (s *Actions) handle(ctx context.Context, req *hostproxyv1.HostActionRequest) *hostproxyv1.HostActionResult {
 	switch action := req.GetAction().(type) {
 	case *hostproxyv1.HostActionRequest_OpenUrl:
-		return s.openURL(action.OpenUrl)
+		return s.openURL(ctx, action.OpenUrl)
 	case *hostproxyv1.HostActionRequest_GitCredential:
 		return s.gitCredential(ctx, action.GitCredential)
 	case *hostproxyv1.HostActionRequest_RegisterCallback:
@@ -150,7 +151,7 @@ func failure(code codes.Code, msg string) *hostproxyv1.HostActionResult {
 
 // openURL opens an http or https URL in the host browser after the
 // egress check.
-func (s *Actions) openURL(req *agentv1.OpenURLRequest) *hostproxyv1.HostActionResult {
+func (s *Actions) openURL(ctx context.Context, req *agentv1.OpenURLRequest) *hostproxyv1.HostActionResult {
 	rawURL := req.GetUrl()
 	if rawURL == "" {
 		return failure(codes.InvalidArgument, "url is required")
@@ -167,7 +168,7 @@ func (s *Actions) openURL(req *agentv1.OpenURLRequest) *hostproxyv1.HostActionRe
 	}
 
 	s.log.Debug().Str("url", rawURL).Msg("opening URL in browser")
-	if openErr := s.browserFunc(rawURL); openErr != nil {
+	if openErr := s.browserFunc(ctx, rawURL); openErr != nil {
 		s.log.Error().Err(openErr).Str("url", rawURL).Msg("failed to open URL in browser")
 		return failure(codes.Internal, "failed to open browser")
 	}
@@ -302,6 +303,12 @@ func callbackTarget(authURL string) (int32, string, error) {
 	if err != nil {
 		return 0, "", fmt.Errorf("invalid auth URL: %w", err)
 	}
+	// The browser opens this URL. With the firewall off, checkEgress is a
+	// no-op, so this is the only guard against file: or a custom scheme
+	// that launches a host application.
+	if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
+		return 0, "", errors.New("auth URL must be http or https")
+	}
 	q := parsed.Query()
 	raw := q.Get("redirect_uri")
 	if raw == "" {
@@ -361,7 +368,7 @@ func (s *Actions) registerCallback(
 		s.callbackChannel.Delete(session.ID)
 		return failure(codes.Internal, fmt.Sprintf("failed to start listener on port %d", port))
 	}
-	if openErr := s.browserFunc(authURL); openErr != nil {
+	if openErr := s.browserFunc(ctx, authURL); openErr != nil {
 		s.log.Error().Err(openErr).Msg("failed to open auth URL in browser")
 		s.callbackChannel.Delete(session.ID)
 		return failure(codes.Internal, "failed to open browser")
@@ -490,6 +497,17 @@ func (s *Actions) listenLoopback(ctx context.Context, port int) []net.Listener {
 func (s *Actions) closeDynamicListener(ctx context.Context, port int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeDynamicListenerLocked(ctx, port)
+}
+
+// closeSessionListener closes the listener on port only while sessionID
+// still owns it.
+func (s *Actions) closeSessionListener(ctx context.Context, port int, sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if dl, ok := s.dynamicListeners[port]; !ok || dl.sessionID != sessionID {
+		return
+	}
 	s.closeDynamicListenerLocked(ctx, port)
 }
 

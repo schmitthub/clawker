@@ -3,6 +3,7 @@ package hostproxy
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -59,19 +60,36 @@ func TestManagerIsRunning_FollowsPIDLock(t *testing.T) {
 	}
 }
 
-// TestIsDaemonRunningWithStalePIDFile tests that stale PID files are handled correctly.
+// TestIsDaemonRunningWithStalePIDFile: a PID file nobody locks is stale,
+// even when it names a live process (an unclean exit left it behind and
+// the PID was reused).
 func TestIsDaemonRunningWithStalePIDFile(t *testing.T) {
-	// Create a temp PID file with a non-existent PID
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "hostproxy.pid")
 
-	// Write a PID that doesn't exist (use a very high PID)
-	if err := os.WriteFile(pidFile, []byte("999999999"), 0o644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		t.Fatalf("failed to write PID file: %v", err)
 	}
 
 	if IsDaemonRunning(pidFile) {
-		t.Error("expected IsDaemonRunning to return false for stale PID file")
+		t.Error("expected IsDaemonRunning to return false for an unlocked PID file")
+	}
+}
+
+// TestIsDaemonRunningWithLockedPIDFile: the daemon's lock is the liveness
+// signal.
+func TestIsDaemonRunningWithLockedPIDFile(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "hostproxy.pid")
+	lock, err := lockPIDFile(pidFile)
+	if err != nil {
+		t.Fatalf("lock PID file: %v", err)
+	}
+	if !IsDaemonRunning(pidFile) {
+		t.Error("expected IsDaemonRunning to return true while the lock is held")
+	}
+	releasePIDFile(lock, pidFile, logger.Nop())
+	if IsDaemonRunning(pidFile) {
+		t.Error("expected IsDaemonRunning to return false after release")
 	}
 }
 
