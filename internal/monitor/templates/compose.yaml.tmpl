@@ -40,8 +40,8 @@ services:
       # monitoring service joins the agent network. Binding to 0.0.0.0
       # would expose the plaintext OTLP ingestion to anything routable
       # on the LAN.
-      - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
-      - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
+      - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCListenPort}}"
+      - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelHTTPListenPort}}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

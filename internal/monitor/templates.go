@@ -76,14 +76,22 @@ const (
 // compose template, otel-config endpoints, and the CoreDNS internalHosts
 // list in `internal/controlplane/firewall/coredns_config.go` cannot drift.
 type MonitorTemplateData struct {
-	// Ports — single value drives both sides of the host:container
-	// publish mapping AND the container's own listener config (Prometheus
-	// --web.listen-address, OpenSearch http.port, Dashboards SERVER_PORT,
-	// otel-collector receiver endpoints in otel-config.yaml.tmpl). User
-	// changes one knob in Settings.Monitoring and host + internal move
-	// together.
-	OtelCollectorPort        int
-	OtelGRPCPort             int // independent of HTTP port
+	// Ports — for Prometheus, OpenSearch and Dashboards a single value
+	// drives both sides of the host:container publish mapping AND the
+	// container's own listener config (Prometheus --web.listen-address,
+	// OpenSearch http.port, Dashboards SERVER_PORT). User changes one
+	// knob in Settings.Monitoring and host + internal move together.
+	//
+	// The host-published OTLP receivers differ: OtelCollectorPort and
+	// OtelGRPCPort are the host side only, while the collector listens
+	// on the fixed OtelHTTPListenPort / OtelGRPCListenPort inside the
+	// container, so a user port cannot collide with the other
+	// in-container listeners (otlp/infra, otlp/agents, the Prometheus
+	// exporter).
+	OtelCollectorPort        int // host side of the otlp HTTP publish
+	OtelGRPCPort             int // host side of the otlp gRPC publish; independent of HTTP port
+	OtelHTTPListenPort       int // consts.MonitoringOtelHTTPPort: container side of the otlp HTTP publish
+	OtelGRPCListenPort       int // consts.MonitoringOtelGRPCPort: container side of the otlp gRPC publish
 	OtelInfraPort            int // consts.MonitoringOtelInfraPort: mTLS receiver on the telemetry network for trusted infra push (clawkercp + firewall Envoy + CoreDNS)
 	OtelAgentIngestPort      int // consts.MonitoringOtelAgentIngestPort: mTLS receiver on the telemetry network for agent telemetry the CP gateway forwards (same infra client CA)
 	PrometheusPort           int
@@ -175,6 +183,8 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 		ISMIndexPatternsJSON:        ismPatterns,
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
+		OtelHTTPListenPort:          consts.MonitoringOtelHTTPPort,
+		OtelGRPCListenPort:          consts.MonitoringOtelGRPCPort,
 		OtelInfraPort:               consts.MonitoringOtelInfraPort,
 		OtelAgentIngestPort:         consts.MonitoringOtelAgentIngestPort,
 		PrometheusPort:              mon.PrometheusPort,

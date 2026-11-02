@@ -373,12 +373,15 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 		const in = `monitoring:
   otel_cp_port: 5319
   otel_infra_port: 7000
+  otel_agent_ingest_port: 7001
   loki_port: 3100
   jaeger_port: 16686
 `
 		var after string
 		notice := captureStderr(t, func() { after = loadSettings(t, in) })
-		for _, key := range []string{"otel_cp_port", "otel_infra_port", "loki_port", "jaeger_port"} {
+		for _, key := range []string{
+			"otel_cp_port", "otel_infra_port", "otel_agent_ingest_port", "loki_port", "jaeger_port",
+		} {
 			assert.NotContains(t, after, key, "dead key must be removed")
 		}
 		assert.Empty(t, notice, "the removal must not print a notice")

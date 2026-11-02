@@ -145,8 +145,11 @@ docker:
 		// --web.listen-address, OpenSearch http.port, Dashboards
 		// SERVER_PORT) is wired from the same template variable so the
 		// image actually listens on the configured port.
-		{"OTEL HTTP port", fmt.Sprintf("%d:%d", data.OtelCollectorPort, data.OtelCollectorPort)},
-		{"OTEL gRPC port", fmt.Sprintf("%d:%d", data.OtelGRPCPort, data.OtelGRPCPort)},
+		// The OTLP publishes map the user's host port onto the fixed
+		// in-container listener so a host port that collides with
+		// another collector listener cannot break the collector.
+		{"OTEL HTTP port", fmt.Sprintf("%d:%d", data.OtelCollectorPort, data.OtelHTTPListenPort)},
+		{"OTEL gRPC port", fmt.Sprintf("%d:%d", data.OtelGRPCPort, data.OtelGRPCListenPort)},
 		{"Prometheus host:container", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusPort)},
 		{"Prometheus listen-address flag", fmt.Sprintf("--web.listen-address=:%d", data.PrometheusPort)},
 		{"OpenSearch REST host:container", fmt.Sprintf("%d:%d", data.OpenSearchPort, data.OpenSearchPort)},
@@ -182,8 +185,8 @@ docker:
 	// metrics to whatever network the host is on. If you change this
 	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelGRPCPort, data.OtelGRPCPort),
-		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelCollectorPort, data.OtelCollectorPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelGRPCPort, data.OtelGRPCListenPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelCollectorPort, data.OtelHTTPListenPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.PrometheusPort, data.PrometheusPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchPort, data.OpenSearchPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
@@ -268,9 +271,16 @@ monitoring:
 		t.Fatalf("RenderTemplate failed: %v", err)
 	}
 
+	// The host-published receivers listen on the fixed in-container
+	// ports, never on the user's host ports (5317/5318 here).
+	for _, hostPort := range []string{"0.0.0.0:5317", "0.0.0.0:5318"} {
+		if strings.Contains(result, hostPort) {
+			t.Errorf("otel-config.yaml listens on host port %q; the container side is fixed", hostPort)
+		}
+	}
 	mustContain := []string{
-		"0.0.0.0:5317", // gRPC endpoint
-		"0.0.0.0:5318", // HTTP endpoint
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelGRPCPort), // gRPC endpoint
+		fmt.Sprintf("0.0.0.0:%d", consts.MonitoringOtelHTTPPort), // HTTP endpoint
 		"0.0.0.0:9889", // prometheus exporter
 		"opensearch/logs_cp:",
 		"opensearch/logs_clawker_cli:",
