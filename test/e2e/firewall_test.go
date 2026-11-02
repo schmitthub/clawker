@@ -137,24 +137,20 @@ build:
 
 	// ping connect()s its socket, which connect4 denies. An unconnected ICMP
 	// datagram socket (ping_group_range lets any uid open one) sends with
-	// sendto(), which no sendmsg hook sees, so sock_create must deny it.
+	// sendto(), which no sendmsg hook sees, so sock_create must deny it. Only
+	// socket creation is probed: a sent packet whose echo reply times out
+	// would also raise OSError and fake a block.
 	script := `
-import socket, struct
-def csum(b):
-    s = sum(struct.unpack("!%dH" % (len(b) // 2), b))
-    s = (s >> 16) + (s & 0xffff)
-    s += s >> 16
-    return ~s & 0xffff
-pkt = struct.pack("!BBHHH", 8, 0, 0, 0x1234, 1) + b"clawkerprobe"
-pkt = pkt[:2] + struct.pack("!H", csum(pkt)) + pkt[4:]
+import socket
 try:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
-    s.settimeout(3)
-    s.sendto(pkt, ("8.8.8.8", 0))
-    s.recvfrom(1024)
-    print("icmp-dgram=open")
-except OSError as e:
+except PermissionError as e:
     print("icmp-dgram=closed", e)
+except OSError as e:
+    print("icmp-dgram=error", e)
+else:
+    s.close()
+    print("icmp-dgram=open")
 `
 	dgramRes := h.RunInContainer("firewall-icmp", "python3", "-c", script)
 	require.NoError(t, dgramRes.Err, "probe failed\nstdout: %s\nstderr: %s", dgramRes.Stdout, dgramRes.Stderr)

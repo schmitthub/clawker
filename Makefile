@@ -708,10 +708,11 @@ test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delega
 # runs under sudo) and kernel ≥ 5.14. The clawker dev container has zero
 # capabilities — run this on the host or the CI privileged job. Without
 # PRIVILEGED_TESTS=1 the suite skips, which is how it rides along inert in
-# the plain `make test` package list.
+# the plain `make test` package list. The ebpf package rides along for its
+# pinned-link sweep test, which attaches real cgroup links under /sys/fs/bpf.
 test-bpf: ebpf
 	@echo "Running privileged BPF prog-run tests (requires root/CAP_BPF)..."
-	PRIVILEGED_TESTS=1 $(GO) test -exec sudo -count=1 -v ./controlplane/firewall/ebpf/bpftest/
+	PRIVILEGED_TESTS=1 $(GO) test -exec sudo -count=1 -v ./controlplane/firewall/ebpf/ ./controlplane/firewall/ebpf/bpftest/
 
 # Root tests of the container socket server: setup as root for a distinct
 # agent uid, then checks as that uid. Without root they skip, so they ride

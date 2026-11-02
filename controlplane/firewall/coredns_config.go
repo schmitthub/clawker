@@ -264,8 +264,13 @@ func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exact
 // CoreDNS. Docker's DNS knows the name, but it sends every name it does not
 // know to public resolvers. Thus only the exact A query goes to it: acl gives
 // an empty answer to every other type, and the template NXDOMAINs every
-// subdomain. No query name that an agent picks gets to Docker's DNS. There is
+// subdomain in every query class, so a CH or HS query cannot slip past the
+// IN-only guard. No query name that an agent picks gets to Docker's DNS. There is
 // no dnsbpf: the eBPF allowlist admits the CP by its static IP.
+// dnsClassAny is the CoreDNS template class that matches IN, CH and HS
+// queries alike; an IN-only guard lets a CH query reach Docker's DNS.
+const dnsClassAny = "ANY"
+
 func writeCPZone(b *strings.Builder) {
 	fmt.Fprintf(b, "%s {\n", consts.ContainerCP)
 	b.WriteString("    otel\n")
@@ -274,7 +279,7 @@ func writeCPZone(b *strings.Builder) {
 	b.WriteString("        allow type A\n")
 	b.WriteString("        filter\n")
 	b.WriteString("    }\n")
-	b.WriteString("    template IN ANY . {\n")
+	fmt.Fprintf(b, "    template %s ANY . {\n", dnsClassAny)
 	fmt.Fprintf(b, "        match \"%s\"\n", subdomainRegex(consts.ContainerCP))
 	b.WriteString("        rcode NXDOMAIN\n")
 	b.WriteString("        fallthrough\n")

@@ -339,3 +339,64 @@ func TestProgRun_AllowedInternal(t *testing.T) {
 		})
 	}
 }
+
+// route_result.verdict values from common.h.
+const (
+	verdictPassthrough = 0
+	verdictRewrite     = 1
+	verdictDeny        = 2
+)
+
+// TestProgRun_DecideSendmsg drives the production unconnected-UDP decision
+// end to end. The intra-subnet rows are the regression surface for the
+// allowlist: an in-subnet destination that is not Envoy, CoreDNS or the CP
+// must come back V_DENY without reaching the per-domain route lookup.
+func TestProgRun_DecideSendmsg(t *testing.T) {
+	objs := loadHarness(t)
+	envoy, coredns := ipU32(t, "172.30.0.200"), ipU32(t, "172.30.0.201")
+
+	// One routed off-subnet destination: dns_cache → route_map hit.
+	routed := ipU32(t, "203.0.113.50")
+	if err := objs.DnsCache.Put(routed, dnsEntryVal(400, farFuture, clawkerebpf.DNSSourceDNS)); err != nil {
+		t.Fatalf("seeding dns_cache: %v", err)
+	}
+	if err := objs.RouteMap.Put(routeKeyVal(400, 4433, clawkerebpf.L4ProtoUDP), routeValVal(15004)); err != nil {
+		t.Fatalf("seeding route_map: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		ip      string
+		port    uint16
+		verdict uint8
+		newIP   uint32 // asserted for V_REWRITE only
+	}{
+		{"in-subnet other agent", "172.30.0.7", 22, verdictDeny, 0},
+		{"in-subnet other agent on cp agent port", "172.30.0.7", 7444, verdictDeny, 0},
+		{"in-subnet gateway", "172.30.0.1", 18374, verdictDeny, 0},
+		{"envoy any port", "172.30.0.200", 15003, verdictPassthrough, 0},
+		{"coredns dns port", "172.30.0.201", 53, verdictRewrite, coredns},
+		{"coredns non-dns port", "172.30.0.201", 8080, verdictDeny, 0},
+		{"cp agent port", "172.30.0.202", 7444, verdictPassthrough, 0},
+		{"cp admin port", "172.30.0.202", 7443, verdictDeny, 0},
+		{"any dns goes to coredns", "8.8.8.8", 53, verdictRewrite, coredns},
+		{"docker embedded dns", "127.0.0.11", 5353, verdictDeny, 0},
+		{"off-subnet unrouted", "93.184.216.34", 443, verdictDeny, 0},
+		{"off-subnet routed", "203.0.113.50", 4433, verdictRewrite, envoy},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := subnetScratch(t)
+			in.InDstIp = ipU32(t, tc.ip)
+			in.InDstPort = tc.port
+			in.InCookie = 1
+			out := runScratch(t, objs, objs.TestDecideSendmsg, in)
+			if out.OutVerdict != tc.verdict {
+				t.Fatalf("decide_sendmsg(%s:%d) verdict = %d; want %d", tc.ip, tc.port, out.OutVerdict, tc.verdict)
+			}
+			if tc.verdict == verdictRewrite && out.OutNewIp != tc.newIP {
+				t.Fatalf("decide_sendmsg(%s:%d) new_ip = %d; want %d", tc.ip, tc.port, out.OutNewIp, tc.newIP)
+			}
+		})
+	}
+}
