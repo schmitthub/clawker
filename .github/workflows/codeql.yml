@@ -47,12 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Before init, so CodeQL traces the Go toolchain the module pins.
-      - name: Set up Go
+      # The module does not compile without the go:embed binaries and bpf2go
+      # bindings. Built here, not restored from pr.yml's artifact, because
+      # artifacts do not cross workflow runs. Before init: the action runs
+      # setup-go, and a setup-go after init puts the real `go` ahead of the
+      # CodeQL tracing wrapper on PATH, so no Go source is extracted.
+      - name: Build embedded control plane binaries
         if: matrix.language == 'go'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
+        uses: ./.github/actions/build-controlplane-binaries
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
@@ -62,13 +64,6 @@ jobs:
           # Same threat model default setup used.
           config: |
             threat-models: local
-
-      # The module does not compile without the go:embed binaries and bpf2go
-      # bindings. Built here, not restored from pr.yml's artifact, because
-      # artifacts do not cross workflow runs.
-      - name: Build embedded control plane binaries
-        if: matrix.language == 'go'
-        uses: ./.github/actions/build-controlplane-binaries
 
       - name: Build Go module
         if: matrix.language == 'go'
