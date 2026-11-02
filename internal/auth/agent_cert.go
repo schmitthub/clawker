@@ -241,6 +241,10 @@ func (AgentCert) String() string { return "AgentCert{<redacted>}" }
 // uses Go-syntax representation) also does not leak KeyPEM.
 func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 
+// agentCertTTL is the agent leaf lifetime. See the MintAgentCert doc
+// comment for why it is 90 days.
+const agentCertTTL = 90 * 24 * time.Hour
+
 // MintAgentCert generates a per-agent mTLS leaf signed by the CLI CA at
 // caCertPath/caKeyPath. The returned material is meant to be delivered
 // to the agent container's writable layer via Docker's CopyToContainer
@@ -262,9 +266,11 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // different container_id is rejected because the SAN won't match the
 // docker container the peer IP resolves to.
 //
-// The 24h lifetime is intentional — thumbprint pinning at registry
-// lookup time makes longer-lived certs safe, but a tight ceiling caps
-// the blast radius if a leaf leaks. CP captures the thumbprint at
+// The lifetime is agentCertTTL (90 days). The cert is minted once at
+// container create and never renewed, so a container that outlives it
+// loses its telemetry relay and Session access; 90 days covers a
+// long-lived container while thumbprint pinning at registry lookup
+// time keeps a leaked leaf useless for another container. CP captures the thumbprint at
 // Register handler entry from the live mTLS peer (cert.Raw → SHA-256)
 // and writes it into the agentregistry row alongside container_id;
 // subsequent Sessions presenting a different cert for the same
@@ -323,7 +329,7 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 			Organization: []string{certOrganization},
 		},
 		NotBefore: now.Add(-5 * time.Minute),
-		NotAfter:  now.Add(24 * time.Hour),
+		NotAfter:  now.Add(agentCertTTL),
 		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		// Dual-purpose cert: ClientAuth so clawkerd can present it
 		// when dialing CP's AgentService (mTLS to AgentPort), and
