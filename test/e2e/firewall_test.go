@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -359,6 +360,14 @@ security:
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// `firewall add` fails fast while no CP exists (by design), and A's
+		// image build can outlast the dial's token retry. The race under test
+		// is AddRules against A's stack bringup, so wait until A has created
+		// the CP; the CLI then waits out the boot (adminclient.AwaitReady).
+		if waitErr := waitForCPListening(3 * time.Minute); waitErr != nil {
+			errs[1] = waitErr
+			return
+		}
 		res := h.Run("firewall", "add", "httpbin.org")
 		if res.Err != nil {
 			errs[1] = fmt.Errorf("firewall add: %w\nstdout: %s\nstderr: %s",
@@ -1459,4 +1468,27 @@ func TestFirewall_IdentityStableAcrossCPRestart(t *testing.T) {
 	// the new CP re-bound every still-configured dst to its previous ID.
 	postIDs := identitySnapshot(t, h)
 	requireIdentitiesStable(t, preIDs, postIDs, "CP restart")
+}
+
+// waitForCPListening polls the CP /healthz until it answers with any
+// status, which means a CP container exists and is booting or ready.
+func waitForCPListening(timeout time.Duration) error {
+	cfg, err := config.NewConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", cfg.ControlPlaneSettings().HealthPort)
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, getErr := client.Get(url)
+		if getErr == nil {
+			_ = resp.Body.Close() // Only the status line matters.
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("control plane never started listening on %s: %w", url, getErr)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
