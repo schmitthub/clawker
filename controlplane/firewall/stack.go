@@ -783,6 +783,7 @@ type containerSpec struct {
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string
+	extraHosts   []string
 	// labels carries the state-encoding labels that distinguish drift-
 	// significant create-time options (today: labelInfraCertsReady).
 	// Compared by ensureContainer / reloadContainer to decide whether
@@ -873,7 +874,8 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 				{HostPort: strconv.Itoa(s.cfg.EnvoyHealthHostPort())},
 			},
 		},
-		labels: s.driftLabels(),
+		extraHosts: hostGatewayHosts(),
+		labels:     s.driftLabels(),
 	}
 }
 
@@ -950,9 +952,19 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// CAP_BPF: bpf(BPF_OBJ_GET) to open the pinned dns_cache map.
 		// CAP_SYS_ADMIN: bpf(BPF_MAP_UPDATE_ELEM) on kernels <5.19 where
 		// CAP_BPF alone is insufficient for map writes.
-		capAdd: []string{"BPF", "SYS_ADMIN"},
-		labels: s.driftLabels(),
+		capAdd:     []string{"BPF", "SYS_ADMIN"},
+		extraHosts: hostGatewayHosts(),
+		labels:     s.driftLabels(),
 	}
+}
+
+// hostGatewayHosts maps host.docker.internal to Docker's host-gateway in the
+// sibling's /etc/hosts. Docker DNS knows the name only on Docker Desktop; on
+// Linux Docker Engine this entry is the only source. CoreDNS answers a
+// host.docker.internal rule zone from it, and Envoy resolves its cluster from
+// it. Only the siblings get it: agents resolve the name through CoreDNS.
+func hostGatewayHosts() []string {
+	return []string{consts.DockerHostInternal + ":host-gateway"}
 }
 
 // driftLabels returns the drift-significant labels for the current
@@ -1062,6 +1074,7 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		Mounts:        spec.mounts,
 		PortBindings:  spec.portBindings,
 		CapAdd:        spec.capAdd,
+		ExtraHosts:    spec.extraHosts,
 	}
 
 	extraLabels := whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}}
