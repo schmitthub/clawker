@@ -40,6 +40,34 @@ const (
 // that memory proportional to a constant, not to a flooding peer.
 const agentMaxConcurrentStreams = 16
 
+// maxConcurrentExports caps in-flight ExportTelemetry calls across every
+// clawkerd connection. The per-connection stream cap does not bound the
+// process: the identity gate runs a Docker container list and inspect for
+// each call on its own 5s timeout, so a peer that opens more connections
+// drives unbounded concurrent Docker scans. exportAdmissionUnary refuses
+// the excess before the identity gate with ResourceExhausted; the relay
+// maps it to a retryable status.
+const maxConcurrentExports = 16
+
+// exportAdmissionUnary admits at most limit concurrent ExportTelemetry calls
+// and passes every other method through untouched. A full lane answers
+// ResourceExhausted at once; nothing queues.
+func exportAdmissionUnary(limit int) grpc.UnaryServerInterceptor {
+	slots := make(chan struct{}, limit)
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if info.FullMethod != agentv1.AgentService_ExportTelemetry_FullMethodName {
+			return handler(ctx, req)
+		}
+		select {
+		case slots <- struct{}{}:
+		default:
+			return nil, status.Error(codes.ResourceExhausted, "telemetry lane busy")
+		}
+		defer func() { <-slots }()
+		return handler(ctx, req)
+	}
+}
+
 // grpcPanicMessage is the client-visible detail of the codes.Internal status
 // a recovered handler panic is converted into. The recovered value and the
 // stack go to the structured log, never onto the wire.
@@ -468,6 +496,7 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 		grpc.ChainUnaryInterceptor(
 			recoveryUnaryInterceptor(log),
 			agentInterceptor.UnaryInterceptor(),
+			exportAdmissionUnary(maxConcurrentExports),
 			identityUnary,
 		),
 		grpc.ChainStreamInterceptor(
