@@ -384,3 +384,4 @@ Once the stack is up:
 - **OpenSearch Dashboards** — http://localhost:5601 — Discover view for log exploration
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
 - **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawkercp` (control-plane logs), `clawker-envoy` (firewall egress access logs), `clawker-coredns` (firewall DNS query logs), and `clawker-ebpf-egress` (eBPF egress decisions) indices
+
