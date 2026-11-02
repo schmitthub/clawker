@@ -17,7 +17,13 @@ import (
 
 func newTestHome(t *testing.T) (string, int, int) {
 	t.Helper()
-	return t.TempDir(), os.Getuid(), os.Getgid()
+	home := t.TempDir()
+	// t.TempDir honors the umask (0775 under umask 0002); openUserDir
+	// rejects a group-writable home, so pin the mode a real $HOME has.
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatalf("chmod home: %v", err)
+	}
+	return home, os.Getuid(), os.Getgid()
 }
 
 func mustOpenUserDir(t *testing.T, home, name string, uid, gid int) *userDir {
