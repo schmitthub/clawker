@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/infracerts"
 	"github.com/schmitthub/clawker/controlplane/sdscerts"
 	"github.com/schmitthub/clawker/internal/config"
 )
@@ -525,7 +526,7 @@ func RotateCA(certDir string, rules []config.EgressRule, reader sdscerts.FileOwn
 }
 
 // prepareCertDirectory creates certDir if absent and makes it traversable for
-// readerGID: CP keeps ownership, the reader group gets certDirectoryMode. Both
+// readerGID: the owner UID is the parent's (infracerts.OwnLikeParent), the reader group gets certDirectoryMode. Both
 // updates go through one directory handle so a path swap between them cannot
 // land on a different directory. MkdirAll leaves an existing directory's mode
 // untouched, so the chmod also heals a directory created before this layout
@@ -546,6 +547,11 @@ func prepareCertDirectory(certDir string, readerGID int) error {
 	}
 	if chmodErr := dir.Chmod(".", certDirectoryMode); chmodErr != nil {
 		return fmt.Errorf("setting certs directory permissions: %w", chmodErr)
+	}
+	// A rootful CP would otherwise leave a root-owned dir in the host
+	// user's data dir that the host user cannot delete.
+	if ownErr := infracerts.OwnLikeParent(certDir); ownErr != nil {
+		return fmt.Errorf("setting certs directory owner: %w", ownErr)
 	}
 	return nil
 }
