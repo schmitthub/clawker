@@ -94,6 +94,16 @@ func TestStatusRun_BestEffortTolerance(t *testing.T) {
 			wantHealthzErr: "connection refused",
 		},
 		{
+			name:    "healthz 503 — CP booting, admin client not called",
+			healthz: func(context.Context) (int, error) { return http.StatusServiceUnavailable, nil },
+			adminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
+				return nil, errors.New("admin client must not be dialed while the CP boots")
+			},
+			firewallStatus: nil,
+			wantHealthzErr: "",
+			wantFWErr:      "control plane not ready (healthz 503); firewall state not queried",
+		},
+		{
 			name:    "AdminClient dial error",
 			healthz: func(context.Context) (int, error) { return http.StatusOK, nil },
 			adminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
