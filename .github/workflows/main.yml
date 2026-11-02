@@ -52,7 +52,7 @@ jobs:
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # Dependency Review requests it; a caller must grant every nested job's permissions
       security-events: write
       actions: read
     with:

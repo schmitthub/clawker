@@ -28,9 +28,6 @@ jobs:
       #   2. Update tag here AND expected version in prek.toml
       image: semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
     timeout-minutes: 10
-    # Dependabot PRs have limited token permissions and only change
-    # go.mod/go.sum — SAST scanning is not useful on dependency changes
-    if: (github.actor != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,11 +94,16 @@ jobs:
     name: Dependency Review
     if: ${{ inputs.run_dependency_review }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr
     steps:
       - name: 'Checkout Repository'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: 'Dependency Review'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          config-file: ./.github/dependency-review-config.yml
 
   osv-scanner:
     name: osv-scanner SCA

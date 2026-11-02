@@ -53,6 +53,7 @@ dependency_review:
   - '**/go.mod'
   - '**/go.sum'
   - '.github/workflows/**'
+  - '.github/dependency-review-config.yml'
 
 lint:
   - *ci
