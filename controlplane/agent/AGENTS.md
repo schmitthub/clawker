@@ -213,7 +213,9 @@ RPC (e.g. a subsequent Register retry).
 ## ExportTelemetry flow (agent telemetry lane)
 
 The agent SDK never reaches the collector. clawkerd relays each OTLP
-batch to `AgentService.ExportTelemetry(signal, body)`; `IdentityInterceptor`
+batch to `AgentService.ExportTelemetry(signal, body)`; the agent listener admits
+at most 16 in-flight `ExportTelemetry` calls per process (`ResourceExhausted`
+beyond that, before any Docker lookup); `IdentityInterceptor`
 runs its universal gate; `Handler.ExportTelemetry` adds the registry thumbprint
 check (the live peer cert must be the one Register bound to this
 container — the same check the dialer makes at Hello) and forwards the
