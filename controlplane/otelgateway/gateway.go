@@ -267,12 +267,6 @@ func New(opts Options) (*Gateway, error) {
 	case opts.Log == nil:
 		return nil, errors.New("otelgateway: Log required")
 	}
-	conn, err := grpc.NewClient(opts.Endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(opts.TLSConfig)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("otelgateway: collector client %s: %w", opts.Endpoint, err)
-	}
 	timeout := opts.ForwardTimeout
 	if timeout == 0 {
 		timeout = defaultForwardTimeout
@@ -295,6 +289,13 @@ func New(opts Options) (*Gateway, error) {
 	maxConcurrent := opts.MaxConcurrent
 	if maxConcurrent == 0 {
 		maxConcurrent = defaultMaxConcurrent
+	}
+	// Options are checked first so no error path leaves a client open.
+	conn, err := grpc.NewClient(opts.Endpoint,
+		grpc.WithTransportCredentials(credentials.NewTLS(opts.TLSConfig)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("otelgateway: collector client %s: %w", opts.Endpoint, err)
 	}
 	g := new(Gateway)
 	g.maxMessages = maxMessages
@@ -366,25 +367,30 @@ func (g *Gateway) Forward(ctx context.Context, signal agentv1.Signal, body []byt
 	return nil
 }
 
-// admit applies the pre-decode caps: the wire-level message budget and
-// the concurrency slot. The returned release frees the slot.
+// admit applies the pre-decode caps: the concurrency slot, then the
+// wire-level message budget. The slot comes first so a batch the gateway
+// cannot forward is refused before the wire walk, which costs up to
+// maxMessages+1 messages. The returned release frees the slot.
 func (g *Gateway) admit(signal agentv1.Signal, name string, body []byte) (func(), error) {
-	count, err := countRequestMessages(signal, body, g.maxMessages)
-	if err != nil {
-		g.Metrics.Malformed.WithLabelValues(name).Inc()
-		return nil, fmt.Errorf("%w: %s: %w", ErrMalformedBody, name, err)
-	}
-	if count > g.maxMessages {
-		g.Metrics.Rejected.WithLabelValues(name).Inc()
-		return nil, fmt.Errorf("%w: over %d messages", ErrBatchTooLarge, g.maxMessages)
-	}
 	select {
 	case g.slots <- struct{}{}:
-		return func() { <-g.slots }, nil
 	default:
 		g.Metrics.Rejected.WithLabelValues(name).Inc()
 		return nil, ErrBusy
 	}
+	release := func() { <-g.slots }
+	count, err := countRequestMessages(signal, body, g.maxMessages)
+	if err != nil {
+		release()
+		g.Metrics.Malformed.WithLabelValues(name).Inc()
+		return nil, fmt.Errorf("%w: %s: %w", ErrMalformedBody, name, err)
+	}
+	if count > g.maxMessages {
+		release()
+		g.Metrics.Rejected.WithLabelValues(name).Inc()
+		return nil, fmt.Errorf("%w: over %d messages", ErrBatchTooLarge, g.maxMessages)
+	}
+	return release, nil
 }
 
 // onForwardFailure counts the failure, feeds the breaker when the

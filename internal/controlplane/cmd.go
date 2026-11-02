@@ -1178,16 +1178,15 @@ type grpcStackDeps struct {
 // is lazy, so a monitoring stack that is not running never delays boot.
 //
 // Degrade contract (§3.4): a missing issuer or a constructor failure
-// returns a true nil interface and logs event=otel_gateway_unavailable;
-// ExportTelemetry answers Unavailable and the clawkerd relay retries. The returned
+// returns a nil gateway and logs event=otel_gateway_unavailable; the caller
+// boxes only a non-nil pointer into agent.OtelForwarder, so ExportTelemetry
+// answers Unavailable and the clawkerd relay retries. The returned
 // cleanup is always callable.
-//
-//nolint:ireturn // returns the OtelForwarder interface by design — nil-tolerant degrade contract
 func buildOtelGateway(
 	cfg config.Config,
 	otelCertsSvc *otelcerts.Service,
 	log *logger.Logger,
-) (agent.OtelForwarder, func()) {
+) (*otelgateway.Gateway, func()) {
 	noop := func() {}
 	if otelCertsSvc == nil {
 		log.Error().
@@ -1236,8 +1235,6 @@ func buildOtelGateway(
 			log.Warn().Err(cerr).Str("component", "otel-gateway").Msg("gateway close failed")
 		}
 	}
-	// Success arm only: boxing a typed-nil *Gateway would pass the
-	// handler's nil check and panic on dispatch.
 	return gw, cleanup
 }
 
@@ -1727,8 +1724,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// agent telemetry gateway (AgentService.ExportTelemetry → collector agent
 	// receiver). Degrades to nil with event=otel_gateway_unavailable; the
 	// deferred close runs after the gRPC servers stop (LIFO).
-	otelGateway, gatewayCleanup := buildOtelGateway(cfg, otelCertsSvc, log)
+	gw, gatewayCleanup := buildOtelGateway(cfg, otelCertsSvc, log)
 	defer gatewayCleanup()
+	// Box only a live gateway: a typed-nil *Gateway would pass the
+	// handler's nil check and panic on dispatch.
+	var otelGateway agent.OtelForwarder
+	if gw != nil {
+		otelGateway = gw
+	}
 
 	// firewall handler + gRPC servers (admin + agent listeners) — see
 	// buildGRPCStack. The ActionQueue Close is drain step 1 (injected via
