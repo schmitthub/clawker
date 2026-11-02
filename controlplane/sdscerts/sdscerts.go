@@ -84,7 +84,8 @@ func New(issuer *infracerts.Issuer, destDir string, rootCABytes []byte, owner Fi
 // parse-checked before any write commits so a mint failure leaves the
 // caller's ready-flag false instead of half-writing broken material.
 //
-// CP keeps ownership of the directory. The reader group can list and
+// The directory owner is the owner of its parent (the host user on a
+// rootful daemon). The reader group can list and
 // traverse it. Each file belongs to the reader and permits owner access
 // only. Envoy mounts this directory read-only.
 //
@@ -95,6 +96,13 @@ func (s *Service) EnsureEnvoyClient() (string, string, string, error) {
 	svcDir := filepath.Join(s.destDir, envoySubdir)
 	if err := prepareClientDirectory(svcDir, s.owner.GID); err != nil {
 		return "", "", "", fmt.Errorf("sdscerts: prepare envoy directory: %w", err)
+	}
+	// The host user owns the dirs (see infracerts.OwnLikeParent); the reader
+	// group and the reader-owned 0600 files keep Envoy's access unchanged.
+	for _, d := range []string{s.destDir, svcDir} {
+		if ownErr := infracerts.OwnLikeParent(d); ownErr != nil {
+			return "", "", "", fmt.Errorf("sdscerts: set directory owner: %w", ownErr)
+		}
 	}
 
 	chainPEM, keyPEM, err := s.issuer.MintClient(consts.EnvoySDSClientName, leafTTL)

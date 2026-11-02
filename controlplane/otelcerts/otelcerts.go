@@ -44,6 +44,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/infracerts"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -170,6 +171,13 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 	svcDir := filepath.Join(s.destDir, svc)
 	if err := os.MkdirAll(svcDir, 0o755); err != nil {
 		return "", "", "", fmt.Errorf("otelcerts: create %s dir: %w", svc, err)
+	}
+	// Root-created dirs in the host user's data dir would be undeletable
+	// by that user on a rootful daemon. Parent first: svcDir copies it.
+	for _, d := range []string{s.destDir, svcDir} {
+		if ownErr := infracerts.OwnLikeParent(d); ownErr != nil {
+			return "", "", "", fmt.Errorf("otelcerts: set %s dir owner: %w", svc, ownErr)
+		}
 	}
 
 	chainPEM, keyPEM, err := s.issuer.MintClient(svc+"-otel-client", leafTTL)

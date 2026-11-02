@@ -27,6 +27,8 @@ func (i *Issuer) IntermediatePEM() []byte
 
 `Load` enforces `BasicConstraints.IsCA=true` on the intermediate so a misprovisioned leaf can't sneak in as a signer.
 
+`OwnLikeParent(dir string) error` sets the owner UID of `dir` to the owner UID of its parent and keeps the group. `otelcerts` and `sdscerts` call it on the client-cert dirs they create in the host user's bind-mounted data dir, so a rootful CP does not leave root-owned dirs the host user cannot delete. On rootless Docker and Docker Desktop the parent already shows as the CP's UID, so it is a no-op. `Lchown` never follows a symlink at `dir`.
+
 `MintClient` returns the leaf cert PEM followed by the intermediate cert PEM in one buffer (`chainPEM`), and the leaf private key separately (`keyPEM`). The leaf carries `KeyUsage=DigitalSignature`, `ExtKeyUsage=ClientAuth`, `CN=serviceName`, and `DNSNames=[serviceName]`.
 
 ## Lifetime
@@ -42,7 +44,7 @@ func (i *Issuer) IntermediatePEM() []byte
 
 ## Imports
 
-- **Uses**: stdlib `crypto/*`, `encoding/pem`, `math/big`. No internal/ imports.
+- **Uses**: stdlib `crypto/*`, `encoding/pem`, `math/big`, `os`, `syscall`. No internal/ imports.
 - **Imported by**: `cmd/clawkercp` (loads the intermediate at startup and hands it to `otelcerts.New`, which is then passed to `firewall.NewStack` as a `firewall.OtelCertProvisioner`), `internal/controlplane/otelcerts` (wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand). The firewall package does NOT import `infracerts` directly — it only sees the `OtelCertProvisioner` interface defined in `firewall/stack.go`. (`internal/auth` provisions the intermediate CA itself using x509 directly — it does not import this package.)
 
 ## Degraded mode
