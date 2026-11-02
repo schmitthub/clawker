@@ -302,15 +302,16 @@ func (m *Manager) cleanupStaleLinks() (map[uint64]struct{}, error) {
 }
 
 // sweepLink keeps one pinned link when its cgroup is live and removes it
-// otherwise. It reports whether the link was kept.
+// otherwise. It reports whether the link was kept. A pin that cannot be
+// loaded (descriptor exhaustion, a bpffs hiccup) is kept too: removing the
+// last pin of a link destroys it, which would detach a live agent's
+// enforcement, and an unknown cgroup is not a dead one.
 func (m *Manager) sweepLink(name string) bool {
 	pin := filepath.Join(m.pinPath, name)
 	l, err := link.LoadPinnedLink(pin, nil)
 	if err != nil {
-		if rmErr := os.Remove(pin); rmErr != nil {
-			m.log.Warn().Err(rmErr).Str("link", name).Msg("ebpf: removing unreadable link pin")
-		}
-		return false
+		m.log.Warn().Err(err).Str("link", name).Msg("ebpf: link pin unreadable; keeping it")
+		return true
 	}
 	defer func() {
 		if closeErr := l.Close(); closeErr != nil {

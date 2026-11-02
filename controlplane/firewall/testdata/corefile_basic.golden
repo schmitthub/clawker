@@ -83,7 +83,7 @@ clawker-controlplane {
         allow type A
         filter
     }
-    template IN ANY . {
+    template ANY ANY . {
         match "[.]clawker-controlplane[.]$"
         rcode NXDOMAIN
         fallthrough
