@@ -1,6 +1,6 @@
-# Path filters for dorny/paths-filter, read by the "changes" job in pr.yml.
-# Each key is one output; a job in a reusable workflow runs when its key is
-# true. Globs use picomatch with dot files matched; '!' excludes.
+# Path filters for dorny/paths-filter, read by the "changes" jobs in pr.yml
+# and codeql.yml. Each key is one output; a job in a reusable workflow, or a
+# CodeQL language, runs when its key is true. Globs use picomatch with dot files matched; '!' excludes.
 #
 # `go` is every file a Go build, test, or scan reads: sources, go:embed
 # assets, testdata, BPF C, proto. It is scoped by directory, not by
@@ -8,12 +8,17 @@
 # .sql, .o) and must live under the embedding package, so a directory match
 # is the exact rule. Agent instruction and license files never feed a build.
 #
-# `ci` is the gating wiring itself. An edit to it must run every gated job,
-# or a wrong rule merges without ever running the checks it controls.
+# `ci` and `codeql_ci` are the gating wiring itself. An edit to it must run
+# every gated job, or a wrong rule merges without ever running the checks it
+# controls.
 
 ci: &ci
   - '.github/filters.yml'
   - '.github/workflows/pr.yml'
+
+codeql_ci: &codeql_ci
+  - '.github/filters.yml'
+  - '.github/workflows/codeql.yml'
 
 # `go_paths` is positive-only so a filter can reuse it with its own
 # exclusions. With some-with-excludes an exclusion is final: no later
@@ -101,3 +106,35 @@ plugin:
   - 'clawker-plugin'
   - '.gitmodules'
   - '.github/workflows/plugin.yml'
+
+# CodeQL, one key per language in codeql.yml. `codeql_go` reuses `go`, which
+# already names every Go build input.
+codeql_actions:
+  - *codeql_ci
+  - '.github/workflows/**'
+  - '.github/actions/**'
+
+codeql_c_cpp:
+  - *codeql_ci
+  - '**/*.c'
+  - '**/*.h'
+
+codeql_go:
+  - *codeql_ci
+  - *go
+
+codeql_python:
+  - *codeql_ci
+  - '**/*.py'
+
+# The JavaScript analysis is scoped to .claude/hooks (see codeql.yml), but
+# any new JavaScript file elsewhere must still run it so the scope gets
+# widened before the file merges unanalyzed.
+codeql_js:
+  - *codeql_ci
+  - '**/*.js'
+  - '**/*.mjs'
+  - '**/*.cjs'
+  - '**/*.ts'
+  - '**/*.tsx'
+  - '.claude/hooks/**'

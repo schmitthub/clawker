@@ -87,6 +87,10 @@ go.work.sum
 .serena/cache
 .serena/logs
 .claude/settings.local.json
+# Claude Code personal instructions; the Claude Code docs say to gitignore it
+CLAUDE.local.md
+# Claude Code worktrees (claude --worktree, EnterWorktree, subagent isolation)
+.claude/worktrees/
 
 # ralph loop working directory
 .ralph/

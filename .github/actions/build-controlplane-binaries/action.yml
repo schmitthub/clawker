@@ -43,6 +43,15 @@ description: >
   clobbers whatever's on disk — you can't use it with this). For those
   tools, install and run them manually after this step instead.
 
+  Actions cache: the binaries are restored from the cache when the embed
+  inputs did not change. The key hashes `git ls-files -s` of every
+  first-party package the six embed commands import (from `go list -deps`),
+  plus the Makefile, go.mod, go.sum, Dockerfile.controlplane, the buf files
+  and this action. No restore-keys: a stale set must never be restored. A
+  pull request run reads the caches of main and saves its own; main.yml
+  saves the cache that later pull requests hit. On a hit this action skips
+  the BPF toolchain install and the build (about three minutes).
+
 inputs:
   go-version-file:
     description: Path to go.mod for the actions/setup-go go-version-file input.
@@ -57,6 +66,28 @@ runs:
       with:
         go-version-file: ${{ inputs.go-version-file }}
 
+    # `go list -e` tolerates the missing go:embed targets; the import graph
+    # resolves without them. `git ls-files -s` hashes tracked content only,
+    # so untracked build output never changes the key.
+    - name: Compute embeds cache key
+      id: key
+      shell: bash
+      run: |
+        mapfile -t dirs < <(go list -e -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' \
+          ./cmd/clawkerd ./cmd/clawkercp ./controlplane/firewall/ebpf/cmd \
+          ./cmd/coredns-clawker ./cmd/bpffs-delegate ./cmd/idmap-mount \
+          | grep "^$PWD/" | sed "s|^$PWD/||" | sort -u)
+        hash=$(git ls-files -s -- "${dirs[@]}" Makefile go.mod go.sum Dockerfile.controlplane \
+          buf.yaml buf.gen.yaml .github/actions/build-controlplane-binaries | sha256sum | cut -c1-64)
+        echo "key=embeds-${{ runner.os }}-${{ runner.arch }}-$hash" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Restore embedded binaries from cache
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: embedded-binaries.tar
+        key: ${{ steps.key.outputs.key }}
+
     # Install pinned BPF toolchain (clang/llvm/libbpf-dev/linux-libc-dev) so
     # `go generate ./internal/controlplane/firewall/ebpf/...` — invoked by
     # the bpf-bindings prereq below — can drive bpf2go's native compile +
@@ -64,10 +95,30 @@ runs:
     # Ubuntu 24.04 (Noble) — callers must use `runs-on: ubuntu-24.04`. macOS
     # dev routes through Dockerfile.controlplane (same ubuntu:24.04 base).
     - name: Install BPF toolchain
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: sudo apt-get update && sudo make bpf-deps
 
     - name: Build embedded control plane binaries
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: make ebpf-binary coredns-binary clawkerd-binary cp-binary bpffs-delegate-binary idmap-mount-binary
+
+    - name: Pack embedded binaries for the cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: make embeds-tar
+
+    - name: Save embedded binaries to cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: embedded-binaries.tar
+        key: ${{ steps.key.outputs.key }}
+
+    # Both paths end with the tar on disk; unpack it so the tree is the same
+    # after a hit and after a build. --touch makes every member newer than
+    # the checkout, so a later `make embeds-tar` re-packs without rebuilding.
+    - name: Unpack embedded binaries
+      shell: bash
+      run: make embeds-untar
