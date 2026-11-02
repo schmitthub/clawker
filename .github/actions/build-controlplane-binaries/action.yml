@@ -73,12 +73,11 @@ runs:
       id: key
       shell: bash
       run: |
-        dirs=$(go list -e -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' \
+        mapfile -t dirs < <(go list -e -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' \
           ./cmd/clawkerd ./cmd/clawkercp ./controlplane/firewall/ebpf/cmd \
           ./cmd/coredns-clawker ./cmd/bpffs-delegate ./cmd/idmap-mount \
           | grep "^$PWD/" | sed "s|^$PWD/||" | sort -u)
-        # shellcheck disable=SC2086 # dirs is a newline list of paths
-        hash=$(git ls-files -s -- $dirs Makefile go.mod go.sum Dockerfile.controlplane \
+        hash=$(git ls-files -s -- "${dirs[@]}" Makefile go.mod go.sum Dockerfile.controlplane \
           buf.yaml buf.gen.yaml .github/actions/build-controlplane-binaries | sha256sum | cut -c1-64)
         echo "key=embeds-${{ runner.os }}-${{ runner.arch }}-$hash" | tee -a "$GITHUB_OUTPUT"
 

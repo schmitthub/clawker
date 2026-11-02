@@ -33,9 +33,10 @@ permissions:
 jobs:
   # Path filters from .github/filters.yml (the codeql_* keys), one output per
   # language. In a stacked pull request below the top, every output is
-  # 'false': the top PR merges the whole stack and is analyzed with all of
-  # it, and main.yml analyzes main after the merge. The stack object is
-  # logged because the webhook docs only list it on the `stacked` action.
+  # 'false'; at the top every output is 'true', because the path filter only
+  # sees that layer's files and merging the top lands every lower layer.
+  # The stack object is logged because the webhook docs only list it on the
+  # `stacked` action.
   changes:
     name: Changed paths
     if: github.event_name == 'pull_request'
@@ -70,10 +71,18 @@ jobs:
           F_JS: ${{ steps.filter.outputs.codeql_js }}
         run: |
           echo "stack=$STACK"
-          below_top=$(jq -n --argjson s "$STACK" '$s != null and $s.position != $s.size')
-          echo "below_top=$below_top"
+          # none: not in a stack, use the path filter. top: force on, the
+          # path filter only sees this layer and the merge lands every lower
+          # layer. below: force off.
+          pos=$(jq -nr --argjson s "$STACK" \
+            'if $s == null then "none" elif $s.position == $s.size then "top" else "below" end')
+          echo "stack_position=$pos"
           gate() {
-            if [ "$below_top" = true ]; then echo "$1=false"; else echo "$1=$2"; fi
+            case "$pos" in
+              top) echo "$1=true" ;;
+              below) echo "$1=false" ;;
+              *) echo "$1=$2" ;;
+            esac
           }
           {
             gate actions "$F_ACTIONS"
