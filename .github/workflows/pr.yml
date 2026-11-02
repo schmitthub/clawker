@@ -96,7 +96,7 @@ jobs:
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # Dependency Review posts a PR comment on failure
       security-events: write
       actions: read
     with:

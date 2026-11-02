@@ -1,0 +1,27 @@
+# actions/dependency-review-action settings, read by the Dependency Review job
+# in .github/workflows/security.yml. Options:
+# https://github.com/actions/dependency-review-action#configuration-options
+
+fail-on-severity: moderate
+
+# Same allowlist as the osv-scanner license gate (security.yml).
+allow-licenses:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - MPL-2.0
+
+# Packages with wrong license data, corrected in osv-scanner.toml. Unlike the
+# osv-scanner overrides, these match every version: osv-scanner still checks
+# each new version.
+allow-dependencies-licenses:
+  - pkg:golang/github.com/opencontainers/go-digest
+  - pkg:golang/github.com/dnstap/golang-dnstap
+  - pkg:golang/github.com/mattn/go-localereader
+
+comment-summary-in-pr: on-failure
+show-patched-versions: true
+show-openssf-scorecard: true
+warn-on-openssf-scorecard-level: 3
