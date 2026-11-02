@@ -95,6 +95,7 @@ var legacyMonitoringKeys = []string{
 	"otel_collector_endpoint",
 	"otel_cp_port",
 	"otel_infra_port",
+	"otel_agent_ingest_port",
 }
 
 // migrateRemoveLegacyMonitoringKeys silently removes the legacy monitoring

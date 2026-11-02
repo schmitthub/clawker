@@ -36,6 +36,18 @@ const (
 	MonitoringOtelAgentIngestPort = 4320
 )
 
+// Collector listener ports inside the container for the host-published
+// OTLP receivers. The host side of the publish is the user's
+// otel_grpc_port / otel_collector_port setting; the container side is
+// fixed so a user port that collides with another in-container listener
+// (4319, 4320, the Prometheus exporter) cannot break the collector.
+const (
+	// MonitoringOtelGRPCPort is the otlp receiver's gRPC endpoint.
+	MonitoringOtelGRPCPort = 4317
+	// MonitoringOtelHTTPPort is the otlp receiver's HTTP endpoint.
+	MonitoringOtelHTTPPort = 4318
+)
+
 // ResolveOTLPEndpoint reads the standard OTLP endpoint env vars (the
 // logs-signal override [EnvOTLPLogsEndpoint] taking precedence over the
 // base [EnvOTLPEndpoint]) and normalises the value to the host:port form

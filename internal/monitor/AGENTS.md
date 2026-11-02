@@ -94,8 +94,10 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `OtelCollectorPort` | `int` | OTEL collector OTLP/HTTP port (default 4318) |
-| `OtelGRPCPort` | `int` | OTEL collector gRPC port (default 4317; independent of HTTP) |
+| `OtelCollectorPort` | `int` | Host port published to the OTLP/HTTP receiver (default 4318) |
+| `OtelGRPCPort` | `int` | Host port published to the OTLP/gRPC receiver (default 4317; independent of HTTP) |
+| `OtelHTTPListenPort` | `int` | In-container OTLP/HTTP listener, fixed `consts.MonitoringOtelHTTPPort` (4318) |
+| `OtelGRPCListenPort` | `int` | In-container OTLP/gRPC listener, fixed `consts.MonitoringOtelGRPCPort` (4317) |
 | `OtelInfraPort` | `int` | `consts.MonitoringOtelInfraPort` (4319): mTLS-gated receiver port on the telemetry network (no host publish) for trusted infra push (clawkercp + firewall Envoy + CoreDNS — all share this lane) |
 | `OtelAgentIngestPort` | `int` | `consts.MonitoringOtelAgentIngestPort` (4320): mTLS-gated receiver port on the telemetry network, no host publish (`otlp/agents`) for agent telemetry the CP gateway forwards with its infra leaf; same server cert and client CA as `otlp/infra` |
 | `PrometheusPort` | `int` | Prometheus UI port (default 9090) — wired into `--web.listen-address` |
