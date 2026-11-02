@@ -28,9 +28,6 @@ jobs:
       #   2. Update tag here AND expected version in prek.toml
       image: semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
     timeout-minutes: 10
-    # Dependabot PRs have limited token permissions and only change
-    # go.mod/go.sum — SAST scanning is not useful on dependency changes
-    if: (github.actor != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
