@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -32,8 +33,18 @@ func mustOpenUserDir(t *testing.T, home, name string, uid, gid int) *userDir {
 	if err != nil {
 		t.Fatalf("openUserDir: %v", err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
+	closeOnCleanup(t, d, "user dir")
 	return d
+}
+
+// closeOnCleanup closes c when the test ends and logs a failure.
+func closeOnCleanup(t *testing.T, c io.Closer, what string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Logf("close %s: %v", what, err)
+		}
+	})
 }
 
 func assertAbsent(t *testing.T, path string) {
@@ -367,7 +378,7 @@ func TestUserDir_DistinctAgentCanUse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("listenUnix %s: %v", sock.name, err)
 		}
-		t.Cleanup(func() { _ = ln.Close() })
+		closeOnCleanup(t, ln, "listener")
 		entries = append(entries, agentSocketArg+filepath.Base(sock.dir.path)+"/"+sock.name)
 	}
 
@@ -390,9 +401,8 @@ func TestUserDir_DistinctAgentCanUse(t *testing.T) {
 	cmd.Env = append(os.Environ(), agentHomeEnv+"="+home)
 	// No supplementary groups: the agent has only agentGID.
 	cred := &syscall.Credential{Uid: agentUID, Gid: agentGID, Groups: nil, NoSetGroups: false}
-	cmd.SysProcAttr = &syscall.SysProcAttr{ //nolint:exhaustruct_v5 // stdlib SysProcAttr: only Credential applies
-		Credential: cred,
-	}
+	cmd.SysProcAttr = new(syscall.SysProcAttr)
+	cmd.SysProcAttr.Credential = cred
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
 		t.Fatalf("agent uid %d cannot use the entries: %v\n%s", agentUID, runErr, out)
 	}
