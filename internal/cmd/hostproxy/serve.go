@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 
-	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -72,20 +72,15 @@ func NewCmdServe() *cobra.Command {
 				opts = append(opts, hostproxy.WithGracePeriod(gracePeriod))
 			}
 
-			// The daemon dials out to the CP admin listener on host loopback.
+			// The daemon dials out to the CP admin listener on host loopback,
+			// once per stream attempt, so rotated auth material is picked up
+			// on the next reconnect.
 			cp := cfg.ControlPlaneSettings()
-			conn, err := adminclient.DialHostProxy(cp.AdminPort, cp.HydraPublicPort)
-			if err != nil {
-				log.Error().Err(err).Msg("failed to build the control plane client")
-				return fmt.Errorf("control plane client: %w", err)
+			dial := func() (*grpc.ClientConn, error) {
+				return adminclient.DialHostProxy(cp.AdminPort, cp.HydraPublicPort)
 			}
-			defer func() {
-				if closeErr := conn.Close(); closeErr != nil {
-					log.Debug().Err(closeErr).Msg("close control plane connection")
-				}
-			}()
 
-			daemon, err := hostproxy.NewDaemon(cfg, log, hostproxyv1.NewHostProxyServiceClient(conn), opts...)
+			daemon, err := hostproxy.NewDaemon(cfg, log, dial, opts...)
 			if err != nil {
 				log.Error().Err(err).Msg("failed to create daemon")
 				return err

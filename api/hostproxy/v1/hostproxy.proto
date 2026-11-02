@@ -24,7 +24,8 @@ service HostProxyService {
 }
 
 // HostActionRequest is one host action the CP authorized. The host proxy
-// echoes id in the result.
+// echoes id in the result. A cancel names an earlier id: the CP stopped
+// waiting for that action, so the host proxy ends it and sends no result.
 message HostActionRequest {
   uint64 id = 1;
   oneof action {
@@ -33,8 +34,17 @@ message HostActionRequest {
     clawker.agent.v1.RegisterCallbackRequest register_callback = 4;
     clawker.agent.v1.GetCallbackDataRequest get_callback_data = 5;
     clawker.agent.v1.DeleteCallbackRequest delete_callback = 6;
+    CancelAction cancel = 7;
   }
+  // deadline_unix_ms is when the CP stops waiting for the result, in Unix
+  // milliseconds. The host proxy ends the action at that time. Zero means
+  // no deadline.
+  int64 deadline_unix_ms = 8;
 }
+
+// CancelAction tells the host proxy the CP no longer waits for the action
+// with this request's id.
+message CancelAction {}
 
 // HostActionResult is the outcome of one host action: the result that
 // matches the request, or an error.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -481,4 +484,82 @@ func TestGateway_CallerDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, s.gw.OpenURL(ctx, agentA(), "https://example.com"), hostgateway.ErrUnavailable)
+}
+
+// TestGateway_SendsDeadline: every request carries the CP's deadline so
+// the host proxy ends the action when the CP stops waiting.
+func TestGateway_SendsDeadline(t *testing.T) {
+	s := newCPServer(t)
+	hp := connectHostProxy(t, s, nil)
+	before := time.Now()
+	require.NoError(t, s.gw.OpenURL(context.Background(), agentA(), "https://example.com"))
+	calls := hp.calls()
+	require.Len(t, calls, 1)
+	deadline := time.UnixMilli(calls[0].GetDeadlineUnixMs())
+	assert.True(t, deadline.After(before), "deadline %v must be in the future", deadline)
+	assert.WithinDuration(t, before.Add(60*time.Second), deadline, 5*time.Second)
+}
+
+// TestGateway_CallerDeadline_SendsCancel: when the caller gives up, the
+// host proxy is told to end the action for that id.
+func TestGateway_CallerDeadline_SendsCancel(t *testing.T) {
+	s := newCPServer(t)
+	hp := connectHostProxy(t, s, nil)
+	hp.setHold()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, s.gw.OpenURL(ctx, agentA(), "https://example.com"), hostgateway.ErrUnavailable)
+	require.Eventually(t, func() bool {
+		calls := hp.calls()
+		return len(calls) == 2 && calls[1].GetCancel() != nil && calls[1].GetId() == calls[0].GetId()
+	}, 2*time.Second, 10*time.Millisecond, "a cancel for the same id must follow the request")
+}
+
+// panicStream is a Connect stream whose Recv panics, standing in for a
+// fault in the receive loop. The embedded ServerStream is nil: only the
+// methods below are called.
+type panicStream struct {
+	grpc.ServerStream
+
+	peer *peer.Peer
+}
+
+func (p *panicStream) Context() context.Context {
+	return peer.NewContext(context.Background(), p.peer)
+}
+func (p *panicStream) SendHeader(metadata.MD) error              { return nil }
+func (p *panicStream) Send(*hostproxyv1.HostActionRequest) error { return nil }
+func (p *panicStream) Recv() (*hostproxyv1.HostActionResult, error) {
+	zero := 0
+	return nil, fmt.Errorf("recv fault %d", 1/zero) // divide by zero: a runtime panic without calling panic()
+}
+
+// TestGateway_RecvPanicDropsStream: a panic in the receive goroutine ends
+// the stream instead of the CP process.
+func TestGateway_RecvPanicDropsStream(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, auth.EnsureAuthMaterial())
+	cert, err := auth.LoadHostProxyClientCert()
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	require.NoError(t, err)
+	var state tls.ConnectionState
+	state.VerifiedChains = [][]*x509.Certificate{{leaf}}
+	pr := &peer.Peer{Addr: nil, LocalAddr: nil, AuthInfo: credentials.TLSInfo{
+		State:          state,
+		CommonAuthInfo: credentials.CommonAuthInfo{SecurityLevel: credentials.PrivacyAndIntegrity},
+		SPIFFEID:       nil,
+	}}
+
+	gw := hostgateway.New(logger.Nop())
+	done := make(chan error, 1)
+	go func() { done <- gw.Connect(&panicStream{ServerStream: nil, peer: pr}) }()
+	select {
+	case err = <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not return after the receive loop panicked")
+	}
+	require.ErrorIs(t, gw.OpenURL(context.Background(), agentA(), "https://example.com"), hostgateway.ErrUnavailable)
 }
