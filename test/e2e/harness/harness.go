@@ -68,20 +68,20 @@ type Harness struct {
 	Cleanup *CleanupReport
 }
 
-// New builds a Harness whose FactoryOptions start at the zero baseline —
-// every dependency mocked, no real CP or admin client. Each mutator opts
-// one dependency into its real production wiring. Cleanup is populated by
-// the harness at teardown.
+// docker ps arguments for requireNoLiveAgents.
+const (
+	liveAgentFilter = "label=" + consts.LabelPurpose + "=" + consts.PurposeAgent
+	liveAgentFormat = `{{.Names}}` + "\t" + `{{.Label "` + consts.LabelTestName + `"}}`
+)
+
 // requireNoLiveAgents fails the test when a running agent container without
 // the test label exists. The test's control plane shares the host's pinned
 // BPF maps, so its cleanup `firewall down` would flush the live agents'
 // container_map rows and open their egress until the host CP re-enrolls them.
 func requireNoLiveAgents(t *testing.T) {
 	t.Helper()
-	//nolint:gosec // label keys are constants
 	out, err := exec.CommandContext(context.Background(), "docker", "ps",
-		"--filter", "label="+consts.LabelPurpose+"="+consts.PurposeAgent,
-		"--format", `{{.Names}}`+"\t"+`{{.Label "`+consts.LabelTestName+`"}}`).Output()
+		"--filter", liveAgentFilter, "--format", liveAgentFormat).Output()
 	if err != nil {
 		t.Fatalf("harness: list running agents: %v", err)
 	}
@@ -98,9 +98,12 @@ func requireNoLiveAgents(t *testing.T) {
 	}
 }
 
+// New builds a Harness whose FactoryOptions start at the zero baseline —
+// every dependency mocked, no real CP or admin client. Each mutator opts
+// one dependency into its real production wiring. Cleanup is populated by
+// the harness at teardown.
 func New(t *testing.T, mutators ...func(*FactoryOptions)) *Harness {
 	t.Helper()
-	requireNoLiveAgents(t)
 	opts := &FactoryOptions{
 		Config:              nil,
 		Client:              nil,
@@ -140,6 +143,9 @@ type FSOptions struct {
 // NewIsolatedFS creates an isolated test environment.
 func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 	h.T.Helper()
+	// Guard here, not in New: tests that build a Harness literal still come
+	// through here before any env change or cleanup registration.
+	requireNoLiveAgents(h.T)
 
 	if opts == nil {
 		opts = &FSOptions{}
