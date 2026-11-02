@@ -51,9 +51,16 @@ func TestTelemetryRelay_E2E(t *testing.T) {
 
 	agent := "relay-" + randomHex(t, 4)
 	nonce := randomHex(t, 8)
-	startRes := h.Run("container", "run", "--detach", "--agent", agent, "@", "sleep", "infinity")
+	// clawkerd spawns the user CMD only after Register; the relay refuses
+	// an unregistered peer with 403, so wait for the CMD before sending.
+	marker := "/tmp/" + agent + "-ready"
+	startRes := h.Run("container", "run", "--detach", "--agent", agent, "@",
+		"sh", "-c", "touch "+marker+" && exec sleep infinity")
 	require.NoError(t, startRes.Err, "container run failed\nstdout: %s\nstderr: %s",
 		startRes.Stdout, startRes.Stderr)
+	require.Eventually(t, func() bool {
+		return h.ExecInContainer(agent, "test", "-f", marker).Err == nil
+	}, 3*time.Minute, time.Second, "%s never finished boot", agent)
 
 	body, err := proto.Marshal(relayProbeBatch(nonce))
 	require.NoError(t, err)
