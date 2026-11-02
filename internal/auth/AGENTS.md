@@ -27,6 +27,8 @@ Dials CP via:
 
 **Invariant:** CLI private signing key is NEVER mounted into the container. Hydra verifies the `private_key_jwt` assertion against the registered JWK (public half only).
 
+**JWK encoding:** `writeJWK` takes `x`/`y` from the uncompressed point (`PublicKey.Bytes`), so both are always 32 bytes as RFC 7518 requires. When the signing key exists, `EnsureAuthMaterial` rewrites the JWK from it on every call; this heals JWKs that older versions wrote with unpadded coordinates (about 1 key in 128), which Hydra rejects at client registration and which made the CP exit at boot.
+
 ## Files
 
 | File | Purpose |

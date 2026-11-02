@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -491,6 +492,62 @@ func TestReadJWK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(jwk), `"kty"`)
 	assert.Contains(t, string(jwk), `"EC"`)
+}
+
+// TestWriteJWK_PadsCoordinates guards the JWK x/y encoding: [big.Int.Bytes]
+// drops leading zero bytes, so about 1 key in 128 produced a short
+// coordinate that Hydra rejects ("invalid EC public key, wrong length").
+func TestWriteJWK_PadsCoordinates(t *testing.T) {
+	// Find a real key with a leading zero byte in x or y (p ≈ 1/128 per key).
+	var key *ecdsa.PrivateKey
+	for range 20000 {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		point, err := k.PublicKey.Bytes()
+		require.NoError(t, err)
+		if point[1] == 0 || point[33] == 0 {
+			key = k
+			break
+		}
+	}
+	require.NotNil(t, key, "no key with a leading-zero coordinate found")
+
+	path := filepath.Join(t.TempDir(), "k.jwk")
+	require.NoError(t, writeJWK(path, &key.PublicKey))
+	assertJWKMatches(t, path, &key.PublicKey)
+}
+
+// TestEnsureAuthMaterial_HealsShortJWK rewrites a JWK written by the old
+// unpadded encoder from the existing private key.
+func TestEnsureAuthMaterial_HealsShortJWK(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+	jwkPath, err := consts.AuthCLISigningJWKPath()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(jwkPath, []byte(`{"kty":"EC","crv":"P-256","x":"AQ","y":"AQ"}`), 0o644))
+
+	require.NoError(t, EnsureAuthMaterial())
+
+	key, err := LoadSigningKey()
+	require.NoError(t, err)
+	assertJWKMatches(t, jwkPath, &key.PublicKey)
+}
+
+// assertJWKMatches checks that the JWK at path has full-length x and y equal
+// to pub's uncompressed point.
+func assertJWKMatches(t *testing.T, path string, pub *ecdsa.PublicKey) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var jwk map[string]string
+	require.NoError(t, json.Unmarshal(raw, &jwk))
+	point, err := pub.Bytes()
+	require.NoError(t, err)
+	for name, want := range map[string][]byte{"x": point[1:33], "y": point[33:]} {
+		got, decErr := base64.RawURLEncoding.DecodeString(jwk[name])
+		require.NoError(t, decErr)
+		assert.Equal(t, want, got, "%s must be the full 32-byte coordinate", name)
+	}
 }
 
 // --- Assertion claims ---

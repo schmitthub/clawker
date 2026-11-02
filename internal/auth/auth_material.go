@@ -402,10 +402,9 @@ func ensureSigningKey() error {
 	}
 
 	if _, err := os.Stat(keyPath); err == nil {
-		if _, err := os.Stat(jwkPath); err == nil {
-			return nil
-		}
-		// Key exists but JWK missing — regenerate JWK from key.
+		// Key exists: always rewrite the JWK from it. The output is
+		// deterministic, and this heals a JWK that is missing or that an
+		// older clawker wrote with unpadded coordinates (Hydra rejects it).
 		key, err := loadECDSAKey(keyPath)
 		if err != nil {
 			return fmt.Errorf("load existing key: %w", err)
@@ -609,14 +608,24 @@ func writeCert(path string, der []byte) error {
 
 // --- JWK ---
 
+// writeJWK writes pub as a JWK. x and y come from the uncompressed point
+// encoding (0x04 || X || Y), which keeps both at the full 32-byte P-256 field
+// size that RFC 7518 §6.2.1.2 requires. The earlier [big.Int.Bytes]
+// encoding dropped leading zero bytes, so about 1 key in 128 got a short
+// coordinate that Hydra rejects.
 func writeJWK(path string, pub *ecdsa.PublicKey) error {
+	point, err := pub.Bytes()
+	if err != nil {
+		return fmt.Errorf("encode public key: %w", err)
+	}
+	const coordLen = 32
 	jwk := map[string]any{
 		"kty": "EC",
 		"crv": "P-256",
 		"use": "sig",
 		"alg": "ES256",
-		"x":   base64.RawURLEncoding.EncodeToString(pub.X.Bytes()),
-		"y":   base64.RawURLEncoding.EncodeToString(pub.Y.Bytes()),
+		"x":   base64.RawURLEncoding.EncodeToString(point[1 : 1+coordLen]),
+		"y":   base64.RawURLEncoding.EncodeToString(point[1+coordLen:]),
 	}
 	data, err := json.MarshalIndent(jwk, "", "  ")
 	if err != nil {
