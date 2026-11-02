@@ -1,0 +1,80 @@
+name: CodeQL
+
+# Advanced setup. It replaces CodeQL default setup, which does not run on
+# Dependabot pull requests, so their required `Analyze (<lang>)` checks never
+# report. A standalone workflow (not a reusable one called from pr.yml)
+# because the main ruleset requires the bare job names `Analyze (go)`,
+# `Analyze (actions)` and `Analyze (c-cpp)`; a reusable workflow renders them
+# as `<caller> / Analyze (go)`. No path gating: every pull request needs the
+# checks and the code-scanning results. Categories stay `/language:<lang>`,
+# the ones default setup used, so alerts carry over.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+          - language: go
+            build-mode: manual
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Before init, so CodeQL traces the Go toolchain the module pins.
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Same threat model default setup used.
+          config: |
+            threat-models: local
+
+      # The module does not compile without the go:embed binaries and bpf2go
+      # bindings. Built here, not restored from pr.yml's artifact, because
+      # artifacts do not cross workflow runs.
+      - name: Build embedded control plane binaries
+        if: matrix.language == 'go'
+        uses: ./.github/actions/build-controlplane-binaries
+
+      - name: Build Go module
+        if: matrix.language == 'go'
+        run: go build ./...
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
