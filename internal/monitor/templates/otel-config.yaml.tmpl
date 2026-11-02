@@ -14,9 +14,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:{{.OtelGRPCPort}}
+        endpoint: 0.0.0.0:{{.OtelGRPCListenPort}}
       http:
-        endpoint: 0.0.0.0:{{.OtelCollectorPort}}
+        endpoint: 0.0.0.0:{{.OtelHTTPListenPort}}
   # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
   # inside the container with no host publish; every trusted sender (CP,
   # Envoy, CoreDNS) dials otel-collector:<port> over the internal
