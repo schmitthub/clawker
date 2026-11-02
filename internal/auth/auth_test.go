@@ -800,13 +800,5 @@ func TestHostProxyIdentity(t *testing.T) {
 
 	jwkPath, err := consts.AuthHostProxySigningJWKPath()
 	require.NoError(t, err)
-	raw, err := os.ReadFile(jwkPath)
-	require.NoError(t, err)
-	var jwk struct {
-		X string `json:"x"`
-		Y string `json:"y"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &jwk))
-	assert.Equal(t, base64.RawURLEncoding.EncodeToString(signingKey.X.Bytes()), jwk.X)
-	assert.Equal(t, base64.RawURLEncoding.EncodeToString(signingKey.Y.Bytes()), jwk.Y)
+	assertJWKMatches(t, jwkPath, &signingKey.PublicKey)
 }
