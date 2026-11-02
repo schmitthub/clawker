@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
@@ -608,6 +609,9 @@ func writeCert(path string, der []byte) error {
 
 // --- JWK ---
 
+// jwkFileMode is the JWK's mode: public material the CP reads.
+const jwkFileMode os.FileMode = 0o644
+
 // writeJWK writes pub as a JWK. x and y come from the uncompressed point
 // encoding (0x04 || X || Y), which keeps both at the full 32-byte P-256 field
 // size that RFC 7518 §6.2.1.2 requires. The earlier [big.Int.Bytes]
@@ -631,7 +635,43 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	// EnsureAuthMaterial calls this on every CLI run, and a CP may be reading
+	// the bind-mounted file. Leave an unchanged JWK alone; replace a changed
+	// one by rename so no reader sees a truncated file.
+	if existing, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(existing, data) {
+		return nil
+	}
+	return writeFileAtomic(path, data, jwkFileMode)
+}
+
+// writeFileAtomic writes data to a temp file in path's directory, sets mode,
+// and renames it over path.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()           // Cleanup only; the original error is the one returned.
+			_ = os.Remove(tmp.Name()) // Cleanup only; the original error is the one returned.
+		}
+	}()
+	if _, writeErr := tmp.Write(data); writeErr != nil {
+		return fmt.Errorf("write temp file: %w", writeErr)
+	}
+	if chmodErr := tmp.Chmod(mode); chmodErr != nil {
+		return fmt.Errorf("chmod temp file: %w", chmodErr)
+	}
+	if closeErr := tmp.Close(); closeErr != nil {
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if renameErr := os.Rename(tmp.Name(), path); renameErr != nil {
+		return fmt.Errorf("rename temp file: %w", renameErr)
+	}
+	committed = true
+	return nil
 }
 
 // --- Infra intermediate CA ---

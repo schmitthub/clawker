@@ -533,6 +533,34 @@ func TestEnsureAuthMaterial_HealsShortJWK(t *testing.T) {
 	assertJWKMatches(t, jwkPath, &key.PublicKey)
 }
 
+// TestWriteJWK_UnchangedIsNoop: a CP may be reading the bind-mounted JWK
+// while another CLI process runs EnsureAuthMaterial. An unchanged JWK must
+// not be rewritten, and a changed one is replaced by rename, never truncated
+// in place.
+func TestWriteJWK_UnchangedIsNoop(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "k.jwk")
+	require.NoError(t, writeJWK(path, &key.PublicKey))
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	require.NoError(t, writeJWK(path, &key.PublicKey))
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "unchanged JWK must keep its inode")
+	assert.Equal(t, before.ModTime(), after.ModTime(), "unchanged JWK must not be rewritten")
+
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, writeJWK(path, &other.PublicKey))
+	replaced, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.False(t, os.SameFile(before, replaced), "changed JWK must be replaced by rename")
+	assert.Equal(t, os.FileMode(0o644), replaced.Mode().Perm())
+	assertJWKMatches(t, path, &other.PublicKey)
+}
+
 // assertJWKMatches checks that the JWK at path has full-length x and y equal
 // to pub's uncompressed point.
 func assertJWKMatches(t *testing.T, path string, pub *ecdsa.PublicKey) {
