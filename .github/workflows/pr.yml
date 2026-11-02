@@ -25,6 +25,14 @@ jobs:
   # `!= 'false'` test below runs the job. An edit to the filters file or to
   # this workflow runs every gated job (the `ci` filter), so a wrong rule is
   # exercised before it merges.
+  #
+  # Stacked pull requests: below the top of a stack the heavy jobs (unit,
+  # lint, docs, licenses, bpf, osv-scanner, and so the embeds build) are
+  # forced off. The top PR merges the whole stack and is tested with all of
+  # it, and main.yml runs the full suite on every push to main; a release is
+  # only cut from a tag. Cheap jobs (dependency review, plugin drift,
+  # semgrep, gitleaks, agent-compat) keep their own rules. The stack object
+  # is logged because the webhook docs only list it on the `stacked` action.
   changes:
     name: Changed paths
     runs-on: ubuntu-24.04
@@ -33,13 +41,13 @@ jobs:
       pull-requests: read
     timeout-minutes: 2
     outputs:
-      osv_scanner: ${{ steps.filter.outputs.osv_scanner }}
+      osv_scanner: ${{ steps.gate.outputs.osv_scanner }}
       dependency_review: ${{ steps.filter.outputs.dependency_review }}
-      lint: ${{ steps.filter.outputs.lint }}
-      unit: ${{ steps.filter.outputs.unit }}
-      bpf: ${{ steps.filter.outputs.bpf }}
-      licenses: ${{ steps.filter.outputs.licenses }}
-      docs: ${{ steps.filter.outputs.docs }}
+      lint: ${{ steps.gate.outputs.lint }}
+      unit: ${{ steps.gate.outputs.unit }}
+      bpf: ${{ steps.gate.outputs.bpf }}
+      licenses: ${{ steps.gate.outputs.licenses }}
+      docs: ${{ steps.gate.outputs.docs }}
       plugin: ${{ steps.filter.outputs.plugin }}
     steps:
       # Checkout only to read the filters file; changed files come from the
@@ -54,8 +62,36 @@ jobs:
           # matches every other path, so exclusions would match everything.
           predicate-quantifier: some-with-excludes
 
+      - name: Apply stack gate
+        id: gate
+        env:
+          STACK: ${{ toJSON(github.event.pull_request.stack) }}
+          F_OSV: ${{ steps.filter.outputs.osv_scanner }}
+          F_LINT: ${{ steps.filter.outputs.lint }}
+          F_UNIT: ${{ steps.filter.outputs.unit }}
+          F_BPF: ${{ steps.filter.outputs.bpf }}
+          F_LICENSES: ${{ steps.filter.outputs.licenses }}
+          F_DOCS: ${{ steps.filter.outputs.docs }}
+        run: |
+          echo "stack=$STACK"
+          below_top=$(jq -n --argjson s "$STACK" '$s != null and $s.position != $s.size')
+          echo "below_top=$below_top"
+          gate() {
+            if [ "$below_top" = true ]; then echo "$1=false"; else echo "$1=$2"; fi
+          }
+          {
+            gate osv_scanner "$F_OSV"
+            gate lint "$F_LINT"
+            gate unit "$F_UNIT"
+            gate bpf "$F_BPF"
+            gate licenses "$F_LICENSES"
+            gate docs "$F_DOCS"
+          } | tee -a "$GITHUB_OUTPUT"
+
   # Builds the go:embed binaries and bpf2go bindings once per run and shares
   # them as an artifact; every job below that needs them restores from it.
+  # The action restores them from the Actions cache when the embed inputs
+  # did not change; main.yml saves the cache on its first miss.
   build:
     name: Embedded binaries
     needs: changes

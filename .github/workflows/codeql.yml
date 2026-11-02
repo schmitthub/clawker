@@ -5,9 +5,16 @@ name: CodeQL
 # report. A standalone workflow (not a reusable one called from pr.yml)
 # because the main ruleset requires the bare job names `Analyze (go)`,
 # `Analyze (actions)` and `Analyze (c-cpp)`; a reusable workflow renders them
-# as `<caller> / Analyze (go)`. No path gating: every pull request needs the
-# checks and the code-scanning results. Categories stay `/language:<lang>`,
-# the ones default setup used, so alerts carry over.
+# as `<caller> / Analyze (go)`. Categories stay `/language:<lang>`, the ones
+# default setup used, so alerts carry over.
+#
+# Path gating is per language and sits on the steps, not on the job or the
+# matrix: `matrix` is not available in a job `if`, and a matrix entry that
+# is dropped never reports, so its required check hangs on "Expected". A
+# gated job runs checkout, skips the rest, and reports success. The rule is
+# fail open: a step runs unless its language output is exactly 'false', so
+# an empty output (push, schedule, or a failed `changes` job) runs every
+# language.
 on:
   pull_request:
     branches: [main]
@@ -24,8 +31,63 @@ permissions:
   contents: read
 
 jobs:
+  # Path filters from .github/filters.yml (the codeql_* keys), one output per
+  # language. In a stacked pull request below the top, every output is
+  # 'false': the top PR merges the whole stack and is analyzed with all of
+  # it, and main.yml analyzes main after the merge. The stack object is
+  # logged because the webhook docs only list it on the `stacked` action.
+  changes:
+    name: Changed paths
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 2
+    outputs:
+      actions: ${{ steps.gate.outputs.actions }}
+      c-cpp: ${{ steps.gate.outputs.c-cpp }}
+      go: ${{ steps.gate.outputs.go }}
+      python: ${{ steps.gate.outputs.python }}
+      javascript-typescript: ${{ steps.gate.outputs.javascript-typescript }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: .github/filters.yml
+          predicate-quantifier: some-with-excludes
+
+      - name: Apply stack gate
+        id: gate
+        env:
+          STACK: ${{ toJSON(github.event.pull_request.stack) }}
+          F_ACTIONS: ${{ steps.filter.outputs.codeql_actions }}
+          F_C_CPP: ${{ steps.filter.outputs.codeql_c_cpp }}
+          F_GO: ${{ steps.filter.outputs.codeql_go }}
+          F_PYTHON: ${{ steps.filter.outputs.codeql_python }}
+          F_JS: ${{ steps.filter.outputs.codeql_js }}
+        run: |
+          echo "stack=$STACK"
+          below_top=$(jq -n --argjson s "$STACK" '$s != null and $s.position != $s.size')
+          echo "below_top=$below_top"
+          gate() {
+            if [ "$below_top" = true ]; then echo "$1=false"; else echo "$1=$2"; fi
+          }
+          {
+            gate actions "$F_ACTIONS"
+            gate c-cpp "$F_C_CPP"
+            gate go "$F_GO"
+            gate python "$F_PYTHON"
+            gate javascript-typescript "$F_JS"
+          } | tee -a "$GITHUB_OUTPUT"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
+    # `changes` is skipped on push and schedule; this job must still run.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -38,14 +100,31 @@ jobs:
         include:
           - language: actions
             build-mode: none
+            # Same threat model default setup used.
+            config: |
+              threat-models: local
           - language: c-cpp
             build-mode: none
+            config: |
+              threat-models: local
           - language: go
             build-mode: manual
+            config: |
+              threat-models: local
           - language: python
             build-mode: none
+            config: |
+              threat-models: local
           - language: javascript-typescript
             build-mode: none
+            # The JavaScript extractor skips hidden directories, and the only
+            # JavaScript files are the Claude Code hooks in .claude/hooks.
+            # Without `paths` the analysis fails with "could not process any
+            # code written in JavaScript/TypeScript".
+            config: |
+              threat-models: local
+              paths:
+                - .claude/hooks
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -55,23 +134,23 @@ jobs:
       # setup-go, and a setup-go after init puts the real `go` ahead of the
       # CodeQL tracing wrapper on PATH, so no Go source is extracted.
       - name: Build embedded control plane binaries
-        if: matrix.language == 'go'
+        if: matrix.language == 'go' && needs.changes.outputs.go != 'false'
         uses: ./.github/actions/build-controlplane-binaries
 
       - name: Initialize CodeQL
+        if: needs.changes.outputs[matrix.language] != 'false'
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          # Same threat model default setup used.
-          config: |
-            threat-models: local
+          config: ${{ matrix.config }}
 
       - name: Build Go module
-        if: matrix.language == 'go'
+        if: matrix.language == 'go' && needs.changes.outputs.go != 'false'
         run: go build ./...
 
       - name: Perform CodeQL analysis
+        if: needs.changes.outputs[matrix.language] != 'false'
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
