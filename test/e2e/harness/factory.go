@@ -24,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/git"
@@ -412,6 +413,11 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			)
 			if err != nil {
 				return nil, fmt.Errorf("admin client: dial: %w", err)
+			}
+			readyErr := adminclient.AwaitReady(ctx, cp.HealthPort, consts.FirewallStackBringupRPCTimeout)
+			if readyErr != nil {
+				_ = newConn.Close() // The connection is unused; the wait error is the one to report.
+				return nil, fmt.Errorf("admin client: %w", readyErr)
 			}
 			adminConn = newConn
 			adminClient = newClient
