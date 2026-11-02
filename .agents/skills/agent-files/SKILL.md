@@ -30,6 +30,7 @@ in the shared Serena memory graph.
 Native configuration belongs to its harness:
 
 - `.claude/settings.json`, `.claude/settings.local.json.example`, and Claude-only `.claude/hooks/` files are regular native files. `.claude/agents/` holds links to skill sidecars or Claude-only agents.
+- Claude Code worktrees go in `.claude/worktrees/` (gitignored). `.worktreeinclude` names the gitignored files copied into each new worktree.
 - `.codex/config.toml` contains Codex settings and names the Codex subagent files.
 - Both native configurations call the shared command guards in `.agents/hooks/`.
 - Harness metadata for a skill lives in that skill's `agents/` directory: `openai.yaml` for Codex skill policy, `claude.md` and `codex.toml` for subagent definitions.

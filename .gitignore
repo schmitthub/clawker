@@ -87,6 +87,8 @@ go.work.sum
 .serena/cache
 .serena/logs
 .claude/settings.local.json
+# Claude Code worktrees (claude --worktree, EnterWorktree, subagent isolation)
+.claude/worktrees/
 
 # ralph loop working directory
 .ralph/

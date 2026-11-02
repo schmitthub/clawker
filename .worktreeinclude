@@ -1,0 +1,9 @@
+# Gitignored files Claude Code copies into each worktree it creates.
+# .gitignore syntax; only paths that are also gitignored are copied.
+# https://code.claude.com/docs/en/worktrees#copy-gitignored-files-into-worktrees
+
+# Serena symbol cache: saves a full re-index per worktree.
+.serena/cache/
+
+# Local Claude Code settings (template: .claude/settings.local.json.example).
+.claude/settings.local.json
