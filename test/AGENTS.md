@@ -66,7 +66,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 | `Run` | `(h *Harness) Run(args ...string) *RunResult` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer` | `(h *Harness) RunInContainer(agent, cmd...) *RunResult` | `container run --rm --agent <agent> @ <cmd>` |
 | `ExecInContainer` | `(h *Harness) ExecInContainer(agent, cmd...) *RunResult` | `container exec --user <consts.ContainerUser> --agent <agent> <cmd>` |
-| `ExecInContainerAsRoot` | `(h *Harness) ExecInContainerAsRoot(agent, cmd...) *RunResult` | `container exec --agent <agent> <cmd>` (root) |
+| `ExecInContainerAsRoot` | `(h *Harness) ExecInContainerAsRoot(agent, cmd...) *RunResult` | `container exec --user root --agent <agent> <cmd>` (`exec` defaults to the container user) |
 | `NewFactory` | `NewFactory(t, opts) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` | Constructs Factory with lazy singletons; returns in/out/err buffers |
 | `EnsureNoControlPlane` | `EnsureNoControlPlane(t, timeout)` | Removes any pre-existing CP so bring-up mints certs against this env's CA (a foreign CP passes the healthz reuse probe but fails every admin RPC). Call after `NewIsolatedFS`, before the first CP-bootstrapping command |
 | `RequireServicesWereRunning` | `(h *Harness) RequireServicesWereRunning(t, services...)` | Fails the test if the cleanup snapshot shows `"firewall"`/`"controlplane"` never ran. Register via `t.Cleanup` BEFORE `NewIsolatedFS` (LIFO) so it reads the populated report |

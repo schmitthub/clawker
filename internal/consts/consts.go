@@ -719,6 +719,12 @@ const (
 	AdminKeepaliveMinClientPing = 10 * time.Second
 )
 
+// DefaultPidsLimit is the agent container's default process limit. A
+// fork bomb inside the container must not stop the host or the Docker
+// VM; the limit leaves ample room for build tools and language servers.
+// `--pids-limit -1` lifts it.
+const DefaultPidsLimit int64 = 4096
+
 // Container user identity.
 const (
 	ContainerUser = "clawker"
