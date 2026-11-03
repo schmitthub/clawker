@@ -1518,6 +1518,34 @@ func TestContainerOptions_NewResourceFlags(t *testing.T) {
 	})
 }
 
+// TestContainerOptions_BuildConfigs_PidsLimitDefault pins the default
+// process limit: a container gets one without any flag, and -1 lifts it.
+func TestContainerOptions_BuildConfigs_PidsLimitDefault(t *testing.T) {
+	t.Run("default pids limit is set", func(t *testing.T) {
+		opts := NewContainerOptions()
+		opts.Image = "alpine"
+		AddFlags(pflag.NewFlagSet("test", pflag.ContinueOnError), opts)
+
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
+		require.NoError(t, err)
+		require.NotNil(t, hostCfg.PidsLimit)
+		assert.Equal(t, consts.DefaultPidsLimit, *hostCfg.PidsLimit)
+	})
+
+	t.Run("pids-limit -1 lifts the default", func(t *testing.T) {
+		opts := NewContainerOptions()
+		opts.Image = "alpine"
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		AddFlags(flags, opts)
+		require.NoError(t, flags.Parse([]string{"--pids-limit", "-1"}))
+
+		_, hostCfg, _, err := opts.BuildConfigs(nil, nil, configmocks.SecurityConfig())
+		require.NoError(t, err)
+		require.NotNil(t, hostCfg.PidsLimit)
+		assert.Equal(t, int64(-1), *hostCfg.PidsLimit)
+	})
+}
+
 func TestContainerOptions_BuildConfigs_NewResourceLimits(t *testing.T) {
 	t.Run("memory-reservation is set in host config", func(t *testing.T) {
 		opts := NewContainerOptions()

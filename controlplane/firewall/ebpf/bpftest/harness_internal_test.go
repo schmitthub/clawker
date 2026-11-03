@@ -340,6 +340,56 @@ func TestProgRun_AllowedInternal(t *testing.T) {
 	}
 }
 
+// TestProgRun_SockTypeAllowed pins the sock_create allowlist. Every row
+// that is not TCP stream or UDP datagram has a send path the connect and
+// sendmsg hooks never see (SCTP and UDP-Lite proven 2026-11-02), so it must
+// be denied at create.
+func TestProgRun_SockTypeAllowed(t *testing.T) {
+	objs := loadHarness(t)
+	const (
+		sockStream    = 1
+		sockDgram     = 2
+		sockRaw       = 3
+		sockSeqpacket = 5
+		protoICMP     = 1
+		protoTCP      = 6
+		protoUDP      = 17
+		protoICMPv6   = 58
+		protoSCTP     = 132
+		protoUDPLite  = 136
+		protoMPTCP    = 262
+	)
+	cases := []struct {
+		name     string
+		typ      uint32
+		protocol uint32
+		want     uint8
+	}{
+		{"tcp stream", sockStream, protoTCP, 1},
+		{"udp datagram", sockDgram, protoUDP, 1},
+		{"icmp datagram", sockDgram, protoICMP, 0},
+		{"icmpv6 datagram", sockDgram, protoICMPv6, 0},
+		{"raw", sockRaw, protoICMP, 0},
+		{"sctp stream", sockStream, protoSCTP, 0},
+		{"sctp seqpacket", sockSeqpacket, protoSCTP, 0},
+		{"udplite datagram", sockDgram, protoUDPLite, 0},
+		{"mptcp stream", sockStream, protoMPTCP, 0},
+		{"udp on a stream type", sockStream, protoUDP, 0},
+		{"tcp on a datagram type", sockDgram, protoTCP, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var in testprogsTestScratch
+			in.InSockType = tc.typ
+			in.InSockProtocol = tc.protocol
+			out := runScratch(t, objs, objs.TestSockTypeAllowed, in)
+			if out.OutSockAllowed != tc.want {
+				t.Fatalf("sock_type_allowed(%d, %d) = %d; want %d", tc.typ, tc.protocol, out.OutSockAllowed, tc.want)
+			}
+		})
+	}
+}
+
 // route_result.verdict values from common.h.
 const (
 	verdictPassthrough = 0

@@ -51,6 +51,10 @@ struct test_scratch {
 	__u8  out_verdict;      // decide_sendmsg route_result.verdict
 	__u8  out_allowed;      // allowed_internal result
 	__u32 out_new_ip;       // decide_sendmsg route_result.new_ip
+	// sock_type_allowed inputs and output.
+	__u32 in_sock_type;     // SOCK_STREAM / SOCK_DGRAM / ...
+	__u32 in_sock_protocol; // IPPROTO_*
+	__u8  out_sock_allowed; // sock_type_allowed result
 };
 
 struct {
@@ -154,6 +158,19 @@ int test_allowed_internal(void *ctx)
 	struct container_config cfg;
 	scratch_config(s, &cfg);
 	s->out_allowed = allowed_internal(&cfg, s->in_dst_ip, s->in_dst_port) ? 1 : 0;
+	return 0;
+}
+
+// test_sock_type_allowed: {in_sock_type, in_sock_protocol} →
+// out_sock_allowed. The sock_create allowlist: TCP stream and UDP
+// datagram only.
+SEC("syscall")
+int test_sock_type_allowed(void *ctx)
+{
+	struct test_scratch *s = scratch();
+	if (!s)
+		return 1;
+	s->out_sock_allowed = sock_type_allowed(s->in_sock_type, s->in_sock_protocol) ? 1 : 0;
 	return 0;
 }
 

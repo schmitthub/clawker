@@ -115,7 +115,7 @@ Each action is one `HostActionRequest` oneof (the AgentService request messages)
 | Action | Result / codes |
 |--------|----------------|
 | `open_url` | `OpenURLResult`; `InvalidArgument` (empty, unparseable, not http/https), `PermissionDenied` (egress deny), `Internal` (broken rules file, browser failure) |
-| `git_credential` | `GitCredentialResult` (credentials for get); `InvalidArgument` (bad action, missing field, injection characters), `FailedPrecondition` (the host `git credential` command failed) |
+| `git_credential` | `GitCredentialResult` (credentials for get; empty for store and erase, which are answered locally and never touch the host store); `InvalidArgument` (bad action, missing field, protocol not http/https, injection characters), `PermissionDenied` (egress deny), `Internal` (broken rules file), `FailedPrecondition` (the host `git credential` command failed) |
 | `register_callback` | `RegisterCallbackResult` (session, port, expiry); `InvalidArgument` (auth URL not http/https, redirect check), `PermissionDenied` (egress deny), `Internal` (session, listener, or browser failure) |
 | `get_callback_data` | `GetCallbackDataResult`; `NotFound` (unknown or expired session) |
 | `delete_callback` | `DeleteCallbackResult` (idempotent) |
@@ -124,7 +124,7 @@ Each action is one `HostActionRequest` oneof (the AgentService request messages)
 
 The `open_url` action enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector: a container agent could otherwise encode stolen secrets in URL query params and use the host browser as an out-of-band channel, bypassing the Envoy+CoreDNS firewall entirely.
 
-`Actions.openURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching). The firewall daemon writes the rules file atomically (temp+fsync+rename), so no locking is needed for concurrent reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
+`Actions.openURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. `Actions.gitCredential` applies the same check to `<protocol>://<host>/<path>` before `git credential fill`: the CP checks the project grant, the host proxy checks the destination, so a sandboxed git can read a host credential only for a remote the firewall allows. `store` and `erase` never run git; they get an empty success so the host credential store cannot be changed or emptied from a container (`event=git_credential_local_noop`). The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching). The firewall daemon writes the rules file atomically (temp+fsync+rename), so no locking is needed for concurrent reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
 
 **Design constraints:**
 - **Leaf package**: does NOT import `internal/controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `egressRulesFile`/`egressRule`/`pathRule` are unexported intentional copies.
@@ -152,7 +152,7 @@ One action: `register_callback {auth_url, ttl_seconds}`. The host proxy requires
 
 ## Git Credential Forwarding
 
-- **HTTPS**: `git-credential-clawker` → clawkerd relay → CP `GitCredential` (needs the `dev.clawker.git_https` grant) → `git_credential` on the stream → host `git credential fill|approve|reject` → OS Keychain
+- **HTTPS**: `git-credential-clawker` → clawkerd relay → CP `GitCredential` (needs the `dev.clawker.git_https` grant) → `git_credential` on the stream → egress check on the remote → host `git credential fill` → OS Keychain. `approve` and `reject` are answered locally and never reach the host store.
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
 - **SSH/GPG**: Handled by `internal/socketbridge` package (muxrpc over `docker exec`, not via host proxy)
 

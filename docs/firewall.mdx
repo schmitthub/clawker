@@ -193,7 +193,7 @@ The `clawker project init` template pre-populates GitHub domains and SSH rules f
 The firewall is configured in two places:
 
 - **Global toggle**: `firewall.enable` in `settings.yaml` (enable/disable the entire firewall)
-- **Per-project rules**: `security.firewall` section of `.clawker.yaml` (which domains to allow)
+- **Project rule contributions**: `security.firewall` section of `.clawker.yaml` (which domains to allow). The rule store itself is global to the host: a domain one project adds is reachable from every enrolled container until it is removed with `clawker firewall remove` or `clawker firewall prune`.
 
 Project-level firewall configuration in `.clawker.yaml`:
 

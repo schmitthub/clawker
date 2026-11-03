@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -145,7 +146,14 @@ func TestNewCmdExec(t *testing.T) {
 				require.Equal(t, tt.wantOpts.Env, gotOpts.Env)
 			}
 			require.Equal(t, tt.wantOpts.Workdir, gotOpts.Workdir)
-			require.Equal(t, tt.wantOpts.User, gotOpts.User)
+			// The user flag defaults to the unprivileged container user,
+			// never the image USER (root), so an unset expectation is
+			// that default.
+			wantUser := tt.wantOpts.User
+			if wantUser == "" {
+				wantUser = consts.ContainerUser
+			}
+			require.Equal(t, wantUser, gotOpts.User)
 			require.Equal(t, tt.wantOpts.Privileged, gotOpts.Privileged)
 			// Verify container name and command are populated (when not using --agent which needs Resolution)
 			if !tt.wantOpts.Agent {

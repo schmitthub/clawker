@@ -42,7 +42,7 @@ clawker exec [OPTIONS] CONTAINER COMMAND [ARG...] [flags]
   # Run with environment variable
   clawker container exec -e FOO=bar clawker.myapp.dev env
 
-  # Run as a specific user
+  # Run as root (the default is the unprivileged container user)
   clawker container exec -u root clawker.myapp.dev whoami
 
   # Run in a specific directory
@@ -59,7 +59,7 @@ clawker exec [OPTIONS] CONTAINER COMMAND [ARG...] [flags]
   -i, --interactive       Keep STDIN open even if not attached
       --privileged        Give extended privileges to the command
   -t, --tty               Allocate a pseudo-TTY
-  -u, --user string       Username or UID (format: <name|uid>[:<group|gid>])
+  -u, --user string       Username or UID (format: <name|uid>[:<group|gid>]); defaults to the unprivileged container user (default "clawker")
   -w, --workdir string    Working directory inside the container
 ```
 

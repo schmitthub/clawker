@@ -204,6 +204,7 @@ func NewContainerOptions() *ContainerCreateOptions {
 		Publish:           NewPortOpts(),
 		Attach:            NewListOpts(validateAttach),
 		Swappiness:        -1, // -1 means use system default
+		PidsLimit:         consts.DefaultPidsLimit,
 		BlkioWeightDevice: docker.NewWeightDeviceOpt(),
 		DeviceReadBps:     docker.NewThrottleDeviceOpt(true),
 		DeviceWriteBps:    docker.NewThrottleDeviceOpt(true),
@@ -268,7 +269,8 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerCreateOptions) {
 	flags.Var(opts.DeviceWriteBps, "device-write-bps", "Limit write rate (bytes per second) to a device")
 	flags.Var(opts.DeviceReadIOps, "device-read-iops", "Limit read rate (IO per second) from a device")
 	flags.Var(opts.DeviceWriteIOps, "device-write-iops", "Limit write rate (IO per second) to a device")
-	flags.Int64Var(&opts.PidsLimit, "pids-limit", 0, "Tune container pids limit (set -1 for unlimited)")
+	flags.Int64Var(&opts.PidsLimit, "pids-limit", consts.DefaultPidsLimit,
+		"Tune container pids limit (set -1 for unlimited)")
 	flags.BoolVar(&opts.OOMKillDisable, "oom-kill-disable", false, "Disable OOM Killer")
 	flags.IntVar(&opts.OOMScoreAdj, "oom-score-adj", 0, "Tune host's OOM preferences (-1000 to 1000)")
 	flags.Var(opts.Ulimits, "ulimit", "Ulimit options")
