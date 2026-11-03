@@ -834,6 +834,36 @@ func TestUpdate(t *testing.T) {
 		assert.Equal(t, worktreePath, entry.Worktrees["feature"].Path)
 	})
 
+	t.Run("nil config trust carries recorded digests forward", func(t *testing.T) {
+		env := testenv.New(t)
+		reg := env.Registry(t)
+		root := t.TempDir()
+
+		_, err := reg.Register("app", root)
+		require.NoError(t, err)
+		_, err = reg.Update(project.ProjectEntry{
+			Name: "app", Root: root, Worktrees: nil, ConfigTrust: map[string]string{"security": "abc"},
+		})
+		require.NoError(t, err)
+
+		_, err = reg.Update(project.ProjectEntry{Name: "renamed", Root: root, Worktrees: nil, ConfigTrust: nil})
+		require.NoError(t, err)
+
+		entry, ok, err := env.Registry(t).ProjectByRoot(root)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, "renamed", entry.Name)
+		assert.Equal(t, map[string]string{"security": "abc"}, entry.ConfigTrust)
+
+		_, err = reg.Update(project.ProjectEntry{
+			Name: "renamed", Root: root, Worktrees: nil, ConfigTrust: map[string]string{},
+		})
+		require.NoError(t, err)
+		entry, _, err = env.Registry(t).ProjectByRoot(root)
+		require.NoError(t, err)
+		assert.Empty(t, entry.ConfigTrust)
+	})
+
 	t.Run("empty worktree map wipes recorded worktrees", func(t *testing.T) {
 		env := testenv.New(t)
 		reg := env.Registry(t)

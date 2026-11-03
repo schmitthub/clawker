@@ -42,6 +42,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | `path_semantics.go` | Manifest path helpers: `ExpandHostPath` (`~`/`$VAR`/`${VAR:-fallback}` expansion), `NormalizeContainerPath`, `HasGlobMeta` |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
+| `trust.go` | Project config trust: `ProjectTrustDigests(cfg)` (one sha256 per covered key group over the values the PROJECT-LAYER files set — layers under `ProjectRoot()` only, read from `ProjectStore().Layers()`; the user config dir is not agent-writable and does not take part; a group no project layer sets is absent), `ChangedTrustGroups(recorded, current)`, `TrustedProjectKeyGroups()`. Covered groups: `security` (whole block), `bundles`, `build` (`instructions.root_run`/`user_run`/`copy`, `inject`, `harnesses.*.inject`), `agent` (`env_file`, `from_env`), `harnesses` (`*.env_file`, `*.from_env`). The gate and the registry record live in `internal/cmd/project/shared` and `internal/project` |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |
 | `port.go` | `Port` type with `UnmarshalYAML` — typed wrapper for settings port fields |
 | `egress_port.go` | `ParsePortSpec`, `ValidatePortSpec`, `PortSpan`, `SinglePort` — port range parsing for egress rules |

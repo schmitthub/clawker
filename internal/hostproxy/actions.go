@@ -54,8 +54,9 @@ type dynamicListener struct {
 // browser.
 type Actions struct {
 	log              *logger.Logger
-	rulesFilePath    string                              // egress rules file path; empty = skip check (firewall disabled)
-	browserFunc      func(context.Context, string) error // opens URL in host browser; defaults to openBrowser
+	rulesFilePath    string                                     // egress rules file path; empty = skip check (firewall disabled)
+	browserFunc      func(context.Context, string) error        // opens URL in host browser; defaults to openBrowser
+	gitCommand       func(context.Context, ...string) *exec.Cmd // runs the host git; tests substitute a fake
 	mu               sync.RWMutex
 	closed           bool
 	sessionStore     *SessionStore
@@ -73,6 +74,7 @@ func NewActions(log *logger.Logger, rulesFilePath string) *Actions {
 		log:              log,
 		rulesFilePath:    rulesFilePath,
 		browserFunc:      openBrowser,
+		gitCommand:       gitCommand,
 		mu:               sync.RWMutex{},
 		closed:           false,
 		sessionStore:     sessionStore,
@@ -202,8 +204,16 @@ func (s *Actions) checkEgress(rawURL string) *hostproxyv1.HostActionResult {
 	}
 }
 
-// gitCredential runs one git credential helper action on the host: get
-// (fill), store (approve) or erase (reject).
+// gitCommand runs the host git with args.
+func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "git", args...)
+}
+
+// gitCredential runs one git credential helper action on the host. Only
+// get (fill) reaches the host credential store, and only for a target the
+// egress rules allow. store (approve) and erase (reject) are answered
+// locally: a sandboxed git must not write to or delete from the host
+// store.
 func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialRequest) *hostproxyv1.HostActionResult {
 	gitAction, refused := validateGitCredential(req)
 	if refused != nil {
@@ -220,7 +230,20 @@ func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialR
 		Str("username", req.GetUsername()).
 		Msg("git credential request")
 
-	cmd := exec.CommandContext(ctx, "git", "credential", gitAction)
+	if gitAction != gitFill {
+		s.log.Debug().Str("event", "git_credential_local_noop").
+			Str("action", gitAction).Str("host", req.GetHost()).
+			Msg("git credential store/erase answered locally; host store unchanged")
+		return &hostproxyv1.HostActionResult{
+			Id:      0,
+			Outcome: &hostproxyv1.HostActionResult_GitCredential{GitCredential: emptyGitCredentialResult()},
+		}
+	}
+	if denied := s.checkEgress(gitCredentialURL(req)); denied != nil {
+		return denied
+	}
+
+	cmd := s.gitCommand(ctx, "credential", gitAction)
 	cmd.Stdin = strings.NewReader(formatGitCredentialInput(req))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -235,22 +258,30 @@ func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialR
 		return failure(codes.FailedPrecondition, "credential helper failed: "+errMsg)
 	}
 
-	out := &agentv1.GitCredentialResult{Protocol: "", Host: "", Username: "", Password: ""}
-	if gitAction == gitFill {
-		creds := parseGitCredentialOutput(stdout.String(), s.log)
-		s.log.Debug().
-			Str("host", req.GetHost()).
-			Str("username", creds.Username).
-			Bool("has_password", creds.Password != "").
-			Msg("git credential retrieved")
-		out = &agentv1.GitCredentialResult{
-			Protocol: creds.Protocol, Host: creds.Host, Username: creds.Username, Password: creds.Password,
-		}
-	}
+	creds := parseGitCredentialOutput(stdout.String(), s.log)
+	s.log.Debug().
+		Str("host", req.GetHost()).
+		Str("username", creds.Username).
+		Bool("has_password", creds.Password != "").
+		Msg("git credential retrieved")
 	return &hostproxyv1.HostActionResult{
-		Id:      0,
-		Outcome: &hostproxyv1.HostActionResult_GitCredential{GitCredential: out},
+		Id: 0,
+		Outcome: &hostproxyv1.HostActionResult_GitCredential{GitCredential: &agentv1.GitCredentialResult{
+			Protocol: creds.Protocol, Host: creds.Host, Username: creds.Username, Password: creds.Password,
+		}},
 	}
+}
+
+// emptyGitCredentialResult is the answer for a locally handled action.
+func emptyGitCredentialResult() *agentv1.GitCredentialResult {
+	return &agentv1.GitCredentialResult{Protocol: "", Host: "", Username: "", Password: ""}
+}
+
+// gitCredentialURL is the target the egress rules are checked against:
+// the request's protocol, host and path as git would address them.
+func gitCredentialURL(req *agentv1.GitCredentialRequest) string {
+	u := url.URL{Scheme: req.GetProtocol(), Host: req.GetHost(), Path: "/" + strings.TrimPrefix(req.GetPath(), "/")}
+	return u.String()
 }
 
 // gitFill is the git credential subcommand for get.
@@ -285,6 +316,11 @@ func validateGitCredential(req *agentv1.GitCredentialRequest) (string, *hostprox
 	fields := []string{req.GetProtocol(), req.GetHost(), req.GetPath(), req.GetUsername(), req.GetPassword()}
 	if slices.ContainsFunc(fields, containsCredentialInjectionChars) {
 		return "", failure(codes.InvalidArgument, msgInjectionChars)
+	}
+	if req.GetProtocol() != schemeHTTP && req.GetProtocol() != schemeHTTPS {
+		// Git credential helpers serve http and https remotes. Any other
+		// protocol has no rule to match and nothing to look up.
+		return "", failure(codes.InvalidArgument, "protocol must be http or https")
 	}
 	return gitAction, nil
 }

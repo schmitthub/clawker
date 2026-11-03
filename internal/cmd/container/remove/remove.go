@@ -131,6 +131,15 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		}
 	}
 
+	// The agent's config, lifecycle and history volumes outlive the
+	// container and mount again in the next container with the same name,
+	// so a planted hook or plugin persists. Say so once.
+	if !opts.Volumes && len(errs) < len(containers) {
+		const kept = "volumes kept; the next container with the same name mounts them again " +
+			"(use --volumes or `clawker volume remove`)"
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.InfoIcon(), kept)
+	}
+
 	if len(errs) > 0 {
 		return cmdutil.SilentError
 	}

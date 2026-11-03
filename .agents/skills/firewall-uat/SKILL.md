@@ -82,6 +82,10 @@ missing listener). Get the IPs from the host with `docker inspect -f
 | `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18374/open/url -d '{"url":"https://denied.invalid/"}'` | `403` from the CP (host actions go clawkerd relay -> CP -> host proxy; a denied URL never opens a browser) |
 | `dig +tcp @127.0.0.11 -p <port of the 0B00007F listener in /proc/net/tcp> example.com` | `no servers could be reached` (Docker resolver denied; NOERROR = DNS bypass) |
 | `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)'` | `PermissionError` (ping socket denied at create; success = ICMP tunnel) |
+| `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM, 132)'` | `PermissionError` (SCTP denied at create; success = egress outside the connect hooks) |
+| `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 136)'` | `PermissionError` (UDP-Lite denied at create; success = egress outside the sendmsg hook) |
+| `clawker exec -u root --agent X -- getent hosts example.com` | no answer (root is enforced; an answer = the uid-0 exemption is back) |
+| `clawker exec --agent X -- id -u` | not `0` (`exec` defaults to the container user) |
 
 **SSH routing is special — banner is the only proof.** Any real SSH server
 completes a valid handshake, so a misroute ("everything funneled to host X")

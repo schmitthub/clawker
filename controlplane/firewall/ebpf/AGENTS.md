@@ -7,7 +7,8 @@ The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel
 ## Layout
 
 ```
-bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, getpeername4/6, sock_create)
+bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, getpeername4/6, sock_create:
+                     an allowlist, TCP stream and UDP datagram only; sock_type_allowed in common.h)
 bpf/common.h         Shared structs: container_config, dns_entry, route_key/val, metric_key
 gen.go               //go:generate bpf2go directive
 clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make ebpf`)
@@ -83,7 +84,7 @@ Callers MUST `bpf_ntohs(ctx->user_port)` before passing `dst_port` to `submit_ev
 
 | State | Meaning | Caller action |
 |-------|---------|---------------|
-| `ENTER_NOT_MANAGED` | uid==0, or container not in `container_map`. | `return 1;` (pass-through, no event). |
+| `ENTER_NOT_MANAGED` | Container not in `container_map`. There is no uid exemption: root in an enrolled container is enforced (clawkerd needs only the CP ports and CoreDNS, which `allowed_internal` admits). | `return 1;` (pass-through, no event). |
 | `ENTER_BYPASSED` | Managed and bypass flag set (only when caller passed `check_bypass=true`). | `submit_event(BYPASSED)` then `return 1;`. |
 | `ENTER_ENFORCED` | Managed, proceed to routing decision. `*cfg` and `*cgroup_id` populated. | Run `decide_connect` / `decide_sendmsg`, `submit_event(verdict)`, return verdict. |
 

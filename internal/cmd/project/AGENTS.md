@@ -15,6 +15,9 @@ Project commands are the primary user interface for working with the `ProjectMan
 | `list/list.go` | `NewCmdList(f, runF)` — list registered projects with format flags |
 | `info/info.go` | `NewCmdInfo(f, runF)` — show project details (name, root, worktrees, status) |
 | `remove/remove.go` | `NewCmdRemove(f, runF)` — remove projects from registry (with confirmation) |
+| `trust/trust.go` | `NewCmdTrust(f, runF)` — accept the project config security settings (`--check` reports without writing) |
+| `shared/trust.go` | `EnsureProjectConfigTrusted(TrustDeps)` — the gate `build`, `container create`, `container run`, and `container start` call before they act on the project config; `ProjectTrustStatus(cfg, reg)`, `RecordProjectTrust(reg, status)`, `ErrProjectConfigUntrusted` |
+| `shared/trust_test.go` | First run records, unchanged is silent, change without a prompt fails, prompt declined/accepted, outside a project is a no-op |
 | `shared/discovery.go` | `HasLocalProjectConfig(cfg, dir)` — config existence check via storage layers + fallback probe |
 | `shared/discovery_test.go` | Table-driven tests: registered/unregistered × all config placements |
 | `shared/completion.go` | `NameCompletions(pmFn)` — cobra completion func for registered project names |
@@ -27,6 +30,7 @@ Project commands are the primary user interface for working with the `ProjectMan
 - `project register` — register existing project in the user's registry (the registry file in the data dir, owned by `internal/project`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
 - `project info NAME` — tab-completes NAME from the registry. Show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
+- `project trust` — records the current digests of the covered project config key groups (`config.TrustedProjectKeyGroups()`: `security`, `bundles`, `build`, `agent`, `harnesses`) on the registry entry (`ProjectEntry.ConfigTrust`). `--check` writes nothing and exits non-zero (`SilentError`) when the digests were never recorded or changed. Outside a registered project it errors.
 - `project remove NAME [NAME...]` (alias `rm`) — tab-completes NAME from the registry (already-typed names excluded). Remove projects from registry by name. Prompts for confirmation in interactive mode; requires `--yes` in non-interactive mode. Does not delete files from disk.
 
 ## Key Symbols
@@ -138,6 +142,10 @@ Checks whether a project config file exists in the given directory. Two-phase:
 2. **Fallback**: Calls `config.ProjectConfigExistsIn(dir)` — config probes the directory itself (both filenames, dual placement, migrations wired), which works for unregistered projects where walk-up can't find the directory. A probe error is reported as "no local config" (a file the loader cannot read is not one the caller can carry forward).
 
 Used by both `init` and `register` to detect existing config before proceeding.
+
+### `EnsureProjectConfigTrusted(deps TrustDeps) error`
+
+The project config trust gate. The project files are agent-writable (bind-mounted workspace), and the keys `config.ProjectTrustDigests` covers change what the host mounts, forwards, or runs. Outside a registered project (`cfg.ProjectRoot() == ""` or no registry entry) it does nothing. First run: records the digests and prints one stderr line. Unchanged: silent. Changed: `Prompter().Confirm` with the changed groups when `IOStreams.CanPrompt()`, `cmdutil.SilentError` on decline; without a prompt, `ErrProjectConfigUntrusted` naming the groups and `clawker project trust`. Callers: `image build`, `container create`, `container run`, `container start` (each wires `IOStreams`, `Config`, `ProjectRegistry`, `Prompter` from the Factory). Lives here rather than in `container/shared` so `image/build` does not import the container command tree.
 
 ### `NameCompletions(pmFn func() (project.ProjectManager, error)) cobra.CompletionFunc`
 

@@ -67,6 +67,16 @@ Scope set by operator: find failures in the secure defaults that users are not a
 - GPG forwarding uses the gpg-agent `extra` (restricted) socket (`socketbridge/bridge.go` L471). SSH forwards the full agent (user choice).
 - Lifecycle hooks: `pre-run.sh`/`post-init.sh` are re-delivered by the CLI each start via tar copy (moby untar removes an existing non-dir first), run as the container user.
 
+## Status after hardening (2026-11-02, branch `fix/mythos-probe-2026-11-02` onto `release/mythos-hardening`)
+
+1. SCTP/UDP-Lite: FIXED. `sock_create` is an allowlist (`sock_type_allowed`, TCP stream + UDP datagram only). Privileged `TestProgRun_SockTypeAllowed`; e2e `TestFirewall_SocketTypeAllowlist`.
+2. uid-0 exemption: FIXED, removed from `enter_enforced`. `container exec`/`exec` default to `consts.ContainerUser` (harness `ExecInContainerAsRoot` passes `--user root`). e2e `TestFirewall_RootEnforced`.
+3. git credential: FIXED. `get` runs `checkEgress` on `protocol://host/path`; `store`/`erase` answered locally (`event=git_credential_local_noop`); non-http(s) protocol refused. `TestActions_GitCredential_*`.
+4. Global rule store: DOCUMENTED (threat model, firewall docs). Per-container rule-set id not implemented.
+5. Agent-writable project config: FIXED with a trust fingerprint of the security-relevant project-layer keys stored in the project registry (`ProjectEntry.ConfigTrust`), checked by run/create/start/build, prompt on change, `clawker project trust` to accept. See `mem:config/core`.
+6. pids limit: FIXED, default `consts.DefaultPidsLimit` (4096), `--pids-limit -1` lifts. `TestContainerOptions_BuildConfigs_PidsLimitDefault`.
+7. Volumes outlive `rm`: DOCUMENTED plus a stderr hint on `container remove` without `--volumes` (`TestRemoveRun_VolumesKeptHint`).
+
 ## Out of scope by operator ruling (not re-probed)
 
 Bind-mounted repo and `.git`; host `~/.claude/projects` bind (contains session transcripts of every project on the host, 33 directories, rw); `clawker` in group `docker` (gid 999, no socket); SSH agent full-socket forwarding; host proxy on by default; granted token scopes.
