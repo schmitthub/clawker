@@ -13,13 +13,21 @@ Operator ruling (2026-11-02). Applies to every Mythos probe of the clawker sandb
 - What an unattended agent can do inside one session run: one container, one prompt, no human at the terminal.
 - Silent local changes that git does not track and that take effect on a later run or restart without a human action. Known case: git hooks in the bind-mounted `.git/hooks` (`docs/threat-model.mdx`, "Git Hooks").
 - Untracked local state that a restart or rebuild picks up on its own counts, because nobody reviews it.
+- A clawker config change that the agent can make take effect inside the same session, with no user action and no change that the user can see (operator ruling, 2026-11-03).
 
 ## Out of scope
 
-- Clawker config files (`.clawker.yaml`, `.clawker/`, user config dir). A change is tracked, easy to see, needs a human to notice it in review, and takes effect only after a restart. Do not propose acceptance gates, fingerprints, or trust prompts on them. A key allowlist over that schema is never complete (`harnesses.*` alone carries many host-relevant fields per harness), so a partial hash is a false guarantee. One was built and removed: `mem:security/probes/2026-11-02-sandbox-defaults-probe`, finding 5.
+- Clawker config file changes (`.clawker.yaml`, `.clawker/`, user config dir) on their own. Git shows the change, and the change takes effect only when the user runs clawker again. The in-scope exception is above: the change applies inside the same session, with no user action and no visible change. Do not propose acceptance gates, fingerprints, or trust prompts on them. A key allowlist over that schema is never complete (`harnesses.*` alone carries many host-relevant fields per harness), so a partial hash is a false guarantee. One was built and removed: `mem:security/probes/2026-11-02-sandbox-defaults-probe`, finding 5.
 - Everything `docs/threat-model.mdx` already acknowledges: the Summary table, Shared Responsibility, and the per-vector sections. Those are platform behaviors an end user trusts clawker for by default, not risks a user accepts by configuring.
 - Host-initiated actions of any kind (see Direction).
-- Risks a user accepts by configuring: Docker socket, privileged mode, capabilities, bypass, token scopes, SSH/GPG forwarding, bind mounts, third-party bundles.
+- Risks a user accepts by configuring: Docker socket, privileged mode, capabilities, bypass, token scopes, SSH/GPG forwarding, bind mounts, build customization, third-party bundles, resource limits, volume persistence. `docs/threat-model.mdx`, "Shared Responsibility", is the reference for these. Read the matching section before you rank a finding that depends on a configured value.
+
+## Probe targets and proof (operator ruling, 2026-11-03)
+
+- Outbound attempts go only to the probe targets that the operator runs for the engagement. There are two paths to the same targets: external through the operator's ngrok edge, and internal through the host loopback ports (`host.docker.internal`). The operator gives the addresses for each run. They are not stored here, because they change when the tunnel restarts.
+- Reachability is the proof. A completed TCP handshake, a service banner, or an HTTP 401 from a target is enough. The agent gets no target credentials and does not need them. No login attempts, password guesses, or brute force.
+- Every active step needs the operator's approval first: each packet or socket opened for a test, each file write outside the probe record, and each change to process, network, or mount state. Passive, read-only analysis needs no approval. One harmless action per approval. Report the result, then stop.
+- Changing the firewall rules or the allow-list from inside the container is a finding to report, never a method to use. Anthropic's Cyber Verification Program accepts an on-host allow-list only if the sandbox cannot change it.
 
 ## Why the boundary is here
 
