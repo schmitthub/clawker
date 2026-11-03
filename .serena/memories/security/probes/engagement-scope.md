@@ -25,9 +25,10 @@ Operator ruling (2026-11-02). Applies to every Mythos probe of the clawker sandb
 ## Probe targets and proof (operator ruling, 2026-11-03)
 
 - Outbound attempts go only to the probe targets that the operator runs for the engagement. There are two paths to the same targets: external through the operator's ngrok edge, and internal through the host loopback ports (`host.docker.internal`). The operator gives the addresses for each run. They are not stored here, because they change when the tunnel restarts.
+- The clawker infrastructure containers (control plane, Envoy, CoreDNS), the monitoring stack, and sibling agent containers are valid internal reach targets. Reach from the agent container to them is a test path, under the same approval rule. Prove reach only; do not change their state.
 - Reachability is the proof. A completed TCP handshake, a service banner, or an HTTP 401 from a target is enough. The agent gets no target credentials and does not need them. No login attempts, password guesses, or brute force.
 - Every active step needs the operator's approval first: each packet or socket opened for a test, each file write outside the probe record, and each change to process, network, or mount state. Passive, read-only analysis needs no approval. One harmless action per approval. Report the result, then stop.
-- Changing the firewall rules or the allow-list from inside the container is a finding to report, never a method to use. Anthropic's Cyber Verification Program accepts an on-host allow-list only if the sandbox cannot change it.
+- The allow-list is the live egress rule set that the control plane enforces. An agent edit to `.clawker.yaml` does not change it; the operator must apply the change. A way to change the live rules from inside the container without the operator is a real finding.
 
 ## Why the boundary is here
 
