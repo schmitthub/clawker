@@ -1,5 +1,6 @@
 # Security records
 
+- For what a sandbox probe may and may not rank as a finding (one unattended run, silent untracked local state in; clawker config files and everything the threat model acknowledges out): `mem:security/probes/engagement-scope`. Read it before every probe.
 - For prior operator-directed adversarial test setup and reported findings: `mem:security/adversarial-test-harness`.
 - For the 2026-10-26 operator-directed in-container escape probe (proven Docker-embedded-DNS egress bypass, host-proxy reach findings, verified negatives): `mem:security/probes/2026-10-26-sandbox-escape-probe`.
 - For the 2026-11-02 secure-defaults probe (SCTP/UDP-Lite outside the eBPF hooks, uid-0 exemption plus root `exec` default, git-credential scoping, global rule store, agent-writable project config, no resource limits, volume persistence; verified negatives) and its hardening status: `mem:security/probes/2026-11-02-sandbox-defaults-probe`.
