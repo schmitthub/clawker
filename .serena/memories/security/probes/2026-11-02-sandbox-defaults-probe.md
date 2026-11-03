@@ -79,6 +79,8 @@ Scope set by operator: find failures in the secure defaults that users are not a
 
 ## Out of scope by operator ruling (not re-probed)
 
+The durable scope rule is `mem:security/probes/engagement-scope`.
+
 Project config files in the workspace (the user owns and reviews them; a host-side acceptance gate on their keys was rejected as bad hardening advice); bind-mounted repo and `.git`; host `~/.claude/projects` bind (contains session transcripts of every project on the host, 33 directories, rw); `clawker` in group `docker` (gid 999, no socket); SSH agent full-socket forwarding; host proxy on by default; granted token scopes.
 
 ## Method log
