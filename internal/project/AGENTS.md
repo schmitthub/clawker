@@ -25,7 +25,7 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 | `manager.go` | Public interfaces, constructor, project handle behavior, `ListWorktrees` on both manager and handle |
 | `registry.go` | `Registry` interface + `registryImpl` (embeds `*storage.Store[ProjectRegistry]`) — `NewRegistry`/`NewRegistryFromString` are the sole constructors of registry storage |
 | `resolve.go` | `ResolveRoot`/`CurrentRoot` project-root resolution on `registryImpl` + `resolveRootPath` normalization |
-| `registry_schema.go` | `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types + `Fields()` (`storage.Schema`). `ProjectEntry.ConfigTrust` (`config_trust`, optional map) records per covered key group the digest of the project config security settings the user last accepted (computed by `config.ProjectTrustDigests`; gated by `internal/cmd/project/shared.EnsureProjectConfigTrusted`) |
+| `registry_schema.go` | `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types + `Fields()` (`storage.Schema`) |
 | `migrations.go` | `RegistryMigrations()` — additive registry migration list, wired into `NewRegistry` via `storage.WithMigrations` |
 | `worktree_service.go` | Internal git + registry orchestration for worktrees, `flatWorktreeDirProvider` |
 | `project_test.go` | Full lifecycle tests: registration, worktree add/remove/prune, duplicate rejection |
@@ -96,8 +96,6 @@ type ProjectRecord struct {
     Root      string
     Worktrees map[string]WorktreeRecord
 }
-
-// ProjectEntry (registry_schema.go) adds ConfigTrust map[string]string — see Registry below.
 
 type WorktreeRecord struct { Path, Branch string }
 
@@ -179,7 +177,7 @@ Every write verb validates before it persists, so an unusable entry never reache
 | `UnregisterWorktree` | empty `projectRoot`/`branch`, unknown root | — |
 | `RemoveByRoot` | unknown root | — |
 
-`Update`'s `Worktrees` field discriminates nil from empty: a **nil** map carries the recorded worktrees forward (the caller is updating other fields); a **non-nil empty** map wipes them. `ConfigTrust` follows the same rule: nil carries the recorded digests forward, a non-nil map (empty included) replaces them. The branch normalization means `Worktrees["main"] = {Branch: "feature"}` cannot persist — the key is the worktree's identity and the value mirrors it. The caller's map is never mutated (normalization copies).
+`Update`'s `Worktrees` field discriminates nil from empty: a **nil** map carries the recorded worktrees forward (the caller is updating other fields); a **non-nil empty** map wipes them. The branch normalization means `Worktrees["main"] = {Branch: "feature"}` cannot persist — the key is the worktree's identity and the value mirrors it. The caller's map is never mutated (normalization copies).
 
 ### Migrations
 

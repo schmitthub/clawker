@@ -73,13 +73,13 @@ Scope set by operator: find failures in the secure defaults that users are not a
 2. uid-0 exemption: FIXED, removed from `enter_enforced`. `container exec`/`exec` default to `consts.ContainerUser` (harness `ExecInContainerAsRoot` passes `--user root`). e2e `TestFirewall_RootEnforced`.
 3. git credential: FIXED. `get` runs `checkEgress` on `protocol://host/path`; `store`/`erase` answered locally (`event=git_credential_local_noop`); non-http(s) protocol refused. `TestActions_GitCredential_*`.
 4. Global rule store: DOCUMENTED (threat model, firewall docs). Per-container rule-set id not implemented.
-5. Agent-writable project config: FIXED with a trust fingerprint of the security-relevant project-layer keys stored in the project registry (`ProjectEntry.ConfigTrust`), checked by run/create/start/build, prompt on change, `clawker project trust` to accept. See `mem:config/core`.
+5. Agent-writable project config: REJECTED by the operator (2026-11-02). The project config is the user's own file; the trust boundary is container vs host, not project file vs user. A trust-fingerprint gate (`clawker project trust`) was built and removed in the same PR. Do not re-propose.
 6. pids limit: FIXED, default `consts.DefaultPidsLimit` (4096), `--pids-limit -1` lifts. `TestContainerOptions_BuildConfigs_PidsLimitDefault`.
 7. Volumes outlive `rm`: DOCUMENTED plus a stderr hint on `container remove` without `--volumes` (`TestRemoveRun_VolumesKeptHint`).
 
 ## Out of scope by operator ruling (not re-probed)
 
-Bind-mounted repo and `.git`; host `~/.claude/projects` bind (contains session transcripts of every project on the host, 33 directories, rw); `clawker` in group `docker` (gid 999, no socket); SSH agent full-socket forwarding; host proxy on by default; granted token scopes.
+Project config files in the workspace (the user owns and reviews them; a host-side acceptance gate on their keys was rejected as bad hardening advice); bind-mounted repo and `.git`; host `~/.claude/projects` bind (contains session transcripts of every project on the host, 33 directories, rw); `clawker` in group `docker` (gid 999, no socket); SSH agent full-socket forwarding; host proxy on by default; granted token scopes.
 
 ## Method log
 

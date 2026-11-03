@@ -12,11 +12,6 @@ type ProjectEntry struct {
 	Name      string                   `yaml:"name"                label:"Name"      desc:"Project slug identifier"`
 	Root      string                   `yaml:"root"                label:"Root"      desc:"Filesystem path to project root"`
 	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty" label:"Worktrees" desc:"Active worktrees for this project"`
-	// ConfigTrust records, per covered key group, the digest of the
-	// project-file security settings the user last accepted. The host CLI
-	// compares it before it acts on the project config (see
-	// config.ProjectTrustDigests). Nil means never recorded.
-	ConfigTrust map[string]string `yaml:"config_trust,omitempty" label:"Config Trust" desc:"Digest per covered key group of the project config security settings the user last accepted"`
 }
 
 // WorktreeEntry represents a worktree within a project.

@@ -328,11 +328,6 @@ func (r *registryImpl) Update(entry ProjectEntry) (ProjectEntry, error) {
 	if entry.Worktrees == nil {
 		entry.Worktrees = entries[index].Worktrees
 	}
-	// Same rule for the recorded config trust: only a caller that supplies
-	// a map replaces it.
-	if entry.ConfigTrust == nil {
-		entry.ConfigTrust = entries[index].ConfigTrust
-	}
 	// The map key is the worktree's identity; Branch mirrors it, so a caller
 	// map keyed on one branch with another recorded on the value cannot
 	// persist. The copy keeps the caller's map untouched.
