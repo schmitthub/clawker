@@ -16,7 +16,7 @@ Operator ruling (2026-11-02). Applies to every Mythos probe of the clawker sandb
 
 ## Out of scope
 
-- Clawker config files (`.clawker.yaml`, `.clawker/`, user config dir). A change is tracked, easy to see, needs a human to notice it in review, and takes effect only after a restart. Do not propose acceptance gates, fingerprints, or trust prompts on them. One was built and removed: `mem:security/probes/2026-11-02-sandbox-defaults-probe`, finding 5.
+- Clawker config files (`.clawker.yaml`, `.clawker/`, user config dir). A change is tracked, easy to see, needs a human to notice it in review, and takes effect only after a restart. Do not propose acceptance gates, fingerprints, or trust prompts on them. A key allowlist over that schema is never complete (`harnesses.*` alone carries many host-relevant fields per harness), so a partial hash is a false guarantee. One was built and removed: `mem:security/probes/2026-11-02-sandbox-defaults-probe`, finding 5.
 - Everything `docs/threat-model.mdx` already acknowledges: the Summary table, Shared Responsibility, and the per-vector sections. Those are platform behaviors an end user trusts clawker for by default, not risks a user accepts by configuring.
 - Host-initiated actions of any kind (see Direction).
 - Risks a user accepts by configuring: Docker socket, privileged mode, capabilities, bypass, token scopes, SSH/GPG forwarding, bind mounts, third-party bundles.
