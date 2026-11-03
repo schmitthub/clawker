@@ -474,12 +474,9 @@ func (h *Harness) ExecInContainer(agent string, cmd ...string) *RunResult {
 }
 
 // ExecInContainerAsRoot runs a command inside an existing container as root.
-// Root must be asked for: `container exec` defaults to the container user.
 func (h *Harness) ExecInContainerAsRoot(agent string, cmd ...string) *RunResult {
 	h.T.Helper()
-	base := []string{"container", "exec", "--user", "root", "--agent", agent}
-	args := make([]string, 0, len(base)+len(cmd))
-	args = append(args, base...)
+	args := []string{"container", "exec", "--agent", agent}
 	args = append(args, cmd...)
 	return h.Run(args...)
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -81,7 +80,7 @@ Container name can be:
   # Run with environment variable
   clawker container exec -e FOO=bar clawker.myapp.dev env
 
-  # Run as root (the default is the unprivileged container user)
+  # Run as a specific user
   clawker container exec -u root clawker.myapp.dev whoami
 
   # Run in a specific directory
@@ -121,12 +120,7 @@ Container name can be:
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Detached mode: run command in the background")
 	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "Set environment variables")
 	cmd.Flags().StringVarP(&opts.Workdir, "workdir", "w", "", "Working directory inside the container")
-	// The default is the unprivileged container user, never the image's
-	// USER (root, for clawkerd). Root is enforced by the firewall like
-	// every other uid, but it bypasses the file and capability posture
-	// of the agent user, so the caller must ask for it.
-	cmd.Flags().StringVarP(&opts.User, "user", "u", consts.ContainerUser,
-		"Username or UID (format: <name|uid>[:<group|gid>]); defaults to the unprivileged container user")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "Username or UID (format: <name|uid>[:<group|gid>])")
 	cmd.Flags().BoolVar(&opts.Privileged, "privileged", false, "Give extended privileges to the command")
 
 	// Stop parsing flags after the first positional argument (CONTAINER)
