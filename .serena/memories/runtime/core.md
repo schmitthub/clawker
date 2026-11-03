@@ -5,7 +5,7 @@
 - `internal/workspace/` owns bind/snapshot workspace handling; `internal/project/` owns worktree identity and lifecycle.
 - Bind mode exposes the mounted project. Snapshot mode changes remain in the container copy.
 - `internal/hostproxy/` owns browser callbacks and host-side credential services. `internal/socketbridge/` owns socket forwarding. Preserve their interfaces and test helpers. The git credential action egress-checks `get` and answers `store`/`erase` locally; the host credential store is never written from a container (2026-11-02).
-- `container exec` runs as `consts.ContainerUser` unless `--user` is given; the image USER is root for clawkerd. Agent containers get `consts.DefaultPidsLimit` unless `--pids-limit` is set (`-1` lifts it).
+- `container exec` without `--user` runs as the image USER (root, for clawkerd); the host user is the privileged principal and picks. Agent containers get `consts.DefaultPidsLimit` unless `--pids-limit` is set (`-1` lifts it).
 
 ## Agent process
 

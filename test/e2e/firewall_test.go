@@ -227,11 +227,6 @@ if getent hosts example.com >/dev/null; then echo dns=open; else echo dns=closed
 	require.NoError(t, res.Err, "probe failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
 	assert.Contains(t, res.Stdout, "0\n", "probe must run as root:\n%s", res.Stdout)
 	assert.Contains(t, res.Stdout, "dns=closed", "root must not resolve an unlisted domain:\n%s", res.Stdout)
-
-	userRes := h.ExecInContainer("root-enforced", "id", "-u")
-	require.NoError(t, userRes.Err, "default exec user probe failed\nstdout: %s\nstderr: %s",
-		userRes.Stdout, userRes.Stderr)
-	assert.NotEqual(t, "0", strings.TrimSpace(userRes.Stdout), "container exec must not default to root")
 }
 
 // TestFirewall_Bypass exercises the full `firewall bypass` surface in one

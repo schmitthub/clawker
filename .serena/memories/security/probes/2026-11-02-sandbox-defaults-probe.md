@@ -70,7 +70,7 @@ Scope set by operator: find failures in the secure defaults that users are not a
 ## Status after hardening (2026-11-02, branch `fix/mythos-probe-2026-11-02` onto `release/mythos-hardening`)
 
 1. SCTP/UDP-Lite: FIXED. `sock_create` is an allowlist (`sock_type_allowed`, TCP stream + UDP datagram only). Privileged `TestProgRun_SockTypeAllowed`; e2e `TestFirewall_SocketTypeAllowlist`.
-2. uid-0 exemption: FIXED, removed from `enter_enforced`. `container exec`/`exec` default to `consts.ContainerUser` (harness `ExecInContainerAsRoot` passes `--user root`). e2e `TestFirewall_RootEnforced`.
+2. uid-0 exemption: FIXED, removed from `enter_enforced` (in-container defense in depth; the agent has no path to uid 0 by design). The `exec` root-default part was REJECTED: `exec` is a host-side action by the privileged user, not an attack surface. e2e `TestFirewall_RootEnforced`.
 3. git credential: FIXED. `get` runs `checkEgress` on `protocol://host/path`; `store`/`erase` answered locally (`event=git_credential_local_noop`); non-http(s) protocol refused. `TestActions_GitCredential_*`.
 4. Global rule store: DOCUMENTED (threat model, firewall docs). Per-container rule-set id not implemented.
 5. Agent-writable project config: REJECTED by the operator (2026-11-02). The project config is the user's own file; the trust boundary is container vs host, not project file vs user. A trust-fingerprint gate (`clawker project trust`) was built and removed in the same PR. Do not re-propose.

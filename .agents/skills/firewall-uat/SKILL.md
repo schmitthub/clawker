@@ -85,7 +85,6 @@ missing listener). Get the IPs from the host with `docker inspect -f
 | `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM, 132)'` | `PermissionError` (SCTP denied at create; success = egress outside the connect hooks) |
 | `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 136)'` | `PermissionError` (UDP-Lite denied at create; success = egress outside the sendmsg hook) |
 | `clawker exec -u root --agent X -- getent hosts example.com` | no answer (root is enforced; an answer = the uid-0 exemption is back) |
-| `clawker exec --agent X -- id -u` | not `0` (`exec` defaults to the container user) |
 
 **SSH routing is special — banner is the only proof.** Any real SSH server
 completes a valid handshake, so a misroute ("everything funneled to host X")
