@@ -224,7 +224,7 @@ Clawker's shipped controls are network- and isolation-based: they constrain wher
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Data exfiltration (ICMP, SCTP, UDP-Lite tunneling) | eBPF sock_create allows only TCP stream and UDP datagram sockets | On | [Firewall](/firewall) |
 | Firewall bypass as root | Every uid is enforced; `container exec` defaults to the container user | On | [Firewall](/firewall) |
-| Host credential store changes from the container | Git credential `store`/`erase` answered locally; `get` is egress-checked | On | [Credential Forwarding](/credentials) |
+| Host credential store changes from the container | Git credential `store`/`erase` answered locally | On | [Credential Forwarding](/credentials) |
 | Host or VM starvation (fork bomb) | Default pids limit of 4096 (`--pids-limit`) | On | [Container Internals](/container-internals) |
 | Host filesystem damage | Container isolation + workspace mount scoping | On | [Container Internals](/container-internals) |
 

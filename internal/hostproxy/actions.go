@@ -239,10 +239,6 @@ func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialR
 			Outcome: &hostproxyv1.HostActionResult_GitCredential{GitCredential: emptyGitCredentialResult()},
 		}
 	}
-	if denied := s.checkEgress(gitCredentialURL(req)); denied != nil {
-		return denied
-	}
-
 	cmd := s.gitCommand(ctx, "credential", gitAction)
 	cmd.Stdin = strings.NewReader(formatGitCredentialInput(req))
 	var stdout, stderr bytes.Buffer
@@ -275,13 +271,6 @@ func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialR
 // emptyGitCredentialResult is the answer for a locally handled action.
 func emptyGitCredentialResult() *agentv1.GitCredentialResult {
 	return &agentv1.GitCredentialResult{Protocol: "", Host: "", Username: "", Password: ""}
-}
-
-// gitCredentialURL is the target the egress rules are checked against:
-// the request's protocol, host and path as git would address them.
-func gitCredentialURL(req *agentv1.GitCredentialRequest) string {
-	u := url.URL{Scheme: req.GetProtocol(), Host: req.GetHost(), Path: "/" + strings.TrimPrefix(req.GetPath(), "/")}
-	return u.String()
 }
 
 // gitFill is the git credential subcommand for get.

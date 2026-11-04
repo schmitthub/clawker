@@ -29,7 +29,7 @@ Changed, Removed. Each release section lists those subsections directly.
   - The host proxy starts its daemon only from the running clawker executable. It no longer reads `CLAWKER_EXECUTABLE`, which let any process that set the variable choose the binary clawker starts.
   - Only TCP and UDP sockets can be created in an agent container. SCTP and UDP-Lite sockets took a kernel path the firewall's connect and send hooks never see; they, MPTCP and SOCK_SEQPACKET are now denied at creation together with raw and ICMP sockets.
   - Root is inside the firewall. Processes running as uid 0 in an agent container were exempt from every firewall program; they are now enforced like every other user.
-  - Git credential requests from a container can only read a credential for a host the firewall allows, and `store` and `erase` requests no longer reach the host credential store: a `401` inside the container cannot erase your host token.
+  - Git credential `store` and `erase` requests from a container no longer reach the host credential store: a `401` inside the container cannot erase your host token.
   - Agent containers get a default process limit of 4096 (`--pids-limit`; `-1` lifts it), so a fork bomb inside the container cannot stop the host or the Docker VM.
   - Documented: the egress rule store is global to the host, not per project, and `clawker rm` keeps the agent's config, lifecycle and history volumes unless `--volumes` is passed.
 - **Changed:** The host proxy has no port setting. `host_proxy.manager.port` and `host_proxy.daemon.port` are removed from `settings.yaml` automatically.
