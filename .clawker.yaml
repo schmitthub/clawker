@@ -156,6 +156,7 @@ build:
     - netcat-openbsd
     - cmake
     - sqlite3
+    - clangd
 monitor:
   extensions:
     - claude-code
@@ -294,6 +295,10 @@ security:
             path: /koalaman/shellcheck/
           - action: allow
             path: /artempyanykh/marksman/
+          - action: allow
+            path: ~/tamasfe/taplo/releases/download/[0-9.]+/taplo-[a-z0-9_-]+\.gz
+          - action: allow
+            path: ~/astral-sh/python-build-standalone/releases/download/[0-9]+/cpython-[^/]+\.tar\.gz
           - action: allow
             path: /mintlify/
           - action: allow
