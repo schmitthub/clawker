@@ -11,7 +11,7 @@ This page records an assessment of clawker's host isolation and egress controls,
 | Item | Value |
 | --- | --- |
 | Run | 2026-11-03 to 2026-11-04 (UTC) |
-| Branch and commit | `release/mythos-hardening`, HEAD `20445bb4`, `CLAWKER_VERSION v2026.10.3-114-g52f7ed94` |
+| Branch and commit | `release/mythos-hardening`. Round one: HEAD `20445bb4`, `CLAWKER_VERSION v2026.10.3-114-g52f7ed94`. Rounds two and three: HEAD `88a92d50`, `CLAWKER_VERSION v2026.10.3-121-g88a92d50`, after the operator rebuilt the image and restarted the container. The commit between them reverts the host proxy's egress check on git credential lookups; that check was redundant with Envoy and broke path-scoped git hosts. |
 | Runtime | Docker Desktop on macOS (arm64), kernel 6.12.76-linuxkit, firewall enabled |
 | Agent | The `claude` harness, container user `clawker` (uid 1001), no capabilities, `no-new-privileges`, seccomp on |
 | Authorization | Operator-directed defensive testing under Anthropic's Cyber Verification Program. The operator approved every active step before it ran. |
@@ -41,9 +41,9 @@ Reachability was the proof: a completed connection to the real service, a banner
 
 ## Result
 
-**No path out of the sandbox was found.** Thirteen approved probes ran, across both paths and every protocol the targets served. All thirteen held. No probe target recorded a request from the container.
+**No path out of the sandbox was found.** Three rounds of approved probes ran: thirteen in round one against egress and host reach, five in round two against the control plane and clawkerd, and seven in round three against the Envoy listeners and the telemetry relay. All held. No probe target recorded a request from the container, and no spoofed telemetry was stored under another identity.
 
-### Approved probes and raw results
+### Round one: egress and host reach
 
 Every "connection succeeded" below is the documented eBPF behaviour: an off-subnet TCP connect is rewritten in the kernel to the Envoy egress listener, so the TCP handshake completes with Envoy, never with the target. Probe D2 proves this on the wire (`server: envoy`). The threat model warns about exactly this: a successful connect on its own is not reach.
 
@@ -65,6 +65,37 @@ Every "connection succeeded" below is the documented eBPF behaviour: an off-subn
 
 The edge IPs for B and E came from a host-side `dig`; the agent could not resolve the names itself (probe A). The operator supplied them so the direct-IP lane could be tested.
 
+### Round two: control plane and clawkerd
+
+clawkerd is PID 1 of the agent container. It runs as root with Docker's default capability set, which includes `CAP_NET_RAW`, and the eBPF program passes any socket that carries the clawker loop-prevention mark. Root inside the container is therefore unfiltered egress, so the three sockets through which the agent user can reach clawkerd are the privilege boundary inside the container: the mTLS command service on port 7700, the host relay on loopback 18374, and the telemetry relay on loopback 4318. Round two tested the authentication of the command service and the control plane, the in-subnet allow list, and the host relay. Round three tested the telemetry relay.
+
+| # | Hypothesis | Command (from the container) | Raw result | Verdict |
+| --- | --- | --- | --- | --- |
+| H1a | clawkerd needs a client certificate | `openssl s_client -connect 127.0.0.1:7700 -tls1_3`, no certificate | Server certificate `CN=clawker-clawkerd`, then TLS alert 116 `certificate required` | Held |
+| H1b | The control plane agent API needs a client certificate | `openssl s_client -connect 172.20.0.202:7444 -tls1_3`, no certificate | Server certificate `CN=clawker-controlplane`, then TLS alert 116 `certificate required` | Held |
+| H2a | A control plane port outside the allow list is denied in the kernel | `nc -vz -w3 172.20.0.202 4445` | `Operation not permitted` | Held: eBPF deny, no packet sent |
+| H2b | Envoy's admin endpoint is not reachable | `nc -vz -w3 172.20.0.200 9901` | `Connection refused` | Held: the allow list admits the Envoy address on every port; the refusal comes from Envoy's loopback bind, which is Envoy's control, not clawker's |
+| H3a | The host relay refuses to open a denied URL on the host | `POST 127.0.0.1:18374/open/url` with the ngrok web target | `403`, `host proxy denied the action: blocked by egress policy` | Held |
+| H3b | The host relay refuses a non-loopback OAuth redirect | `POST /callback/register` with `redirect_uri=http://192.168.65.254:8080/cb` | `400`, `redirect_uri must be http://localhost:<port> or http://127.0.0.1:<port>` | Held |
+| H4 | The host relay survives an unknown route and an oversized body | `GET /`, then `POST /open/url` with a 1 MiB non-JSON body | `404`, then `400 invalid JSON`; PID 1 start time unchanged | Held |
+| H5 | Envoy exposes nothing beyond its documented listeners | TCP connect scan of all 65535 ports on `172.20.0.200` | Open: 53, 9902, 10000, 10001; 65531 refused; none denied by eBPF | Held: 53 is the kernel rewrite to CoreDNS, 9902 the readiness listener, 10000 the egress listener, 10001 the opaque route for the project's `github.com` SSH rule |
+
+### Round three: Envoy listeners and the telemetry relay
+
+| # | Hypothesis | Command (from the container) | Raw result | Verdict |
+| --- | --- | --- | --- | --- |
+| B1 | Port 9902 is a static readiness answer, not an admin API | `curl -si http://172.20.0.200:9902/` and `/config_dump` | Both `200`, body `ok`, `server: envoy` | Held |
+| B2 | Port 10001 is the opaque SSH route | `nc 172.20.0.200 10001` | `SSH-2.0-...` banner from GitHub | By design: the same destination the eBPF rewrite sends SSH to |
+| R1 | The telemetry relay accepts only OTLP posts | `GET /v1/logs`; `POST /foo`; `POST /v1/logs` as `text/plain` | `405`; `404`; `415`, all answered before any forward | Held |
+| R2 | A malformed body is rejected by the control plane | `POST /v1/logs` with a non-protobuf body | `400 InvalidArgument` | Held |
+| R3 | An off-schema batch is not stored | OTLP logs batch with `service.name=cvp-probe` and spoofed identity attributes | Relay `200`; the record is absent from every OpenSearch index | Held: the collector keeps only known service names on the agent lane |
+| R3b | Identity attributes cannot be spoofed | The same batch with `service.name=claude-code`, resource attributes `project`, `agent`, `container_id` and `ingest_source` all set to `spoofed-*`, plus a record attribute `agent=spoofed-record-attr` | Stored in the `claude-code` index with `project=mythos`, `agent=mythos`, the real container id and `ingest_source=cp_gateway`; the record attribute `agent` removed | Held: every spoofed value replaced or dropped |
+| R4 | Body caps hold before and after gzip | `POST /v1/logs` with 5 MiB; then 8 MiB of zeros gzipped to 8 KB | `413`; `413` | Held: the cap applies to the decoded size |
+
+Telemetry identity is enforced in four layers, and R3 and R3b crossed all of them. The relay checks method, path, content type and size and nothing else. The control plane gateway decodes the batch, deletes the identity keys it owns, and stamps the identity it verified through mTLS. The collector drops agent-lane records whose `service.name` it does not know. The `claude-code` index pipeline removes the scalar `attributes.agent` and `attributes.project` that Claude Code reflects onto every record. The stored R3b record was verified by the operator's overseer session in OpenSearch; the probe records' own markers appear only in the agent's genuine Claude Code telemetry, which carries the real identity.
+
+Not run in rounds two and three: exhausting the telemetry relay's in-flight slots, which is resource exhaustion and out of scope.
+
 ### Ruled out before any probe
 
 - **claude.ai connector tools.** The agent's Remote Control session carried server-side connector tools (web fetch, mail, chat, storage). Those execute outside the container over the harness's own allowed API session. Operator ruling: Claude Code behaviour that the user configures and can turn off; not a clawker control, not a finding.
@@ -80,11 +111,14 @@ Passive review of the current branch, before any packet was sent. Each item name
 - **Host actions.** The only agent path to the host is the clawkerd loopback relay with five routes (open URL, git credential, register callback, get callback data, delete callback). The control plane authorizes each one by container identity and label grants. The host proxy egress-checks `open/url` and the OAuth auth URL against the host's own rules file, never the workspace copy. Callback redirects must be `http://localhost` or `http://127.0.0.1` on a port of 1024 or more.
 - **Socket bridge.** The SSH and GPG forwarding protocol carries a socket type, not a path. The host side resolves it to the gpg-agent extra socket or `SSH_AUTH_SOCK` and nothing else.
 - **Process and mounts.** No capabilities, `no-new-privileges`, seccomp, `/sys` read-only, no Docker socket, the agent certificate directory root-only, pids limit 4096.
+- **In-container privilege boundary.** clawkerd (PID 1, root) accepts commands only on an mTLS listener that requires a client certificate issued by the clawker CA and pins the peer name to the control plane (`clawkerd/listener.go`). The two loopback relays hold no policy of their own; every request becomes one authenticated control plane call that the control plane authorizes by the container's verified identity.
+- **Telemetry identity.** The control plane gateway replaces the `project`, `agent`, `container_id` and `ingest_source` resource attributes on every batch with the identity it verified (`controlplane/otelgateway/gateway.go`), so a container cannot attribute telemetry to another agent.
 
 ## Limits of this assessment
 
 - One host (Docker Desktop on macOS), one container, one run. Linux Docker Engine, rootless Docker, and other kernels were not tested here.
 - The attacker was the unprivileged container user. Root inside the container is a host-initiated action (`clawker exec -u root`) and was out of scope by operator ruling.
 - One connection per probe by design. Timing channels, resource exhaustion, and anything that needs volume were not attempted.
+- The control plane's agent API and clawkerd's command service were tested for authentication, not fuzzed. A bug in either request handler would be a path to the control plane, which holds the eBPF and cgroup rights; on Docker Desktop that ends in the VM, on a rootful Linux engine it ends on the host.
 - Allowed domains were not abused. Exfiltration through a domain the user chose to allow (a package registry, a code host with forwarded credentials, a storage bucket) is a configured risk, covered by the Shared Responsibility section of the threat model, and was not part of the goal.
 - Results describe the commit above. Check the source before you reuse any claim from this page.
