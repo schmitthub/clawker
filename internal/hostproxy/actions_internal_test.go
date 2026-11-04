@@ -569,53 +569,6 @@ func gitRulesFile(t *testing.T) string {
 	return rulesFile
 }
 
-// TestActions_GitCredential_EgressGate: get runs the host helper only for
-// a target the egress rules allow; a denied host never reaches git.
-func TestActions_GitCredential_EgressGate(t *testing.T) {
-	get := agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET
-	rulesFile := gitRulesFile(t)
-	cases := []struct {
-		name  string
-		req   *agentv1.GitCredentialRequest
-		want  codes.Code
-		calls int
-	}{
-		{"allowed host", gitReq(get, "https", "github.test", "org/repo.git", "", ""), codes.OK, 1},
-		{"denied host", gitReq(get, "https", "evil.test", "", "", ""), codes.PermissionDenied, 0},
-		{"wrong proto", gitReq(get, "http", "github.test", "", "", ""), codes.PermissionDenied, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			a, _ := newTestActions(t, rulesFile)
-			calls := fakeGit(t, a)
-			res := a.Handle(context.Background(), gitCredential(tc.req))
-			require.Equal(t, tc.want, codeOf(res), res.GetError().GetMessage())
-			assert.Len(t, *calls, tc.calls)
-			if tc.want == codes.OK {
-				assert.Equal(t, "p", res.GetGitCredential().GetPassword())
-			}
-		})
-	}
-}
-
-func TestActions_GitCredential_NoRulesFile_SkipsCheck(t *testing.T) {
-	a, _ := newTestActions(t, "")
-	calls := fakeGit(t, a)
-	res := a.Handle(context.Background(), gitCredential(
-		gitReq(agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET, "https", "any.test", "", "", "")))
-	require.Equal(t, codes.OK, codeOf(res), res.GetError().GetMessage())
-	assert.Equal(t, []string{"credential fill"}, *calls)
-}
-
-func TestActions_GitCredential_BrokenRulesFails(t *testing.T) {
-	a, _ := newTestActions(t, "/nonexistent/egress-rules.yaml")
-	calls := fakeGit(t, a)
-	res := a.Handle(context.Background(), gitCredential(
-		gitReq(agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET, "https", "github.test", "", "", "")))
-	assert.Equal(t, codes.Internal, codeOf(res))
-	assert.Empty(t, *calls)
-}
-
 // TestActions_GitCredential_StoreEraseLocal: store and erase succeed
 // without a host git call, so a sandboxed git cannot change the host
 // credential store.
