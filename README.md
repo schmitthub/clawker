@@ -4,6 +4,8 @@
 <code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a CLI that runs agent harnesses like <code>Claude Code</code> or <code>Codex</code> in isolated <code>Docker</code> containers on any macOS/Linux host with Docker installed.
 </p>
 
+<p align="center"><strong>Anthropic CVP: assessed by Claude Mythos</strong> &mdash; <a href="https://docs.clawker.dev/mythos-assessment">read the assessment</a></p>
+
 <div align="center">
   <img src="docs/assets/system-diagram.png" alt="system diagram" width="700">
 </div>
