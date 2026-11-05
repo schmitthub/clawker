@@ -275,6 +275,32 @@ func TestActions_RegisterCallback_TTLCapped(t *testing.T) {
 		"expiry %v exceeds the %v cap", expires, DefaultCallbackTTL)
 }
 
+// TestActions_CloseDynamicListener_BeforeServe: a listener whose Serve
+// goroutine has not run yet is not registered with its [http.Server], so
+// Shutdown alone leaves the port bound. Close must release it anyway.
+func TestActions_CloseDynamicListener_BeforeServe(t *testing.T) {
+	a, _ := newTestActions(t, "")
+	port := getFreePort(t)
+	l, err := net.Listen("tcp", net.JoinHostPort(consts.Localhost, strconv.Itoa(port)))
+	require.NoError(t, err)
+	a.mu.Lock()
+	a.dynamicListeners[port] = &dynamicListener{
+		port:      port,
+		sessionID: "s",
+		listeners: []net.Listener{l},
+		servers:   []*http.Server{{}},
+	}
+	a.mu.Unlock()
+
+	a.closeDynamicListener(context.Background(), port)
+
+	assertPortClosed(t, consts.Localhost, port)
+	a.mu.RLock()
+	_, exists := a.dynamicListeners[port]
+	a.mu.RUnlock()
+	assert.False(t, exists)
+}
+
 // TestActions_RegisterCallback_BrowserFailure: when the browser cannot
 // open, the session and its listener are removed.
 func TestActions_RegisterCallback_BrowserFailure(t *testing.T) {
