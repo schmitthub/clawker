@@ -38,7 +38,9 @@ const (
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
 // ExportTelemetry is the agent telemetry lane: clawkerd relays the agent's OTLP
 // batches here and the CP stamps provenance before it forwards them to
-// the collector.
+// the collector. The host actions (OpenURL, GitCredential, and the OAuth
+// callback RPCs) are the path from the agent to the host proxy: clawkerd
+// relays each request here and the CP sends it to the host proxy.
 //
 // Trust model:
 //   - The CLI mints the agent's leaf cert at container-create time,
@@ -57,9 +59,10 @@ const (
 //     one-time per container creation.
 //
 // Transport: mTLS over TCP on the CP's clawker network agent listener.
-// Server requires a client cert chained to the CLI CA; authorization
-// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
-// client (scope `agent:self:register`).
+// Server requires a client cert chained to the CLI CA. Register also
+// requires a Hydra-issued bearer token scoped to the `clawker-agent`
+// OAuth2 client (scope `agent:self:register`). The other RPCs are public
+// scope: no bearer token; mTLS plus the identity gate authorize them.
 type AgentServiceClient interface {
 	// Register binds (peer cert thumbprint, container_id) into the CP's
 	// agentregistry. Container_id is read from the peer cert's URI SAN;
@@ -193,7 +196,9 @@ func (c *agentServiceClient) DeleteCallback(ctx context.Context, in *DeleteCallb
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
 // ExportTelemetry is the agent telemetry lane: clawkerd relays the agent's OTLP
 // batches here and the CP stamps provenance before it forwards them to
-// the collector.
+// the collector. The host actions (OpenURL, GitCredential, and the OAuth
+// callback RPCs) are the path from the agent to the host proxy: clawkerd
+// relays each request here and the CP sends it to the host proxy.
 //
 // Trust model:
 //   - The CLI mints the agent's leaf cert at container-create time,
@@ -212,9 +217,10 @@ func (c *agentServiceClient) DeleteCallback(ctx context.Context, in *DeleteCallb
 //     one-time per container creation.
 //
 // Transport: mTLS over TCP on the CP's clawker network agent listener.
-// Server requires a client cert chained to the CLI CA; authorization
-// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
-// client (scope `agent:self:register`).
+// Server requires a client cert chained to the CLI CA. Register also
+// requires a Hydra-issued bearer token scoped to the `clawker-agent`
+// OAuth2 client (scope `agent:self:register`). The other RPCs are public
+// scope: no bearer token; mTLS plus the identity gate authorize them.
 type AgentServiceServer interface {
 	// Register binds (peer cert thumbprint, container_id) into the CP's
 	// agentregistry. Container_id is read from the peer cert's URI SAN;

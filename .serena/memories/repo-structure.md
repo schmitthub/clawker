@@ -5,8 +5,9 @@ Reference map of the clawker repo. Referenced from root `AGENTS.md`.
 ```
 ├── api/
 │   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC)
-│   ├── agent/v1/              # AgentService protobuf (Register RPC for clawkerd→CP identity binding)
-│   └── clawkerd/v1/           # ClawkerdService protobuf (Session RPC for CP→clawkerd dispatch)
+│   ├── agent/v1/              # AgentService protobuf (clawkerd→CP: Register identity binding, ExportTelemetry OTLP relay, host actions OpenURL/GitCredential/RegisterCallback/GetCallbackData/DeleteCallback)
+│   ├── clawkerd/v1/           # ClawkerdService protobuf (Session RPC for CP→clawkerd dispatch)
+│   └── hostproxy/v1/          # HostProxyService protobuf (host proxy→CP outbound Connect stream; CP sends authorized host actions)
 ├── .agents/                   # Shared instructions, rules, docs, skills, and command guards
 ├── .claude/                   # Claude Code settings, reviewers, hooks, and shared rule/skill links
 ├── .codex/                    # Codex settings and reviewer definitions
@@ -26,20 +27,23 @@ Reference map of the clawker repo. Referenced from root `AGENTS.md`.
 │   ├── agent/                 # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, AgentEvent + state repo
 │   ├── auth/                  # Typed agent/project identity primitives (ProjectSlug, AgentName)
 │   ├── dockerevents/          # Docker events feeder + typed DockerEvent envelope + container state repo
-│   ├── firewall/              # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, rules store
+│   ├── firewall/              # Firewall: Handler (12 RPCs), Stack, Envoy+CoreDNS, rules store
 │   │   └── ebpf/              # eBPF loader + Manager
 │   │       └── netlogger/     # Per-decision egress event emitter (ringbuf → enrich → OTLP)
+│   ├── hostgateway/           # CP side of the AgentService host actions (forwards to the host proxy stream)
 │   ├── infracerts/            # CLI-root CA material (long-lived) for CP→clawkerd dial
 │   ├── manager/               # Host-side CP lifecycle (Start/Stop/IsRunning/ProbeHealthz), embedded clawkercp + ebpf-manager + bpffs-delegate binaries
 │   ├── otel/                  # CP-side OTel logger provider factory (trusted-infra OTLP)
 │   ├── otelcerts/             # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS/netlogger)
+│   ├── otelgateway/           # CP OTLP gateway for agent telemetry (ExportTelemetry → collector otlp/agents)
 │   ├── pubsub/                # Generic typed pub/sub pipe: Topic[T], Event[T] (dumb, stateless, panic-recovered delivery)
+│   ├── sdscerts/              # mTLS client identity Envoy uses to dial the CP certificate SDS server
 │   ├── server/                # AdminService composition (NewAdminServer) + authz + AgentService listener wiring
-│   ├── subprocess/            # Ory subprocess lifecycle manager (start, health, crash, shutdown)
-│   └── mocks/
+│   └── subprocess/            # Ory subprocess lifecycle manager (start, health, crash, shutdown)
 ├── internal/
 │   ├── auth/                  # CLI-side auth material + CP dial helpers
 │   ├── build/                 # Build-time metadata (leaf, stdlib only)
+│   ├── bundle/                # Bundle-install model: three-tier component resolution, bundle-directory loading, source/identity vocabulary
 │   ├── bundler/               # Dockerfile generation, harness bundle + stack loading/validation/composition, egress composition, semver resolution, npm registry (manifest schema types live in internal/config)
 │   ├── clawker/               # CLI domain package: types + interface declarations only, no internal imports (Session)
 │   ├── clawkercmd/            # CLI entry point: builds and runs the command tree
@@ -65,7 +69,6 @@ Reference map of the clawker repo. Referenced from root `AGENTS.md`.
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   ├── idmap/                 # ID-mapped workspace views for rootless daemons: mapping math, view paths, bind rewriting (leaf)
 │   ├── iostreams/             # I/O streams, colors, styles, spinners, layout
-│   ├── keyring/               # Credential storage
 │   ├── logger/                # Struct-based zerolog; Factory noun
 │   ├── monitor/               # Monitoring stack templates
 │   ├── project/               # Registry facade over Store[ProjectRegistry] + project identity, CRUD, worktree lifecycle

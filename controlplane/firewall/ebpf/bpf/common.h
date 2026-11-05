@@ -458,7 +458,8 @@ static __always_inline bool is_in_subnet(__u32 ip, __u32 net_addr, __u32 net_mas
 //                         is loopback-only inside its own container
 //   coredns_ip 53       — already rewritten by the DNS branch; kept so a
 //                         direct dial to the CoreDNS address stays allowed
-//   cp_ip      agent    — Register + Export (mTLS, identity-gated)
+//   cp_ip      agent    — Register, ExportTelemetry, and host actions
+//                         (mTLS, identity-gated)
 //   cp_ip      hydra    — clawkerd's one-time assertion exchange
 //
 // dst_port is host byte order, IPs are network byte order.
@@ -732,9 +733,11 @@ submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
 // enter_enforced is the shared fast-path preamble for every clawker BPF
 // program. It handles the active-bypass detection (when check_bypass is
 // true) and the container_map lookup that gates enforcement. There is no
-// uid exemption: root inside an enrolled container is enforced like every
-// other uid. clawkerd (PID 1, root) needs only the CP agent and Hydra
-// ports and CoreDNS, which allowed_internal admits.
+// uid exemption: root inside an enrolled container goes through the same
+// checks as every other uid. clawkerd (PID 1, root) needs only the CP agent
+// and Hydra ports and CoreDNS, which allowed_internal admits. Root sockets
+// without the mark are enforced. Root can opt out by setting SO_MARK =
+// CLAWKER_MARK; this is by design because root in the container is trusted.
 //
 // Returns enum enter_state:
 //   ENTER_NOT_MANAGED — container not in container_map; caller
@@ -881,6 +884,8 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	// Loop prevention: skip redirect for Envoy/CoreDNS upstream traffic.
 	// Envoy sets SO_MARK = CLAWKER_MARK on its upstream sockets
 	// (ref: iximiuz.com eBPF transparent proxy pattern).
+	// Only a process with CAP_NET_RAW or CAP_NET_ADMIN (root) can set this mark;
+	// the agent user cannot.
 	__u32 mark = 0;
 	bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
 	if (mark == CLAWKER_MARK)

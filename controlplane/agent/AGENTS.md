@@ -13,9 +13,10 @@ package, one umbrella entry point (`agent.Start`).
 
 ## Single entry point: `agent.Start`
 
-`cmd/clawkercp/main.go` wires the agent gRPC listener and registry in
-Step 8, then calls `agent.Start` after Step 9 (SetReady) once the
-dialer is constructed:
+`internal/controlplane/cmd.go` builds the agent registry in
+`buildAgentInfra` and the agent gRPC listener in `buildGRPCStack`
+(`controlplane/server/grpc_stack.go`). After `SetReady`,
+`startAgentDialer` constructs the dialer and calls `agent.Start`:
 
 ```go
 agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
@@ -24,7 +25,7 @@ agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
         return listAgentIDs(ctx, listAgentsOpts{All: true})
     },                                 // returns purpose=agent containers, All:true
     PeerLookup:   agentPeerLookup,     // peer-IP→Docker→labels resolver (required)
-    Dialer:       dialer,              // agent.New(...) for CP→clawkerd
+    Dialer:       dialer,              // agent.NewDialer(...) for CP→clawkerd
     DockerTopic:  dockerTopic,         // *pubsub.Topic[dockerevents.DockerEvent]
     AgentTopic:   agentTopic,          // *pubsub.Topic[AgentEvent]
     Log:          log.With("component", "agent"),
@@ -68,8 +69,8 @@ now unexported helpers behind `Start`.
 | `events.go` | The `AgentEvent` envelope and its vocabulary: `EventType` (session/exec/registry), `Action`, `Status`, `Reason`, plus the `Agent`/`Message` sub-structs and the `newAgentEvent` constructor |
 | `event_state.go` | `AgentEventState` (the state-repository projection target) + `ExecutorEventState` + `Trust` — the observed-now worldview value types a subscriber folds events into |
 | `publish.go` | `publish(topic *pubsub.Topic[AgentEvent], ev AgentEvent) bool` — the single producer seam. Stamps event ID/Timestamp/Source; nil-topic is a no-op; non-blocking |
-| `init_steps.go` | `initPlan` — the static one-time init step list (config/git/credentials/ssh/post-init) the Executor runs once per container |
-| `boot_steps.go` | `bootPlan` — the static every-start boot step list (docker-socket/pre-run) the Executor runs on each start |
+| `init_steps.go` | `InitPlan()` — the static one-time init step list (config/git/credentials/ssh/post-init) the Executor runs once per container |
+| `boot_steps.go` | `BootPlan(defaultCmd)` — the static every-start boot step list (docker-socket/pre-run) the Executor runs on each start |
 | `lister.go` | `ContainerLister` + `ListOpts` + `NewContainerLister` — Docker lookup of `purpose=agent` container IDs, used by `Start`/`DialAllRunning` |
 | `repository.go` | `AgentStore` (the `AgentEventState` worldview map) + `Repository` aggregator. `Subscribe`/`SubscribeDockerEvents` wire the stores to the agent + docker topics; `project` is the sole mutation path that folds an `AgentEvent` into the worldview |
 | `register_handler.go` | `Handler` (the AgentService server: Register, ExportTelemetry, and the host actions) — Register consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row. Declares the `OtelForwarder` interface (`Handler.OtelGateway`, nil = degraded) and the `HostForwarder` interface (`Handler.HostGateway`, nil = degraded) |
@@ -184,8 +185,8 @@ or strands the dispatch on a panic.
 empty-ACK behavior discarded those flags, so CP re-ran BOTH plans on
 every reconnect. With the real ACK, `utils.go` keys the plans:
 `shouldAgentInit` makes init one-shot off `HelloAck.Initialized` (the
-`initPlan` runs once per container), and `shouldAgentBoot` runs the
-`bootPlan` every start off `HelloAck.CmdRunning`.
+`InitPlan()` runs once per container), and `shouldAgentBoot` runs
+`BootPlan(defaultCmd)` every start off `HelloAck.CmdRunning`.
 
 ## Trust outcomes via agent events
 
@@ -303,10 +304,12 @@ network}`, `github.com/moby/moby/client`,
 `crypto/{sha256,subtle,tls,x509}`, `database/sql`, `encoding/hex`,
 `net/netip`.
 
-**Used by**: `cmd/clawkercp` (agent.Start, agent.NewSQLiteWriter,
-agent.NewHandler, agent.IdentityInterceptor, agent.New for the
-dialer), `internal/controlplane/server.go` (`agent.Registry` type
-on adminServer for ListAgents).
+**Used by**: `internal/controlplane/cmd.go` (agent.Start,
+agent.NewSQLiteWriter, agent.NewMobyPeerLookup, agent.NewRepository,
+agent.NewAgentWatcher, agent.NewDialer), `controlplane/server/grpc_stack.go`
+(agent.NewHandler, agent.IdentityInterceptor), and
+`controlplane/server/server.go` (`agent.Registry` type on adminServer
+for ListAgents).
 
 ## Test seam
 

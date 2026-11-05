@@ -5,7 +5,7 @@ Clawker is a Go CLI tool that runs coding agents in secure, reproducible Docker 
 ## Related Docs
 
 - `mem:architecture` — package layering and dependency boundaries.
-- `internal/storage/AGENTS.md` — storage package API, node tree mem:architecture, merge/write internals.
+- `internal/storage/AGENTS.md` — storage package API, node tree architecture, merge/write internals.
 - `internal/config/AGENTS.md` — config package contracts, persistence model, and test helpers.
 
 Agent file layout is in `.agents/skills/agent-files/SKILL.md`.
@@ -526,7 +526,7 @@ Clawker-specific middleware that builds on the External Engine:
 
 - Initializes External Engine with clawker's label configuration
 - Receives `Config` interface for label keys, naming, and path helpers
-- Handles clawker-specific logic (agent naming, volume mem:conventions)
+- Handles clawker-specific logic (agent naming, volume conventions)
 - Exposes high-level interface for Cobra commands
 
 ```go
@@ -655,7 +655,7 @@ General codes (extensible later):
 - `0` - Success
 - `1` - General error
 
-Pattern follows GitHub CLI mem:conventions.
+Pattern follows GitHub CLI conventions.
 
 ## 7. Security Model
 
@@ -693,13 +693,11 @@ This supplements environment variable passing for persistent credential storage.
 
 So `post_init` is an init step (one-time) and `pre_run` is a boot step (every start). On a `docker start` after stop, init is skipped (marker present) but boot re-runs and re-forks the CMD.
 
-**PID-1 privilege model**: eBPF programs are attached from outside the container by the eBPF manager. Agent containers require no elevated capabilities — they run fully unprivileged. clawkerd runs as root for log writes, bootstrap reads, and `Wait4(-1)` orphan drain; the user CMD is the privilege-dropped child, never the supervisor itself (kernel runs `setgroups → setgid → setuid` between fork and exec).
-
 #### Implementation
 
 The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:<content hash>`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `mem:architecture` and `controlplane/firewall/AGENTS.md` for the as-built design.
 
-**Why this mem:architecture:**
+**Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
 - **Real-time dns_cache via dnsbpf plugin**: Every successful A-record response goes through the `dnsbpf` CoreDNS plugin, which writes `IP → {identity, TTL}` into the pinned BPF `dns_cache` map (identity = the zone's CP-allocated route identity). Writing at resolution time keeps the cache in step with DNS round-robin — the IP the agent is about to connect to is always the one just answered. NXDOMAIN responses are never written to the cache.
 - **TLS inspection**: Envoy terminates TLS for every allowed HTTPS/WSS rule, with certificates signed by the firewall CA. Wildcard TCP chains obtain per-SNI certificates from the CP SDS service over mTLS. CP creates the SDS client files with owner-only access for the Envoy process. The client directory grants read and traversal access to the Envoy group and is mounted read-only.
@@ -707,7 +705,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 - **Global BPF route_map**: `route_key` is `{identity, dst_port, l4_proto}` (no `cgroup_id`). Container enforcement is gated on presence in `container_map` — all enforced containers share the same routes. Enables live rule sync and eliminates 1×N route duplication.
 - **Dual-stack IPv6 handling**: `cgroup/connect4` handles AF_INET sockets. `cgroup/connect6` routes IPv4-mapped IPv6 destinations (`::ffff:x.x.x.x`) with the same logic as connect4 — this closed a prior security bug where dual-stack sockets (SSH, curl, Node.js) bypassed the firewall entirely. `cgroup/sendmsg6` and `cgroup/recvmsg6` similarly handle UDP DNS via dual-stack sockets so `nslookup`-style resolvers can't bypass CoreDNS. Native IPv6 is denied (documented limitation).
 - **Stale pin recovery**: `ebpf.Manager.Load()` detects pinned maps whose key/value sizes changed (e.g., after the `route_key` schema change) and removes them before loading new programs. Prevents startup failures after BPF struct changes.
-- **Agent container capabilities**: Agent containers need zero Linux capabilities. The eBPF manager container handles BPF program loading/attachment from outside. The custom CoreDNS container requires `CAP_BPF + CAP_SYS_ADMIN` (plus a bind mount of the same BPF filesystem the CP loads against, at `/sys/fs/bpf`) so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries.
+- **Agent container capabilities**: The firewall needs no Linux capabilities in agent containers. Agent containers still keep Docker's default set, which includes `CAP_NET_RAW`, but the agent user has no effective capabilities. The eBPF manager container handles BPF program loading/attachment from outside. The custom CoreDNS container requires `CAP_BPF + CAP_SYS_ADMIN` (plus a bind mount of the same BPF filesystem the CP loads against, at `/sys/fs/bpf`) so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries.
 
 **Firewall container lifecycle**: The firewall runs as Docker containers managed by `Stack.EnsureRunning()`, called from CP startup. `Stack` manages container lifecycle and runs dual health check loops (Envoy HTTP + CoreDNS HTTP, 5s interval). The CP's agent watcher drives the `drain-to-zero` path that calls `Stack.Stop()` when no clawker containers are running.
 
@@ -723,7 +721,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Bypass escape hatch**: `clawker firewall bypass` sets an eBPF bypass flag for instant unrestricted egress, auto-clearing after a configurable timeout. No rule flushing or re-application needed — just a BPF map update.
 
-**PID-1 privilege model**: Agent containers run fully unprivileged, with `no-new-privileges` set by default in `applySecurityOptions` (a user `--security-opt no-new-privileges=...` replaces it). The container user stays in the `docker` group in the image even without `security.docker_socket`: clawkerd resolves supplementary groups once at startup, before CP boot steps, so membership cannot be added at runtime. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, write log files, and reap reparented orphans; the user CMD it forks runs as the unprivileged container user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities.
+**PID-1 privilege model**: Agent containers get no added privileges, with `no-new-privileges` set by default in `applySecurityOptions` (a user `--security-opt no-new-privileges=...` replaces it). The container user stays in the `docker` group in the image even without `security.docker_socket`: clawkerd resolves supplementary groups once at startup, before CP boot steps, so membership cannot be added at runtime. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, read the bootstrap, write log files, and reap reparented orphans (`Wait4(-1)`). The user CMD it forks is never the supervisor and runs as the unprivileged container user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities. Agent containers keep Docker's default capability set (no default `CapDrop`), but the agent user has no effective capabilities. Root in the container is trusted (clawkerd, host operator); see `mem:security/core`.
 
 #### Per-decision telemetry / eBPF egress event stream
 
@@ -790,11 +788,11 @@ No error, no duplicate—deterministic behavior.
 A Docker Compose stack on its own compose network (never `clawker-net`; every host publish binds `127.0.0.1`, so agent containers reach no monitoring service directly). The collector also joins the internal `clawker-telemetry` network, which only the CP, Envoy, and CoreDNS join:
 
 - **OpenTelemetry Collector** - Three OTLP receivers on distinct trust lanes: the untrusted `otlp` receiver (host CLI telemetry on loopback), the mTLS-gated `otlp/agents` receiver (agent telemetry forwarded by the control plane gateway with CP-stamped identity), and the mTLS-gated `otlp/infra` receiver on `consts.MonitoringOtelInfraPort` (4319) (trusted CP-side emitters — CP zerolog bridge, Envoy access logs, CoreDNS otel plugin, netlogger — all dialing `otel-collector` over the `clawker-telemetry` network; the receiver has no host publish). Routes logs into the six OpenSearch indices and exposes a Prometheus scrape endpoint for metrics. The two-lane split is load-bearing for netlogger's trust model — infra emitters carry per-handshake leaf certs minted by `otelcerts.Service` and never cross into the untrusted agent lane. A `traces` pipeline is configured but idle — agents don't emit spans today.
-- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
+- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code telemetry through the CP gateway lane: clawkerd relay → `ExportTelemetry` → `otlp/agents` → `routing/agents`), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 
-Container images are built with OTEL environment variables pointing to the collector. The stack is preconfigured by a one-shot `clawker-opensearch-bootstrap` compose service that runs after OpenSearch reports `service_healthy` and before `otel-collector` / `prometheus` start (`service_completed_successfully` gate): component + index templates with explicit per-source field mappings (including `clawker-ebpf-egress` for netlogger records), per-index ingest pipelines on the trusted-infra OTLP lane (the `envelope-normalize` mirror that surfaces `resource.attributes.*` for OSD Explore default columns), a default ISM retention policy auto-attached via `ism_template.index_patterns`, and Dashboards index-pattern saved objects for all six indices. Source assets live in `internal/monitor/templates/opensearch-bootstrap/` and are re-applied every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — adding them is a matter of dropping the Dashboards-exported NDJSON into `opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
+Agent images set `OTEL_EXPORTER_OTLP_ENDPOINT` to `consts.AgentOTLPRelayURL` (clawkerd's loopback relay, `http://127.0.0.1:4318`); agents never dial the collector. The stack is preconfigured by a one-shot `clawker-opensearch-bootstrap` compose service that runs after OpenSearch reports `service_healthy` and before `otel-collector` / `prometheus` start (`service_completed_successfully` gate): component + index templates with explicit per-source field mappings (including `clawker-ebpf-egress` for netlogger records), per-index ingest pipelines on the trusted-infra OTLP lane (the `envelope-normalize` mirror that surfaces `resource.attributes.*` for OSD Explore default columns), a default ISM retention policy auto-attached via `ism_template.index_patterns`, and Dashboards index-pattern saved objects for all six indices. Source assets live in `internal/monitor/templates/opensearch-bootstrap/` and are re-applied every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — adding them is a matter of dropping the Dashboards-exported NDJSON into `opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
 
 ### 9.2 Verbosity Levels
 

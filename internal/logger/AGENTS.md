@@ -73,7 +73,7 @@ type OtelOptions struct {
     //     config, not this struct). Shape preserved for future on-disk-
     //     cert consumers. If any one is set, all three must be set.
     //   - In-process TLSConfig: caller passes a fully-formed *tls.Config
-    //     (typically built by internal/controlplane/otelcerts with a
+    //     (typically built by controlplane/otelcerts with a
     //     GetClientCertificate hook that re-mints per handshake). Used by
     //     clawkercp so the leaf never lands on disk and rotation matches
     //     the connection lifecycle. When non-nil, file-path fields are

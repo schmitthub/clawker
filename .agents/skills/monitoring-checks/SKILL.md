@@ -7,13 +7,13 @@ description: Use when changing or verifying the monitoring stack: OpenTelemetry 
 
 Package contract and runtime UAT: `internal/monitor/AGENTS.md`.
 
-> **Backend:** logs in OpenSearch — six indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), `clawker-coredns` (firewall DNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries use pattern `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker` (Claude Code beta export gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, both env vars baked into the image). Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Resource attributes are written FLAT at `resource.*` (so `resource.service.name`, `resource.project`, `resource.agent`) by the OTel `opensearchexporter` (SS4O shape). The `envelope-normalize` ingest pipeline only mirrors `resource.service.name` → `resource.attributes.service.name` (the one path OSD Explore's default log columns hard-code) — other resource attrs are NOT duplicated under `resource.attributes.*`. Prefer the flat `resource.<k>` path for queries. Event content lives under `attributes.*` (`attributes.event.name`, `attributes.tool_name`).
+> **Backend:** logs in OpenSearch — six indices `claude-code` (Claude Code OTLP, forwarded by the CP on the gateway lane: receiver `otlp/agents`, mTLS, `ingest_source=cp_gateway`), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), `clawker-coredns` (firewall DNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries use pattern `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker` (Claude Code beta export gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, both env vars baked into the image). Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Resource attributes are written FLAT at `resource.*` (so `resource.service.name`, `resource.project`, `resource.agent`) by the OTel `opensearchexporter` (SS4O shape). The `envelope-normalize` ingest pipeline only mirrors `resource.service.name` → `resource.attributes.service.name` (the one path OSD Explore's default log columns hard-code) — other resource attrs are NOT duplicated under `resource.attributes.*`. Prefer the flat `resource.<k>` path for queries. Event content lives under `attributes.*` (`attributes.event.name`, `attributes.tool_name`).
 >
 > **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, the `clawker_prometheus` direct-query datasource, an OSD `Clawker` workspace with `features: ["use-case-all"]`, and Dashboards saved objects (index patterns for every log index + the preconfigured `Claude Code` dashboard with KPI strip and filter controls) on every `monitor up`. After the import, bootstrap writes each index pattern's field list from the live mapping: OpenSearch Dashboards 3.9 no longer fetches it at load time, and a pattern without `fields` makes every field-naming visualization fail with "Could not locate that index-pattern-field". The visualization surface grows via the NDJSON-export-and-bake workflow into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson`.
 
 # Prometheus Metric Labels — `type` is rewritten to `kind`
 
-The OTel collector's `transform/metrics` processor unconditionally renames any datapoint attribute named `type` to `kind` before metrics reach the Prometheus exporter. This is a workaround for a bug in the OpenSearch SQL plugin's experimental direct-query Prometheus connector (currently pinned at OpenSearch 3.6.0 — see `OpenSearchImage` / `OpenSearchDashboardsImage` in `internal/monitor/templates.go`).
+The OTel collector's `transform/metrics` processor unconditionally renames any datapoint attribute named `type` to `kind` before metrics reach the Prometheus exporter. This is a workaround for a bug in the OpenSearch SQL plugin's experimental direct-query Prometheus connector (currently pinned at OpenSearch 3.9.0 — see `OpenSearchImage` / `OpenSearchDashboardsImage` in `internal/monitor/templates.go`).
 
 **What it means when querying:**
 
@@ -42,6 +42,8 @@ Cross-reference with [Claude Code's monitoring docs](https://code.claude.com/doc
 ## Common clawker-injected fields (from OTEL_RESOURCE_ATTRIBUTES)
 
 `project`, `agent`, `session_id`
+
+> **CP gateway stamp**: for records on the gateway lane (`claude-code`), the CP sets `project`, `agent`, and `container_id` from the verified agent identity. It deletes the client values of these keys before it adds its own values. It also deletes client keys under the reserved `clawker.` prefix (`controlplane/otelgateway/gateway.go`). The CP and the collector (`resource/agent_gateway`) set `ingest_source=cp_gateway` on these records. The collector sets `ingest_source=untrusted_otlp` on records from the untrusted `otlp` port (sender-declared, forgeable).
 
 > **netlogger exception**: for `clawker-ebpf-egress` records (`service.name=ebpf-egress`), `project` and `agent` are NOT carried via `OTEL_RESOURCE_ATTRIBUTES` on a sender. The CP-side netlogger pipeline derives them from the target container's `dev.clawker.{project,agent}` Docker labels via `LabelCache` enrichment, keyed on the BPF-attested `cgroup_id`. They land as event-time attributes on the record (`attributes.project`, `attributes.agent`), not under `resource.*`.
 
@@ -150,7 +152,12 @@ When modifying templates, datasource, workspace, or saved objects:
    ```
    make clawker && clawker monitor init --force && clawker monitor down --volumes && clawker monitor up
    ```
-4. Verify saved objects landed in the `Clawker` workspace at `http://localhost:5601`. For dashboards, open Discover/Explore against the relevant index pattern to confirm fields resolve before adjusting visualizations.
+4. After changes to the telemetry relay, the CP gateway, or a collector lane, run the relay e2e test on the host:
+   ```
+   go test ./test/e2e -run TestTelemetryRelay_E2E -count=1
+   ```
+   Source: `test/e2e/telemetry_relay_internal_test.go`.
+5. Verify saved objects landed in the `Clawker` workspace at `http://localhost:5601`. For dashboards, open Discover/Explore against the relevant index pattern to confirm fields resolve before adjusting visualizations.
 
 # Reference
 

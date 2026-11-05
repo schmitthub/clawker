@@ -34,7 +34,8 @@ import (
 // ALSConfig configures the Envoy access logger's upstream cluster. MTLS=true
 // targets the otel-collector's mTLS receiver on Port; MTLS=false omits the OTel
 // sink + cluster (stdout-only) — infra services must never cross into the
-// untrusted otel-collector:4317 lane reserved for agent containers.
+// untrusted otel-collector:4317 receiver, which only the host CLI uses
+// (agents never reach it).
 type ALSConfig struct {
 	Port int
 	MTLS bool

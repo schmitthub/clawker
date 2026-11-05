@@ -23,7 +23,7 @@ type egressRule struct {
 	// port ("443") or an inclusive range ("9000-9100"). It MUST be a string —
 	// the firewall writes numeric-looking values quoted (port: "443") and range
 	// specs, both of which fail to unmarshal into an int and would poison the
-	// whole rules file (fail-closed → every /open/url blocked).
+	// whole rules file (fail-closed → every open_url action blocked).
 	Port        string     `yaml:"port,omitempty"`
 	Action      string     `yaml:"action,omitempty"`
 	PathRules   []pathRule `yaml:"path_rules,omitempty"`
@@ -213,7 +213,7 @@ var errEgressRulesInvalid = errors.New("egress rules file invalid")
 // any unusable file — missing, unreadable, unparseable, or carrying an
 // uncompilable "~" regex — is a hard error so the host proxy refuses to start
 // (and thus fails container startup) rather than come up and silently deny
-// every /open/url while masking the cause. Only an empty path (firewall
+// every open_url action while masking the cause. Only an empty path (firewall
 // genuinely disabled) is a legitimate skip; when enabled the file must exist
 // and be valid, exactly as Envoy will not boot without a valid config.
 func validateEgressRulesFile(filePath string) error {
@@ -416,8 +416,8 @@ func normalizeEgressRule(r egressRule) egressRule {
 
 // portSpecMatches reports whether the request port p satisfies the rule's
 // dynamic port spec: a single port ("443") or an inclusive range ("9000-9100").
-// A range only ever attaches to opaque protos (tcp/ssh/udp); since /open/url
-// handles http/https only, a range never matches a browser URL in practice —
+// A range only ever attaches to opaque protos (tcp/ssh/udp); since the open_url
+// action handles http/https only, a range never matches a browser URL in practice —
 // but the membership check is correct regardless.
 //
 // It MUST parse identically to config.ParsePortSpec, which is the boundary the

@@ -42,7 +42,7 @@ Keep `.agents/` independent of any harness. Store native settings and tool-speci
 - Docker is always available. Never defer or skip Docker-based tests. When a change touches containers, networks, or volumes, write the integration test in the same task.
 - Unit tests are co-located `*_test.go` files without Docker. `test/e2e/` needs Docker; `test/whail/` needs Docker and BuildKit. No build tags; directory separation only. Name tests `TestFunctionName`, `TestFeature_Integration`, or `TestFeature_E2E`.
 - Each package in the dependency DAG provides its own test utilities. If a node lacks them, add them first.
-- Use unique agent names with random suffixes. Stop containers before removing them. Register cleanup with `t.Cleanup()` and use `context.Background()` inside it. Gate Docker tests with `RequireDocker(t)` or `SkipIfNoDocker(t)`.
+- Use unique agent names with random suffixes. Stop containers before removing them. Register cleanup with `t.Cleanup()` and use `context.Background()` inside it. In `test/whail/`, gate Docker tests with `requireDocker(t)` (`test/whail/helpers_test.go`). The `test/e2e/` harness has no Docker gate: it fails the test when Docker calls fail.
 - Never discard errors; log cleanup failures with `t.Logf`.
 - Co-located `*_test.go` files never import `test/e2e/harness`. Never call `factory.New()` outside `internal/clawkercmd/cmd.go`; build `&cmdutil.Factory{}` literals with test doubles.
 - Add no production code only to serve a test seam. Test doubles adapt to production, not the reverse.

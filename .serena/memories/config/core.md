@@ -11,6 +11,7 @@
 - `ProjectStore().Set` / `Remove` stage changes. `Write` persists them. Settings use the corresponding store.
 - Keys use explicit segments; a literal dot in an alias name is not a separator.
 - `internal/consts` owns shared names and path primitives. Use config accessors where the Config interface provides the required value. Never hardcode config file names, subdirectories, or label domains in callers; read `ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, and similar methods.
+- Settings migrations (`internal/config/migrations.go`, `SettingsMigrations`) are silent unless noted: `migrateRemoveLegacyMonitoringKeys`, `migrateDockerSocketToHost` (prints a notice), `migrateRemoveHostProxyPortKeys`. Host proxy port keys: commits 2d3ee81e and 675ba4d8 merged `host_proxy.manager.port` and `host_proxy.daemon.port` into one `host_proxy.port`. Commit a3c5352e removed `host_proxy.port` (the host proxy dials out to the CP and has no action listener). `migrateRemoveHostProxyPortKeys` now removes `host_proxy.manager` and `host_proxy.daemon.port`; `host_proxy` keeps only `daemon` (poll interval, grace period, error limit).
 - `internal/config/schema.go` and the component schema files define persisted fields. `cmd/gen-docs/` generates JSON schemas from them.
 - Package contracts: `internal/config/AGENTS.md`, `internal/project/AGENTS.md`, `internal/state/AGENTS.md`.
 - For engine mutation and persistence rules: `mem:storage/core`.

@@ -73,6 +73,12 @@ an extension exists to land telemetry somewhere. Each lane declares:
 | `service_names` | The `service.name` values the collector routes into this lane's index. |
 | `retention` | `default` (or omitted) joins the shared clawker retention policy; `custom` means the extension ships its own policy files under `ism-policies/`, scoped to its own indices. |
 
+A service that runs inside an agent container must export OTLP/HTTP to
+`http://127.0.0.1:4318`, the clawkerd relay in the container. Agent containers
+cannot reach the collector hostname. The control plane overwrites the
+`project`, `agent`, and `container_id` resource attributes with the identity it
+verified. Then the collector routes each record to a lane by its `service.name`.
+
 ### `metrics`
 
 Optional collector-side shaping for the extension's metrics on the shared

@@ -1,12 +1,13 @@
 # CLI and Docker boundaries
 
-- `cmd/clawker/` is the binary entry point; `internal/clawker/` owns the CLI process entry logic.
+- `cmd/clawker/` is the binary entry point; `internal/clawkercmd/` owns the CLI process entry logic.
 - `internal/cmd/root/` registers commands and Docker-style aliases. Subcommand packages live under `internal/cmd/<noun>/`.
 - `internal/cmdutil/factory.go` declares Factory. `internal/cmd/factory/default.go` wires its lazy closure fields.
 - Follow `NewCmd(f, runF)`: construction tests capture options through `runF`; execution tests use the same command with injected dependencies.
 - Shared container operations belong in `internal/cmd/container/shared/`. A noun's subdirectories otherwise represent subcommands.
 - Docker calls pass through `internal/docker` and `pkg/whail`. Only `pkg/whail` imports the Moby `APIClient` connector and only `internal/docker` imports `pkg/whail`. Typed Moby imports (`client.Filters`, `container.Config`, ...) are fine anywhere. Standalone daemon packages (`internal/hostproxy`, `internal/cmd/bridge`, `cmd/clawkercp`, `internal/controlplane`) may import the connector directly; they need lightweight Docker access without whail's label isolation.
-- Cobra: always `PersistentPreRunE`, never `PersistentPreRun`. Every command sets `Example` with indented examples. Follow https://clig.dev/ mem:conventions.
+- `whail` `ContainerCreate` with `EnsureNetwork`: when `HostConfig.NetworkMode` is empty or `default`, the ensured network becomes the network mode (`pkg/whail/container.go`), so agents are not also on the default bridge (no second NIC, no default route through it). An explicit mode is kept, and the caller's HostConfig is not mutated. With no `--network` flag the CLI sends an endpoint under the `default` key; whail moves its settings to the ensured network (commits 79aac3a7, 0bc389f3).
+- Cobra: always `PersistentPreRunE`, never `PersistentPreRun`. Every command sets `Example` with indented examples. Follow https://clig.dev/ conventions.
 - Managed labels are authoritative. A matching container name does not establish ownership.
 - A project agent has three name segments. A global agent has two and omits the project label; an empty project label is not equivalent.
 - CP command operations use `f.AdminClient(ctx)`. Do not call the firewall handler directly from a CLI command.

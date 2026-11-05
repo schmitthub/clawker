@@ -184,10 +184,9 @@ func legacyBuildKeys() [][]string {
 // carried and pointing at the replacement surface. Without the migration the
 // keys would be silently ignored (and preserved on re-save) while the build
 // produced something entirely different from what the user configured.
-// Mirrors migrateRemoveLegacyMonitoringKeys: one-shot notice, file rewritten
-// clean by the migration framework's auto-save, per file layer (a legacy key
-// duplicated in clawker.local.yaml or the user config-dir clawker.yaml is
-// cleaned in each owning file).
+// The migration framework's auto-save rewrites the file clean, per file
+// layer (a legacy key duplicated in clawker.local.yaml or the user
+// config-dir clawker.yaml is cleaned in each owning file).
 func migrateRemoveLegacyBuildKeys(s *storage.Store[Project]) (bool, error) {
 	buildRemoved, removed, err := stripLegacyKeys(s, legacyBuildKeys())
 	if err != nil {

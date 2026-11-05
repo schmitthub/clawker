@@ -64,9 +64,10 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 func (s *Service) LoadTLSConfig(svc string) (*tls.Config, error)
 ```
 
-`*infracerts.Issuer` satisfies `Issuer`. Wiring in
-`cmd/clawkercp/main.go` passes the concrete `*infracerts.Issuer` once
-it's loaded.
+`*infracerts.Issuer` satisfies `Issuer`. `NewCPProvisioner`
+(`provisioner.go`) loads the concrete `*infracerts.Issuer` and passes it
+to `New`. `bootLogging` in `internal/controlplane/cmd.go` calls
+`NewCPProvisioner`.
 
 `New` returns an error for nil issuer, empty destDir, empty rootCA
 bytes, or rootCA bytes that contain no parseable PEM certificates
@@ -76,8 +77,8 @@ handshake).
 ### Degraded-mode signaling
 
 Degraded mode propagates via **plain interface-typed nil**, NOT a
-typed-nil `(*Service)(nil)`. Callers in `cmd/clawkercp/main.go`
-declare:
+typed-nil `(*Service)(nil)`. `NewCPProvisioner` and its caller in
+`internal/controlplane/cmd.go` declare:
 
 ```go
 var (
@@ -90,9 +91,9 @@ and only assign into `otelCerts` on the success path. Boxing a typed-
 nil `*Service` into the interface would pass downstream `s.otelCerts
 == nil` checks while still dispatching `EnsureClient`/`LoadTLSConfig`
 on a nil receiver — turning the intended degraded mode into a panic
-that strands eBPF (see `internal/controlplane/AGENTS.md`, "CP crashing
-is a security incident"). The two-variable pattern is enforced by an
-inline comment in `main.go`.
+that strands eBPF (see `controlplane/AGENTS.md`, "CP crashing
+is a SECURITY incident"). Inline comments in `provisioner.go` and
+`internal/controlplane/cmd.go` (`bootLogging`) record the two-variable pattern.
 
 On the in-process exporter side, the CP wiring sets `OtelOptions =
 nil` (entire struct, not just TLSConfig) on any failure so the logger
@@ -153,13 +154,16 @@ this immediately after `logger.New`.
 
 ## Imports
 
-- **Uses**: stdlib `crypto/*`, `internal/logger`. No internal/
-  controlplane/firewall imports (this is the layering boundary; see
-  `feedback_no_layering_violations.md`).
-- **Imported by**: `cmd/clawkercp` only (constructs the Service; wires it
-  into `firewall.NewStack` as an `OtelCertProvisioner` AND calls
-  `LoadTLSConfig` for the CP's own OTel exporter and the netlogger
-  pipeline). `internal/controlplane/firewall` does NOT import this package
+- **Uses**: stdlib `crypto/*`, `internal/consts`, `internal/logger`,
+  `controlplane/infracerts`. Only `provisioner.go` imports
+  `controlplane/firewall`, for the `OtelCertProvisioner` return type of
+  `NewCPProvisioner`. The `Service` core does not import it.
+- **Imported by**: `internal/controlplane/cmd.go` (constructs the Service
+  through `NewCPProvisioner`; wires it into `firewall.NewStack` as an
+  `OtelCertProvisioner` AND calls `LoadTLSConfig("cp")` for the CP's own
+  OTel exporter and the agent telemetry gateway) and
+  `controlplane/firewall/ebpf/netlogger` (`start.go` calls
+  `LoadTLSConfig("netlogger")`). `controlplane/firewall` does NOT import this package
   — it defines the `OtelCertProvisioner` interface itself and `*Service`
   satisfies it structurally; tests supply a local fake.
 

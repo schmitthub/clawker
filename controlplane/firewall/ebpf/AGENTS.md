@@ -1,6 +1,6 @@
 # eBPF Subsystem (under the control plane)
 
-BPF loader + manager for clawker's cgroup programs. Lives under `internal/controlplane/` because ebpf is a **feature of the control plane**, not a peer service: once BPF programs are loaded into the kernel they persist independently of any userspace process, so there is no separate "ebpf service" to run. The CP owns `Manager.Load()` lifetime and drives everything through direct Go imports.
+BPF loader + manager for clawker's cgroup programs. Lives under `controlplane/firewall/` because ebpf is a **feature of the control plane**, not a peer service: once BPF programs are loaded into the kernel they persist independently of any userspace process, so there is no separate "ebpf service" to run. The CP owns `Manager.Load()` lifetime and drives everything through direct Go imports.
 
 The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/AGENTS.md`), but the real interface is `AdminService` gRPC.
 
@@ -40,7 +40,7 @@ cmd/                 break-glass ebpf-manager binary (see cmd/AGENTS.md)
 
 ## Lifetime ownership
 
-The `clawker-controlplane` container runs `clawkercp` (the daemon binary) as PID 1. That binary imports `internal/controlplane/firewall/ebpf` directly and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning under `PinPath` is purely a crash-recovery mechanism, not load-bearing state.
+The `clawker-controlplane` container runs `clawkercp` (the daemon binary) as PID 1. That binary imports `controlplane/firewall/ebpf` directly (through `internal/controlplane/cmd.go`) and calls `Manager.Load()` **exactly once** at startup. The resulting `link.Link` handles live in-process for the CP's lifetime; BPF pinning under `PinPath` is purely a crash-recovery mechanism, not load-bearing state.
 
 `Load()` runs `cleanupStaleLinks()`, which asks the kernel whether each pinned `link_*` is still attached: the kernel detaches a cgroup link when its cgroup is destroyed and then reports cgroup ID 0. Detached links (dead cgroups) are removed; attached links (live cgroups) are preserved. A link info error keeps the link, and so does a pin that cannot be loaded: its cgroup counts as live. The sweep does not read `container_map`. This ensures enforcement survives CP restarts while cleaning up resource leaks from dead containers. `CleanupAllLinks()` is a separate method that removes ALL pinned links — called ONLY through `FlushAll` (`firewall down`). The CP drain calls `FlushDead`, which runs the same sweep and keeps the `container_map` rows of the cgroups whose links stay attached (cgroup ID from the `link_<program>_<cgroupID>` pin name), so a live agent fails closed while the CP is down. An unreadable pin directory keeps every row.
 
@@ -109,7 +109,7 @@ func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns numbe
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
 
 // Startup / shutdown maintenance — not on EBPFManager interface; called
-// by cmd/clawkercp directly so the RPC surface stays pure.
+// by internal/controlplane/cmd.go directly so the RPC surface stays pure.
 func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
 func (m *Manager) FlushAll() error                          // firewall down only — empty container_map + bypass_map + ratelimit_state + udp_flow_map + ratelimit_drops, unpin links
 func (m *Manager) FlushDead() error                         // INV-B2-007 CP drain — unpin dead links, keep container_map rows of live cgroups, empty the other maps
@@ -187,5 +187,5 @@ To bump pins: resolve fresh apt versions against the pinned `ubuntu:24.04@sha256
 
 ## Imports
 
-- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` overseer event type), `internal/dnsbpf` (reuses `IPToUint32`/`Uint32ToIP` + `DNSSource*` constants to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` pubsub event type), `internal/dnsbpf` (reuses `IPToUint32`/`Uint32ToIP` + `DNSSource*` constants to stay in sync), `controlplane/firewall/ebpf/cmd` (the break-glass CLI).
 - **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

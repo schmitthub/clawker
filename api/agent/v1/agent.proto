@@ -10,7 +10,9 @@ option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
 // ExportTelemetry is the agent telemetry lane: clawkerd relays the agent's OTLP
 // batches here and the CP stamps provenance before it forwards them to
-// the collector.
+// the collector. The host actions (OpenURL, GitCredential, and the OAuth
+// callback RPCs) are the path from the agent to the host proxy: clawkerd
+// relays each request here and the CP sends it to the host proxy.
 //
 // Trust model:
 //   - The CLI mints the agent's leaf cert at container-create time,
@@ -29,9 +31,10 @@ option go_package = "github.com/schmitthub/clawker/api/agent/v1";
 //     one-time per container creation.
 //
 // Transport: mTLS over TCP on the CP's clawker network agent listener.
-// Server requires a client cert chained to the CLI CA; authorization
-// via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
-// client (scope `agent:self:register`).
+// Server requires a client cert chained to the CLI CA. Register also
+// requires a Hydra-issued bearer token scoped to the `clawker-agent`
+// OAuth2 client (scope `agent:self:register`). The other RPCs are public
+// scope: no bearer token; mTLS plus the identity gate authorize them.
 service AgentService {
   // Register binds (peer cert thumbprint, container_id) into the CP's
   // agentregistry. Container_id is read from the peer cert's URI SAN;
@@ -64,16 +67,19 @@ service AgentService {
 
   // Host actions. clawkerd serves the agent's host-proxy HTTP paths on
   // loopback and relays each request here. The CP is the only path to the
-  // host proxy: it resolves the peer to a registered container, applies
-  // that container's policy (its labels) and the egress rules, then calls
-  // the host proxy over mTLS. Agents cannot reach the host proxy directly.
+  // host proxy: it resolves the peer to a registered container, checks
+  // that container's label grants and callback-session ownership, then
+  // sends the action down the host proxy's HostProxyService stream. The
+  // host proxy applies the egress rules. Agents cannot reach the host
+  // proxy directly.
   //
   // Public scope: no bearer token, same gate as ExportTelemetry, plus the
   // per-container policy. Failure modes: PermissionDenied (identity
   // rejected, host proxy not enabled for this container, action not
   // granted, egress denied, callback session owned by another container),
   // InvalidArgument (malformed request), NotFound (unknown callback
-  // session), Unavailable (host proxy unreachable).
+  // session), FailedPrecondition (the host action failed, for example the
+  // host `git credential` command), Unavailable (host proxy unreachable).
 
   // OpenURL opens a URL in the host browser after the egress check.
   rpc OpenURL(OpenURLRequest) returns (OpenURLResult);

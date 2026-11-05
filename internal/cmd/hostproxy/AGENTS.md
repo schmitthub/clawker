@@ -18,14 +18,14 @@ Hidden daemon management commands for the host proxy subprocess. Internal use on
 
 ```go
 func NewCmdHostProxy() *cobra.Command  // Hidden parent command group
-func NewCmdServe() *cobra.Command      // Flags: --port, --poll-interval, --grace-period
+func NewCmdServe() *cobra.Command      // Flags: --poll-interval, --grace-period
 func NewCmdStatus() *cobra.Command     // No flags; reads PID file from config
 func NewCmdStop() *cobra.Command       // Flags: --wait duration
 ```
 
 ## Pattern: Config + Functional Options
 
-Commands load config via `config.NewConfig()`. `serve` collects changed flags into `[]hostproxy.DaemonOption` functional options, then calls `hostproxy.NewDaemon(cfg, log, opts...)`. This allows CLI flags to override config values without mutating the config object. PID file always comes from `cfg.HostProxyPIDFilePath()` (no `--pid-file` flag).
+Commands load config via `config.NewConfig()`. `serve` collects changed flags into `[]hostproxy.DaemonOption` functional options, builds a `dial` function that calls `adminclient.DialHostProxy(cp.AdminPort, cp.HydraPublicPort)`, then calls `hostproxy.NewDaemon(cfg, log, dial, opts...)`. The daemon dials out to the CP admin listener on host loopback for each stream attempt. Thus it reads rotated auth material on the next reconnect. This allows CLI flags to override config values without mutating the config object. PID file always comes from `cfg.HostProxyPIDFilePath()` (no `--pid-file` flag).
 
 `status` and `stop` read PID file path from `cfg.HostProxyPIDFilePath()` directly.
 
@@ -35,4 +35,4 @@ Commands load config via `config.NewConfig()`. `serve` collects changed flags in
 
 Registered hidden in `internal/cmd/root/root.go`. Runtime lifecycle managed by `internal/hostproxy.Manager.EnsureRunning()`.
 
-See `internal/hostproxy/AGENTS.md` for daemon architecture and HTTP API reference.
+See `internal/hostproxy/AGENTS.md` for daemon architecture. The daemon has no HTTP API and no listener. It serves the host action stream from the CP.

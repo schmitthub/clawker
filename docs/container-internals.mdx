@@ -77,7 +77,7 @@ Combined with path mirroring for the worktree directory itself, git commands wor
 
 Git credentials are forwarded into the container automatically based on your project's security settings:
 
-- **HTTPS** — Clawker runs a host proxy that the container's git credential helper calls through. Your host's git credentials are never copied into the container.
+- **HTTPS** — The container's git credential helper calls the clawkerd host-action relay on loopback. clawkerd sends the request to the control plane `AgentService.GitCredential` RPC over mTLS gRPC. The control plane checks the agent's project settings and sends the request to the host proxy on its outbound stream. The helper cannot reach the host proxy directly. Your host's git credentials are never copied into the container.
 - **SSH** — SSH agent forwarding is handled via a socket bridge (muxrpc over `docker exec`). Your SSH keys stay on the host.
 - **GPG** — GPG agent forwarding works the same way as SSH, via the socket bridge.
 - **Git config** — Your `~/.gitconfig` is bind-mounted read-only at `/tmp/host-gitconfig` inside the container. During CP-driven init, clawkerd reads that file, filters out any `[credential]` sections, and writes the sanitized result to `~/.gitconfig` inside the container (which then uses its own credential forwarding).
@@ -236,8 +236,13 @@ When the container starts, clawkerd executes in this order:
 3. **Start the mTLS listener.** clawkerd serves a gRPC `ClawkerdService.Session` endpoint on `:7700`, reachable only over the `clawker-net` network. The listener enforces `RequireAndVerifyClientCert` plus a CN pin: the only authorized peer is the clawker control plane's cert (CN = `clawker-controlplane`). Any other peer is rejected at the TLS layer, before any RPC handler runs.
 4. **Wait for CP-driven init.** The control plane dials in over mTLS, registers the agent's identity (binding the container ID to the captured cert thumbprint in CP's sqlite agent registry), and then dispatches one or more setup commands — config seeding, git wiring, your `post_init` script if configured. Each step's exit status and output flow back over the same Session stream.
 5. **Fork the user CMD when the agent is ready.** When CP sends the readiness signal, clawkerd forks the user CMD (the harness command from the image's CMD) using `SysProcAttr.Credential` so the kernel performs `setgroups → setgid → setuid` between fork and exec. The user CMD never runs as root; clawkerd does, but it never executes user-controlled code in its own process.
-6. **Supervise.** clawkerd holds open the Session for the container's lifetime — CP can dispatch additional setup commands, signal-forward into the child pgroup, or trigger a clean shutdown.
-7. **Reap and exit.** On `docker stop` (SIGTERM) or when the user CMD exits, clawkerd runs an ordered teardown: stop the listener, run phase-2 orphan drain, then `os.Exit` with the bash-convention exit code so Docker's restart policy reads the right value.
+6. **Serve the loopback relays.** clawkerd also serves two HTTP relays on loopback inside the container. Each relay dials the control plane `AgentService` on the agent listener with the bootstrap mTLS leaf:
+   - **Host-action relay** on `127.0.0.1:18374` (`CLAWKER_HOST_PROXY`, set only for agents with the host-proxy grant). The container scripts (`host-open`, `git-credential-clawker`, `callback-forwarder`) call it. Each request becomes one `AgentService` host action (`OpenURL`, `GitCredential`, `RegisterCallback`, `GetCallbackData`, `DeleteCallback`). The control plane authorizes it and calls the host proxy. The relay holds no policy.
+   - **OTLP/HTTP relay** on `127.0.0.1:4318` (`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`). The agent SDK exports there. clawkerd sends each batch unchanged to `AgentService.ExportTelemetry`. The control plane verifies the peer, adds the agent identity, and sends the batch to the collector.
+
+   If a relay cannot start, clawkerd continues without it. The relays never delay the listener, the Session, or the spawn.
+7. **Supervise.** clawkerd holds open the Session for the container's lifetime — CP can dispatch additional setup commands, signal-forward into the child pgroup, or trigger a clean shutdown.
+8. **Reap and exit.** On `docker stop` (SIGTERM) or when the user CMD exits, clawkerd runs an ordered teardown: stop the listener, run phase-2 orphan drain, then `os.Exit` with the bash-convention exit code so Docker's restart policy reads the right value.
 
 If the user CMD exits cleanly (e.g. you exit the harness), clawkerd exits with the same code and the container stops. If you used `--rm`, Docker removes the container. If you didn't, you can start it again later with `clawker start -a -i --agent <agent>` — the harness volumes still hold your settings, sessions, and shell history.
 
@@ -255,11 +260,11 @@ clawkerd's command surface (CP-dispatched, root-capable) is the entire trust bou
 
 ### What clawkerd Does Not Do
 
-- **No proactive outbound dial** outside the one-time CP-triggered Register handshake. clawkerd is a server — CP dials in, not the other way around.
+- **No outbound dial except to the control plane `AgentService`.** clawkerd dials it for the one-time CP-triggered Register handshake and for the host-action and OTLP relays. For the Session, clawkerd is a server: CP dials in, not the other way around.
 - **No heartbeat or keepalive.** CP knows liveness via Docker events plus the Session stream's TCP keepalives.
 - **No init-script execution as part of clawkerd's own logic.** Setup steps (config seeding, git wiring, `post_init`) are dispatched by CP over the Session as setup commands — clawkerd just runs them and reports the result.
 - **No firewall configuration.** eBPF cgroup programs are attached to the container's cgroup from outside by the control plane. clawkerd has no role in firewall enforcement.
-- **No reconnect logic.** clawkerd serves; if CP loses the connection, CP reconnects with backoff. clawkerd just waits for the next dial.
+- **No Session reconnect logic.** clawkerd serves the Session; if CP loses the connection, CP reconnects with backoff. clawkerd just waits for the next dial.
 
 ## Boot Progress on the Terminal
 
@@ -267,14 +272,19 @@ When you attach an interactive terminal (`-it`), clawkerd renders per-step boot 
 
 After the final readiness step completes, clawkerd transfers TTY foreground to the user CMD and the harness takes over the terminal.
 
+## Networking
+
+Each agent container joins the `clawker-net` network, and `clawker-net` is its network mode. Agents are not attached to Docker's default bridge: there is no second network interface and no default route through `172.17.0.1`. If you give `--network`, your network becomes the network mode, and clawker also connects the container to `clawker-net`.
+
 ## Firewall Decoupling
 
 The firewall is intentionally **not** configured inside the container. eBPF cgroup programs are attached from outside by the control plane before the user CMD starts, and they remain attached for the container's lifetime. This means:
 
 - The container image has no baked-in firewall addresses or capabilities — it is portable across different Docker network configurations.
-- Agent containers run with **no Linux capabilities** (`cap_add: []`). No `NET_ADMIN`, no `NET_RAW`. The firewall enforcement happens kernel-side, outside the container's privilege scope.
+- Agent containers get **no added Linux capabilities** (`cap_add: []`, no `NET_ADMIN`). They keep the Docker default set, which includes `NET_RAW`, but the agent user has no effective capabilities. The firewall enforcement happens kernel-side, outside the container's privilege scope.
+- **The firewall boundary is the agent user.** The agent runs as the non-root `clawker` user, with no `sudo` and `no-new-privileges`, so it cannot get root. The connect programs pass each socket that has the loop-prevention mark (`SO_MARK`) that Envoy and CoreDNS use; the agent user cannot set this mark. Root sockets without the mark are enforced. Root in the container is trusted (clawkerd, host operator) and can set the mark by design.
 - Agent containers run with **`no-new-privileges`**. A setuid binary in the image (`su`, `mount`, `passwd`) cannot give a process more privileges than it already has. If your workflow needs setuid (for example, `sudo` that you add through `build.packages`), pass `--security-opt no-new-privileges=false` to `clawker run` or `clawker create`.
-- A compromised user CMD cannot modify, weaken, or bypass the firewall from inside — the eBPF programs, the BPF maps, and the route table are all in kernel space owned by the host, not the container.
+- A compromised user CMD that runs as the agent user cannot modify, weaken, or bypass the firewall from inside — the eBPF programs, the BPF maps, and the route table are all in kernel space owned by the host, not the container.
 
 If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debugging), add them to `security.cap_add` in your `clawker.yaml`. The firewall does not require any.
 

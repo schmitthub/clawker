@@ -1271,7 +1271,8 @@ type ContainerConfigParams struct {
 	CIDR       string
 	EgressPort uint16
 	// CPIP and the two ports are the only control-plane endpoints an agent
-	// may dial inside the subnet (Register + Export, and the Hydra token
+	// may dial inside the subnet (the agent port carries Register,
+	// ExportTelemetry, and host actions; the Hydra port is the token
 	// endpoint). CPIP is required: without it every agent would be cut
 	// off from the CP.
 	CPIP        string

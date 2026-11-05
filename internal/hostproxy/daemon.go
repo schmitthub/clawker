@@ -20,6 +20,10 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// egressHealthTimeout bounds the HTTP request used to probe Envoy's health
+// listener during the daemon's startup readiness gate.
+const egressHealthTimeout = 2 * time.Second
+
 // ContainerLister is the minimal interface needed for container watcher functionality.
 // This allows the daemon to work without directly coupling to the full Docker client,
 // and enables testing with mock implementations.
@@ -28,10 +32,6 @@ import (
 // through pkg/whail. This is intentional because the daemon runs as a standalone
 // subprocess that only needs to list containers - it doesn't need whail's jail
 // semantics or label enforcement. The interface pattern still allows for testing.
-// egressHealthTimeout bounds the HTTP request used to probe Envoy's health
-// listener during the daemon's startup readiness gate.
-const egressHealthTimeout = 2 * time.Second
-
 type ContainerLister interface {
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
 	io.Closer
@@ -111,16 +111,16 @@ func NewDaemon(
 
 	// Resolve egress rules file path for URL egress enforcement only when the
 	// global firewall is enabled. When disabled, keep rulesFilePath empty so
-	// /open/url preserves its documented "skip check" behavior.
+	// the open_url action keeps its documented "skip check" behavior.
 	var rulesFilePath string
 	if cfg.FirewallEnabled() {
 		var dataDir string
 		dataDir, err = cfg.FirewallDataSubdir()
 		if err != nil {
-			// Firewall is enabled, so /open/url egress enforcement is mandatory.
-			// If the rules path can't be resolved we cannot enforce — fail closed
-			// by refusing to construct the daemon (which fails container startup)
-			// rather than silently running /open/url unchecked.
+			// Firewall is enabled, so egress enforcement for the open_url action
+			// is mandatory. If the rules path can't be resolved we cannot enforce —
+			// fail closed by refusing to construct the daemon (which fails
+			// container startup) rather than silently running open_url unchecked.
 			return nil, fmt.Errorf("firewall enabled but cannot resolve egress rules path: %w", err)
 		}
 		rulesFilePath = filepath.Join(dataDir, cfg.EgressRulesFileName())
@@ -199,9 +199,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// then — only once the rules are confirmed usable — start the container
 	// watcher. Sequencing the watcher behind the gate keeps the watcher's
 	// clean auto-exit from preempting (and silently masking) a readiness
-	// failure. The gate must not block the /health bind above, so it runs here
-	// off the main goroutine; until it passes, request-time /open/url
-	// enforcement already fails closed.
+	// failure. The gate must not block the connector start above, so it runs
+	// off the main goroutine; until it passes, open_url enforcement fails
+	// closed per request.
 	watcherDone := make(chan struct{})
 	readyErrCh := make(chan error, 1)
 	go func() {
@@ -311,9 +311,9 @@ func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 // writes it is healthy). Each stage's budget comes from internal/consts (the
 // firewall's own bringup/health timeouts) so the host proxy never gives up
 // before the firewall could be up. On exhaustion it returns an error so the
-// caller can shut the daemon down — request-time /open/url enforcement is
-// fail-closed regardless. No-op when the firewall is disabled (empty rules
-// path → /open/url enforcement is intentionally skipped).
+// caller can shut the daemon down — request-time enforcement of the open_url
+// action is fail-closed regardless. No-op when the firewall is disabled (empty
+// rules path → open_url enforcement is intentionally skipped).
 func (d *Daemon) ensureEgressRulesReady(ctx context.Context) error {
 	path := d.rulesFilePath
 	if path == "" {
