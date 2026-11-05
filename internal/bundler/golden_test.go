@@ -6,7 +6,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
+
+// goldenUIDConfig pins the container UID/GID so goldens do not depend on the
+// host: on Linux ContainerUID() is the invoker's real uid.
+type goldenUIDConfig struct{ config.Config }
+
+func (goldenUIDConfig) ContainerUID() int { return 1001 }
+func (goldenUIDConfig) ContainerGID() int { return 1001 }
 
 // TestGenerate_Golden locks the rendered Dockerfile output byte-for-byte,
 // per image of the base/harness split: <name>.base.Dockerfile from
@@ -100,7 +109,7 @@ monitoring:
 	for _, tc := range scenarios {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testConfig(t, tc.projectYAML)
-			gen := newTestProjectGenerator(cfg, t.TempDir())
+			gen := newTestProjectGenerator(goldenUIDConfig{cfg}, t.TempDir())
 			gen.BuildKitEnabled = tc.buildKit
 
 			base, err := gen.GenerateBase()
@@ -155,7 +164,7 @@ bundles:
 	// selects. testConfig isolated the XDG cache; this plants content into it.
 	writeInstalledStack(t, "acme", "tools", "1.0.0", "node", "RUN echo installed-acme-node\n")
 
-	gen := newTestProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(goldenUIDConfig{cfg}, t.TempDir())
 	gen.BuildKitEnabled = true
 
 	base, err := gen.GenerateBase()

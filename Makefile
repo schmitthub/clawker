@@ -193,48 +193,16 @@ BPF_BINDING_DEPS := \
 	controlplane/firewall/ebpf/gen.go \
 	controlplane/firewall/ebpf/bpftest/gen.go
 
-# Source dependencies for the ebpf-manager binary.
-EBPF_BINARY_DEPS := \
-	$(BPF_BINDING_DEPS) \
-	controlplane/firewall/ebpf/manager.go \
-	controlplane/firewall/ebpf/types.go \
-	controlplane/firewall/ebpf/cmd/main.go
-
-COREDNS_BINARY_DEPS := \
-	$(BPF_BINDING_DEPS) \
-	cmd/coredns-clawker/main.go \
-	$(wildcard cmd/coredns-clawker/plugins/otel/*.go) \
-	$(wildcard internal/dnsbpf/*.go) \
-	controlplane/firewall/ebpf/types.go
-
-# Source dependencies for the clawkercp (control plane) binary, built
-# via `go build ./cmd/clawkercp`. The list mirrors every first-party
-# package that build pulls from the controlplane/ and internal/controlplane
-# trees (cross-check with `go list -deps ./cmd/clawkercp | grep
-# schmitthub/clawker/...controlplane`) — internal/controlplane is the
-# entrypoint (Main/run); controlplane/* are its subsystems. PROTO_GENERATED
-# is listed explicitly so editing a `.proto` triggers the regeneration rule
-# (above) before the binary rebuilds. Deeper transitive deps (internal/consts,
-# logger, docker, ...) are intentionally not tracked: this is a first-party
-# staleness heuristic, not a full import-graph mirror.
-CP_BINARY_DEPS := \
-	$(BPF_BINDING_DEPS) \
-	$(PROTO_GENERATED) \
-	$(wildcard cmd/clawkercp/*.go) \
-	$(wildcard internal/controlplane/*.go) \
-	$(wildcard controlplane/*.go) \
-	$(wildcard controlplane/agent/*.go) \
-	$(wildcard controlplane/auth/*.go) \
-	$(wildcard controlplane/dockerevents/*.go) \
-	$(wildcard controlplane/firewall/*.go) \
-	$(wildcard controlplane/firewall/ebpf/*.go) \
-	$(wildcard controlplane/firewall/ebpf/netlogger/*.go) \
-	$(wildcard controlplane/infracerts/*.go) \
-	$(wildcard controlplane/otel/*.go) \
-	$(wildcard controlplane/otelcerts/*.go) \
-	$(wildcard controlplane/pubsub/*.go) \
-	$(wildcard controlplane/server/*.go) \
-	$(wildcard controlplane/subprocess/*.go)
+# go_src_deps lists every first-party file that `go build $(1)` reads for
+# linux/$(BUILDX_TARGETARCH): the .go files and go:embed files of each package
+# in the module's import graph, from `go list -deps`. A hand-kept list missed
+# deep imports (internal/auth, internal/config, ...), so `make` served a stale
+# embedded binary after edits there. Generated inputs (BPF bindings, protos)
+# that do not exist yet are absent from the list; the rules below name them
+# explicitly so they build first.
+GO_MODULE := $(shell $(GO) list -m 2>/dev/null)
+go_src_deps = $(patsubst $(CURDIR)/%,%,$(shell GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 \
+	$(GO) list -e -deps -f '{{if and .Module (eq .Module.Path "$(GO_MODULE)")}}{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .EmbedFiles}}{{$$.Dir}}/{{.}} {{end}}{{end}}' $(1) 2>/dev/null))
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane
@@ -393,13 +361,13 @@ $(filter-out $(BPF_BINDINGS_CANONICAL),$(BPF_BINDINGS)): $(BPF_BINDINGS_CANONICA
 # generated clawker_*_bpfel.go files embed the .o bytecode via `//go:embed`,
 # so the binary build itself never needs clang or Docker.
 ebpf-binary: $(EBPF_BINARY)
-$(EBPF_BINARY): $(EBPF_BINARY_DEPS) $(BPF_BINDINGS)
+$(EBPF_BINARY): $(BPF_BINDING_DEPS) $(BPF_BINDINGS) $(call go_src_deps,./controlplane/firewall/ebpf/cmd)
 	@echo "Building ebpf-manager for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./controlplane/firewall/ebpf/cmd
 
 coredns-binary: $(COREDNS_BINARY)
-$(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
+$(COREDNS_BINARY): $(BPF_BINDING_DEPS) $(BPF_BINDINGS) $(call go_src_deps,./cmd/coredns-clawker)
 	@echo "Building coredns-clawker for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/coredns-clawker
@@ -417,7 +385,7 @@ $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
 # order, but adding this as an explicit prerequisite of the file target
 # also makes parallel `make -j` correct.
 cp-binary: $(CP_BINARY)
-$(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
+$(CP_BINARY): $(BPF_BINDING_DEPS) $(PROTO_GENERATED) $(BPF_BINDINGS) $(CLAWKERD_BINARY) $(COREDNS_BINARY) $(call go_src_deps,./cmd/clawkercp)
 	@echo "Building clawkercp for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkercp
@@ -432,16 +400,12 @@ $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
 # The build is `go build ./cmd/clawkerd`: the thin shell
 # (cmd/clawkerd/clawkerd.go) imports the real entrypoint package
 # internal/clawkerd (Main/run — the supervisor orchestration), which
-# imports the daemon package clawkerd. All three carry first-party
-# source for this binary, so all three are path-listed prerequisites
-# below — editing the orchestration in internal/clawkerd must retrigger
-# the rebuild, else the embedded binary goes stale against `go build`
-# output. Deeper transitive deps (logger, grpc, moby) are intentionally
-# not tracked: this is a first-party staleness heuristic, not a full
-# import-graph mirror.
+# imports the daemon package clawkerd. Prerequisites come from
+# go_src_deps: every first-party file in the import graph, so an edit
+# anywhere in it retriggers the rebuild.
 .PHONY: clawkerd-binary
 clawkerd-binary: $(CLAWKERD_BINARY)
-$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/clawkerd/*.go) $(wildcard clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
+$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(call go_src_deps,./cmd/clawkerd)
 	@echo "Building clawkerd for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
@@ -455,7 +419,7 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 # written to a private temp directory at heal time.
 .PHONY: bpffs-delegate-binary
 bpffs-delegate-binary: $(BPFFS_DELEGATE_BINARY)
-$(BPFFS_DELEGATE_BINARY): $(wildcard cmd/bpffs-delegate/*.go) $(wildcard controlplane/firewall/ebpf/delegation/*.go)
+$(BPFFS_DELEGATE_BINARY): $(call go_src_deps,./cmd/bpffs-delegate)
 	@echo "Building bpffs-delegate for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/bpffs-delegate
@@ -485,7 +449,7 @@ embeds-untar:
 # directory when a container create needs a view.
 .PHONY: idmap-mount-binary
 idmap-mount-binary: $(IDMAP_MOUNT_BINARY)
-$(IDMAP_MOUNT_BINARY): $(wildcard cmd/idmap-mount/*.go) $(wildcard internal/idmap/*.go)
+$(IDMAP_MOUNT_BINARY): $(call go_src_deps,./cmd/idmap-mount)
 	@echo "Building idmap-mount for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/idmap-mount
@@ -687,7 +651,7 @@ UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/whail' | grep -v '/test/e2e')
 # uses go:embed on assets/clawkercp + assets/ebpf-manager, and
 # controlplane/firewall uses go:embed on assets/coredns-clawker —
 # tests that compile those packages will fail without the binaries on disk.
-test: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
@@ -700,13 +664,13 @@ test-unit: test
 
 # CI-mode unit tests: race detector, no caching, coverage
 # Called by .github/workflows/test.yml
-test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test-ci: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
 	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
 	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # E2E integration tests (requires Docker)
-test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
+test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary idmap-mount-binary $(PROTO_GENERATED)
 	@echo "Running E2E integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"

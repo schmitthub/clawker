@@ -21,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundle/componentcheck"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -299,7 +300,9 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 // Pure dial — does NOT bootstrap the CP container. The CP is brought up
 // only by flows that need it (agent container start; explicit `clawker
 // controlplane up` / `clawker firewall up`). Admin commands invoked when
-// the CP is down fail fast — `controlplane down` stays down.
+// the CP is down fail fast — `controlplane down` stays down. A CP that
+// is still booting (another process started it) is waited for: see
+// adminclient.AwaitReady.
 //
 // First call dials with mTLS + OAuth2 JWT; subsequent calls return the
 // cached client unless the gRPC connection has entered TransientFailure
@@ -338,6 +341,14 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		)
 		if err != nil {
 			return nil, fmt.Errorf("admin client: dial: %w", err)
+		}
+		// Another CLI process may be cold-starting the CP; its ready gate
+		// refuses admin RPCs until boot ends. Wait here, outside the RPC
+		// deadline. A CP that is down or ready returns at once.
+		readyErr := adminclient.AwaitReady(ctx, cp.HealthPort, consts.FirewallStackBringupRPCTimeout)
+		if readyErr != nil {
+			_ = newConn.Close() // The connection is unused; the wait error is the one to report.
+			return nil, fmt.Errorf("admin client: %w", readyErr)
 		}
 		conn = newConn
 		client = newClient

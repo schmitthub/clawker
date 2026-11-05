@@ -102,6 +102,9 @@ plaintext-fall-back to the untrusted lane.
 ## File permissions (Docker bind-mount UID traversal)
 
 - Per-svc dir: `0o755`
+- `otel-clients` and per-svc dir owner UID: the parent's owner
+  (`infracerts.OwnLikeParent`), so the host user can delete them after a
+  rootful Linux CP creates them as root.
 - All three files: `0o644`
 
 The directory mode is load-bearing for non-root in-container readers

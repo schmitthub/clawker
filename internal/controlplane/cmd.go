@@ -1515,6 +1515,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// here so it covers every return arm.
 	ctx := context.Background()
 	defer logCleanup()
+	// Main prints the run error to stderr only, and stderr dies with the
+	// container. Put it in the log file too, before the flush above. Defers
+	// registered later (cleanup joins into retErr) run first.
+	defer func() {
+		if retErr != nil && !errors.Is(retErr, errBPFFSDelegated) {
+			log.Error().Err(retErr).Str("event", "cp_exit_error").
+				Msg("control plane exiting on error; the on-failure restart policy may retry")
+		}
+	}()
 
 	// config + signal-aware contexts. All ports come from
 	// settings.ControlPlane (config dir set by CLAWKER_CONFIG_DIR).

@@ -17,6 +17,8 @@
 
 ## Runtime and CLI work
 
+- Sandbox hardening initiative (2026-10-24): six platform-default fixes with per-item design memories, tracker, and tasks: `mem:plans/sandbox-hardening/initiative`.
+
 - Earlier CP typed pub/sub proposal and task history: `mem:plans/controlplane-pubsub`. Typed topics now exist; its draft status is historical.
 - AgentService streaming adversarial-test proposal: `mem:plans/agent-service-adversarial-tests`.
 - Docker build flag and metadata parity proposal: `mem:plans/docker-build-parity`.

@@ -44,7 +44,10 @@ Degraded mode: construction or mint failure → `event=sds_certs_unavailable` /
 MITM chains keep their static `[apex, *.apex]` certs (multi-label subdomains
 fail client-side hostname verification, the pre-SDS behavior). CP stays up.
 
-CP keeps ownership of the client directory. Its group is `consts.EnvoyGID`,
+The `sds-clients` directory and its `envoy` subdirectory take the owner UID of
+their parent (`infracerts.OwnLikeParent`). On a rootful Linux daemon that is
+the host user, who can then delete them; on rootless Docker or Docker Desktop
+it is the CP's own UID. The `envoy` directory group is `consts.EnvoyGID`,
 with mode `0750`. The group can read and traverse the directory; other users
 have no access. Existing directory permissions are restricted on each call.
 

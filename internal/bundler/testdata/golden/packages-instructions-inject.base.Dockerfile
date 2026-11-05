@@ -19,7 +19,7 @@ RUN echo after-from
 # Install system packages. The substrate is slim, so this layer carries the
 # full clawker floor: TLS trust (ca-certificates), archive tooling
 # (unzip/xz-utils), download+verify tooling (curl/wget/gnupg2), and the dev
-# environment clawker promises (git, ssh, zsh, sudo, gh, locales, editors).
+# environment clawker promises (git, ssh, zsh, gh, locales, editors).
 # openssh-client is floor, not option: clawker forwards the host SSH agent
 # through the socketbridge — a forwarded socket without a client is a broken
 # promise.
@@ -36,7 +36,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ca-certificates \
     less \
     procps \
-    sudo \
     fzf \
     gcc \
     git \

@@ -269,9 +269,6 @@ func SchemaURL(filename, ref string) string {
 
 // Host-side behavior override env vars.
 const (
-	// EnvExecutable overrides the clawker binary path used when
-	// re-invoking clawker as a daemon (host proxy spawn, e2e harness).
-	EnvExecutable = "CLAWKER_EXECUTABLE"
 	// EnvNoNotifier disables all clawker notifications (the update notifier and
 	// the show-once changelog teaser) when non-empty.
 	EnvNoNotifier = "CLAWKER_NO_NOTIFIER"

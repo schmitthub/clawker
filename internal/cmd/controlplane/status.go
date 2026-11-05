@@ -96,6 +96,13 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 	if probeErr != nil {
 		row.HealthzError = probeErr.Error()
 	}
+	// A booting CP answers 503 and refuses admin RPCs until its ready
+	// gate opens; the admin client would wait for it. Status is a
+	// point-in-time diagnostic, so report the boot and skip the snapshot.
+	if status == http.StatusServiceUnavailable {
+		row.FirewallError = "control plane not ready (healthz 503); firewall state not queried"
+		return renderStatus(opts, row)
+	}
 
 	// Best-effort firewall snapshot. Both the AdminClient dial and the
 	// RPC itself can fail while the CP is otherwise healthy (transient
