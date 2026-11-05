@@ -153,10 +153,10 @@ func (m *Manager) startDaemon() error {
 	return nil
 }
 
-// daemonStartTimeout bounds the wait for a new daemon's PID file.
+// daemonStartTimeout bounds the wait for a new daemon to take the PID file lock.
 const daemonStartTimeout = 3 * time.Second
 
-// waitForPIDFile waits until the PID file names a live process.
+// waitForPIDFile waits until a daemon holds the PID file lock.
 func (m *Manager) waitForPIDFile(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

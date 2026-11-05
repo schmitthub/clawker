@@ -32,7 +32,7 @@ The Go binaries under `cmd/` are standalone `package main` programs compiled ins
 
 ## Callback Forwarder (`cmd/callback-forwarder/main.go`)
 
-The callback forwarder polls the host proxy for captured OAuth callbacks and forwards them to a local HTTP server inside the container. Key types and behavior:
+The callback forwarder polls the clawkerd relay (`CLAWKER_HOST_PROXY`, `http://127.0.0.1:18374`) for captured OAuth callbacks. The relay sends each poll through the CP (`GetCallbackData`, with a session ownership check) to the host proxy. The forwarder then sends each callback to a local HTTP server inside the container. Key types and behavior:
 
 ### Types
 

@@ -17,8 +17,12 @@ The control plane is **not** the firewall. The firewall (Envoy + CoreDNS + eBPF)
 The CP container is a single binary, `clawkercp`, running as PID 1. Inside it:
 
 - **Ory auth stack** — Hydra (OAuth2 token issuer, `client_credentials` + `private_key_jwt` ES256), Kratos (identity), and Oathkeeper (HTTP auth proxy) are subprocess-managed by the same PID. Token validation is fail-closed.
-- **AdminService gRPC** (mTLS + OAuth2 JWT, default port `7443` on host loopback) — the 13-method firewall control surface (`FirewallInit`, `FirewallEnable`, `FirewallAddRules`, `FirewallSyncRoutes`, `FirewallBypass`, …) plus `ListAgents` (uniform admin scope) and `GetSystemTime` (public-scope, no bearer token required — used by the clock-sync readiness gate). Every CLI `clawker firewall *` and `clawker controlplane agents` call goes through this RPC.
-- **AgentService gRPC** (mTLS, default in-container port `7444`, reachable only over `clawker-net`) — the surface clawkerd uses to register itself with CP and hold open a long-lived Session.
+- **AdminService gRPC** (mTLS + OAuth2 JWT, default port `7443` on host loopback) — the 12-method firewall control surface (`FirewallInit`, `FirewallEnable`, `FirewallAddRules`, `FirewallSyncRoutes`, `FirewallBypass`, …) plus `ListAgents` (uniform admin scope), `GetSystemTime` (public-scope, no bearer token required — used by the clock-sync readiness gate), and `WatchSOS` (server stream). Every CLI `clawker firewall *` and `clawker controlplane agents` call goes through this RPC.
+- **HostProxyService gRPC** (separate service on the same admin listener) — `HostProxyService.Connect` is a bidirectional stream. The host proxy dials out to CP over mTLS with a token that has the `hostproxy:serve` scope. CP sends each authorized host action down this stream. CP never dials the host.
+- **AgentService gRPC** (mTLS, default in-container port `7444`, reachable only over `clawker-net`) — the surface clawkerd dials: `Register` (one-time identity handshake), `ExportTelemetry` (OTLP relay), and the host actions `OpenURL`, `GitCredential`, `RegisterCallback`, `GetCallbackData`, and `DeleteCallback`.
+- **ClawkerdService Session** — the long-lived command stream. clawkerd serves it on port `7700` in each agent container, and CP dials it to dispatch setup commands.
+- **Host gateway (`controlplane/hostgateway`)** — the CP side of the host actions. The agent handler resolves the caller and authorizes each action from the container's grant labels (`LabelHostProxy`, `LabelGitHTTPS`). The gateway keeps the callback-session ownership records and sends the action to the host proxy on its `Connect` stream.
+- **OTel gateway (`controlplane/otelgateway`)** — receives agent telemetry from `ExportTelemetry`, replaces the identity attributes with the CP-verified values, and sends each batch to the collector over the infra mTLS lane on the internal `clawker-telemetry` network. If the collector is not available, a breaker drops batches; the agent and CP continue.
 - **Agent registry** — a sqlite database persisted on the host XDG data dir, keyed by SHA-256 of the agent's mTLS leaf cert thumbprint plus container ID. CP is the **sole** writer; reads go through `ListAgents`. The registry survives CP restarts.
 - **Overseer event bus + worldview** — in-process typed pub/sub topics carrying container lifecycle (start/stop/destroy/rename), agent session lifecycle (connecting/connected/failed/broken), and trust verdict events. Each domain (agent, firewall, …) subscribes and projects events into its own thread-safe worldview store — there is no shared cross-domain state.
 - **Docker events feeder** — subscribes to the local Docker daemon's event stream (with reconnect), projects managed-label-filtered events onto the overseer bus.
@@ -71,7 +75,7 @@ On every boot, CP reads `firewall.enable` from settings and — when enabled (th
 
 CP joins `clawker-net` with a deterministic static IP computed by replacing the gateway's last octet with `202` — so e.g. `192.168.215.202` on a default Docker bridge with gateway `192.168.215.1`. The CLI talks to it over host loopback for `AdminClient` (mTLS gRPC on port `7443`) and `/healthz` (plain HTTP on port `7080`). The agent listener (`7444`) is **only** reachable from other containers on `clawker-net`.
 
-When CP brings up the firewall, it places Envoy at `<network>.200` and CoreDNS at `<network>.201` on the same network (last-octet replacement, same scheme). Agent containers join `clawker-net` with `--dns` pointing at CoreDNS so DNS resolution is filtered from the very first lookup.
+When CP brings up the firewall, it places Envoy at `<network>.200` and CoreDNS at `<network>.201` on the same network (last-octet replacement, same scheme). Agent containers join `clawker-net`. Their resolver stays Docker's embedded DNS (`127.0.0.11`), with Docker DNS forwarders set to `1.1.1.2` and `1.0.0.2`. The eBPF programs rewrite every port 53 connect to CoreDNS, so DNS resolution is filtered from the very first lookup.
 
 ## CLI Surface
 
@@ -132,6 +136,7 @@ control_plane:
   admin_port: 7443        # CLI ↔ CP gRPC (host loopback, mTLS + OAuth2)
   health_port: 7080       # CLI ↔ CP /healthz (host loopback, plain HTTP)
   agent_port: 7444        # clawkerd ↔ CP gRPC (clawker-net only, mTLS)
+  sds_port: 7445          # Envoy ↔ CP on-demand certificate fetch (clawker-net only, mTLS)
   hydra_public_port: 4444
   hydra_admin_port: 4445
   oathkeeper_port: 4456
@@ -140,7 +145,7 @@ control_plane:
   kratos_admin_port: 4434
 ```
 
-The Ory admin and API ports (`hydra_admin_port`, `kratos_public_port`, `kratos_admin_port`, `oathkeeper_api_port`) are **container-internal** — they are not published to the host. `hydra_public_port` and `oathkeeper_port` are published to `127.0.0.1` on the host. All ports appear in settings so the in-container subprocesses agree on their port assignments.
+The Ory admin and API ports (`hydra_admin_port`, `kratos_public_port`, `kratos_admin_port`, `oathkeeper_api_port`) are **container-internal** — they are not published to the host. `hydra_public_port` and `oathkeeper_port` are published to `127.0.0.1` on the host. All ports appear in settings so the in-container subprocesses agree on their port assignments. The monitoring stack is on the internal `clawker-telemetry` network, not on `clawker-net`.
 
 ## Troubleshooting
 
@@ -169,6 +174,6 @@ The host-side CP log file is `~/.local/state/clawker/logs/clawker-controlplane.l
 
 - [Firewall](/firewall) — egress enforcement (one of CP's managed subsystems)
 - [Container Internals](/container-internals) — what `clawkerd` (PID 1 inside each agent container) does, and how it talks to CP
-- [Credentials](/credentials) — credential forwarding mechanisms unrelated to CP
+- [Credentials](/credentials) — credential forwarding; Git HTTPS credentials and OAuth callbacks go through CP, SSH and GPG use the socket bridge
 - [`clawker controlplane`](/cli-reference/clawker_controlplane) — full CLI reference
 - [`clawker auth`](/cli-reference/clawker_auth) — auth material rotation

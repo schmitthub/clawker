@@ -210,8 +210,9 @@ func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 // gitCredential runs one git credential helper action on the host. Only
-// get (fill) reaches the host credential store, and only for a target the
-// egress rules allow. store (approve) and erase (reject) are answered
+// get (fill) reaches the host credential store. It runs no egress check:
+// forward_https is the user's choice, and Envoy enforces where a
+// credential can go. store (approve) and erase (reject) are answered
 // locally: a sandboxed git must not write to or delete from the host
 // store.
 func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialRequest) *hostproxyv1.HostActionResult {

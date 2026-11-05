@@ -6,7 +6,7 @@ Docker CLI-compatible container management commands. Subpackages (`run/`, `creat
 
 - Always use `f.Client(ctx)` from the Factory; never `docker.NewClient()` directly. Do not `defer client.Close()`: the Factory owns the client lifecycle.
 - Three-phase command structure: Phase A (pre-progress: config, Docker, image, safety checks), Phase B (`CreateContainer`, usually in a goroutine behind a spinner), Phase C (post-progress: warnings and output).
-- Onboarding bypass (`hasCompletedOnboarding`) is handled at image level via `claude-config.json` baked into `~/.claude-init/.config.json`; CP-driven init (`configSeedScript` in `internal/controlplane/agent/init.go`) copies it to `~/.claude/.config.json` on first boot.
+- Onboarding bypass (`hasCompletedOnboarding`) is a harness seed: the Claude harness manifest (`internal/bundle/assets/harnesses/claude/harness.yaml`) stages `assets/claude-config.json` in the image with dest `.claude/.config.json` (`copy-if-missing-or-empty`). CP-driven init (`ConfigSeedScript` in `controlplane/agent/exec.go`, run by `configStep` in `controlplane/agent/init_steps.go`) applies the seed manifest on first boot.
 
 ## Container Lifecycle Hooks
 

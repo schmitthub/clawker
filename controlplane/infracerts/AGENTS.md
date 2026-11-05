@@ -45,7 +45,7 @@ func (i *Issuer) IntermediatePEM() []byte
 ## Imports
 
 - **Uses**: stdlib `crypto/*`, `encoding/pem`, `math/big`, `os`, `syscall`. No internal/ imports.
-- **Imported by**: `cmd/clawkercp` (loads the intermediate at startup and hands it to `otelcerts.New`, which is then passed to `firewall.NewStack` as a `firewall.OtelCertProvisioner`), `internal/controlplane/otelcerts` (wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand). The firewall package imports `infracerts` only for `OwnLikeParent`; for certificates it sees only the `OtelCertProvisioner` interface defined in `firewall/stack.go`. (`internal/auth` provisions the intermediate CA itself using x509 directly — it does not import this package.)
+- **Imported by**: `controlplane/otelcerts` (`NewCPProvisioner` loads the intermediate at CP startup and hands it to `otelcerts.New`; the result goes to `firewall.NewStack` as a `firewall.OtelCertProvisioner`; `otelcerts` also wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand), `controlplane/sdscerts`, and `controlplane/firewall`. The firewall package imports `infracerts` only for `OwnLikeParent`; for certificates it sees only the `OtelCertProvisioner` interface defined in `firewall/stack.go`. (`internal/auth` provisions the intermediate CA itself using x509 directly — it does not import this package.)
 
 ## Degraded mode
 

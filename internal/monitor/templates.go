@@ -73,8 +73,7 @@ const (
 // MonitorTemplateData provides values for rendering monitoring stack templates.
 //
 // Service hostnames are sourced from [consts.MonitoringService*] so the
-// compose template, otel-config endpoints, and the CoreDNS internalHosts
-// list in `internal/controlplane/firewall/coredns_config.go` cannot drift.
+// compose template and the otel-config endpoints cannot drift.
 type MonitorTemplateData struct {
 	// Ports — for Prometheus, OpenSearch and Dashboards a single value
 	// drives both sides of the host:container publish mapping AND the

@@ -47,7 +47,7 @@ This is a Go CLI project. Key testing details:
 - **Test environment**: `testenv.New(t)` for isolated XDG dirs + config + project manager
 - **Golden files**: `GOLDEN_UPDATE=1` env var to regenerate; tests compare against `testdata/` files
 - **Integration tests**: Live in `test/` directory tree (Docker required), separated from unit tests
-- **Unit tests**: `make test` runs all unit tests (excludes `test/cli`, `test/internals`, `test/agents`)
+- **Unit tests**: `make test` runs all unit tests (`UNIT_PKGS` in the `Makefile` excludes `test/e2e` and `test/whail`)
 
 ## CRITICAL: Step 0 — Load test infrastructure context
 
@@ -64,8 +64,9 @@ cat internal/git/gittest/*.go              # InMemoryGitManager
 cat internal/config/mocks/*.go             # ConfigMock, NewBlankConfig, NewFromString, NewIsolatedTestConfig
 cat internal/project/mocks/*.go            # ProjectManagerMock, TestManagerHarness
 cat api/admin/v1/mocks/*.go controlplane/manager/mocks/*.go controlplane/auth/mocks/*.go   # AdminServiceClientMock, ManagerMock, IntrospectorMock
-cat internal/controlplane/firewall/ebpf/mocks/*.go  # EBPFManagerMock
-cat internal/hostproxy/hostproxytest/*.go  # MockHostProxy
+cat controlplane/firewall/ebpf/mocks/*.go  # EBPFManagerMock
+cat api/agent/v1/mocks/*.go controlplane/agent/mocks/*.go   # AgentServiceClientMock, HostForwarderMock, OtelForwarderMock, RegistryMock
+cat internal/hostproxy/hostproxytest/*.go  # MockManager
 cat pkg/whail/whailtest/*.go              # FakeAPIClient, BuildKitCapture, golden file seeding
 
 # Test environment
@@ -217,7 +218,7 @@ miss. The hunter should be AGGRESSIVE about pushing unit tests in Docker-adjacen
 packages toward E2E replacements.
 
 **Docker-adjacent packages get extra scrutiny:** Unit tests in `internal/docker/`,
-`internal/controlplane/`, `internal/controlplane/firewall/`, `internal/containerfs/`,
+`controlplane/`, `controlplane/firewall/`, `internal/containerfs/`,
 `internal/hostproxy/`, `internal/socketbridge/`, and `internal/workspace/` should be examined with a
 strong bias toward E2E. If the behavior can be tested by running a real command
 through `test/e2e/harness`, that's almost always better than a unit test with
@@ -231,10 +232,9 @@ would be loud, obvious, and easy to trace — the unit test is redundant with th
 higher-level test.
 
 **Clawker context:** The project has substantial integration tests in `test/`:
-- `test/cli/` — testscript-based CLI workflow tests (Docker required)
-- `test/commands/` — command integration tests (Docker required)
-- `test/e2e/` — end-to-end tests with harness
-- `test/whail/` — BuildKit integration tests
+- `test/e2e/` — end-to-end tests with harness (Docker required)
+- `test/whail/` — BuildKit integration tests (Docker and BuildKit required)
+- `test/adversarial/` — live UAT only (adversarial probes against a running stack); not a CI or `make test` suite
 
 Common offenders:
 - Testing that `docker.NewClient` creates a non-nil client
@@ -258,7 +258,7 @@ unit test has value as a diagnostic tool.
 the same behavior. Don't just delete — insist on E2E coverage as the replacement.
 Example: "DELETE — this is trivially covered by running `clawker settings edit`
 through the harness. If no E2E test exists for this flow, create one in
-`test/e2e/` or `test/commands/`."
+`test/e2e/`."
 
 ## The cardinal rule: no hardcoded value assertions
 

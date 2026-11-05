@@ -87,11 +87,12 @@ Both tools receive that same instruction. This is a shared instruction, not a
 native loading restriction. Keep vendor-specific invocation metadata out of
 shared skills.
 
-Both tools use `.agents/docs`, `.agents/templates`, and the shared Serena
+Both tools use the shared skills in `.agents/skills` and the shared Serena
 memory graph under `.serena/memories`. Memory links use `mem:` references.
 The root memory is `core`. Keep durable project knowledge there or in shared
 references; do not make required knowledge depend on one tool's private memory.
-The CLI output and prompter references are files in `.agents/docs`, not memories.
+The CLI output and prompter references are the `cli-output` and
+`wizard-commands` skills, not memories.
 
 ### Native hooks and reviewer settings
 

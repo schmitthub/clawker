@@ -21,11 +21,18 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 The monitoring stack runs as four long-lived Docker Compose services on their own Compose network (the collector also joins an internal telemetry network), plus one short-lived bootstrap container that runs at bring-up (and on `monitor reload`) to preconfigure the cluster:
 
 ```
-Claude Code (in container)                Control plane (host)
+Claude Code (in agent container)          Control plane (container)
     |                                          |
-    | OTLP (HTTP/gRPC) — agent lane            | OTLP/gRPC + mTLS — trusted infra lane
-    | logs, metrics, traces                    | zerolog bridge, Envoy access logs,
-    |                                          | CoreDNS query logs, netlogger ebpf-egress
+    | OTLP/HTTP to 127.0.0.1:4318              | OTLP/gRPC + mTLS — trusted infra lane
+    v                                          | zerolog bridge, Envoy access logs,
+clawkerd relay (in agent container)            | CoreDNS query logs, netlogger ebpf-egress
+    |                                          |
+    | AgentService.ExportTelemetry (mTLS)      |
+    v                                          |
+Control plane gateway (sets project,           |
+agent, container_id)                           |
+    |                                          |
+    | OTLP/gRPC + mTLS to otlp/agents :4320    |
     v                                          v
 OTEL Collector ──┬──> OpenSearch (logs + traces) ──> OpenSearch Dashboards
                  └──> Prometheus (metrics + spanmetrics) ──> Prometheus UI

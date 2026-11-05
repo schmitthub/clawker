@@ -125,8 +125,8 @@ type Config interface {
 	// stack and the container's OTEL env.
 	MonitoringConfig() MonitoringConfig
 
-	// HostProxyConfig returns the `host_proxy:` block (manager + daemon
-	// settings), consumed as one unit by the host proxy.
+	// HostProxyConfig returns the `host_proxy:` block (daemon settings only),
+	// consumed as one unit by the host proxy.
 	HostProxyConfig() HostProxyConfig
 
 	// ControlPlaneSettings returns the `control_plane:` block — the CP port

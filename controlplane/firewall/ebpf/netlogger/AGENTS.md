@@ -2,7 +2,7 @@
 
 Pipeline contract (collector routing, indices, record schema, runtime UAT): `internal/monitor/AGENTS.md`.
 
-Userspace consumer of the BPF `events_ringbuf`. Drains per-decision-point egress records, enriches each with `{container_id, agent, project, domain}` attribution looked up by `cgroup_id`, and pushes the result through an OTel log sink to the trusted-infra OTLP receiver. Lives under `internal/controlplane/firewall/ebpf/` because it is the userspace half of the ebpf egress event emitter — the BPF programs in `bpf/clawker.c` submit records into the pinned ringbuf; this package shapes them into the OTLP log stream the monitoring backend consumes.
+Userspace consumer of the BPF `events_ringbuf`. Drains per-decision-point egress records, enriches each with `{container_id, agent, project, domain}` attribution looked up by `cgroup_id`, and pushes the result through an OTel log sink to the trusted-infra OTLP receiver. Lives under `controlplane/firewall/ebpf/` because it is the userspace half of the ebpf egress event emitter — the BPF programs in `bpf/clawker.c` submit records into the pinned ringbuf; this package shapes them into the OTLP log stream the monitoring backend consumes.
 
 The package ships as a per-decision-point egress event emitter with an OTel sink and a circuit breaker; CP main constructs the `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps it with `NewCircuitExporter`, and wires it through `Deps.OtelLoggerProvider`. The drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushDead()`.
 
@@ -202,7 +202,7 @@ No explicit cache backfill is needed at startup. `firewall.Handler.FirewallInit`
 3. Cancel the inner ctx (the reverse-DNS refresher exits on the next tick; subscriber goroutines exit on the next select).
 4. Wait on the goroutines with a bounded timeout (`defaultStopTimeout = 5s`); beyond that we proceed so netlogger is never the long pole during CP drain-to-zero.
 
-The CP wiring (see `cmd/clawkercp/main.go::drainCallbackBody`) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushDead()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down. Stop is wrapped in a `if netloggerSvc != nil` so the degraded path (boot-time provider failure) doesn't NPE.
+The CP wiring (see `runDrainSequence` in `internal/controlplane/cmd.go`) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushDead()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down. Stop is wrapped in a `if netloggerSvc != nil` so the degraded path (boot-time provider failure) doesn't NPE.
 
 ## CP no-panic discipline
 
@@ -213,11 +213,11 @@ Every goroutine recovers (`defer func() { if r := recover(); r != nil { log.Erro
 - `Sink` interface — pipeline tests use a hand-rolled `recordingSink` (see `processor_test.go`) to capture Emit calls. otelSink tests build a real `*sdklog.LoggerProvider` with a `SimpleProcessor` wrapping a `recordingExporter` (see `otel_sink_test.go`) so the SDK code paths get exercised without an OTLP gRPC dial.
 - `readerSource` interface — reader tests use `fakeRingbuf` that scripts a sequence of records + errors. Skips the CAP_BPF dependency entirely.
 - `ReverseDNSMap.walk` function field — tests inject a stub that returns scripted identities without touching cilium/ebpf.
-- `ContainerInspecter` interface — Service tests use `fakeInspecter` with a map of canned `ContainerInspectResult` rows. Pattern matches `internal/controlplane/agent/peer_lookup_moby.go`.
+- `ContainerInspecter` interface — Service tests use `fakeInspecter` with a map of canned `ContainerInspectResult` rows. Pattern matches `controlplane/agent/peer_lookup_moby.go`.
 - `newTestService` helper in `netlogger_test.go` — wires `subscribeBus` without invoking `Start` (which would require CAP_BPF). Exercises the bus subscription path end-to-end on the in-process overseer bus.
 - `circuitExporter` tests use a `flakyExporter` that returns a scripted sequence of errors. No SDK or network involvement.
 
 ## Imports
 
-- **Uses**: `internal/config`, `internal/logger`, `internal/controlplane/dockerevents`, `internal/controlplane/firewall/ebpf` (for `EgressEvent`, `EBPFContainerEnrolled`, `Manager` accessors), `internal/controlplane/overseer`, `github.com/cilium/ebpf/ringbuf`, `github.com/moby/moby/client` + `api/types/container,events` (daemon-side; permitted under the docker-client.md exception), `go.opentelemetry.io/otel/log`, `go.opentelemetry.io/otel/sdk/log`.
-- **Imported by**: `cmd/clawkercp/main.go` — constructs `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps with `NewCircuitExporter`, hands to `netlogger.New` via `Deps.OtelLoggerProvider`.
+- **Uses**: `internal/config`, `internal/logger`, `internal/consts`, `controlplane/dockerevents`, `controlplane/firewall/ebpf` (for `EgressEvent`, `EBPFContainerEnrolled`, `Manager` accessors), `controlplane/pubsub`, `controlplane/otel` and `controlplane/otelcerts` (in `start.go`), `github.com/cilium/ebpf/ringbuf`, `github.com/moby/moby/client` + `api/types/container,events` (daemon-side; permitted under the docker-client.md exception), `go.opentelemetry.io/otel/log`, `go.opentelemetry.io/otel/sdk/log`.
+- **Imported by**: `internal/controlplane/cmd.go` (`startWorkers`) — calls `netlogger.Start` (`start.go`). `Start` constructs `*sdklog.LoggerProvider` via `otel.NewOtelLoggerProvider`, wraps the exporter with `NewCircuitExporter`, and hands the provider to `netlogger.New` via `Deps.OtelLoggerProvider`.

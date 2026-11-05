@@ -219,7 +219,7 @@
               "type": "array"
             },
             "after_user_setup": {
-              "description": "Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services",
+              "description": "Add Dockerfile instructions while root with the container user (clawker) created — e.g. set up directories, fix permissions, or configure services",
               "items": {
                 "type": "string"
               },
@@ -227,7 +227,7 @@
               "type": "array"
             },
             "after_user_switch": {
-              "description": "Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools",
+              "description": "Add Dockerfile instructions as the container user (clawker) — e.g. install dotfiles, configure your shell, or set up user-level tools",
               "items": {
                 "type": "string"
               },

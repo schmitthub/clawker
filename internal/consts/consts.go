@@ -602,13 +602,13 @@ const (
 // before drain-to-zero.
 const CPSOSIdleTTL = 30 * time.Second
 
-// Host-proxy egress-rules readiness gate. The host-proxy daemon serves
-// /health immediately, then runs a staged wait — firewall container running →
-// Envoy health answering → egress rules file readable — before it trusts the
-// rules for /open/url enforcement. The per-stage budgets derive from the
-// firewall's own bringup/health timeouts so the host proxy never gives up
-// before the firewall could plausibly be up: the firewall boots AFTER the
-// host proxy in container bootstrap.
+// Host-proxy egress-rules readiness gate. The host-proxy daemon takes its PID
+// lock and starts the CP connector immediately, then runs a staged wait —
+// firewall container running → Envoy health answering → egress rules file
+// readable — before it trusts the rules for open_url action enforcement. The
+// per-stage budgets derive from the firewall's own bringup/health timeouts so
+// the host proxy never gives up before the firewall could plausibly be up. The
+// CP and the firewall boot BEFORE the host proxy in container bootstrap.
 const (
 	// HostProxyFirewallRunningTimeout bounds stage 1 — the wait for the
 	// firewall container to appear (created + running). The firewall's whole

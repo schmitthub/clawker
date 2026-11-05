@@ -20,7 +20,7 @@ import (
 // starts checking for live containers.
 const defaultGracePeriod = 60 * time.Second
 
-// NewCmdServe creates the hidden daemon subcommand that runs the host proxy server.
+// NewCmdServe creates the hidden subcommand that runs the host proxy daemon.
 // This is invoked by Manager.EnsureRunning() when spawning a daemon subprocess.
 func NewCmdServe() *cobra.Command {
 	var (

@@ -3,7 +3,8 @@
 // it breaks the image build. Inline literals here are intentional, exempt from
 // the no-hardcoded-strings policy. See internal/hostproxy/internals/CLAUDE.md.
 //
-// callback-forwarder polls the host proxy for captured OAuth callback data and
+// callback-forwarder polls the clawkerd host-action relay for captured OAuth
+// callback data (the relay gets it from the host proxy through the CP) and
 // forwards it to the local HTTP server (the in-container agent's callback listener).
 //
 // Usage:
@@ -33,7 +34,7 @@ import (
 	"time"
 )
 
-// CallbackData matches the CallbackData struct from the host proxy.
+// CallbackData matches the host proxy's CallbackData JSON that the relay returns.
 type CallbackData struct {
 	Method     string            `json:"method"`
 	Path       string            `json:"path"`

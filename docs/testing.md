@@ -171,7 +171,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` (47 Fn fields, call recording), build scenarios (Simple, Cached, MultiStage, Error, etc.), `EventRecorder` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
-| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` for integration tests |
+| `internal/hostproxy` | `hostproxytest/` | `MockManager` for integration tests |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
 **Rule**: If a dependency node lacks test infrastructure, add it before writing tests that depend on it.
@@ -246,8 +246,8 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 | `NewIsolatedFS(opts)` | Creates isolated XDG dirs, registers cleanup |
 | `Run(args...)` | Fresh Factory → `root.NewCmdRoot` → execute (full Cobra pipeline) |
 | `RunInContainer(agent, cmd...)` | `container run --rm --agent <agent> @ <cmd>` |
-| `ExecInContainer(agent, cmd...)` | `container exec --user claude --agent <agent> <cmd>` |
-| `ExecInContainerAsRoot(agent, cmd...)` | `container exec --agent <agent> <cmd>` (root) |
+| `ExecInContainer(agent, cmd...)` | `container exec --user clawker --agent <agent> <cmd>` (`consts.ContainerUser`) |
+| `ExecInContainerAsRoot(agent, cmd...)` | `container exec --agent <agent> <cmd>` (image user, root) |
 | `NewFactory(t, opts)` | Constructs Factory with lazy singletons; returns in/out/err buffers |
 
 #### Cleanup

@@ -44,7 +44,7 @@ func Edit(ios *iostreams.IOStreams, store *storage.Store[T]) (storeui.Result, er
 
 - Set `Hidden: true` to remove fields the user shouldn't see (complex nested types like `map[string]string`, `[]struct`)
 - Use prefix-based hiding: hiding path `"build.instructions"` also hides `"build.instructions.env"`, `"build.instructions.root_run"`, etc.
-- Set `ReadOnly` for fields managed by other systems (e.g., `host_proxy.*` ports)
+- Set `ReadOnly` for internal fields that users must not change (e.g., `host_proxy.daemon.poll_interval`, `host_proxy.daemon.grace_period`, `host_proxy.daemon.max_consecutive_errs` in `internal/config/storeui/settings/settings.go`). `storeui` also locks a row that it cannot decode, and a field with a consumer-defined kind (`Kind > storage.KindLast`)
 - Set `Kind` + `Options` for constrained fields (e.g., `workspace.default_mode` → `KindSelect` with `["bind", "snapshot"]`)
 - Set `Label` and `Description` for human-friendly display text
 - Set `Order` to control sort position within tabs (lower = first)

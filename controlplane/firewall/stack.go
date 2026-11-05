@@ -146,7 +146,7 @@ type Stack struct {
 // and the otel_collector_als cluster entirely (sender-side gate on
 // als.MTLS in buildHTTPAccessLog / buildTCPAccessLog / buildClusters
 // — no cross-lane emission to the untrusted otel-collector:4317
-// receiver that's reserved for agent containers). CoreDNS sees no
+// receiver, which only the host CLI uses; agents never reach it). CoreDNS sees no
 // CLAWKER_COREDNS_OTEL_ENDPOINT and installs noopEmitter. Stdout
 // logs remain available via `docker logs` for triage, but the
 // OpenSearch pipeline has no filelog receiver — the trusted OTLP push
@@ -580,8 +580,8 @@ func (s *Stack) ensureConfigs() (string, error) {
 		// installs noopEmitter. Stdout sinks remain wired for
 		// `docker logs` triage, but the OpenSearch ingestion path
 		// stays cold (no filelog receiver). Infra services must
-		// never cross into the untrusted otel-collector:4317 lane
-		// reserved for agent containers. Without this gate (i.e.
+		// never cross into the untrusted otel-collector:4317 lane,
+		// which only the host CLI uses (agents never reach it). Without this gate (i.e.
 		// wiring the bind-mounts when s.infraIssuer != nil regardless
 		// of mint success), CoreDNS's otel plugin would
 		// tls.LoadX509KeyPair missing/partial files at setup time,
@@ -666,8 +666,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 
 // ensureInfraClientCerts mints short-lived mTLS client leaves for the
 // infra services that push telemetry through the CP-only OTLP
-// receiver (Envoy + CoreDNS today; future hostproxy sidecars plug in
-// here). Files land under OtelClientsDir:
+// receiver (Envoy + CoreDNS). Files land under OtelClientsDir:
 //
 //	<dir>/envoy/client.pem  (leaf + intermediate chain)
 //	<dir>/envoy/client.key
@@ -726,7 +725,7 @@ func (s *Stack) ensureSDSClientCerts() error {
 // buildHTTPAccessLog / buildTCPAccessLog / buildClusters), and Envoy
 // keeps only the stdout JSON sink for `docker logs clawker-envoy`
 // triage. Infra services must never cross into the untrusted
-// otel-collector:4317 lane reserved for agent containers — degraded
+// otel-collector:4317 lane (host CLI only; agents never reach it) — degraded
 // telemetry is silent at the trusted receiver, never spoofable noise
 // on the untrusted one.
 //

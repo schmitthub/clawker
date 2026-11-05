@@ -9,8 +9,8 @@ import (
 // tcp_proxy clawker emits. Two sinks: a stdout JSON sink (always, for
 // `docker logs clawker-envoy` triage) and the OpenTelemetry ALS sink (only when
 // ALSConfig.MTLS is true — without mTLS material we cannot reach the trusted
-// otlp/infra receiver, and the untrusted otel-collector:4317 lane is reserved
-// for agent containers). Fields follow OTel network/server/client/tls semconv.
+// otlp/infra receiver, and the untrusted otel-collector:4317 receiver is for
+// the host CLI only; agents never reach it). Fields follow OTel network/server/client/tls semconv.
 
 // buildHTTPAccessLog returns access loggers for an HCM. HTTP-specific fields
 // (method/path/response_code) are included. server.address travels uniformly:
