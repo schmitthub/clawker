@@ -54,9 +54,8 @@ type dynamicListener struct {
 // browser.
 type Actions struct {
 	log              *logger.Logger
-	rulesFilePath    string                                     // egress rules file path; empty = skip check (firewall disabled)
-	browserFunc      func(context.Context, string) error        // opens URL in host browser; defaults to openBrowser
-	gitCommand       func(context.Context, ...string) *exec.Cmd // runs the host git; tests substitute a fake
+	rulesFilePath    string                              // egress rules file path; empty = skip check (firewall disabled)
+	browserFunc      func(context.Context, string) error // opens URL in host browser; defaults to openBrowser
 	mu               sync.RWMutex
 	closed           bool
 	sessionStore     *SessionStore
@@ -74,7 +73,6 @@ func NewActions(log *logger.Logger, rulesFilePath string) *Actions {
 		log:              log,
 		rulesFilePath:    rulesFilePath,
 		browserFunc:      openBrowser,
-		gitCommand:       gitCommand,
 		mu:               sync.RWMutex{},
 		closed:           false,
 		sessionStore:     sessionStore,
@@ -204,11 +202,6 @@ func (s *Actions) checkEgress(rawURL string) *hostproxyv1.HostActionResult {
 	}
 }
 
-// gitCommand runs the host git with args.
-func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, "git", args...)
-}
-
 // gitCredential runs one git credential helper action on the host. Only
 // get (fill) reaches the host credential store. It runs no egress check:
 // forward_https is the user's choice, and Envoy enforces where a
@@ -240,11 +233,12 @@ func (s *Actions) gitCredential(ctx context.Context, req *agentv1.GitCredentialR
 			Outcome: &hostproxyv1.HostActionResult_GitCredential{GitCredential: emptyGitCredentialResult()},
 		}
 	}
-	cmd := s.gitCommand(ctx, "credential", gitAction)
+	cmd := exec.CommandContext(ctx, "git", "credential", gitAction)
 	cmd.Stdin = strings.NewReader(formatGitCredentialInput(req))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = gitCredentialWaitDelay
 	if err := cmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
 		if errMsg == "" {
@@ -276,6 +270,10 @@ func emptyGitCredentialResult() *agentv1.GitCredentialResult {
 
 // gitFill is the git credential subcommand for get.
 const gitFill = "fill"
+
+// gitCredentialWaitDelay bounds the wait for a credential helper child
+// that keeps the output pipes open after the context killed git.
+const gitCredentialWaitDelay = 5 * time.Second
 
 // msgInjectionChars is the refusal for a field that could inject
 // key=value pairs into the git credential protocol.

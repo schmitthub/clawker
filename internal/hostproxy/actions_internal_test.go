@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -544,17 +543,25 @@ func TestActions_SessionExpiryKeepsNewerListener(t *testing.T) {
 	assert.Equal(t, secondID, dl.sessionID)
 }
 
-// fakeGit substitutes the host git with a script that prints creds and
-// records every invocation.
-func fakeGit(t *testing.T, a *Actions) *[]string {
+// fakeGit puts a `git` script first on PATH that prints creds and appends
+// each invocation's arguments to a file. The returned func reads the
+// recorded invocations, one per line.
+func fakeGit(t *testing.T) func() []string {
 	t.Helper()
-	calls := new([]string)
-	a.gitCommand = func(ctx context.Context, args ...string) *exec.Cmd {
-		*calls = append(*calls, strings.Join(args, " "))
-		return exec.CommandContext(ctx, "sh", "-c",
-			"cat >/dev/null; printf 'protocol=https\\nhost=github.test\\nusername=u\\npassword=p\\n'")
+	dir := t.TempDir()
+	callsFile := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + callsFile + "\n" +
+		"cat >/dev/null; printf 'protocol=https\\nhost=github.test\\nusername=u\\npassword=p\\n'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() []string {
+		raw, err := os.ReadFile(callsFile)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		require.NoError(t, err)
+		return strings.Split(strings.TrimSpace(string(raw)), "\n")
 	}
-	return calls
 }
 
 func gitRulesFile(t *testing.T) string {
@@ -579,21 +586,21 @@ func TestActions_GitCredential_StoreEraseLocal(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, _ := newTestActions(t, gitRulesFile(t))
-			calls := fakeGit(t, a)
+			calls := fakeGit(t)
 			res := a.Handle(context.Background(), gitCredential(gitReq(action, "https", "evil.test", "", "u", "p")))
 			require.Equal(t, codes.OK, codeOf(res), res.GetError().GetMessage())
 			assert.NotNil(t, res.GetGitCredential())
 			assert.Empty(t, res.GetGitCredential().GetPassword())
-			assert.Empty(t, *calls)
+			assert.Empty(t, calls())
 		})
 	}
 }
 
 func TestActions_GitCredential_RejectsNonHTTPProtocol(t *testing.T) {
 	a, _ := newTestActions(t, "")
-	calls := fakeGit(t, a)
+	calls := fakeGit(t)
 	res := a.Handle(context.Background(), gitCredential(
 		gitReq(agentv1.GitCredentialAction_GIT_CREDENTIAL_ACTION_GET, "ssh", "github.test", "", "", "")))
 	assert.Equal(t, codes.InvalidArgument, codeOf(res))
-	assert.Empty(t, *calls)
+	assert.Empty(t, calls())
 }

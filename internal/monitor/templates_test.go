@@ -26,6 +26,23 @@ func testMonitoring(t *testing.T, yaml string) config.MonitoringConfig {
 	return cfg.MonitoringConfig()
 }
 
+// TestNewMonitorTemplateData_PrometheusMetricsPortCollision: the Prometheus
+// exporter binds inside the collector container, so a port equal to one of
+// the collector's fixed listeners is refused with a clear settings error
+// instead of a collector that cannot start.
+func TestNewMonitorTemplateData_PrometheusMetricsPortCollision(t *testing.T) {
+	for _, port := range []int{
+		consts.MonitoringOtelGRPCPort, consts.MonitoringOtelHTTPPort,
+		consts.MonitoringOtelInfraPort, consts.MonitoringOtelAgentIngestPort,
+	} {
+		mon := testMonitoring(t, fmt.Sprintf("monitoring:\n  prometheus_metrics_port: %d\n", port))
+		_, err := NewMonitorTemplateData(mon, nil)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("prometheus_metrics_port %d collides", port)) {
+			t.Errorf("port %d: want a collision error, got %v", port, err)
+		}
+	}
+}
+
 func TestNewMonitorTemplateData(t *testing.T) {
 	mon := testMonitoring(t, `
 monitoring:

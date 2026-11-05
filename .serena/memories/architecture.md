@@ -474,7 +474,7 @@ The CP container is the **single owner** of firewall state, eBPF lifetime, and E
 
 **CP self-shutdown (`controlplane/agent/watcher.go` + the orchestrator's drain callback in `internal/controlplane/cmd.go`):**
 
-`AgentWatcher` polls Docker every 30s for containers with `purpose=agent, managed=true`. After `(missed_threshold=2) × pollInterval + grace=60s` of drain-to-zero, it fires the drain callback. Drain callback ordering (INV-B2-007): `actionQueue.Close` → `grpcServer.GracefulStop` → `handler.CancelAllBypassTimers` → `firewall.Stack.Stop` → `ebpf.Manager.FlushDead` (the same drain runs on SIGTERM from `controlplane down`; live agents stay enrolled and fail closed). The CP exits clean (code 0) and the `on-failure` restart policy does NOT retrigger.
+`AgentWatcher` polls Docker every 30s for containers with `purpose=agent, managed=true`. After `(missed_threshold=2) × pollInterval + grace=60s` of drain-to-zero, it fires the drain callback. Drain callback ordering (INV-B2-007): `actionQueue.Close` → `hostGateway.Close` (ends the host proxy stream so GracefulStop does not wait on it) → `grpcServer.GracefulStop` → `handler.CancelAllBypassTimers` → `firewall.Stack.Stop` → `ebpf.Manager.FlushDead` (the same drain runs on SIGTERM from `controlplane down`; live agents stay enrolled and fail closed). The CP exits clean (code 0) and the `on-failure` restart policy does NOT retrigger.
 
 Watcher hardening: `ListErrCeiling` bounds Docker-wedged blindness; `started atomic.Bool` enforces at-most-once `Run`; negative options panic instead of snapping to defaults.
 
@@ -518,7 +518,7 @@ The plugin is consumed exclusively by `cmd/coredns-clawker/main.go`, a custom Co
 
 Containerized, privileged, long-lived Go service that owns authoritative state for managed containers. Runs `cmd/clawkercp` as PID 1 in the `clawker-controlplane` container. Responsibilities:
 
-1. **Authoritative eBPF management** — owns `ebpf.Manager.Load()` lifetime for the process lifetime; defensive startup cleanup (`CleanupStaleBypass`, INV-B2-013); drain flush (`FlushDead`, INV-B2-007; `FlushAll` only on `firewall down`).
+1. **Authoritative eBPF management** — owns `ebpf.Manager.Load()` lifetime for the process lifetime; defensive startup cleanup (`CleanupStaleBypass`, INV-B2-013); drain flush (`FlushDead`, INV-B2-007; `FlushAll` on `firewall down` and on a CP boot with `firewall.enable: false`, which clears the agents the previous firewalled CP left enrolled against a stopped Envoy/CoreDNS).
 2. **AdminService gRPC surface** — 15 methods: 12 firewall RPCs + `ListAgents`, `GetSystemTime`, `WatchSOS`, embedded alongside `*firewall.Handler` in `controlplane.adminServer`. Every AdminService RPC requires the `"admin"` scope (INV-B2-009), except `GetSystemTime` (`consts.ScopePublic`, mTLS only; `api/admin/v1/admin.go` `AdminMethodScopes`). This scope rule applies to AdminService only: `HostProxyService.Connect` (`api/hostproxy/v1`) requires `hostproxy:serve` and is pinned to the host proxy's Hydra client ID (`controlplane/server/grpc_stack.go`).
 3. **Ory auth stack** — Hydra (OAuth2, `client_credentials` + `private_key_jwt` ES256), Kratos (identity, webui placeholder), Oathkeeper (reverse proxy, webui placeholder). Hydra introspection validates bearer tokens; fail-closed on any error.
 4. **Aggregate health** — `/healthz` on `HealthPort` probes all 7 service ports before returning 200.
