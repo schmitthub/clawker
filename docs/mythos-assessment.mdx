@@ -67,7 +67,7 @@ The edge IPs for B and E came from a host-side `dig`; the agent could not resolv
 
 ### Round two: control plane and clawkerd
 
-clawkerd is PID 1 of the agent container. It runs as root with Docker's default capability set, which includes `CAP_NET_RAW`, and the eBPF program passes any socket that carries the clawker loop-prevention mark. Root inside the container is therefore unfiltered egress, so the three sockets through which the agent user can reach clawkerd are the privilege boundary inside the container: the mTLS command service on port 7700, the host relay on loopback 18374, and the telemetry relay on loopback 4318. Round two tested the authentication of the command service and the control plane, the in-subnet allow list, and the host relay. Round three tested the telemetry relay.
+clawkerd is PID 1 of the agent container. It runs as root with Docker's default capability set, which includes `CAP_NET_RAW`, and the eBPF program passes any socket that carries the clawker loop-prevention mark. Root inside the container can set that mark and so has unfiltered egress, so the three sockets through which the agent user can reach clawkerd are the privilege boundary inside the container: the mTLS command service on port 7700, the host relay on loopback 18374, and the telemetry relay on loopback 4318. Round two tested the authentication of the command service and the control plane, the in-subnet allow list, and the host relay. Round three tested the telemetry relay.
 
 | # | Hypothesis | Command (from the container) | Raw result | Verdict |
 | --- | --- | --- | --- | --- |
