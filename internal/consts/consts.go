@@ -68,6 +68,15 @@ const (
 	// against the bare mount-point directory would hand the container an
 	// empty workspace.
 	LabelIDMapRoots = LabelPrefix + "idmap.roots"
+
+	// LabelHostProxy and LabelGitHTTPS are the container's host-action
+	// grants, stamped by the CLI at create from security.enable_host_proxy
+	// and security.git_credentials.forward_https. The CP reads them to
+	// authorize the AgentService host actions. The value is a bool string;
+	// anything that does not parse as true is no grant. A config change
+	// takes effect at the next create.
+	LabelHostProxy = LabelPrefix + "host_proxy"
+	LabelGitHTTPS  = LabelPrefix + "git_https"
 )
 
 // Infrastructure volume-name purpose suffixes. Volume names compose as
@@ -300,12 +309,8 @@ const (
 	// RouteIdentitiesFile persists the firewall's sticky dst→identity
 	// allocation table. CP-owned state, never user-edited.
 	RouteIdentitiesFile = "route-identities.yaml"
-	// FirewallEnrollmentsFile persists the per-container enrollment records
-	// (host-proxy bypass) the CLI pushes on FirewallEnable. CP-owned state,
-	// never user-edited.
-	FirewallEnrollmentsFile = "enrollments.yaml"
-	EnvoyConfigFile         = "envoy.yaml"
-	Corefile                = "Corefile"
+	EnvoyConfigFile     = "envoy.yaml"
+	Corefile            = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
@@ -412,6 +417,7 @@ const (
 	authOtelSubdir    = "otel"
 	authCPSubdir      = "cp"
 	authInfraCASubdir = "infra-ca"
+	authHostProxySub  = "hostproxy"
 )
 
 // authSubdirs enumerates every auth subdirectory. EnsureAuthDirs creates
@@ -420,7 +426,7 @@ const (
 // from subdirPathUnder.
 var authSubdirs = []string{
 	authCASubdir, authCLISubdir, authTLSSubdir,
-	authOtelSubdir, authCPSubdir, authInfraCASubdir,
+	authOtelSubdir, authCPSubdir, authInfraCASubdir, authHostProxySub,
 }
 
 // Auth material file basenames. Same drift contract as the subdir
@@ -513,6 +519,10 @@ const (
 	// pin the peer CN to this constant; agent identity is read from
 	// the SAN and verified against label-derived ground truth.
 	ContainerClawkerd = "clawker-clawkerd"
+
+	// HostProxyClientName is the CN of the host proxy's client leaf. The
+	// CP admits a HostProxyService stream only from this CN.
+	HostProxyClientName = "clawker-hostproxy"
 )
 
 // Container images.
@@ -658,6 +668,15 @@ const (
 	// AgentOTLPRelayURL is the OTEL_EXPORTER_OTLP_ENDPOINT value baked
 	// into harness images (base URL; the SDK appends /v1/<signal>).
 	AgentOTLPRelayURL = "http://" + AgentOTLPRelayAddr
+	// AgentHostRelayAddr is the loopback address clawkerd's host-action
+	// relay listens on inside the agent container. The container scripts
+	// call it as CLAWKER_HOST_PROXY; clawkerd carries each request to an
+	// AgentService host action over its mTLS leaf. The agent cannot reach
+	// the host proxy itself.
+	AgentHostRelayAddr = Localhost + ":18374"
+	// AgentHostRelayURL is the CLAWKER_HOST_PROXY value for agents with
+	// the host-proxy grant.
+	AgentHostRelayURL = "http://" + AgentHostRelayAddr
 )
 
 // gRPC keepalive parameters for the CP↔clawkerd Session channel.
@@ -687,6 +706,17 @@ const (
 	// ClawkerdKeepaliveClientPingInterval. Drives the server's
 	// keepalive.EnforcementPolicy.MinTime.
 	ClawkerdKeepaliveMinClientPing = 10 * time.Second
+)
+
+// gRPC keepalive parameters for the host proxy's HostProxyService stream
+// to the CP admin listener (host proxy = client, CP = server). The stream
+// idles between host actions; client pings find a dead CP connection.
+// HostProxyKeepaliveTime MUST be >= AdminKeepaliveMinClientPing, the
+// admin server's EnforcementPolicy.MinTime.
+const (
+	HostProxyKeepaliveTime      = 30 * time.Second
+	HostProxyKeepaliveTimeout   = 10 * time.Second
+	AdminKeepaliveMinClientPing = 10 * time.Second
 )
 
 // Container user identity.
@@ -817,6 +847,10 @@ const (
 	// tokens to for clawkerd. CLI signs assertions for both clients with
 	// one private key — distinct client IDs keep the scope surface clean.
 	ClientIDAgent = "clawker-agent"
+	// ClientIDHostProxy is the OAuth2 client identity of the host proxy
+	// daemon. It has its own signing key and holds only the
+	// hostproxy:serve scope.
+	ClientIDHostProxy = "clawker-hostproxy"
 )
 
 // Agent bootstrap material (per-container auth artifacts).
@@ -1302,6 +1336,47 @@ func AuthInfraCAKeyPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, InfraCAKeyFile), nil
+}
+
+// AuthHostProxyDir ensures and returns the auth/hostproxy directory under
+// the XDG data dir. Holds the host proxy's identity for its outbound
+// stream to the CP admin listener: a CLI-CA client leaf (CN
+// HostProxyClientName) and an ES256 signing key whose public JWK the CP
+// registers as the ClientIDHostProxy Hydra client.
+func AuthHostProxyDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, authHostProxySub), DataDir())
+}
+
+// AuthHostProxyClientCertPath returns the path to the host proxy's mTLS
+// client certificate.
+func AuthHostProxyClientCertPath() (string, error) {
+	return authHostProxyFile(ClientCertFile)
+}
+
+// AuthHostProxyClientKeyPath returns the path to the host proxy's mTLS
+// client private key.
+func AuthHostProxyClientKeyPath() (string, error) {
+	return authHostProxyFile(ClientKeyFile)
+}
+
+// AuthHostProxySigningKeyPath returns the path to the host proxy's ES256
+// private key (private_key_jwt). It never enters a container.
+func AuthHostProxySigningKeyPath() (string, error) {
+	return authHostProxyFile(SigningKeyFile)
+}
+
+// AuthHostProxySigningJWKPath returns the path to the host proxy's public
+// JWK. Bind-mounted RO into the CP at CPHostProxyPubKeyPath.
+func AuthHostProxySigningJWKPath() (string, error) {
+	return authHostProxyFile(SigningJWKFile)
+}
+
+func authHostProxyFile(name string) (string, error) {
+	dir, err := AuthHostProxyDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // AuthCPDir ensures and returns the auth/cp directory under the

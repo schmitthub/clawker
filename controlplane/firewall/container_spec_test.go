@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -168,6 +169,33 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 		)
 		assertNoBindTarget(t, spec.mounts, "/etc/clawker/auth/tls/ca.pem")
 	})
+}
+
+// TestContainerSpecs_HostDockerInternalFromHostGateway pins the Linux fix for
+// host.docker.internal. Docker DNS knows the name only on Docker Desktop; on
+// Linux Docker Engine only an ExtraHosts entry adds it, in /etc/hosts. CoreDNS
+// answers the rule zone from its /etc/hosts and Envoy resolves its cluster
+// from its /etc/hosts, so both siblings get the host-gateway entry.
+func TestContainerSpecs_HostDockerInternalFromHostGateway(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	overrideHostPathsForTest(t, consts.DataDir())
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
+	netInfo := &NetworkInfo{
+		NetworkID: "net-test",
+		EnvoyIP:   "172.20.0.2",
+		CoreDNSIP: "172.20.0.3",
+		Gateway: netip.MustParseAddr(
+			"172.20.0.1",
+		),
+		Subnet: netip.MustParsePrefix("172.20.0.0/16"),
+		CPIP:   "172.20.0.202",
+		CIDR:   "172.20.0.0/16",
+	}
+
+	want := []string{"host.docker.internal:host-gateway"}
+	assert.Equal(t, want, s.envoyContainerSpec(netInfo).extraHosts, "envoy")
+	assert.Equal(t, want, s.corednsContainerSpec(netInfo).extraHosts, "coredns")
 }
 
 // TestContainerSpecs_SDSClientMaterialMountGatesOnSDSCertsReady pins the

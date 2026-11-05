@@ -37,7 +37,7 @@ conversation. Do not start the next task after wrap-up.
 |------|--------|-------|
 | Task 1: Remove sudo from the base image (item 6) | `complete` | Claude (2026-10-24) |
 | Task 2: Root-owned `/run/clawker` and symlink-safe root writes (item 5) | `complete` | Claude (2026-10-24) |
-| Task 3: Per-container host-proxy bypass from project config (item 4) | `complete` | Claude (2026-10-24) |
+| Task 3: Per-container host-proxy bypass from project config (item 4) | `complete`; superseded 2026-10-26 by `mem:plans/hostproxy-behind-cp/plan` (lane removed) | Claude (2026-10-24) |
 | Task 4: `AgentService.Export` RPC, CP ingest handler, collector agent receiver (item 2, CP side) | `complete` | Claude (2026-10-24) |
 | Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `complete` | Claude (2026-10-25) |
 | Task 6: Monitoring stack off clawker-net (item 1) | `complete` | Claude (2026-10-25) |

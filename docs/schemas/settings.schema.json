@@ -118,24 +118,6 @@
               "description": "How often to check if containers still need the proxy",
               "title": "Poll Interval",
               "type": "string"
-            },
-            "port": {
-              "default": 18374,
-              "description": "Local port the proxy daemon binds to",
-              "title": "Daemon Port",
-              "type": "integer"
-            }
-          },
-          "type": "object"
-        },
-        "manager": {
-          "additionalProperties": false,
-          "properties": {
-            "port": {
-              "default": 18374,
-              "description": "Local port the host proxy listens on (change if 18374 conflicts)",
-              "title": "Manager Port",
-              "type": "integer"
             }
           },
           "type": "object"

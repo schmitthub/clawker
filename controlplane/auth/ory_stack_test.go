@@ -56,7 +56,14 @@ func writeTestCACert(t *testing.T) string {
 func TestNewOryStack_BuildsSingleCAPool(t *testing.T) {
 	caPath := writeTestCACert(t)
 
-	s, err := NewOryStack(configmocks.NewBlankConfig(), nil, caPath, "ignored.jwk", logger.Nop())
+	s, err := NewOryStack(
+		configmocks.NewBlankConfig(),
+		nil,
+		caPath,
+		"ignored.jwk",
+		"ignored-hostproxy.jwk",
+		logger.Nop(),
+	)
 	if err != nil {
 		t.Fatalf("NewOryStack: %v", err)
 	}
@@ -82,7 +89,14 @@ func TestNewOryStack_BuildsSingleCAPool(t *testing.T) {
 // TestNewOryStack_MissingCACert asserts a missing CA cert fails closed with an
 // error (never a panic) so the orchestrator treats it as a startup gate.
 func TestNewOryStack_MissingCACert(t *testing.T) {
-	s, err := NewOryStack(configmocks.NewBlankConfig(), nil, filepath.Join(t.TempDir(), "absent.pem"), "ignored.jwk", logger.Nop())
+	s, err := NewOryStack(
+		configmocks.NewBlankConfig(),
+		nil,
+		filepath.Join(t.TempDir(), "absent.pem"),
+		"ignored.jwk",
+		"ignored-hostproxy.jwk",
+		logger.Nop(),
+	)
 	if err == nil {
 		t.Fatal("expected error for missing CA cert, got nil")
 	}
@@ -99,7 +113,7 @@ func TestNewOryStack_UnparseableCACert(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	s, err := NewOryStack(configmocks.NewBlankConfig(), nil, path, "ignored.jwk", logger.Nop())
+	s, err := NewOryStack(configmocks.NewBlankConfig(), nil, path, "ignored.jwk", "ignored-hostproxy.jwk", logger.Nop())
 	if err == nil {
 		t.Fatal("expected error for unparseable CA cert, got nil")
 	}

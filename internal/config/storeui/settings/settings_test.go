@@ -42,8 +42,6 @@ func TestOverrides_NoOrphans(t *testing.T) {
 func TestOverrides_HostProxyReadOnly(t *testing.T) {
 	overrides := Overrides()
 	hostProxyPaths := []string{
-		"host_proxy.manager.port",
-		"host_proxy.daemon.port",
 		"host_proxy.daemon.poll_interval",
 		"host_proxy.daemon.grace_period",
 		"host_proxy.daemon.max_consecutive_errs",

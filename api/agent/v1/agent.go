@@ -7,6 +7,8 @@
 // and forwards to the collector.
 package v1
 
+//go:generate moq -rm -pkg mocks -out mocks/agent_client_mock.go . AgentServiceClient
+
 import "github.com/schmitthub/clawker/internal/consts"
 
 // ServiceName is the fully-qualified gRPC service name for AgentService.
@@ -49,5 +51,12 @@ func AgentMethodScopes() map[string]AgentScope {
 		// the listener plus the IdentityInterceptor and the handler's
 		// registry thumbprint check are the gate.
 		svc + "ExportTelemetry": consts.ScopePublic,
+		// Host actions are PUBLIC for the same reason. The handler adds
+		// the per-container policy from the container labels.
+		svc + "OpenURL":          consts.ScopePublic,
+		svc + "GitCredential":    consts.ScopePublic,
+		svc + "RegisterCallback": consts.ScopePublic,
+		svc + "GetCallbackData":  consts.ScopePublic,
+		svc + "DeleteCallback":   consts.ScopePublic,
 	}
 }

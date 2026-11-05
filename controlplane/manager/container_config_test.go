@@ -46,8 +46,14 @@ func TestINV_B1_006_PrivateKeysNeverMounted(t *testing.T) {
 	require.NoError(t, err)
 	clientKeyPath, err := consts.AuthCLIClientKeyPath()
 	require.NoError(t, err)
+	hpSigningKeyPath, err := consts.AuthHostProxySigningKeyPath()
+	require.NoError(t, err)
+	hpClientKeyPath, err := consts.AuthHostProxyClientKeyPath()
+	require.NoError(t, err)
 
 	for _, m := range cpConfig.Mounts {
+		assert.NotEqual(t, hpSigningKeyPath, m.Source, "host proxy signing key must never enter the CP container")
+		assert.NotEqual(t, hpClientKeyPath, m.Source, "host proxy client key must never enter the CP container")
 		assert.False(t, strings.HasSuffix(m.Source, signingKeyPath) || m.Source == signingKeyPath,
 			"CLI signing key must never be bind-mounted into the CP container, but found mount source: %s", m.Source)
 		assert.False(t, strings.HasSuffix(m.Source, clientKeyPath) || m.Source == clientKeyPath,
@@ -65,6 +71,8 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 
 	jwkPath, err := consts.AuthCLISigningJWKPath()
 	require.NoError(t, err)
+	hpJWKPath, err := consts.AuthHostProxySigningJWKPath()
+	require.NoError(t, err)
 	certPath, err := consts.AuthServerCertPath()
 	require.NoError(t, err)
 	keyPath, err := consts.AuthServerKeyPath()
@@ -75,6 +83,7 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 		path string
 	}{
 		{"CLI signing JWK", jwkPath},
+		{"Host proxy signing JWK", hpJWKPath},
 		{"Server TLS cert", certPath},
 		{"Server TLS key", keyPath},
 	}
@@ -457,19 +466,6 @@ func TestCPContainer_OtelClientCertMounts(t *testing.T) {
 	for target, found := range wants {
 		assert.True(t, found, "missing CP OTEL mount: %s", target)
 	}
-}
-
-// TestCPContainer_ExtraHostsHostGateway — host.docker.internal is
-// always remapped via host-gateway. The firewall handler resolves the
-// name from the CP's network namespace to build the per-container
-// host-proxy bypass address.
-func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
-	testenv.New(t)
-	cfg := configmocks.NewBlankConfig()
-
-	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
-	require.NoError(t, err)
-	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
 }
 
 // TestCPContainer_OtelLogsEnv_Emitted — the OTLP endpoint env var lands

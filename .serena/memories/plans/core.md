@@ -17,6 +17,7 @@
 
 ## Runtime and CLI work
 
+- Host proxy behind the CP (2026-10-26, implemented on local branch `feat/hostproxy-behind-cp`; stack insert below #600 pending): new stack layer below the release branch; agent -> clawkerd relay -> CP authZ -> mTLS host proxy: `mem:plans/hostproxy-behind-cp/plan`.
 - Sandbox hardening initiative (2026-10-24): six platform-default fixes with per-item design memories, tracker, and tasks: `mem:plans/sandbox-hardening/initiative`.
 
 - Earlier CP typed pub/sub proposal and task history: `mem:plans/controlplane-pubsub`. Typed topics now exist; its draft status is historical.

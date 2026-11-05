@@ -27,6 +27,7 @@ dnsserver.Directives = append([]string{"otel", "dnsbpf"}, dnsserver.Directives..
 _ "github.com/coredns/coredns/plugin/acl"       // query-type filter (CP name zone: A only)
 _ "github.com/coredns/coredns/plugin/forward"   // upstream resolution
 _ "github.com/coredns/coredns/plugin/health"    // /health endpoint (catch-all zone)
+_ "github.com/coredns/coredns/plugin/hosts"     // host.docker.internal rule zone: /etc/hosts host-gateway entry
 _ "github.com/coredns/coredns/plugin/log"       // stdout logging (docker logs triage only; OpenSearch ingestion is the `otel` plugin)
 _ "github.com/coredns/coredns/plugin/reload"    // 2s Corefile reload
 _ "github.com/coredns/coredns/plugin/template"  // AAAA NODATA + NXDOMAIN templates

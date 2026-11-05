@@ -47,9 +47,6 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //			FirewallRemoveRuleFunc: func(ctx context.Context, in *v1.FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRuleResult, error) {
 //				panic("mock out the FirewallRemoveRule method")
 //			},
-//			FirewallResolveHostnameFunc: func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error) {
-//				panic("mock out the FirewallResolveHostname method")
-//			},
 //			FirewallRotateCAFunc: func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResult, error) {
 //				panic("mock out the FirewallRotateCA method")
 //			},
@@ -101,9 +98,6 @@ type AdminServiceClientMock struct {
 
 	// FirewallRemoveRuleFunc mocks the FirewallRemoveRule method.
 	FirewallRemoveRuleFunc func(ctx context.Context, in *v1.FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*v1.FirewallRemoveRuleResult, error)
-
-	// FirewallResolveHostnameFunc mocks the FirewallResolveHostname method.
-	FirewallResolveHostnameFunc func(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error)
 
 	// FirewallRotateCAFunc mocks the FirewallRotateCA method.
 	FirewallRotateCAFunc func(ctx context.Context, in *v1.FirewallRotateCARequest, opts ...grpc.CallOption) (*v1.FirewallRotateCAResult, error)
@@ -206,15 +200,6 @@ type AdminServiceClientMock struct {
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
-		// FirewallResolveHostname holds details about calls to the FirewallResolveHostname method.
-		FirewallResolveHostname []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// In is the in argument value.
-			In *v1.FirewallResolveHostnameRequest
-			// Opts is the opts argument value.
-			Opts []grpc.CallOption
-		}
 		// FirewallRotateCA holds details about calls to the FirewallRotateCA method.
 		FirewallRotateCA []struct {
 			// Ctx is the ctx argument value.
@@ -270,22 +255,21 @@ type AdminServiceClientMock struct {
 			Opts []grpc.CallOption
 		}
 	}
-	lockFirewallAddRules        sync.RWMutex
-	lockFirewallBypass          sync.RWMutex
-	lockFirewallDisable         sync.RWMutex
-	lockFirewallEnable          sync.RWMutex
-	lockFirewallInit            sync.RWMutex
-	lockFirewallListRules       sync.RWMutex
-	lockFirewallReload          sync.RWMutex
-	lockFirewallRemove          sync.RWMutex
-	lockFirewallRemoveRule      sync.RWMutex
-	lockFirewallResolveHostname sync.RWMutex
-	lockFirewallRotateCA        sync.RWMutex
-	lockFirewallStatus          sync.RWMutex
-	lockFirewallSyncRoutes      sync.RWMutex
-	lockGetSystemTime           sync.RWMutex
-	lockListAgents              sync.RWMutex
-	lockWatchSOS                sync.RWMutex
+	lockFirewallAddRules   sync.RWMutex
+	lockFirewallBypass     sync.RWMutex
+	lockFirewallDisable    sync.RWMutex
+	lockFirewallEnable     sync.RWMutex
+	lockFirewallInit       sync.RWMutex
+	lockFirewallListRules  sync.RWMutex
+	lockFirewallReload     sync.RWMutex
+	lockFirewallRemove     sync.RWMutex
+	lockFirewallRemoveRule sync.RWMutex
+	lockFirewallRotateCA   sync.RWMutex
+	lockFirewallStatus     sync.RWMutex
+	lockFirewallSyncRoutes sync.RWMutex
+	lockGetSystemTime      sync.RWMutex
+	lockListAgents         sync.RWMutex
+	lockWatchSOS           sync.RWMutex
 }
 
 // FirewallAddRules calls FirewallAddRulesFunc.
@@ -645,46 +629,6 @@ func (mock *AdminServiceClientMock) FirewallRemoveRuleCalls() []struct {
 	mock.lockFirewallRemoveRule.RLock()
 	calls = mock.calls.FirewallRemoveRule
 	mock.lockFirewallRemoveRule.RUnlock()
-	return calls
-}
-
-// FirewallResolveHostname calls FirewallResolveHostnameFunc.
-func (mock *AdminServiceClientMock) FirewallResolveHostname(ctx context.Context, in *v1.FirewallResolveHostnameRequest, opts ...grpc.CallOption) (*v1.FirewallResolveHostnameResult, error) {
-	if mock.FirewallResolveHostnameFunc == nil {
-		panic("AdminServiceClientMock.FirewallResolveHostnameFunc: method is nil but AdminServiceClient.FirewallResolveHostname was just called")
-	}
-	callInfo := struct {
-		Ctx  context.Context
-		In   *v1.FirewallResolveHostnameRequest
-		Opts []grpc.CallOption
-	}{
-		Ctx:  ctx,
-		In:   in,
-		Opts: opts,
-	}
-	mock.lockFirewallResolveHostname.Lock()
-	mock.calls.FirewallResolveHostname = append(mock.calls.FirewallResolveHostname, callInfo)
-	mock.lockFirewallResolveHostname.Unlock()
-	return mock.FirewallResolveHostnameFunc(ctx, in, opts...)
-}
-
-// FirewallResolveHostnameCalls gets all the calls that were made to FirewallResolveHostname.
-// Check the length with:
-//
-//	len(mockedAdminServiceClient.FirewallResolveHostnameCalls())
-func (mock *AdminServiceClientMock) FirewallResolveHostnameCalls() []struct {
-	Ctx  context.Context
-	In   *v1.FirewallResolveHostnameRequest
-	Opts []grpc.CallOption
-} {
-	var calls []struct {
-		Ctx  context.Context
-		In   *v1.FirewallResolveHostnameRequest
-		Opts []grpc.CallOption
-	}
-	mock.lockFirewallResolveHostname.RLock()
-	calls = mock.calls.FirewallResolveHostname
-	mock.lockFirewallResolveHostname.RUnlock()
 	return calls
 }
 

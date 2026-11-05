@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	"github.com/schmitthub/clawker/controlplane/hostgateway"
 	"github.com/schmitthub/clawker/controlplane/otelgateway"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -46,6 +47,30 @@ type Handler struct {
 	// ExportTelemetry answers Unavailable and the relay retries, while Register
 	// and every other CP surface are unaffected.
 	OtelGateway OtelForwarder
+	// HostGateway calls the host proxy for authorized host actions. nil is
+	// the degraded state: the host actions answer Unavailable, every other
+	// surface is unaffected.
+	HostGateway HostForwarder
+}
+
+// HostForwarder is the host-action handlers' forwarding seam: the handler
+// resolves, verifies, and authorizes the caller; the implementation
+// (controlplane/hostgateway) enforces callback-session ownership and calls
+// the host proxy. Errors are the hostgateway sentinels.
+//
+//go:generate moq -rm -pkg mocks -out mocks/host_forwarder_mock.go . HostForwarder
+type HostForwarder interface {
+	OpenURL(ctx context.Context, id hostgateway.Identity, rawURL string) error
+	GitCredential(
+		ctx context.Context, id hostgateway.Identity, req *agentv1.GitCredentialRequest,
+	) (*agentv1.GitCredentialResult, error)
+	RegisterCallback(
+		ctx context.Context, id hostgateway.Identity, req *agentv1.RegisterCallbackRequest,
+	) (*agentv1.RegisterCallbackResult, error)
+	GetCallbackData(
+		ctx context.Context, id hostgateway.Identity, sessionID string,
+	) (*agentv1.GetCallbackDataResult, error)
+	DeleteCallback(ctx context.Context, id hostgateway.Identity, sessionID string) error
 }
 
 // OtelForwarder is the ExportTelemetry handler's forwarding seam: the handler

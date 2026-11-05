@@ -1,5 +1,6 @@
-// Package adminclient constructs the CLI's gRPC client to the control
-// plane's AdminService. It composes auth primitives (mTLS material +
+// Package adminclient constructs the gRPC clients for the control plane's
+// admin listener: the CLI's AdminService client and the host proxy's
+// HostProxyService client. It composes auth primitives (mTLS material +
 // signed JWT assertions) with CP-specific network topology
 // (127.0.0.1:adminPort target, Hydra token endpoint, ServerName).
 //
@@ -22,12 +23,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/metadata"
 )
 
 // Dial connects to the CP's gRPC AdminService with mTLS + OAuth2.
@@ -83,7 +89,7 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	target := fmt.Sprintf(consts.Localhost+":%d", adminPort)
 
 	hydraTokenURL := fmt.Sprintf("https://"+consts.Localhost+":%d/oauth2/token", hydraPort)
-	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
+	ts := newTokenSource(signingKey, consts.ClientIDCLI, string(adminv1.ScopeAdmin), hydraTokenURL, tokenTLSCfg)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
 	// concurrent CP bring-up (e.g. one goroutine starts a container while
@@ -112,6 +118,53 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	}
 
 	return adminv1.NewAdminServiceClient(conn), conn, nil
+}
+
+// DialHostProxy returns the host proxy's connection for the
+// HostProxyService on the CP admin listener (the caller wraps it with
+// hostproxyv1.NewHostProxyServiceClient): mTLS with the host proxy's own client leaf,
+// and a bearer token from its own Hydra client (scope hostproxy:serve).
+// Nothing is fetched or dialed here; the first Connect fetches the token,
+// so a CP that is not up yet only fails that attempt and the caller
+// retries. Keepalive pings find a dead connection while the stream idles.
+func DialHostProxy(adminPort, hydraPort int) (*grpc.ClientConn, error) {
+	signingKey, err := auth.LoadHostProxySigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("load host proxy signing key: %w", err)
+	}
+	clientCert, err := auth.LoadHostProxyClientCert()
+	if err != nil {
+		return nil, fmt.Errorf("load host proxy client cert: %w", err)
+	}
+	caCert, err := auth.CACert()
+	if err != nil {
+		return nil, fmt.Errorf("load CA cert: %w", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	// Plain TLS for the Hydra token endpoint (no client cert).
+	var tokenTLSCfg tls.Config
+	tokenTLSCfg.RootCAs = pool
+	tokenTLSCfg.ServerName = consts.ContainerCP
+	tokenTLSCfg.MinVersion = tls.VersionTLS13
+	hydraTokenURL := fmt.Sprintf("https://"+consts.Localhost+":%d/oauth2/token", hydraPort)
+	ts := newTokenSource(
+		signingKey, consts.ClientIDHostProxy, string(hostproxyv1.ScopeServe), hydraTokenURL, &tokenTLSCfg,
+	)
+
+	conn, err := grpc.NewClient(fmt.Sprintf(consts.Localhost+":%d", adminPort),
+		grpc.WithTransportCredentials(credentials.NewTLS(mtlsConfig(pool, clientCert))),
+		grpc.WithChainStreamInterceptor(ts.streamInterceptor()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                consts.HostProxyKeepaliveTime,
+			Timeout:             consts.HostProxyKeepaliveTimeout,
+			PermitWithoutStream: false,
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dial cp grpc: %w", err)
+	}
+	return conn, nil
 }
 
 // mtlsConfig builds the mTLS client config for the gRPC AdminService:
@@ -223,6 +276,8 @@ func deadlineInterceptor(timeout time.Duration) grpc.UnaryClientInterceptor {
 // tokenRefreshMargin of expiry. Thread-safe.
 type tokenSource struct {
 	signingKey *ecdsa.PrivateKey
+	clientID   string // OAuth2 client: iss and sub of the assertion
+	scope      string
 	tokenURL   string
 	tlsCfg     *tls.Config
 
@@ -243,9 +298,11 @@ const tokenRefreshMargin = 30 * time.Second
 // hang. A CP-time probe is one fast local round trip to the CP.
 const cpTimeProbeTimeout = 5 * time.Second
 
-func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) *tokenSource {
+func newTokenSource(signingKey *ecdsa.PrivateKey, clientID, scope, tokenURL string, tlsCfg *tls.Config) *tokenSource {
 	return &tokenSource{
 		signingKey: signingKey,
+		clientID:   clientID,
+		scope:      scope,
 		tokenURL:   tokenURL,
 		tlsCfg:     tlsCfg,
 	}
@@ -261,13 +318,25 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 		return ts.cached, nil
 	}
 
-	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.tokenURL, ts.tlsCfg)
+	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.clientID, ts.scope, ts.tokenURL, ts.tlsCfg)
 	if err != nil {
 		return "", err
 	}
 	ts.cached = tok
 	ts.expiresAt = time.Now().Add(expiresIn)
 	return tok, nil
+}
+
+// checkRejected clears the cached token when err is Unauthenticated, so the
+// next call mints a new one. The CP's Hydra keeps tokens in memory: after a
+// CP restart, a cached token is rejected until it expires. It returns err.
+func (ts *tokenSource) checkRejected(err error) error {
+	if status.Code(err) == codes.Unauthenticated {
+		ts.mu.Lock()
+		ts.cached = ""
+		ts.mu.Unlock()
+	}
+	return err
 }
 
 // unaryInterceptor returns a gRPC interceptor that fetches a fresh token
@@ -279,7 +348,7 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 			return fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
-		return invoker(ctx, method, req, reply, cc, opts...)
+		return ts.checkRejected(invoker(ctx, method, req, reply, cc, opts...))
 	}
 }
 
@@ -304,8 +373,30 @@ func (ts *tokenSource) streamInterceptor() grpc.StreamClientInterceptor {
 			return nil, fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
-		return streamer(ctx, desc, cc, method, opts...)
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, ts.checkRejected(err)
+		}
+		return &authStream{ClientStream: stream, ts: ts}, nil
 	}
+}
+
+// authStream reports the stream's status to its token source. A stream the
+// CP refuses ends trailers-only: the refusal comes from Header or RecvMsg,
+// not from opening the stream.
+type authStream struct {
+	grpc.ClientStream
+
+	ts *tokenSource
+}
+
+func (s *authStream) Header() (metadata.MD, error) {
+	md, err := s.ClientStream.Header()
+	return md, s.ts.checkRejected(err)
+}
+
+func (s *authStream) RecvMsg(m any) error {
+	return s.ts.checkRejected(s.ClientStream.RecvMsg(m))
 }
 
 // probeCPTime dials a short-lived mTLS connection (no bearer token —
@@ -333,13 +424,15 @@ func probeCPTime(ctx context.Context, target string, tlsCfg *tls.Config) (time.T
 	return time.Unix(0, resp.GetUnixNanos()).UTC(), nil
 }
 
-// fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
-// /oauth2/token endpoint for an access token. Returns the token and its
-// TTL (from expires_in, defaulting to 1 hour if absent).
-func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) (string, time.Duration, error) {
+// fetchAccessToken signs a JWT assertion as clientID and exchanges it at
+// Hydra's /oauth2/token endpoint for an access token with scope. Returns
+// the token and its TTL (from expires_in, defaulting to 1 hour if absent).
+func fetchAccessToken(
+	ctx context.Context, signingKey *ecdsa.PrivateKey, clientID, scope, tokenURL string, tlsCfg *tls.Config,
+) (string, time.Duration, error) {
 	assertion, err := auth.BuildSignedAssertion(auth.AssertionClaims{
-		Issuer:           consts.ClientIDCLI,
-		Subject:          consts.ClientIDCLI,
+		Issuer:           clientID,
+		Subject:          clientID,
 		Audience:         tokenURL,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: 30,
@@ -351,13 +444,11 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		return "", 0, fmt.Errorf("build assertion: %w", err)
 	}
 
-	adminScope := string(adminv1.ScopeAdmin)
-
 	form := url.Values{
 		"grant_type":            {"client_credentials"},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
-		"scope":                 {adminScope},
+		"scope":                 {scope},
 	}
 
 	client := &http.Client{

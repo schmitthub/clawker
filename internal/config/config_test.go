@@ -159,11 +159,6 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	assert.Equal(t, 5601, mon.OpenSearchDashboardsPort)
 	assert.Equal(t, 512, mon.OpenSearchHeapMB)
 
-	// Host proxy defaults
-	hp := cfg.HostProxyConfig()
-	assert.Equal(t, 18374, hp.Manager.Port)
-	assert.Equal(t, 18374, hp.Daemon.Port)
-
 	// firewall.enable ships true. Read through the store rather than
 	// FirewallEnabled(): that accessor folds an absent key onto true, so it
 	// cannot tell a shipped default from a missing one.

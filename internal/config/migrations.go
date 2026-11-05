@@ -39,6 +39,7 @@ func SettingsMigrations() []storage.Migration[Settings] {
 	return []storage.Migration[Settings]{
 		migrateRemoveLegacyMonitoringKeys,
 		migrateDockerSocketToHost,
+		migrateRemoveHostProxyPortKeys,
 	}
 }
 
@@ -81,6 +82,37 @@ func migrateDockerSocketToHost(s *storage.Store[Settings]) (bool, error) {
 		s.MigratingLayerPath(), legacyKey, keyHost, old,
 	)
 	return true, nil
+}
+
+// Segments of the legacy host proxy port keys.
+const (
+	keyHostProxyManager = "manager"
+	keyHostProxyDaemon  = "daemon"
+	keyHostProxyPort    = "port"
+)
+
+// migrateRemoveHostProxyPortKeys removes host_proxy.manager (it held only
+// the port) and host_proxy.daemon.port. The host proxy dials out to the CP
+// and has no listener for host actions, so the keys have no effect. The
+// migration is silent.
+func migrateRemoveHostProxyPortKeys(s *storage.Store[Settings]) (bool, error) {
+	if !slices.Contains(s.Keys(), keyHostProxy) {
+		return false, nil
+	}
+	changed := false
+	if slices.Contains(s.Keys(keyHostProxy), keyHostProxyManager) {
+		if err := s.Remove(keyHostProxy, keyHostProxyManager); err != nil {
+			return false, fmt.Errorf("removing host_proxy.%s: %w", keyHostProxyManager, err)
+		}
+		changed = true
+	}
+	if slices.Contains(s.Keys(keyHostProxy, keyHostProxyDaemon), keyHostProxyPort) {
+		if err := s.Remove(keyHostProxy, keyHostProxyDaemon, keyHostProxyPort); err != nil {
+			return false, fmt.Errorf("removing host_proxy.%s.%s: %w", keyHostProxyDaemon, keyHostProxyPort, err)
+		}
+		changed = true
+	}
+	return changed, nil
 }
 
 // legacyMonitoringKeys is the set of monitoring.* keys clawker no longer

@@ -74,6 +74,59 @@ func (Signal) EnumDescriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
+// GitCredentialAction is the git credential helper operation.
+type GitCredentialAction int32
+
+const (
+	GitCredentialAction_GIT_CREDENTIAL_ACTION_UNSPECIFIED GitCredentialAction = 0
+	GitCredentialAction_GIT_CREDENTIAL_ACTION_GET         GitCredentialAction = 1
+	GitCredentialAction_GIT_CREDENTIAL_ACTION_STORE       GitCredentialAction = 2
+	GitCredentialAction_GIT_CREDENTIAL_ACTION_ERASE       GitCredentialAction = 3
+)
+
+// Enum value maps for GitCredentialAction.
+var (
+	GitCredentialAction_name = map[int32]string{
+		0: "GIT_CREDENTIAL_ACTION_UNSPECIFIED",
+		1: "GIT_CREDENTIAL_ACTION_GET",
+		2: "GIT_CREDENTIAL_ACTION_STORE",
+		3: "GIT_CREDENTIAL_ACTION_ERASE",
+	}
+	GitCredentialAction_value = map[string]int32{
+		"GIT_CREDENTIAL_ACTION_UNSPECIFIED": 0,
+		"GIT_CREDENTIAL_ACTION_GET":         1,
+		"GIT_CREDENTIAL_ACTION_STORE":       2,
+		"GIT_CREDENTIAL_ACTION_ERASE":       3,
+	}
+)
+
+func (x GitCredentialAction) Enum() *GitCredentialAction {
+	p := new(GitCredentialAction)
+	*p = x
+	return p
+}
+
+func (x GitCredentialAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GitCredentialAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_v1_agent_proto_enumTypes[1].Descriptor()
+}
+
+func (GitCredentialAction) Type() protoreflect.EnumType {
+	return &file_agent_v1_agent_proto_enumTypes[1]
+}
+
+func (x GitCredentialAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GitCredentialAction.Descriptor instead.
+func (GitCredentialAction) EnumDescriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{1}
+}
+
 // ExportTelemetryRequest carries one serialized Export<Signal>ServiceRequest, the
 // http/protobuf payload exactly as the SDK sent it to the loopback relay.
 type ExportTelemetryRequest struct {
@@ -267,6 +320,624 @@ func (*Welcome) Descriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
 }
 
+type OpenURLRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenURLRequest) Reset() {
+	*x = OpenURLRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenURLRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenURLRequest) ProtoMessage() {}
+
+func (x *OpenURLRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenURLRequest.ProtoReflect.Descriptor instead.
+func (*OpenURLRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *OpenURLRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+type OpenURLResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenURLResult) Reset() {
+	*x = OpenURLResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenURLResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenURLResult) ProtoMessage() {}
+
+func (x *OpenURLResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenURLResult.ProtoReflect.Descriptor instead.
+func (*OpenURLResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+// GitCredentialRequest carries the git credential protocol fields.
+// password is set only for store and erase.
+type GitCredentialRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Action        GitCredentialAction    `protobuf:"varint,1,opt,name=action,proto3,enum=clawker.agent.v1.GitCredentialAction" json:"action,omitempty"`
+	Protocol      string                 `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
+	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	Username      string                 `protobuf:"bytes,5,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,6,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GitCredentialRequest) Reset() {
+	*x = GitCredentialRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GitCredentialRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GitCredentialRequest) ProtoMessage() {}
+
+func (x *GitCredentialRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GitCredentialRequest.ProtoReflect.Descriptor instead.
+func (*GitCredentialRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GitCredentialRequest) GetAction() GitCredentialAction {
+	if x != nil {
+		return x.Action
+	}
+	return GitCredentialAction_GIT_CREDENTIAL_ACTION_UNSPECIFIED
+}
+
+func (x *GitCredentialRequest) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *GitCredentialRequest) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *GitCredentialRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *GitCredentialRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GitCredentialRequest) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+// GitCredentialResult carries the credential for get. It is empty for
+// store and erase, and for a get that found no credential.
+type GitCredentialResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Protocol      string                 `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
+	Username      string                 `protobuf:"bytes,3,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,4,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GitCredentialResult) Reset() {
+	*x = GitCredentialResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GitCredentialResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GitCredentialResult) ProtoMessage() {}
+
+func (x *GitCredentialResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GitCredentialResult.ProtoReflect.Descriptor instead.
+func (*GitCredentialResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GitCredentialResult) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *GitCredentialResult) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *GitCredentialResult) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GitCredentialResult) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+// RegisterCallbackRequest carries the authorization URL the agent wants
+// to open. Its redirect_uri (or callback) parameter must be
+// http://localhost:<port> or http://127.0.0.1:<port>.
+type RegisterCallbackRequest struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	AuthUrl string                 `protobuf:"bytes,1,opt,name=auth_url,json=authUrl,proto3" json:"auth_url,omitempty"`
+	// ttl_seconds is the session lifetime. Zero selects the default; the
+	// host proxy caps it.
+	TtlSeconds    int32 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterCallbackRequest) Reset() {
+	*x = RegisterCallbackRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterCallbackRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterCallbackRequest) ProtoMessage() {}
+
+func (x *RegisterCallbackRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterCallbackRequest.ProtoReflect.Descriptor instead.
+func (*RegisterCallbackRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RegisterCallbackRequest) GetAuthUrl() string {
+	if x != nil {
+		return x.AuthUrl
+	}
+	return ""
+}
+
+func (x *RegisterCallbackRequest) GetTtlSeconds() int32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type RegisterCallbackResult struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// port is the localhost callback port the host proxy bound. The agent
+	// forwards the captured callback to this port in the container.
+	Port          int32 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	ExpiresAtUnix int64 `protobuf:"varint,3,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterCallbackResult) Reset() {
+	*x = RegisterCallbackResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterCallbackResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterCallbackResult) ProtoMessage() {}
+
+func (x *RegisterCallbackResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterCallbackResult.ProtoReflect.Descriptor instead.
+func (*RegisterCallbackResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RegisterCallbackResult) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RegisterCallbackResult) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *RegisterCallbackResult) GetExpiresAtUnix() int64 {
+	if x != nil {
+		return x.ExpiresAtUnix
+	}
+	return 0
+}
+
+type GetCallbackDataRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCallbackDataRequest) Reset() {
+	*x = GetCallbackDataRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCallbackDataRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCallbackDataRequest) ProtoMessage() {}
+
+func (x *GetCallbackDataRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCallbackDataRequest.ProtoReflect.Descriptor instead.
+func (*GetCallbackDataRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetCallbackDataRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// GetCallbackDataResult reports whether the browser callback arrived and,
+// when it did, the captured request.
+type GetCallbackDataResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Received      bool                   `protobuf:"varint,1,opt,name=received,proto3" json:"received,omitempty"`
+	Callback      *CallbackData          `protobuf:"bytes,2,opt,name=callback,proto3" json:"callback,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCallbackDataResult) Reset() {
+	*x = GetCallbackDataResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCallbackDataResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCallbackDataResult) ProtoMessage() {}
+
+func (x *GetCallbackDataResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCallbackDataResult.ProtoReflect.Descriptor instead.
+func (*GetCallbackDataResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *GetCallbackDataResult) GetReceived() bool {
+	if x != nil {
+		return x.Received
+	}
+	return false
+}
+
+func (x *GetCallbackDataResult) GetCallback() *CallbackData {
+	if x != nil {
+		return x.Callback
+	}
+	return nil
+}
+
+// CallbackData is the captured browser callback request.
+type CallbackData struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Method         string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
+	Path           string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Query          string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
+	Headers        map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Body           string                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`
+	ReceivedAtUnix int64                  `protobuf:"varint,6,opt,name=received_at_unix,json=receivedAtUnix,proto3" json:"received_at_unix,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CallbackData) Reset() {
+	*x = CallbackData{}
+	mi := &file_agent_v1_agent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallbackData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallbackData) ProtoMessage() {}
+
+func (x *CallbackData) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallbackData.ProtoReflect.Descriptor instead.
+func (*CallbackData) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CallbackData) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *CallbackData) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *CallbackData) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *CallbackData) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *CallbackData) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *CallbackData) GetReceivedAtUnix() int64 {
+	if x != nil {
+		return x.ReceivedAtUnix
+	}
+	return 0
+}
+
+type DeleteCallbackRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCallbackRequest) Reset() {
+	*x = DeleteCallbackRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCallbackRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCallbackRequest) ProtoMessage() {}
+
+func (x *DeleteCallbackRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCallbackRequest.ProtoReflect.Descriptor instead.
+func (*DeleteCallbackRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *DeleteCallbackRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type DeleteCallbackResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCallbackResult) Reset() {
+	*x = DeleteCallbackResult{}
+	mi := &file_agent_v1_agent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCallbackResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCallbackResult) ProtoMessage() {}
+
+func (x *DeleteCallbackResult) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCallbackResult.ProtoReflect.Descriptor instead.
+func (*DeleteCallbackResult) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+}
+
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
@@ -280,15 +951,69 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\"\t\n" +
-	"\aWelcome*X\n" +
+	"\aWelcome\"\"\n" +
+	"\x0eOpenURLRequest\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"\x0f\n" +
+	"\rOpenURLResult\"\xd1\x01\n" +
+	"\x14GitCredentialRequest\x12=\n" +
+	"\x06action\x18\x01 \x01(\x0e2%.clawker.agent.v1.GitCredentialActionR\x06action\x12\x1a\n" +
+	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x12\n" +
+	"\x04host\x18\x03 \x01(\tR\x04host\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\x1a\n" +
+	"\busername\x18\x05 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x06 \x01(\tR\bpassword\"}\n" +
+	"\x13GitCredentialResult\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x12\n" +
+	"\x04host\x18\x02 \x01(\tR\x04host\x12\x1a\n" +
+	"\busername\x18\x03 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x04 \x01(\tR\bpassword\"U\n" +
+	"\x17RegisterCallbackRequest\x12\x19\n" +
+	"\bauth_url\x18\x01 \x01(\tR\aauthUrl\x12\x1f\n" +
+	"\vttl_seconds\x18\x02 \x01(\x05R\n" +
+	"ttlSeconds\"s\n" +
+	"\x16RegisterCallbackResult\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\x12&\n" +
+	"\x0fexpires_at_unix\x18\x03 \x01(\x03R\rexpiresAtUnix\"7\n" +
+	"\x16GetCallbackDataRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"o\n" +
+	"\x15GetCallbackDataResult\x12\x1a\n" +
+	"\breceived\x18\x01 \x01(\bR\breceived\x12:\n" +
+	"\bcallback\x18\x02 \x01(\v2\x1e.clawker.agent.v1.CallbackDataR\bcallback\"\x91\x02\n" +
+	"\fCallbackData\x12\x16\n" +
+	"\x06method\x18\x01 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x14\n" +
+	"\x05query\x18\x03 \x01(\tR\x05query\x12E\n" +
+	"\aheaders\x18\x04 \x03(\v2+.clawker.agent.v1.CallbackData.HeadersEntryR\aheaders\x12\x12\n" +
+	"\x04body\x18\x05 \x01(\tR\x04body\x12(\n" +
+	"\x10received_at_unix\x18\x06 \x01(\x03R\x0ereceivedAtUnix\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
+	"\x15DeleteCallbackRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +
+	"\x14DeleteCallbackResult*X\n" +
 	"\x06Signal\x12\x16\n" +
 	"\x12SIGNAL_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSIGNAL_LOGS\x10\x01\x12\x12\n" +
 	"\x0eSIGNAL_METRICS\x10\x02\x12\x11\n" +
-	"\rSIGNAL_TRACES\x10\x032\xbe\x01\n" +
+	"\rSIGNAL_TRACES\x10\x03*\x9d\x01\n" +
+	"\x13GitCredentialAction\x12%\n" +
+	"!GIT_CREDENTIAL_ACTION_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19GIT_CREDENTIAL_ACTION_GET\x10\x01\x12\x1f\n" +
+	"\x1bGIT_CREDENTIAL_ACTION_STORE\x10\x02\x12\x1f\n" +
+	"\x1bGIT_CREDENTIAL_ACTION_ERASE\x10\x032\x9e\x05\n" +
 	"\fAgentService\x12H\n" +
 	"\bRegister\x12!.clawker.agent.v1.RegisterRequest\x1a\x19.clawker.agent.v1.Welcome\x12d\n" +
-	"\x0fExportTelemetry\x12(.clawker.agent.v1.ExportTelemetryRequest\x1a'.clawker.agent.v1.ExportTelemetryResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
+	"\x0fExportTelemetry\x12(.clawker.agent.v1.ExportTelemetryRequest\x1a'.clawker.agent.v1.ExportTelemetryResult\x12L\n" +
+	"\aOpenURL\x12 .clawker.agent.v1.OpenURLRequest\x1a\x1f.clawker.agent.v1.OpenURLResult\x12^\n" +
+	"\rGitCredential\x12&.clawker.agent.v1.GitCredentialRequest\x1a%.clawker.agent.v1.GitCredentialResult\x12g\n" +
+	"\x10RegisterCallback\x12).clawker.agent.v1.RegisterCallbackRequest\x1a(.clawker.agent.v1.RegisterCallbackResult\x12d\n" +
+	"\x0fGetCallbackData\x12(.clawker.agent.v1.GetCallbackDataRequest\x1a'.clawker.agent.v1.GetCallbackDataResult\x12a\n" +
+	"\x0eDeleteCallback\x12'.clawker.agent.v1.DeleteCallbackRequest\x1a&.clawker.agent.v1.DeleteCallbackResultB,Z*github.com/schmitthub/clawker/api/agent/v1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -302,26 +1027,52 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_agent_v1_agent_proto_rawDescData
 }
 
-var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(Signal)(0),                    // 0: clawker.agent.v1.Signal
-	(*ExportTelemetryRequest)(nil), // 1: clawker.agent.v1.ExportTelemetryRequest
-	(*ExportTelemetryResult)(nil),  // 2: clawker.agent.v1.ExportTelemetryResult
-	(*RegisterRequest)(nil),        // 3: clawker.agent.v1.RegisterRequest
-	(*Welcome)(nil),                // 4: clawker.agent.v1.Welcome
+	(Signal)(0),                     // 0: clawker.agent.v1.Signal
+	(GitCredentialAction)(0),        // 1: clawker.agent.v1.GitCredentialAction
+	(*ExportTelemetryRequest)(nil),  // 2: clawker.agent.v1.ExportTelemetryRequest
+	(*ExportTelemetryResult)(nil),   // 3: clawker.agent.v1.ExportTelemetryResult
+	(*RegisterRequest)(nil),         // 4: clawker.agent.v1.RegisterRequest
+	(*Welcome)(nil),                 // 5: clawker.agent.v1.Welcome
+	(*OpenURLRequest)(nil),          // 6: clawker.agent.v1.OpenURLRequest
+	(*OpenURLResult)(nil),           // 7: clawker.agent.v1.OpenURLResult
+	(*GitCredentialRequest)(nil),    // 8: clawker.agent.v1.GitCredentialRequest
+	(*GitCredentialResult)(nil),     // 9: clawker.agent.v1.GitCredentialResult
+	(*RegisterCallbackRequest)(nil), // 10: clawker.agent.v1.RegisterCallbackRequest
+	(*RegisterCallbackResult)(nil),  // 11: clawker.agent.v1.RegisterCallbackResult
+	(*GetCallbackDataRequest)(nil),  // 12: clawker.agent.v1.GetCallbackDataRequest
+	(*GetCallbackDataResult)(nil),   // 13: clawker.agent.v1.GetCallbackDataResult
+	(*CallbackData)(nil),            // 14: clawker.agent.v1.CallbackData
+	(*DeleteCallbackRequest)(nil),   // 15: clawker.agent.v1.DeleteCallbackRequest
+	(*DeleteCallbackResult)(nil),    // 16: clawker.agent.v1.DeleteCallbackResult
+	nil,                             // 17: clawker.agent.v1.CallbackData.HeadersEntry
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	0, // 0: clawker.agent.v1.ExportTelemetryRequest.signal:type_name -> clawker.agent.v1.Signal
-	3, // 1: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
-	1, // 2: clawker.agent.v1.AgentService.ExportTelemetry:input_type -> clawker.agent.v1.ExportTelemetryRequest
-	4, // 3: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
-	2, // 4: clawker.agent.v1.AgentService.ExportTelemetry:output_type -> clawker.agent.v1.ExportTelemetryResult
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0,  // 0: clawker.agent.v1.ExportTelemetryRequest.signal:type_name -> clawker.agent.v1.Signal
+	1,  // 1: clawker.agent.v1.GitCredentialRequest.action:type_name -> clawker.agent.v1.GitCredentialAction
+	14, // 2: clawker.agent.v1.GetCallbackDataResult.callback:type_name -> clawker.agent.v1.CallbackData
+	17, // 3: clawker.agent.v1.CallbackData.headers:type_name -> clawker.agent.v1.CallbackData.HeadersEntry
+	4,  // 4: clawker.agent.v1.AgentService.Register:input_type -> clawker.agent.v1.RegisterRequest
+	2,  // 5: clawker.agent.v1.AgentService.ExportTelemetry:input_type -> clawker.agent.v1.ExportTelemetryRequest
+	6,  // 6: clawker.agent.v1.AgentService.OpenURL:input_type -> clawker.agent.v1.OpenURLRequest
+	8,  // 7: clawker.agent.v1.AgentService.GitCredential:input_type -> clawker.agent.v1.GitCredentialRequest
+	10, // 8: clawker.agent.v1.AgentService.RegisterCallback:input_type -> clawker.agent.v1.RegisterCallbackRequest
+	12, // 9: clawker.agent.v1.AgentService.GetCallbackData:input_type -> clawker.agent.v1.GetCallbackDataRequest
+	15, // 10: clawker.agent.v1.AgentService.DeleteCallback:input_type -> clawker.agent.v1.DeleteCallbackRequest
+	5,  // 11: clawker.agent.v1.AgentService.Register:output_type -> clawker.agent.v1.Welcome
+	3,  // 12: clawker.agent.v1.AgentService.ExportTelemetry:output_type -> clawker.agent.v1.ExportTelemetryResult
+	7,  // 13: clawker.agent.v1.AgentService.OpenURL:output_type -> clawker.agent.v1.OpenURLResult
+	9,  // 14: clawker.agent.v1.AgentService.GitCredential:output_type -> clawker.agent.v1.GitCredentialResult
+	11, // 15: clawker.agent.v1.AgentService.RegisterCallback:output_type -> clawker.agent.v1.RegisterCallbackResult
+	13, // 16: clawker.agent.v1.AgentService.GetCallbackData:output_type -> clawker.agent.v1.GetCallbackDataResult
+	16, // 17: clawker.agent.v1.AgentService.DeleteCallback:output_type -> clawker.agent.v1.DeleteCallbackResult
+	11, // [11:18] is the sub-list for method output_type
+	4,  // [4:11] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -334,8 +1085,8 @@ func file_agent_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   4,
+			NumEnums:      2,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

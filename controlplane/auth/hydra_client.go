@@ -12,6 +12,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	hostproxyv1 "github.com/schmitthub/clawker/api/hostproxy/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -30,6 +31,22 @@ func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte
 // Idempotent: returns nil on 409 Conflict.
 func RegisterAgentClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
 	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDAgent, string(agentv1.ScopeSelfRegister), jwkData, tlsCfg)
+}
+
+// RegisterHostProxyClient registers the clawker-hostproxy OAuth2 client
+// with Hydra. jwkData is the host proxy's own public JWK (bind-mounted
+// from the host). The client holds only the hostproxy:serve scope, so its
+// tokens open the HostProxyService stream and no admin RPC. Idempotent:
+// returns nil on 409 Conflict.
+func RegisterHostProxyClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
+	return registerHydraClient(
+		ctx,
+		hydraAdminURL,
+		consts.ClientIDHostProxy,
+		string(hostproxyv1.ScopeServe),
+		jwkData,
+		tlsCfg,
+	)
 }
 
 // registerHydraClient is the shared implementation; public callers
