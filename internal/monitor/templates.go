@@ -85,6 +85,7 @@ type MonitorTemplateData struct {
 	OtelCollectorPort        int
 	OtelGRPCPort             int // independent of HTTP port
 	OtelInfraPort            int // mTLS-gated host-loopback receiver for trusted infra push (clawkercp + firewall Envoy + CoreDNS)
+	OtelAgentIngestPort      int // mTLS-gated host-loopback receiver for agent telemetry the CP gateway forwards (same infra client CA)
 	PrometheusPort           int
 	PrometheusMetricsPort    int
 	OpenSearchPort           int
@@ -165,6 +166,7 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
 		OtelInfraPort:               int(mon.OtelInfraPort),
+		OtelAgentIngestPort:         int(mon.OtelAgentIngestPort),
 		PrometheusPort:              mon.PrometheusPort,
 		PrometheusMetricsPort:       mon.PrometheusMetricsPort,
 		OpenSearchPort:              mon.OpenSearchPort,

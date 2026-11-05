@@ -34,6 +34,40 @@ const (
 	surfaceAgent = "grpc-agent"
 )
 
+// agentMaxConcurrentStreams caps in-flight RPCs per clawkerd connection
+// on the agent listener. The ExportTelemetry gateway holds decoded OTLP batches in
+// memory per call; the cap plus the gateway's own concurrency slot keep
+// that memory proportional to a constant, not to a flooding peer.
+const agentMaxConcurrentStreams = 16
+
+// maxConcurrentExports caps in-flight ExportTelemetry calls across every
+// clawkerd connection. The per-connection stream cap does not bound the
+// process: the identity gate runs a Docker container list and inspect for
+// each call on its own 5s timeout, so a peer that opens more connections
+// drives unbounded concurrent Docker scans. exportAdmissionUnary refuses
+// the excess before the identity gate with ResourceExhausted; the relay
+// maps it to a retryable status.
+const maxConcurrentExports = 16
+
+// exportAdmissionUnary admits at most limit concurrent ExportTelemetry calls
+// and passes every other method through untouched. A full lane answers
+// ResourceExhausted at once; nothing queues.
+func exportAdmissionUnary(limit int) grpc.UnaryServerInterceptor {
+	slots := make(chan struct{}, limit)
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if info.FullMethod != agentv1.AgentService_ExportTelemetry_FullMethodName {
+			return handler(ctx, req)
+		}
+		select {
+		case slots <- struct{}{}:
+		default:
+			return nil, status.Error(codes.ResourceExhausted, "telemetry lane busy")
+		}
+		defer func() { <-slots }()
+		return handler(ctx, req)
+	}
+}
+
 // grpcPanicMessage is the client-visible detail of the codes.Internal status
 // a recovered handler panic is converted into. The recovered value and the
 // stack go to the structured log, never onto the wire.
@@ -92,6 +126,12 @@ type GRPCDeps struct {
 	// nil-yielding IdentityInterceptor (wiring regression) degrades the
 	// AgentService surface — see ServeAgent / the identity gate below.
 	PeerLookup agent.ContainerByPeerIP
+
+	// OtelGateway forwards verified AgentService.ExportTelemetry batches to the
+	// collector. nil is the degraded state (event=otel_gateway_unavailable
+	// at wiring): ExportTelemetry answers Unavailable, every other surface is
+	// unaffected.
+	OtelGateway agent.OtelForwarder
 
 	// ServerCertPath / ServerKeyPath locate the CP server leaf used for
 	// both the admin and agent listeners (same mTLS material).
@@ -444,9 +484,19 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 
 	agentServer := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
+		// ExportTelemetry bodies are capped at agentv1.ExportTelemetryMaxBodyBytes; the
+		// transport cap leaves room for the envelope so a body at the
+		// cap reaches the handler and an oversize one is refused by
+		// grpc-go with ResourceExhausted before any decode.
+		grpc.MaxRecvMsgSize(agentv1.ExportTelemetryMaxMessageBytes),
+		// One clawkerd per container; a handful of in-flight ExportTelemetry calls
+		// per connection is plenty, and the cap keeps a flooding peer
+		// from holding unbounded decode memory open.
+		grpc.MaxConcurrentStreams(agentMaxConcurrentStreams),
 		grpc.ChainUnaryInterceptor(
 			recoveryUnaryInterceptor(log),
 			agentInterceptor.UnaryInterceptor(),
+			exportAdmissionUnary(maxConcurrentExports),
 			identityUnary,
 		),
 		grpc.ChainStreamInterceptor(
@@ -474,6 +524,9 @@ func NewGRPCStack(deps GRPCDeps) (*GRPCStack, error) {
 		closeBound(grpcLis, agentLis)
 		return nil, fmt.Errorf("agent register handler: %w", herr)
 	}
+	// The same handler serves ExportTelemetry; the gateway is optional (nil =
+	// degraded, ExportTelemetry answers Unavailable).
+	registerHandler.OtelGateway = deps.OtelGateway
 	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	stack.agentServer = agentServer

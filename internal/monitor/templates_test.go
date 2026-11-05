@@ -109,6 +109,8 @@ func TestRenderTemplate_Compose(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
+  otel_infra_port: 5319
+  otel_agent_ingest_port: 5320
   prometheus_port: 10090
   prometheus_metrics_port: 9889
   opensearch_port: 19200
@@ -178,6 +180,8 @@ docker:
 	// metrics to whatever network the host is on. If you change this
 	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelInfraPort, data.OtelInfraPort),
+		fmt.Sprintf(consts.Localhost+":%d:%d", data.OtelAgentIngestPort, data.OtelAgentIngestPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.PrometheusPort, data.PrometheusPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchPort, data.OpenSearchPort),
 		fmt.Sprintf(consts.Localhost+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
@@ -197,6 +201,7 @@ monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
   otel_infra_port: 5319
+  otel_agent_ingest_port: 5320
   prometheus_metrics_port: 9889
   opensearch_port: 9200
 `)
@@ -255,6 +260,12 @@ monitoring:
 		"receivers: [routing/untrusted]",
 		// gRPC variant of the trusted receiver is what Envoy ALS dials.
 		"0.0.0.0:5319",
+		// CP gateway lane: the receiver follows the configured port and
+		// the two processors exist. Pipeline wiring is locked by the
+		// otel-config golden files.
+		"0.0.0.0:5320",
+		"resource/agent_gateway:",
+		"transform/agent_gateway_metrics:",
 	}
 	for _, check := range mustContain {
 		if !strings.Contains(result, check) {

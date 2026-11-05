@@ -48,6 +48,27 @@ receivers:
           # chain does not validate against this CA. Bind-mount source
           # is consts.AuthInfraCACertPath() — the infra intermediate.
           client_ca_file: /etc/otel/tls/ca.pem
+  # Agent telemetry, forwarded by the control plane. The agent SDK
+  # exports to a loopback relay inside its container; clawkerd carries
+  # the batch to the CP over AgentService.ExportTelemetry; the CP verifies the
+  # peer against the agent registry, overwrites the project / agent /
+  # container_id / ingest_source resource attributes with the values it
+  # resolved itself, and forwards here with its infra leaf. Same TLS
+  # material and client CA as otlp/infra: only infra-intermediate
+  # chains complete the handshake, so an agent that reaches this port
+  # directly is refused. A separate receiver (not otlp/infra) keeps the
+  # routing honest: records here carry a CP-stamped identity, not a
+  # sender-declared one, and routing/trusted never sees them.
+  otlp/agents:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:0
+        # The CP forwards bodies up to its 4 MiB cap plus the stamp.
+        max_recv_msg_size_mib: 8
+        tls:
+          cert_file: /etc/otel/tls/server.pem
+          key_file: /etc/otel/tls/server.key
+          client_ca_file: /etc/otel/tls/ca.pem
   # Collector self-telemetry. The otel-collector exposes its own
   # process/pipeline metrics as a Prometheus endpoint on :8888 by
   # default; scraping them here lets the metrics pipeline ship them
@@ -86,6 +107,29 @@ processors:
       - key: ingest_source
         value: untrusted_otlp
         action: upsert
+  # Provenance stamp for the CP gateway lane. The CP already stamps
+  # ingest_source=cp_gateway on every resource it forwards; upserting
+  # it again here makes the collector authoritative for the value.
+  resource/agent_gateway:
+    attributes:
+      - key: ingest_source
+        value: cp_gateway
+        action: upsert
+  # The Prometheus exporter turns only datapoint attributes into labels,
+  # so a client datapoint attribute named like an identity label would
+  # reach Prometheus as is. Drop the client copies (every key that label
+  # sanitizing folds into the label: each rune outside [A-Za-z0-9]
+  # becomes "_") and copy the CP-stamped values from the resource. Runs
+  # after transform/metrics, which already copies project and agent.
+  transform/agent_gateway_metrics:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_matching_keys(attributes, "^container[^A-Za-z0-9]+id$")
+          - delete_matching_keys(attributes, "^ingest[^A-Za-z0-9]+source$")
+          - set(attributes["container_id"], resource.attributes["container_id"]) where resource.attributes["container_id"] != nil
+          - set(attributes["ingest_source"], resource.attributes["ingest_source"]) where resource.attributes["ingest_source"] != nil
   # Copy project/agent from resource attributes to datapoint attributes.
   # The Prometheus exporter only surfaces datapoint attributes as metric labels,
   # so this transform is required for per-project/agent filtering on the
@@ -441,6 +485,24 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
+    # CP gateway lane — agent telemetry with a CP-stamped identity.
+    # Traces and metrics take the same exporters as the agent-facing
+    # pipelines above; logs enter the same service.name routing so each
+    # active monitoring unit's lane keeps its index. The records differ
+    # from the untrusted lane only in provenance: project / agent /
+    # container_id are the CP's values and ingest_source=cp_gateway.
+    traces/agents:
+      receivers: [otlp/agents]
+      processors: [memory_limiter, resource/agent_gateway, batch]
+      exporters: [opensearch/traces, spanmetrics, debug]
+    metrics/agents:
+      receivers: [otlp/agents]
+      processors: [memory_limiter, resource/agent_gateway, transform/metrics, transform/agent_gateway_metrics, deltatocumulative, batch]
+      exporters: [prometheus, debug]
+    logs/agents:
+      receivers: [otlp/agents]
+      processors: [memory_limiter, resource/agent_gateway, batch]
+      exporters: [routing/untrusted]
     # Trusted metrics — collector self-scrape and spanmetrics-derived
     # RED metrics. All sourced locally; no sender-declared resource
     # attrs to defend.
