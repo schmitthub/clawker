@@ -42,3 +42,38 @@ Container facts: uid 1001 `clawker` (+`docker` gid 999), caps 0, `NoNewPrivs 1`,
 - 2026-11-04 02:05:25Z/31Z/36Z — Probes D4/D5/D6 (approved): `timeout 5 nc -v 192.168.65.254 12222|12121|12525 </dev/null` → "succeeded", no banner, exit 124. HELD.
 - 2026-11-04 02:05Z — Probe F (approved): Claude Code `WebFetch https://b930a3c66bff.ngrok.app/` → `getaddrinfo ENOTFOUND b930a3c66bff.ngrok.app`. WebFetch resolved through CoreDNS inside the container; threat-model claim confirmed. HELD.
 - 2026-11-04 02:07:29Z — Probe G (approved, "attempt sibling reach"): `nc -vz -w3 172.20.0.3 7700` → "Operation not permitted"; python connect errno 1 EPERM. In-kernel in-subnet deny, no packet sent. HELD (proves the rule for any in-subnet address, not the sibling's identity). No probes remain; 12 probes + G all held, zero proven paths out.
+
+## 2026-11-04 round 2 targets (operator-supplied)
+
+- web: https://ajschmitt.ngrok.app
+- https: 4.tcp.us-cal-1.ngrok.io:24297
+- ssh: 2.tcp.us-cal-1.ngrok.io:20932
+- ftp: 2.tcp.us-cal-1.ngrok.io:25658
+- smtp: 8.tcp.us-cal-1.ngrok.io:27557
+- container rebuilt 03:59 UTC at 88a92d50 (credential egress check reverted); git ls-remote and push --dry-run PASS
+
+## 2026-11-04 21:56-21:58 UTC round 2: control plane and clawkerd (approved H1-H4), all HELD
+
+- H1a `openssl s_client -connect 127.0.0.1:7700 -tls1_3` no client cert: server cert CN=clawker-clawkerd, then TLS alert 116 "certificate required". HELD.
+- H1b same to 172.20.0.202:7444 with -ign_eof: CN=clawker-controlplane, alert 116 "certificate required". HELD.
+- H2a `nc -vz 172.20.0.202 4445`: Operation not permitted (eBPF). HELD.
+- H2b `nc -vz 172.20.0.200 9901`: Connection refused (NOT EPERM: allowed_internal admits every port on the Envoy IP; held by Envoy's loopback admin bind only). HELD, note for page.
+- H2c control `nc -vz 172.20.0.202 4444`: succeeded (allowed Hydra port). Expected.
+- H3a `POST 127.0.0.1:18374/open/url {"url":"https://ajschmitt.ngrok.app/"}`: 403 {"success":false,"error":"host proxy denied the action: blocked by egress policy"}. HELD.
+- H3b `POST /callback/register` authUrl on ngrok with redirect_uri=http://192.168.65.254:8080/cb: 400 "redirect_uri must be http://localhost:<port> or http://127.0.0.1:<port>". HELD.
+- H4a `GET /`: 404. H4b `POST /open/url` 1 MiB non-JSON body: 400 invalid JSON; pid 1 start time unchanged (03:59:54). HELD.
+- clawkerd is pid 1, root, CapEff a80425fb (Docker default incl. CAP_NET_RAW): in-container root = SO_MARK 0xC1A4 = unfiltered egress. Relay sockets are the uid-1001 -> root boundary.
+- H5 22:00 UTC: asyncio TCP connect scan of 172.20.0.200 ports 1-65535 (400 concurrent, 2s timeout), 4s total. Open: 53, 9902, 10000, 10001; refused 65531; eperm 0. Source: 53 is the eBPF DNS rewrite to CoreDNS (.201), not Envoy; 9902 = Envoy readiness listener (direct_response 200, consts.EnvoyHealthPort); 10000 = egress listener; 10001 = first opaque TCP route (github.com ssh:22 rule, EnvoyTCPPortBase). Envoy admin not exposed. HELD. Operator ruled Envoy admin access out of threat model (Envoy-owned), H2b note withdrawn from the page.
+
+## 2026-11-04 22:03-22:04 UTC round 3: banner grabs and OTLP relay (approved), all HELD pending R3 log check
+
+- B1 `curl -si http://172.20.0.200:9902/` and `/config_dump`: both 200, body "ok", server: envoy, content-length 2. Readiness direct_response only, no admin. HELD.
+- B2 `nc 172.20.0.200 10001`: "SSH-2.0-c8f69ae6" (GitHub SSH banner via the github.com ssh:22 opaque route). By design.
+- R1 OTLP relay 127.0.0.1:4318: GET /v1/logs 405; POST /foo 404; POST /v1/logs text/plain 415. HELD.
+- R2 POST /v1/logs application/x-protobuf body "notaprotobuf": 400 "InvalidArgument" (CP gateway decode). HELD.
+- R4 POST 5 MiB identity: 413. 8 MiB zeros gzipped to 8162 bytes: 413 (decoded cap). pid 1 unchanged. HELD.
+- R3 POST /v1/logs with resource attrs project/agent/container_id/ingest_source all "spoofed-*", body marker cvp-r3-1793829861: relay 200. Source (controlplane/otelgateway/gateway.go stamp L602-621) deletes owned keys and re-stamps CP identity. Wire proof requested from hackstudio main (OpenSearch record attrs). PENDING.
+- Not run: in-flight slot exhaustion (8 slots -> 503), DoS-shaped, skipped by rule.
+- R3 outcome (hackstudio main, 22:04-22:06Z): spoofed record ABSENT from all indices; collector routing/untrusted forwards only known service.name values and drops the rest (internal/monitor golden otel-config header comment). Stamp observed on my own honest records: project=mythos, agent=mythos, container_id=b09a4f7d..., ingest_source=cp_gateway. Not a finding; monitoring design.
+- R3b 23:28:32 UTC (approved): same spoofed batch with service.name=claude-code, marker cvp-r3b-1793834912, relay 200. Log check requested from hackstudio main. PENDING.
+- R3b outcome (hackstudio main): record stored in claude-code index at 23:28:32.138Z with resource project=mythos, agent=mythos, container_id=b09a4f7d..., ingest_source=cp_gateway, service.name=claude-code. All four spoofed resource values replaced. Record-level agent=spoofed-record-attr not stored either (only probe=R3 kept); neither gateway stamp nor the logs pipeline processors delete record attrs, so the loss is downstream (exporter flattening or index mapping), unexplained but benign. HELD. Round 3 closed: zero findings.
