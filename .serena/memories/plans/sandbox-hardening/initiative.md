@@ -36,7 +36,7 @@ conversation. Do not start the next task after wrap-up.
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Remove sudo from the base image (item 6) | `complete` | Claude (2026-10-24) |
-| Task 2: Root-owned `/run/clawker` and symlink-safe root writes (item 5) | `pending` | — |
+| Task 2: Root-owned `/run/clawker` and symlink-safe root writes (item 5) | `complete` | Claude (2026-10-24) |
 | Task 3: Per-container host-proxy bypass from project config (item 4) | `pending` | — |
 | Task 4: `AgentService.Export` RPC, CP ingest handler, collector agent receiver (item 2, CP side) | `pending` | — |
 | Task 5: clawkerd loopback OTLP receiver and harness endpoint (item 2, container side) | `pending` | — |
@@ -53,6 +53,7 @@ Append findings that the next task needs, with the source or task number.
 - (plan) `/var/run` is a symlink to `/run`, so chowning `/var/run/clawker` hands the agent user the parent of the root-only `/run/clawker/bootstrap` dir.
 - (plan) The CLI mints the agent leaf (`internal/auth/agent_cert.go`); the CLI root key never enters CP. CP holds only the infra intermediate key.
 - (plan) clawkerd has no persistent connection to CP. `clawkerd/register.go` dials for the one-time Register and closes. The Hydra assertion is single-use, so clawkerd cannot obtain a second bearer token.
+- (Task 2) `clawker-socket-server` is stdlib-only (compiled standalone in the image), so its `*at` calls use package `syscall` with local `AT_FDCWD`/`AT_SYMLINK_NOFOLLOW` consts and the file carries `//go:build linux`. `syscall.Unlinkat` on Linux has no flags argument.
 - (plan) CP already reaches the collector's `otlp/infra` receiver through `host.docker.internal:<OtelInfraPort>` (published on `127.0.0.1`), not over clawker-net (`controlplane/manager/cp_container.go:448-467`).
 
 ## Context for All Agents
@@ -147,10 +148,10 @@ Tests pass. In a rebuilt container: `stat -c '%U %a' /run/clawker` prints `root 
 
 ### Results and Wrap Up
 
-- Acceptance results: Not run.
-- Reviews and findings: Not reviewed.
-- Blockers and next action: None recorded.
-- Commit: Not made.
+- Acceptance results (2026-10-24): `go test ./clawkerd/... ./internal/hostproxy/... ./internal/bundler/... -count=1` pass; `make test` pass (6602 tests); `golangci-lint` 0 issues on the three packages. Mutation check: dropping `O_NOFOLLOW` from the dir open or `AT_SYMLINK_NOFOLLOW` from `Fstatat` fails the symlink tests. Runtime checks (`stat -c '%U %a' /run/clawker` = `root 755`, bridge sockets owned by the agent, `gpg --list-keys`, `ssh-add -l`) NOT run: no Docker socket in the agent container; host check pending.
+- Changes: base template drops `/var/run/clawker` from the chown and the comment explains `/var/run -> /run`; `touchReadyFile` adds `O_NOFOLLOW` and mode 0600 (only reader is the root HEALTHCHECK); socket-server rewritten around `resolveSocketTarget`, `openUserDir`, `userDir.writeFile`, `userDir.listenUnix`, `userDir.chownSocketNode` (stdlib `syscall`, `//go:build linux`); new `main_test.go`; `internal/hostproxy/internals/AGENTS.md` documents the mechanism; golden files regenerated; plugin reference copy updated in clawker-plugin#10 (calver 2026.10.2).
+- Reviews and findings: code-reviewer: chown by name was open to a hard-link swap (`fs.protected_hardlinks=0`) → chown now goes through descriptors (design memory amended). test-hunter: three symlink tests used dangling targets so the guards were not load-bearing → targets now exist; added FIFO-at-socket-path and positive `resolveSocketTarget` cases. Accepted as-is: `killExistingGPGAgent` still passes the home path string to `gpgconf --kill` (no write, runs after the directory was validated).
+- Commit: `dec7c91f` (task), `874c3cf6` (plugin pointer → 2026.10.2 after clawker-plugin#10 merged). PR #590 stacked on #589. User ruling: runtime checks for every task run once at the top of the stack (Task 8), not per task.
 
 ### Handoff Prompt
 
