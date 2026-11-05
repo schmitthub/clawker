@@ -111,7 +111,8 @@
           "security",
           "firewall",
           "credentials",
-          "observability"
+          "observability",
+          "mythos-assessment"
         ]
       },
       {

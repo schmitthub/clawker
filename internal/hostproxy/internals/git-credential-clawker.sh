@@ -1,13 +1,14 @@
 #!/bin/sh
-# git-credential-clawker - Git credential helper that forwards to host proxy
+# git-credential-clawker - Git credential helper that forwards to the clawkerd host-action relay
 # Usage: git-credential-clawker <get|store|erase>
 #
 # This script reads git credential protocol input from stdin, converts it to JSON,
-# POSTs to the clawker host proxy, and outputs the response in git credential format.
+# POSTs to the clawkerd host-action relay (CLAWKER_HOST_PROXY), which relays it to
+# the CP, and outputs the response in git credential format.
 
 set -e
 
-# Ensure host proxy is configured
+# Ensure the host-action relay URL is configured
 if [ -z "$CLAWKER_HOST_PROXY" ]; then
     echo "error: CLAWKER_HOST_PROXY not set" >&2
     exit 1
@@ -47,7 +48,7 @@ json_req=$(jq -n \
     --arg password "$password" \
     '{action: $action, protocol: $protocol, host: $host, path: $path, username: $username, password: $password}')
 
-# POST to host proxy with proper error handling
+# POST to the host-action relay with proper error handling
 curl_stderr=$(mktemp)
 trap 'rm -f "$curl_stderr"' EXIT
 

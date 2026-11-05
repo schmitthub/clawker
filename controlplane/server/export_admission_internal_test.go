@@ -15,7 +15,7 @@ import (
 )
 
 // TestExportAdmissionUnary pins the process-wide ExportTelemetry cap: the
-// call past the limit is refused with ResourceExhausted while the others
+// call past the limit is refused with Unavailable (retryable) while the others
 // are still in the handler, other methods pass through while the lane is
 // full, and a released slot admits the next call.
 func TestExportAdmissionUnary(t *testing.T) {
@@ -49,7 +49,7 @@ func TestExportAdmissionUnary(t *testing.T) {
 	}
 
 	_, err := admit(context.Background(), nil, exportInfo, blocking)
-	require.Equal(t, codes.ResourceExhausted, status.Code(err), "call %d must be refused: %v", limit+1, err)
+	require.Equal(t, codes.Unavailable, status.Code(err), "call %d must be refused: %v", limit+1, err)
 
 	passthrough := false
 	_, err = admit(context.Background(), nil, registerInfo, func(context.Context, any) (any, error) {

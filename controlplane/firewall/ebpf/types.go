@@ -13,7 +13,7 @@
 //   - sendmsg6:     IPv6 UDP (IPv4-mapped DNS redirect + native deny)
 //   - recvmsg6:     IPv6 UDP (rewrite IPv4-mapped DNS response source)
 //   - getpeername6: IPv6 UDP (report the original dst as the connected peer)
-//   - sock_create:  Raw socket blocking (ICMP prevention)
+//   - sock_create:  socket allowlist (TCP stream and UDP datagram only)
 //
 // All programs share pinned BPF maps under PinPath for cross-process
 // access (eBPF Manager + CoreDNS plugin both read/write maps).

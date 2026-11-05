@@ -24,9 +24,10 @@ services:
     restart: unless-stopped
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
-      # CLI-issued mTLS material for the CP-only receiver. Bound RO from
-      # the CLI auth dir on the host. The CA bundle gates client certs
-      # to ones the CLI signed (currently just clawkercp).
+      # CLI-issued server cert and the infra intermediate CA for the mTLS
+      # receivers (otlp/infra, otlp/agents). Bound RO from the CLI auth dir
+      # on the host. Only leaves the infra intermediate signed (CP, Envoy,
+      # CoreDNS) complete the handshake.
       - {{.OtelServerCertHostPath}}:/etc/otel/tls/server.pem:ro
       - {{.OtelServerKeyHostPath}}:/etc/otel/tls/server.key:ro
       - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro

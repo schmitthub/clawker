@@ -73,8 +73,7 @@ const (
 // MonitorTemplateData provides values for rendering monitoring stack templates.
 //
 // Service hostnames are sourced from [consts.MonitoringService*] so the
-// compose template, otel-config endpoints, and the CoreDNS internalHosts
-// list in `internal/controlplane/firewall/coredns_config.go` cannot drift.
+// compose template and the otel-config endpoints cannot drift.
 type MonitorTemplateData struct {
 	// Ports — for Prometheus, OpenSearch and Dashboards a single value
 	// drives both sides of the host:container publish mapping AND the
@@ -85,9 +84,11 @@ type MonitorTemplateData struct {
 	// The host-published OTLP receivers differ: OtelCollectorPort and
 	// OtelGRPCPort are the host side only, while the collector listens
 	// on the fixed OtelHTTPListenPort / OtelGRPCListenPort inside the
-	// container, so a user port cannot collide with the other
-	// in-container listeners (otlp/infra, otlp/agents, the Prometheus
-	// exporter).
+	// container, so those user ports cannot collide with the other
+	// in-container listeners (otlp/infra, otlp/agents). The Prometheus
+	// exporter is the exception: PrometheusMetricsPort binds inside the
+	// collector container, so NewMonitorTemplateData rejects a value
+	// equal to one of the fixed listeners.
 	OtelCollectorPort        int // host side of the otlp HTTP publish
 	OtelGRPCPort             int // host side of the otlp gRPC publish; independent of HTTP port
 	OtelHTTPListenPort       int // consts.MonitoringOtelHTTPPort: container side of the otlp HTTP publish
@@ -169,6 +170,14 @@ type MonitorTemplateData struct {
 // without further edits. mon drives ports/heap; the union drives collector
 // routing and the shared retention policy's index patterns.
 func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (MonitorTemplateData, error) {
+	for _, p := range collectorListenPorts() {
+		if mon.PrometheusMetricsPort == p {
+			return MonitorTemplateData{}, fmt.Errorf(
+				"monitor: prometheus_metrics_port %d collides with the otel-collector's fixed listener on that port; choose another port",
+				p,
+			)
+		}
+	}
 	routings, err := BuildUnitRoutings(units)
 	if err != nil {
 		return MonitorTemplateData{}, err
@@ -204,6 +213,18 @@ func NewMonitorTemplateData(mon config.MonitoringConfig, units []SeededUnit) (Mo
 		CurlImage:                   CurlImage,
 		OpenSearchBootstrapDirName:  OpenSearchBootstrapDirName,
 	}, nil
+}
+
+// collectorListenPorts lists the ports the otel-collector binds inside
+// its container regardless of settings. The Prometheus exporter shares
+// that network namespace, so its user-set port must avoid them.
+func collectorListenPorts() []int {
+	return []int{
+		consts.MonitoringOtelGRPCPort,
+		consts.MonitoringOtelHTTPPort,
+		consts.MonitoringOtelInfraPort,
+		consts.MonitoringOtelAgentIngestPort,
+	}
 }
 
 // ismIndexPatternsJSON builds the shared retention policy's index

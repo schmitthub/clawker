@@ -24,12 +24,17 @@ Clawker is a CLI tool plus two long-lived daemons — `clawkercp` (the control p
 │              │    │                     │    │  of clawker-controlplane)  │
 │ docker/      │    │ storage/ (engine)   │    │                            │
 │ workspace/   │    │ config/ (project)   │    │ AdminService gRPC (mTLS    │
-│ containerfs/ │    │ config/ (settings) │    │  + OAuth2): 13 firewall    │
-│ bundler/     │    │ project/ (registry) │    │  RPCs + ListAgents         │
-│              │    │ storeui/ (TUI edit) │    │ AgentService gRPC (mTLS):  │
-│ pkg/whail    │    │                     │    │  clawkerd Register +       │
-│ (engine lib) │    │                     │    │  Session command channel   │
-└──────┬───────┘    └─────────────────────┘    │ Ory auth stack (Hydra,     │
+│ containerfs/ │    │ config/ (settings) │    │  + OAuth2): 12 firewall    │
+│ bundler/     │    │ project/ (registry) │    │  RPCs + ListAgents +       │
+│              │    │ storeui/ (TUI edit) │    │  GetSystemTime + WatchSOS  │
+│ pkg/whail    │    │                     │    │ HostProxyService (same     │
+│ (engine lib) │    │                     │    │  listener): host proxy     │
+└──────┬───────┘    └─────────────────────┘    │  dials Connect stream      │
+       │                                       │ AgentService gRPC (mTLS):  │
+       │                                       │  Register, ExportTelemetry,│
+       │                                       │  host actions              │
+       │                                       │ hostgateway, otelgateway   │
+       │                                       │ Ory auth stack (Hydra,     │
        │                                       │  Kratos, Oathkeeper)       │
        ▼                                       │ Agent sqlite registry      │
   moby/moby (Docker SDK)                       │ Pub/sub event bus          │
@@ -40,7 +45,8 @@ Clawker is a CLI tool plus two long-lived daemons — `clawkercp` (the control p
                                                │  events_ringbuf → emits    │
                                                │  ebpf-egress OTLP logs)    │
                                                └──────────┬─────────────────┘
-                                                          │ mTLS Session
+                                                          │ mTLS Session (CP dials)
+                                                          │ AgentService (clawkerd dials)
                                                           ▼
                                                ┌────────────────────────────┐
                                                │ clawkerd                   │
@@ -48,6 +54,15 @@ Clawker is a CLI tool plus two long-lived daemons — `clawkercp` (the control p
                                                │  container; ENTRYPOINT)    │
                                                │                            │
                                                │ Inbound mTLS gRPC :7700    │
+                                               │ Host-action relay          │
+                                               │  127.0.0.1:18374           │
+                                               │  (CLAWKER_HOST_PROXY)      │
+                                               │ OTLP/HTTP relay            │
+                                               │  127.0.0.1:4318            │
+                                               │  (OTEL_EXPORTER_OTLP_      │
+                                               │   ENDPOINT)                │
+                                               │ Relays forward to CP       │
+                                               │  AgentService over mTLS    │
                                                │ Forks user CMD with kernel-│
                                                │  side privilege drop       │
                                                │ Two-phase orphan reaper    │
@@ -133,12 +148,14 @@ Core business logic. Import leaves and foundation packages only.
 | `controlplane/dockerevents` | pubsub, logger | Docker events feeder (reconnecting stream → typed events on a pub/sub topic) |
 | `controlplane/manager` | config, docker, logger (+ embedded clawkercp + ebpf-manager + bpffs-delegate binaries) | Host-side CP lifecycle: `Manager.Start`/`Stop`/`CPRunning` |
 | `controlplane/adminclient` | auth, consts | CLI-side AdminService gRPC dial (mTLS + auto-refreshing OAuth2 bearer) |
-| `controlplane/firewall` | config, docker, logger, storage, controlplane/firewall/ebpf | Firewall `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue`, config generators, certificate PKI, rules store |
+| `controlplane/firewall` | config, docker, logger, storage, controlplane/firewall/ebpf | Firewall `Handler` (12 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue`, config generators, certificate PKI, rules store |
 | `controlplane/firewall/ebpf` | logger | eBPF program loader/manager, `SyncRoutes` replaces global `route_map` atomically; break-glass `ebpf-manager` CLI under `cmd/` |
 | `controlplane/firewall/ebpf/netlogger` | controlplane/firewall/ebpf, controlplane/pubsub, controlplane/dockerevents, controlplane/otel, config, logger | Per-decision-point egress event emitter — drains the BPF `events_ringbuf`, enriches by cgroup ID with container/agent/project attribution via the eBPF-enrolled pub/sub topic, emits OTLP log records via a `*sdklog.LoggerProvider` (`service.name=ebpf-egress`) |
 | `dnsbpf` | controlplane/firewall/ebpf | CoreDNS plugin that writes DNS resolutions to the BPF `dns_cache` map in real time (embedded in `cmd/coredns-clawker`) |
 | `clawkerd/embed` | (embed only) | embeds the compiled per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd` |
-| `hostproxy` | config, logger | Host proxy for container-to-host communication |
+| `hostproxy` | api/agent/v1, api/hostproxy/v1, config, consts, logger | Host proxy for container-to-host actions. It is a client: it dials the CP admin listener and holds a `HostProxyService.Connect` stream. Containers cannot reach it directly |
+| `controlplane/hostgateway` | api/agent/v1, api/hostproxy/v1, consts, logger | CP side of the AgentService host actions: callback-session ownership, and the `HostProxyService` server that sends each authorized action to the host proxy stream |
+| `controlplane/otelgateway` | api/agent/v1, logger | CP OTLP gateway: stamps the CP-verified agent identity on each `ExportTelemetry` batch and forwards it to the collector over the infra mTLS lane |
 | `socketbridge` | config, logger | SSH/GPG agent forwarding via muxrpc |
 | `containerfs` | config, keyring, logger | Host config preparation for container init |
 | `monitor` | config | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |

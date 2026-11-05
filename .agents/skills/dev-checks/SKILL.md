@@ -30,9 +30,9 @@ Host checks need the host Docker daemon or kernel capabilities:
 
 | Purpose | Command |
 | --- | --- |
-| CLI integration tests | `make test-e2e` (`go test ./test/e2e/... -v -timeout 10m`) |
+| CLI integration tests | `make test-e2e` (`go test ./test/e2e/... -v -timeout 10m`). Stop live agent containers first: the harness refuses to run while they exist. |
 | Docker/BuildKit integration tests | `make test-whail` (`go test ./test/whail/... -v -timeout 5m`) |
-| Unit plus both integration suites | `make test-all` |
+| Unit plus both integration suites | `make test-all` (stop live agent containers first, as for `make test-e2e`) |
 | Privileged BPF tests on Linux | `make test-bpf` |
 | Socket server root tests on Linux | `make test-root` (in the dev container: `go test -c`, then run the binary in a Docker container) |
 
@@ -44,7 +44,7 @@ Host checks need the host Docker daemon or kernel capabilities:
 
 ## `make clawker` — only when embeds are missing
 
-`make clawker` builds the `//go:embed` binaries the prek go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. Check first; build only if a binary is missing:
+`make clawker` builds the `//go:embed` binaries the prek go-test hook needs. It is slow and fills build caches — **never run it reflexively before a commit**. `make test` (and so `make pre-commit`, whose prek go-test hook runs `make test`) builds missing embed binaries itself through its prerequisite targets. Check first; build only if a binary is missing:
 
 ```bash
 ls clawkerd/embed/assets/clawkerd \

@@ -157,6 +157,15 @@ build:
   in the build and is unaffected — it still uses `/bin/sh`.
 </Note>
 
+<Note>
+  Base images do not include `sudo`. Agent containers run with
+  `no-new-privileges` by default, so setuid binaries cannot raise the
+  privileges of the agent. A `--security-opt no-new-privileges=<bool>` value
+  that you set replaces the default. Install system packages at build time
+  with `build.packages` or `root_run`. To run a one-off command as root, use
+  `clawker exec -u root` from the host.
+</Note>
+
 ## Injection Points
 
 For advanced use cases, the `inject` field provides raw Dockerfile injection points. Each field accepts an array of raw Dockerfile lines. Four points render in the base image, two in the harness image:

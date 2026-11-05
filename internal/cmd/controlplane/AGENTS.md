@@ -69,7 +69,7 @@ whenever the CP is. Two cooperating mechanisms deliver that:
 1. **CP-side (every boot, startup gate)**: the CP daemon reads settings
    at startup and, when enabled, runs the in-process `FirewallInit`
    synchronously BEFORE `SetReady` (the settings-driven firewall
-   bringup gate in `cmd/clawkercp/main.go`).
+   bringup gate `firewallBringupGate` in `internal/controlplane/cmd.go`).
    A bringup failure fails CP startup (exit code 1) — fail-closed and
    loud, never silently unenforced. `/healthz` green therefore implies
    the stack is up when the firewall is enabled, and the host-side
@@ -97,7 +97,7 @@ stack-down exposure warning) even though the CP itself is up.
 
 The CP owns Envoy and CoreDNS lifecycle end-to-end. `controlplane down`
 does a single thing — `docker stop clawker-controlplane` — which sends
-SIGTERM to PID 1 inside the CP (`cmd/clawkercp/main.go`). The CP's
+SIGTERM to PID 1 inside the CP (`clawkercp`; the handler is in `internal/controlplane/cmd.go`). The CP's
 SIGTERM handler converges on the same `drainCallback` as the
 drain-to-zero path via `sync.Once`, so the teardown runs exactly once
 regardless of which trigger fires:

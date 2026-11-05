@@ -12,7 +12,7 @@ Clawker builds custom Docker images, creates config/history volumes, and spins u
 | --- | --- | --- |
 | **Images** | Each `clawker build` creates a new image. Old images are not automatically removed. | Largest contributor — images range from hundreds of MB to several GB |
 | **Build cache** | BuildKit caches intermediate layers to speed up rebuilds. Cache grows with each unique build. | Can silently consume tens of GB |
-| **Volumes** | Each project+agent combination gets config and history volumes. Volumes persist across container restarts. | Small individually, but accumulate across projects |
+| **Volumes** | Each project+agent combination gets config, lifecycle and history volumes. Volumes persist across container restarts and across `clawker rm` (pass `--volumes` to remove them with the container); the next container with the same name mounts them again. | Small individually, but accumulate across projects |
 | **Stopped containers** | Containers created with `clawker run` or `clawker create` remain after stopping until explicitly removed. | Minor, but reference images and volumes preventing cleanup |
 
 ## When to clean up

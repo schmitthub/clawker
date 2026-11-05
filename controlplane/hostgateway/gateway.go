@@ -104,6 +104,9 @@ func New(log *logger.Logger) *Gateway {
 // errReplaced ends a stream that a newer host proxy stream replaced.
 var errReplaced = status.Errorf(codes.Aborted, "replaced by a newer host proxy stream")
 
+// errShutdown ends the stream when the CP drains.
+var errShutdown = status.Errorf(codes.Unavailable, "control plane shutting down")
+
 // Connect is the host proxy's stream. The newest stream replaces the
 // previous one; calls in flight on the previous stream fail as
 // unavailable. The stream ends when the host proxy goes away or a newer
@@ -116,7 +119,7 @@ func (g *Gateway) Connect(srv hostproxyv1.HostProxyService_ConnectServer) error 
 		return status.Errorf(codes.PermissionDenied, "not the host proxy")
 	}
 
-	hs := newHostStream(srv)
+	hs := newHostStream(srv, g.log)
 	g.mu.Lock()
 	old := g.stream
 	g.stream = hs
@@ -154,10 +157,27 @@ func (g *Gateway) Connect(srv hostproxyv1.HostProxyService_ConnectServer) error 
 	}
 	g.drop(hs, err)
 	g.log.Info().Str("event", "host_proxy_disconnected").Err(err).Msg("host proxy stream ended")
-	if errors.Is(err, errReplaced) {
-		return errReplaced
+	if errors.Is(err, errReplaced) || errors.Is(err, errShutdown) {
+		return err
 	}
 	return nil
+}
+
+// Close ends the connected host proxy stream so Connect returns and the
+// gRPC server can drain. Calls in flight fail as unavailable. The drain
+// runs Close before GracefulStop: a held stream would otherwise consume
+// the whole drain budget.
+func (g *Gateway) Close() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	hs := g.stream
+	g.stream = nil
+	g.mu.Unlock()
+	if hs != nil {
+		hs.close(errShutdown)
+	}
 }
 
 // drop closes hs and clears it unless a newer stream already replaced it.
@@ -420,6 +440,7 @@ func actionName(req *hostproxyv1.HostActionRequest) string {
 // hostStream is one connected host proxy stream with its calls in flight.
 type hostStream struct {
 	srv hostproxyv1.HostProxyService_ConnectServer
+	log *logger.Logger
 
 	sendMu sync.Mutex // gRPC allows one Send at a time
 
@@ -430,9 +451,10 @@ type hostStream struct {
 	done    chan struct{}
 }
 
-func newHostStream(srv hostproxyv1.HostProxyService_ConnectServer) *hostStream {
+func newHostStream(srv hostproxyv1.HostProxyService_ConnectServer, log *logger.Logger) *hostStream {
 	return &hostStream{
 		srv:     srv,
+		log:     log,
 		sendMu:  sync.Mutex{},
 		mu:      sync.Mutex{},
 		pending: make(map[uint64]chan *hostproxyv1.HostActionResult),
@@ -460,11 +482,8 @@ func (hs *hostStream) roundTrip(
 		hs.mu.Unlock()
 	}()
 
-	hs.sendMu.Lock()
-	err := hs.srv.Send(req)
-	hs.sendMu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("send to host proxy: %w", err)
+	if err := hs.send(ctx, req); err != nil {
+		return nil, err
 	}
 
 	select {
@@ -473,19 +492,49 @@ func (hs *hostStream) roundTrip(
 	case <-hs.done:
 		return nil, fmt.Errorf("host proxy stream ended: %w", hs.err)
 	case <-ctx.Done():
-		// Tell the host proxy to end the action; nobody waits for its result.
-		hs.sendMu.Lock()
-		cancelErr := hs.srv.Send(&hostproxyv1.HostActionRequest{
-			Id:             req.GetId(),
-			Action:         &hostproxyv1.HostActionRequest_Cancel{Cancel: &hostproxyv1.CancelAction{}},
-			DeadlineUnixMs: 0,
-		})
-		hs.sendMu.Unlock()
-		if cancelErr != nil {
-			return nil, fmt.Errorf("waiting for host proxy: %w (cancel not sent: %w)", ctx.Err(), cancelErr)
-		}
+		// Tell the host proxy to end the action; nobody waits for the
+		// notice or its result. The caller is already past its deadline,
+		// and a failed notice means the stream is ending, which ends the
+		// action on the host proxy side too.
+		go func() {
+			if err := hs.sendLocked(&hostproxyv1.HostActionRequest{
+				Id:             req.GetId(),
+				Action:         &hostproxyv1.HostActionRequest_Cancel{Cancel: &hostproxyv1.CancelAction{}},
+				DeadlineUnixMs: 0,
+			}); err != nil {
+				hs.log.Debug().Err(err).Uint64("id", req.GetId()).Msg("cancel notice not sent to the host proxy")
+			}
+		}()
 		return nil, fmt.Errorf("waiting for host proxy: %w", ctx.Err())
 	}
+}
+
+// send writes req to the stream and returns when the write completes, the
+// caller's ctx ends, or the stream closes. A host proxy that stops reading
+// fills the flow-control window and blocks Send; the caller must not wait
+// on that past its deadline. The write itself finishes in the background
+// when the window opens or the stream ends.
+func (hs *hostStream) send(ctx context.Context, req *hostproxyv1.HostActionRequest) error {
+	errc := make(chan error, 1)
+	go func() { errc <- hs.sendLocked(req) }()
+	select {
+	case err := <-errc:
+		return err
+	case <-hs.done:
+		return fmt.Errorf("host proxy stream ended: %w", hs.err)
+	case <-ctx.Done():
+		return fmt.Errorf("send to host proxy: %w", ctx.Err())
+	}
+}
+
+// sendLocked serializes writes to the stream: gRPC allows one Send at a time.
+func (hs *hostStream) sendLocked(req *hostproxyv1.HostActionRequest) error {
+	hs.sendMu.Lock()
+	defer hs.sendMu.Unlock()
+	if err := hs.srv.Send(req); err != nil {
+		return fmt.Errorf("send to host proxy: %w", err)
+	}
+	return nil
 }
 
 // recvLoop delivers each result to the call waiting for its id. A result

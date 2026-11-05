@@ -83,11 +83,13 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/state` | `mocks/` | `NewBlankState()`, `NewFromString(yaml)`, `StateStoreMock` (moq) |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
 | `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq) |
+| `api/agent/v1` | `mocks/` | `AgentServiceClientMock` (moq) |
+| `controlplane/agent` | `mocks/` | `HostForwarderMock`, `OtelForwarderMock`, `RegistryMock` (moq) |
 | `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq) |
 | `controlplane/manager` | `mocks/` | `ManagerMock` (moq) |
 | `controlplane/firewall` | `mocks/` | `EgressRulesStoreMock`, `RouteIdentityStoreMock` (moq) |
 | `controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
-| `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
+| `internal/hostproxy` | `hostproxytest/` | `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
 
@@ -736,7 +738,7 @@ gitMgr := gittest.NewInMemoryGitManager()
 
 ### Basic E2E Test
 
-Uses the `test/e2e/harness` package with real constructors. `NewIsolatedFS` creates isolated XDG dirs, builds the clawker binary, and registers cleanup.
+Uses the `test/e2e/harness` package with real constructors. `NewIsolatedFS` refuses to run while live agent containers exist. It creates isolated XDG dirs, links the real `~/.docker/cli-plugins` into the isolated Docker config (so `docker compose` stays available), and registers cleanup. It does not build a clawker binary. `TestMain` in `test/e2e/main_test.go` makes the test binary act as the clawker CLI for `host-proxy serve`, because the host proxy manager starts its daemon from its own executable.
 
 ```go
 package e2e
@@ -774,32 +776,44 @@ build:
 
 ### Firewall E2E Test Pattern
 
+`test/e2e/firewall_test.go` keeps the real firewall wiring in one place. Copy these names exactly:
+
 ```go
-func newFirewallHarness(t *testing.T) *harness.Harness {
-    h := &harness.Harness{
-        T: t,
-        Opts: &harness.FactoryOptions{
-            Config:         config.NewConfig,
-            Client:         docker.NewClient,
-            ProjectManager: project.NewProjectManager,
-            Firewall:       firewall.NewManager,  // real manager, not mock
-        },
-    }
+// firewallFactoryOpts: real Config/Docker/ProjectManager, production
+// ControlPlane manager, production-identical AdminClient.
+func firewallFactoryOpts(o *harness.FactoryOptions) {
+    o.Config = config.NewConfig
+    o.Client = docker.NewClient
+    o.ProjectManager = project.NewProjectManager
+    o.UseRealControlPlane = true
+    o.UseRealAdminClient = true
+}
+
+// fwSetup: isolated FS, CP removal, project config write, register, build.
+func fwSetup(t *testing.T, h *harness.Harness, projectYAML string) *harness.SetupResult {
+    t.Helper()
     setup := h.NewIsolatedFS(nil)
-    setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
-build:
-  image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
-`)
+    // The test CP must use this test environment's CA.
+    harness.EnsureNoControlPlane(t, 30*time.Second)
+    setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, projectYAML)
     regRes := h.Run("project", "register", "testproject")
-    require.NoError(t, regRes.Err)
+    require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
     buildRes := h.Run("build")
-    require.NoError(t, buildRes.Err)
-    return h
+    require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
+    return setup
+}
+
+func TestFirewall_BlockedDomain(t *testing.T) {
+    h := newFirewallHarness(t)
+    res := h.RunInContainer("firewall-test", "curl", "-s", "--max-time", "5", "https://example.com")
+    assert.NotNil(t, res.Err, "curl to blocked domain should fail")
 }
 ```
+
+- `newFirewallHarness(t, requiredServices...)` calls `newFirewallYAMLHarness(t, "\n", requiredServices...)`. Use `newFirewallYAMLHarness` for a custom project config.
+- `newFirewallYAMLHarness` calls `harness.New(t, firewallFactoryOpts)`, registers `h.RequireServicesWereRunning` before `fwSetup` (cleanup is LIFO), then calls `fwSetup`.
+- `requiredServices` defaults to `"firewall", "controlplane"`. A test that stops the firewall gives only `"controlplane"`. A test that also stops the CP gives `fwNoServices`.
+- A test that needs more wiring (for example, the host proxy) gives an additional mutator to `harness.New`.
 
 ### Table-Driven E2E Tests
 
@@ -960,7 +974,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 ### Whail Jail Testing
 
 - `jail_test.go` must use `package whail_test` (external) to avoid import cycle with `whailtest`
-- Integration tests use `package whail` (internal) and are located in `test/whail/`
+- Integration tests in `test/whail/` use `package whail_test` (external)
 - Label override prevention: add `labels[e.managedLabelKey] = e.managedLabelValue` AFTER final label merge (caller labels have highest precedence)
 - `ContainerStatsOneShot` delegates to `APIClient.ContainerStats` — spy on `"ContainerStats"` not `"ContainerStatsOneShot"`
 

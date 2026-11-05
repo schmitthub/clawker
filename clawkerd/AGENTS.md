@@ -141,7 +141,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 
 ## What It Does NOT Do
 
-- No proactive outbound dial beyond the CP-triggered Register handshake and the ExportTelemetry connection the OTLP relay holds (lazy dial, gRPC-managed reconnect)
+- No proactive outbound dial beyond the CP-triggered Register handshake, the ExportTelemetry connection the OTLP relay holds, and the AgentService connection the host relay holds for the host actions (each a lazy dial with gRPC-managed reconnect)
 - No heartbeat — CP knows liveness via Docker events + dialer overseer events
 - No init-script execution — CP-driven `Session.ShellCommand` runs the post-init plan; clawkerd just dispatches
 - No reconnect logic — clawkerd is the SERVER; reconnect with backoff lives in `controlplane/agent/dialer.go` on the CP side

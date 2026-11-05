@@ -23,7 +23,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/schmitthub/clawker/controlplane/firewall"
+	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/controlplane/sdscerts"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -418,4 +420,33 @@ func TestRequireSDSClientSAN(t *testing.T) {
 	t.Run("empty chain set refused", func(t *testing.T) {
 		require.Error(t, requireSDSClientSAN(nil))
 	})
+}
+
+// TestFirewallBringupGate_DisabledClearsEBPFState: with firewall.enable
+// false the gate flushes the pinned eBPF state once, so agents a previous
+// firewalled CP enrolled pass through, and a flush failure degrades
+// instead of gating startup. The handler is nil: the disabled branch must
+// not touch it.
+func TestFirewallBringupGate_DisabledClearsEBPFState(t *testing.T) {
+	cfg := configmocks.NewFromString("", "firewall:\n  enable: false\n")
+
+	flushOnly := func(flush func() error) *ebpfmocks.EBPFManagerMock {
+		return &ebpfmocks.EBPFManagerMock{
+			DisableFunc:    nil,
+			EnableFunc:     nil,
+			FlushAllFunc:   flush,
+			InstallFunc:    nil,
+			RemoveFunc:     nil,
+			SyncRoutesFunc: nil,
+		}
+	}
+
+	mock := flushOnly(func() error { return nil })
+	require.NoError(t, firewallBringupGate(cfg, logger.Nop(), nil, mock))
+	assert.Len(t, mock.FlushAllCalls(), 1)
+
+	failing := flushOnly(func() error { return errors.New("bpf: map busy") })
+	require.NoError(t, firewallBringupGate(cfg, logger.Nop(), nil, failing),
+		"a flush failure must degrade, not gate startup")
+	assert.Len(t, failing.FlushAllCalls(), 1)
 }

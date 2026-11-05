@@ -458,6 +458,7 @@ type drainDeps struct {
 	log               *logger.Logger
 	actionQueue       *fwhandler.ActionQueue
 	grpcStack         *server.GRPCStack
+	hostGateway       *hostgateway.Gateway
 	handler           *fwhandler.Handler
 	stack             *fwhandler.Stack
 	netloggerSvc      *netlogger.Service
@@ -475,7 +476,8 @@ type drainDeps struct {
 // un-reorderable order (INV-B2-007):
 //
 //  1. actionQueue.Close drains accepted submissions then rejects new ones.
-//  2. grpcStack.GracefulStop refuses new RPCs, waits for in-flight handlers.
+//  2. hostGateway.Close ends the host proxy stream, then grpcStack.GracefulStop
+//     refuses new RPCs and waits for in-flight handlers.
 //  3. handler.CancelAllBypassTimers cancels any bypass timer mid-retry.
 //  4. stack.Stop tears down the firewall stack (Envoy + CoreDNS).
 //  5. netlogger Stop + provider Shutdown (BEFORE flush so the ringbuf reader
@@ -507,6 +509,9 @@ func runDrainSequence(ctx context.Context, d drainDeps) error {
 		if err := d.actionQueue.Close(); err != nil {
 			d.log.Warn().Err(err).Msg("actionQueue close failed")
 		}
+		// The host proxy stream is long-lived: GracefulStop would wait
+		// for it until ctx expires. End it first.
+		d.hostGateway.Close()
 		d.grpcStack.GracefulStop(ctx)
 		d.handler.CancelAllBypassTimers()
 		if err := d.stack.Stop(ctx); err != nil {
@@ -828,8 +833,31 @@ func stopSDSServer(grpcSrv *grpc.Server, log *logger.Logger) {
 // agents stay fail-closed against pinned state. The structured
 // event=firewall_bringup_failed line is the operator's only triage surface (the
 // exit itself lands on stderr/docker logs).
-func firewallBringupGate(cfg config.Config, log *logger.Logger, handler *fwhandler.Handler) error {
+//
+// When firewall.enable is false the gate clears the pinned eBPF state
+// instead. The drain keeps live agents enrolled (FlushDead) so they fail
+// closed until the next CP re-enrolls them; with the firewall disabled no
+// CP will, and they would stay pointed at a stopped Envoy and CoreDNS.
+// The operator turned enforcement off, so the agents pass through. A
+// flush failure degrades (event=firewall_disabled_flush_failed): the
+// agents stay blocked, which is never fail-open.
+func firewallBringupGate(
+	cfg config.Config,
+	log *logger.Logger,
+	handler *fwhandler.Handler,
+	ebpfMgr ebpf.EBPFManager,
+) error {
 	if !cfg.FirewallEnabled() {
+		if err := ebpfMgr.FlushAll(); err != nil {
+			log.Error().Err(err).
+				Str("event", "firewall_disabled_flush_failed").
+				Str("component", "firewall-bringup").
+				Msg("firewall disabled in settings but the pinned eBPF state could not be cleared; agents enrolled by a previous CP stay blocked until `clawker firewall down`")
+			return nil
+		}
+		log.Info().Str("event", "firewall_disabled_state_cleared").
+			Str("component", "firewall-bringup").
+			Msg("firewall disabled in settings: cleared the pinned eBPF enforcement state")
 		return nil
 	}
 	log.Info().Str("component", "firewall-bringup").
@@ -1727,6 +1755,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// buildGRPCStack. The ActionQueue Close is drain step 1 (injected via
 	// HandlerDeps); grpcCleanup is the belt-and-braces close for non-drain
 	// exit paths.
+	hostGateway := hostgateway.New(log.With("component", "host-gateway"))
 	actionQueue, handler, grpcStack, serveFailed, grpcCleanup, err := buildGRPCStack(grpcStackDeps{
 		log:               log,
 		cfg:               cfg,
@@ -1738,7 +1767,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		containerResolver: enf.containerResolver,
 		agentReg:          agentReg,
 		otelGateway:       otelGateway,
-		hostGateway:       hostgateway.New(log.With("component", "host-gateway")),
+		hostGateway:       hostGateway,
 		agentPeerLookup:   agentPeerLookup,
 		lister:            lister,
 		enrolledTopic:     enrolledTopic,
@@ -1807,7 +1836,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// settings-driven firewall bringup — startup GATE, pre-SetReady
 	// (see firewallBringupGate). A failure exits 1 without an eBPF flush.
-	if err := firewallBringupGate(cfg, log, handler); err != nil {
+	if err = firewallBringupGate(cfg, log, handler, enf.ebpfMgr); err != nil {
 		return err
 	}
 
@@ -1861,6 +1890,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log:               log,
 		actionQueue:       actionQueue,
 		grpcStack:         grpcStack,
+		hostGateway:       hostGateway,
 		handler:           handler,
 		stack:             enf.stack,
 		netloggerSvc:      netloggerSvc,

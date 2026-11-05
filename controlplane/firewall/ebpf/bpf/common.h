@@ -51,6 +51,19 @@
 #define SOCK_RAW 3
 #endif
 
+// sock_type_allowed is the sock_create allowlist: only TCP stream sockets
+// and UDP datagram sockets reach the connect and sendmsg hooks, so only
+// those may be created in an enrolled container. Raw and ping sockets,
+// SCTP, UDP-Lite, MPTCP and SOCK_SEQPACKET all have a send path the hooks
+// never see. The kernel resolves protocol 0 to the type's default before
+// the sock_create hook runs, so a plain socket(AF_INET, SOCK_STREAM, 0)
+// arrives here with IPPROTO_TCP.
+static __always_inline bool sock_type_allowed(__u32 type, __u32 protocol)
+{
+	return (type == SOCK_STREAM && protocol == IPPROTO_TCP) ||
+	       (type == SOCK_DGRAM && protocol == IPPROTO_UDP);
+}
+
 // ---------------------------------------------------------------------------
 // Routing constants
 // ---------------------------------------------------------------------------
@@ -445,7 +458,8 @@ static __always_inline bool is_in_subnet(__u32 ip, __u32 net_addr, __u32 net_mas
 //                         is loopback-only inside its own container
 //   coredns_ip 53       — already rewritten by the DNS branch; kept so a
 //                         direct dial to the CoreDNS address stays allowed
-//   cp_ip      agent    — Register + Export (mTLS, identity-gated)
+//   cp_ip      agent    — Register, ExportTelemetry, and host actions
+//                         (mTLS, identity-gated)
 //   cp_ip      hydra    — clawkerd's one-time assertion exchange
 //
 // dst_port is host byte order, IPs are network byte order.
@@ -717,12 +731,16 @@ submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
 // ---------------------------------------------------------------------------
 
 // enter_enforced is the shared fast-path preamble for every clawker BPF
-// program. It handles root-uid pass-through, the active-bypass detection
-// (when check_bypass is true), and the container_map lookup that gates
-// enforcement.
+// program. It handles the active-bypass detection (when check_bypass is
+// true) and the container_map lookup that gates enforcement. There is no
+// uid exemption: root inside an enrolled container goes through the same
+// checks as every other uid. clawkerd (PID 1, root) needs only the CP agent
+// and Hydra ports and CoreDNS, which allowed_internal admits. Root sockets
+// without the mark are enforced. Root can opt out by setting SO_MARK =
+// CLAWKER_MARK; this is by design because root in the container is trusted.
 //
 // Returns enum enter_state:
-//   ENTER_NOT_MANAGED — uid==0 or container not in container_map; caller
+//   ENTER_NOT_MANAGED — container not in container_map; caller
 //                       must `return 1` immediately.
 //   ENTER_BYPASSED    — managed but bypass flag set (check_bypass=true
 //                       only); caller emits submit_event_v4/v6/nodst
@@ -745,10 +763,6 @@ submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
 static __always_inline enum enter_state
 enter_enforced(struct container_config **cfg, __u64 *cgroup_id, bool check_bypass)
 {
-	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-	if (uid == 0)
-		return ENTER_NOT_MANAGED;
-
 	__u64 cid = bpf_get_current_cgroup_id();
 
 	if (check_bypass) {
@@ -870,6 +884,8 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	// Loop prevention: skip redirect for Envoy/CoreDNS upstream traffic.
 	// Envoy sets SO_MARK = CLAWKER_MARK on its upstream sockets
 	// (ref: iximiuz.com eBPF transparent proxy pattern).
+	// Only a process with CAP_NET_RAW or CAP_NET_ADMIN (root) can set this mark;
+	// the agent user cannot.
 	__u32 mark = 0;
 	bpf_getsockopt(ctx, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
 	if (mark == CLAWKER_MARK)

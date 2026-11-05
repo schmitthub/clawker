@@ -2,7 +2,7 @@
 
 CoreDNS plugin that populates the clawker BPF `dns_cache` map in real time. Installed as a `dnsbpf` directive in the custom CoreDNS build (`cmd/coredns-clawker`), registered second (after `otel`) in every server block so it wraps the downstream resolver (typically `forward`) and intercepts the response.
 
-Runtime owner: `internal/controlplane/firewall.Stack` builds the `clawker-coredns:<content hash>` image on demand (embeds `cmd/coredns-clawker` via `//go:embed`), manages its container lifecycle, and provides the pinned `dns_cache` map at `/sys/fs/bpf/clawker/dns_cache`.
+Runtime owner: `controlplane/firewall.Stack` builds the `clawker-coredns:<content hash>` image on demand (embeds `cmd/coredns-clawker` via `//go:embed`), manages its container lifecycle, and provides the pinned `dns_cache` map at `/sys/fs/bpf/clawker/dns_cache`.
 
 Purpose: let the BPF `connect4` program route per-domain TCP traffic (e.g. `ssh github.com` vs `ssh gitlab.com`, both on port 22) to the correct Envoy listener. CoreDNS resolves → the plugin writes `dns_cache[resolved_ip] = {identity, expire_ts, source}` → the BPF fast path looks it up on the next `connect()`.
 
@@ -69,4 +69,4 @@ The custom CoreDNS container (`clawker-coredns:<content hash>`, built on demand 
 
 ## Imports
 
-Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `controlplane/firewall/ebpf` (for `IPToUint32`, `Uint32ToIP`, and the `DNSSource*` precedence constants). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `internal/controlplane/firewall` embeds the built binary but does not import this package.
+Imports: `github.com/coredns/coredns/plugin` + `plugin/pkg/nonwriter` + `core/dnsserver`, `github.com/coredns/caddy`, `github.com/miekg/dns`, `github.com/cilium/ebpf`, and `controlplane/firewall/ebpf` (for `IPToUint32`, `Uint32ToIP`, and the `DNSSource*` precedence constants). Imported by `cmd/coredns-clawker` (the binary) and nothing else. `controlplane/firewall` embeds the built binary but does not import this package.

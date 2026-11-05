@@ -47,6 +47,14 @@ func closeOnCleanup(t *testing.T, c io.Closer, what string) {
 	})
 }
 
+// closeNow closes c at once and logs a failure.
+func closeNow(t *testing.T, c io.Closer, what string) {
+	t.Helper()
+	if err := c.Close(); err != nil {
+		t.Logf("close %s: %v", what, err)
+	}
+}
+
 func assertAbsent(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
@@ -196,13 +204,13 @@ func TestUserDir_ListenUnix(t *testing.T) {
 		t.Fatalf("listener type %T", stale)
 	}
 	ul.SetUnlinkOnClose(false)
-	_ = stale.Close()
+	closeNow(t, stale, "stale listener")
 
 	l, err := d.listenUnix("agent.sock")
 	if err != nil {
 		t.Fatalf("listenUnix: %v", err)
 	}
-	defer l.Close()
+	closeOnCleanup(t, l, "listener")
 	var st syscall.Stat_t
 	if err = syscall.Lstat(path, &st); err != nil {
 		t.Fatal(err)
@@ -214,7 +222,7 @@ func TestUserDir_ListenUnix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	_ = c.Close()
+	closeNow(t, c, "dialed conn")
 }
 
 func TestUserDir_ListenUnix_RefusesSymlink(t *testing.T) {
@@ -225,7 +233,7 @@ func TestUserDir_ListenUnix_RefusesSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer victim.Close()
+	closeOnCleanup(t, victim, "victim listener")
 	if err = os.Symlink(target, filepath.Join(home, ".ssh", "agent.sock")); err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +437,7 @@ func TestHelperAgentAccess(t *testing.T) {
 				t.Errorf("dial %s: %v", sock, err)
 				continue
 			}
-			_ = c.Close()
+			closeNow(t, c, sock)
 			continue
 		}
 		if _, err := os.ReadFile(filepath.Join(home, arg)); err != nil {

@@ -281,6 +281,7 @@ func TestRemoveRun_WithVolumes(t *testing.T) {
 	// --volumes triggers RemoveContainerWithVolumes path (VolumeList called for cleanup)
 	fake.AssertCalled(t, "ContainerRemove")
 	fake.AssertCalled(t, "VolumeList")
+	require.NotContains(t, errOut.String(), "volumes kept")
 }
 
 func TestRemoveRun_DisablesFirewallBeforeRemove(t *testing.T) {
@@ -317,6 +318,28 @@ func TestRemoveRun_DisablesFirewallBeforeRemove(t *testing.T) {
 	require.Len(t, fwMock.FirewallDisableCalls(), 1)
 	require.Equal(t, fixture.ID, disabledID)
 	fake.AssertCalled(t, "ContainerRemove")
+}
+
+// TestRemoveRun_VolumesKeptHint pins the stderr note that the agent's
+// volumes outlive the container unless --volumes is passed (the --volumes
+// case is asserted in TestRemoveRun_WithVolumes).
+func TestRemoveRun_VolumesKeptHint(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		return mobyclient.ContainerRemoveResult{}, nil
+	}
+	f, in, out, errOut := testFactory(t, fake, nil, nil)
+
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	require.NoError(t, cmd.Execute())
+	require.Contains(t, errOut.String(), "volumes kept")
 }
 
 func TestRemoveRun_FirewallDisableErrorDoesNotFailRemove(t *testing.T) {

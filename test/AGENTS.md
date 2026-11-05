@@ -110,7 +110,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker. Shared
 preamble lives in `newFirewallHarness` / `newFirewallYAMLHarness(t, projectYAML,
 services...)` (real wiring + services invariant + isolated FS + register +
 build); pass `fwNoServices` for tests that deliberately end with the stack
-down. `harness.New` fails when a running agent without the test label exists:
+down. `NewIsolatedFS` (`requireNoLiveAgents` in `test/e2e/harness/harness.go`) fails when a running agent without the test label exists:
 the test CP shares the host's pinned BPF maps, and its cleanup `firewall down`
 would open that agent's egress. Stop live agents before an e2e run.
 `fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
@@ -129,9 +129,27 @@ Highlights (not exhaustive — see the file):
 | `TestFirewall_SSHTCPMapping` / `_HTTPDomainDetection` / `_ICMPBlocked` | Non-TLS protocol routing and blocking |
 | `TestFirewall_CPNameResolves` | An enrolled agent resolves `clawker-controlplane` to the CP static IP; a TXT query gets an empty answer and a subdomain NXDOMAIN |
 | `TestFirewall_Identity*` | Route identities stable across rule churn and CP restart |
+| `TestFirewall_SocketTypeAllowlist` | The `sock_create` allowlist: an enrolled container can create TCP stream and UDP datagram sockets only (the test probes SCTP and UDP-Lite sockets, which are denied). Only socket creation is probed |
+| `TestFirewall_RootEnforced` | A root shell (`container exec -u root`) with unmarked sockets is enforced like other uids: an unlisted domain stays NXDOMAIN. |
+| `TestFirewall_HostActionsBehindCP` | Host actions go through the CP: a denied `open/url` host is refused before a browser opens, a callback session the agent does not own is refused, `enable_host_proxy: false` and `forward_https: false` are refused at the CP, and the host proxy reconnects after a CP restart |
+| `TestFirewall_ControlPlaneDownFailsClosed` | `controlplane down` with a running agent keeps the agent enrolled: the drain stops Envoy and CoreDNS but keeps the eBPF state of live cgroups, so the agent has no egress until `controlplane up` |
+| `TestFirewall_DockerInternalDNS` / `_DockerDNSDirectPortDenied` | DNS goes to CoreDNS; a direct dial to the random port of Docker's embedded resolver is denied |
+| `TestFirewall_ExactAllowBlocksSubdomain` / `_DenySubdomainUnderWildcard` / `_WildcardAndExactCoexist` | An exact rule resolves the apex only; a deny rule under a wildcard wins; wildcard and exact rules get separate Envoy filter chains |
+| `TestFirewall_PathRuleNormalizationDefeatsSmuggling` | URL-encoded `..` sequences cannot pass a path-rule prefix match |
 | `TestFirewall_IntraSubnetAllowlist` / `_FirewallDisabled` | In-subnet allowlist (another container denied on TCP and UDP, CP agent + Hydra ports open, CP health port denied, DNS intact); disabled-firewall behavior (CP still boots — CP ≠ firewall) |
 
 Tests drive the full CLI pipeline via `h.Run()`. The CP AdminService is reached indirectly through the production CLI code path. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup removes firewall and CP containers by purpose label before removing test resources.
+
+## Sandbox Hardening E2E Tests (`test/e2e/sandbox_hardening_test.go`)
+
+| Test | Verifies |
+|------|----------|
+| `TestSandbox_NoNewPrivileges_E2E` | The agent process has the kernel no-new-privileges flag, so setuid binaries in the image cannot raise its privileges |
+| `TestSandbox_DockerSocketGroup_E2E` | With `security.docker_socket`, the boot step gives the mounted socket to the docker group, and the agent process is a member of that group |
+
+## Whail Network Integration Test (`test/whail/container_network_test.go`)
+
+`TestContainerCreateEnsureNetworkReplacesDefaultEndpoint` sends the request the CLI sends when no `--network` flag is set (an endpoint under the `default` key). The container must start on the ensured network only.
 
 ## Telemetry Relay E2E Test (`test/e2e/telemetry_relay_internal_test.go`)
 

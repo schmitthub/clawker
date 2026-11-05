@@ -157,6 +157,78 @@ else:
 	assert.Contains(t, dgramRes.Stdout, "icmp-dgram=closed", "probe results:\n%s", dgramRes.Stdout)
 }
 
+// TestFirewall_SocketTypeAllowlist pins the sock_create allowlist: an
+// enrolled container can create TCP stream and UDP datagram sockets and
+// nothing else. SCTP has no pre_connect hook and UDP-Lite is not the
+// udp_sendmsg hook, so both bypass connect4 and sendmsg4 (proven
+// 2026-11-02). Only socket creation is probed; no packet leaves.
+func TestFirewall_SocketTypeAllowlist(t *testing.T) {
+	h := newFirewallYAMLHarness(t, `
+build:
+  packages:
+    - python3
+`)
+
+	script := `
+import socket
+cases = [
+    ("tcp", socket.AF_INET, socket.SOCK_STREAM, 0),
+    ("udp", socket.AF_INET, socket.SOCK_DGRAM, 0),
+    ("tcp6", socket.AF_INET6, socket.SOCK_STREAM, 0),
+    ("sctp-stream", socket.AF_INET, socket.SOCK_STREAM, 132),
+    ("sctp-seqpacket", socket.AF_INET, socket.SOCK_SEQPACKET, 132),
+    ("sctp6-stream", socket.AF_INET6, socket.SOCK_STREAM, 132),
+    ("udplite", socket.AF_INET, socket.SOCK_DGRAM, 136),
+    ("udplite6", socket.AF_INET6, socket.SOCK_DGRAM, 136),
+    ("mptcp", socket.AF_INET, socket.SOCK_STREAM, 262),
+]
+for name, fam, typ, proto in cases:
+    try:
+        s = socket.socket(fam, typ, proto)
+    except PermissionError:
+        print(name + "=closed")
+    except OSError as e:
+        print(name + "=error " + str(e.errno))
+    else:
+        s.close()
+        print(name + "=open")
+`
+	res := h.RunInContainer("firewall-socktype", "python3", "-c", script)
+	require.NoError(t, res.Err, "probe failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	for _, want := range []string{"tcp=open", "udp=open", "tcp6=open"} {
+		assert.Contains(t, res.Stdout, want, "probe results:\n%s", res.Stdout)
+	}
+	// A kernel without the protocol module answers EPROTONOSUPPORT
+	// (=error 93) before the hook runs; that is closed too, but never
+	// open.
+	for _, name := range []string{"sctp-stream", "sctp-seqpacket", "sctp6-stream", "udplite", "udplite6", "mptcp"} {
+		assert.NotContains(t, res.Stdout, name+"=open", "probe results:\n%s", res.Stdout)
+	}
+}
+
+// TestFirewall_RootEnforced pins that uid 0 inside an enrolled container is
+// enforced like every other uid: a root shell from `container exec -u root`
+// still resolves through CoreDNS, so an unlisted domain stays NXDOMAIN. With
+// the former uid-0 exemption the query reached Docker's resolver and
+// resolved (found 2026-11-02).
+func TestFirewall_RootEnforced(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "root-enforced", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "root-enforced") })
+
+	script := `
+id -u
+if getent hosts example.com >/dev/null; then echo dns=open; else echo dns=closed; fi
+`
+	res := h.ExecInContainerAsRoot("root-enforced", "sh", "-c", script)
+	require.NoError(t, res.Err, "probe failed\nstdout: %s\nstderr: %s", res.Stdout, res.Stderr)
+	assert.Contains(t, res.Stdout, "0\n", "probe must run as root:\n%s", res.Stdout)
+	assert.Contains(t, res.Stdout, "dns=closed", "root must not resolve an unlisted domain:\n%s", res.Stdout)
+}
+
 // TestFirewall_Bypass exercises the full `firewall bypass` surface in one
 // composite flow: explicit --stop restore, natural dead-man timer expiry
 // (INV-B2-007), and the stopped-container error path (INV-B2-016).
@@ -485,7 +557,8 @@ func TestFirewall_Status(t *testing.T) {
 // TestFirewall_IntraSubnetAllowlist proves the eBPF in-subnet allowlist: a
 // managed agent reaches only Envoy, CoreDNS on 53, and the control plane
 // on its agent and Hydra ports. Another container on clawker-net is denied
-// on TCP and UDP, and DNS plus allowed egress still work. Every probe runs
+// on TCP and UDP, the control plane's other listeners (health, admin
+// gRPC) are denied too, and DNS plus allowed egress still work. Every probe runs
 // in one container through bash's /dev/tcp and /dev/udp so a denial is the
 // kernel's EPERM on connect(), never a missing listener.
 func TestFirewall_IntraSubnetAllowlist(t *testing.T) {
@@ -530,6 +603,8 @@ probe other-tcp "exec 3<>/dev/tcp/` + listenerIP + `/8080"
 probe other-udp "echo x > /dev/udp/` + listenerIP + `/9"
 probe cp-agent "exec 3<>/dev/tcp/` + cpIP + `/7444"
 probe cp-hydra "exec 3<>/dev/tcp/` + cpIP + `/4444"
+probe cp-health "exec 3<>/dev/tcp/` + cpIP + `/7080"
+probe cp-admin "exec 3<>/dev/tcp/` + cpIP + `/7443"
 probe dns "getent hosts api.anthropic.com >/dev/null"
 `
 	res := h.RunInContainer("intra-net-test", "bash", "-c", script)
@@ -539,6 +614,8 @@ probe dns "getent hosts api.anthropic.com >/dev/null"
 		"other-udp=closed",
 		"cp-agent=open",
 		"cp-hydra=open",
+		"cp-health=closed",
+		"cp-admin=closed",
 		"dns=open",
 	} {
 		assert.Contains(t, res.Stdout, want, "probe results:\n%s", res.Stdout)

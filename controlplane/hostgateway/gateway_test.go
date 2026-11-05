@@ -474,6 +474,34 @@ func TestGateway_StreamDropFailsPending(t *testing.T) {
 	require.ErrorIs(t, s.gw.OpenURL(context.Background(), agentA(), "https://example.com"), hostgateway.ErrUnavailable)
 }
 
+// TestGateway_Close: the CP drain ends the host proxy stream so Connect
+// returns, a call in flight fails as unavailable, and a host proxy that
+// reconnects is served again.
+func TestGateway_Close(t *testing.T) {
+	s := newCPServer(t)
+	s.gw.Close() // no stream: a no-op
+	hp := connectHostProxy(t, s, nil)
+	hp.setHold()
+
+	inflight := make(chan error, 1)
+	go func() { inflight <- s.gw.OpenURL(context.Background(), agentA(), "https://example.com") }()
+	require.Eventually(t, func() bool { return len(hp.calls()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	s.gw.Close()
+	require.ErrorIs(t, <-inflight, hostgateway.ErrUnavailable)
+	select {
+	case err := <-hp.done:
+		assert.Equal(t, codes.Unavailable, status.Code(err), "the stream must end as shutting down: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not end the stream")
+	}
+	require.ErrorIs(t, s.gw.OpenURL(context.Background(), agentA(), "https://example.com"), hostgateway.ErrUnavailable)
+
+	fresh := connectHostProxy(t, s, nil)
+	require.NoError(t, s.gw.OpenURL(context.Background(), agentA(), "https://example.com"))
+	require.Len(t, fresh.calls(), 1)
+}
+
 // TestGateway_CallerDeadline: a host proxy that never answers does not
 // hold the agent's call past its deadline.
 func TestGateway_CallerDeadline(t *testing.T) {

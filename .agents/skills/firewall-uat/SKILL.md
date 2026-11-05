@@ -59,9 +59,10 @@ reach the firewall. Disable the sandbox for probe commands (Claude Code:
 **clawker-net is an allowlist, not an egress-test surface.** The eBPF
 programs deny every in-subnet destination in the kernel (EPERM on `connect()`
 / `sendto()`) except Envoy (any port), CoreDNS on 53, and the CP on its agent
-(7444) and Hydra (4444) ports. A sibling container's clawker-net IP (e.g. the
-C2's) is therefore unreachable; an egress-attack test needs a **PUBLIC** dst
-(through Envoy), e.g. the C2's ngrok edge. Confused-deputy's structural
+(7444) and Hydra (4444) ports. Another agent's clawker-net IP is therefore
+unreachable. The C2 is not on clawker-net: it runs on `clawker-adversarial` and
+listens only on host ports (`test/adversarial/AGENTS.md`). An egress-attack test
+needs a **PUBLIC** dst (through Envoy), e.g. the C2's ngrok edge. Confused-deputy's structural
 defense is config-verifiable: FQDN flows are all `LOGICAL_DNS`/DFP, ZERO
 `ORIGINAL_DST`/`use_original_dst` (those appear only for IP/CIDR rules, the
 range-validated carve-out).
@@ -79,9 +80,15 @@ missing listener). Get the IPs from the host with `docker inspect -f
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/4444'` | exit 0 (connects) |
 | `timeout 3 bash -c 'exec 3<>/dev/tcp/<cp-ip>/7080'` | `Permission denied` |
 | `getent hosts host.docker.internal` | fails with no rule; resolves after `firewall add host.docker.internal` (exact name only) |
-| `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18374/open/url -d '{"url":"https://denied.invalid/"}'` | `403` from the CP (host actions go clawkerd relay -> CP -> host proxy; a denied URL never opens a browser) |
+| `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18374/open/url -d '{"url":"https://denied.invalid/"}'` | `403` from the CP (host actions go clawkerd relay -> CP -> host proxy; a denied URL never opens a browser). The relay listens on `127.0.0.1:18374` (`consts.AgentHostRelayAddr`). `CLAWKER_HOST_PROXY` is set only when the container has the host proxy grant. |
 | `dig +tcp @127.0.0.11 -p <port of the 0B00007F listener in /proc/net/tcp> example.com` | `no servers could be reached` (Docker resolver denied; NOERROR = DNS bypass) |
 | `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)'` | `PermissionError` (ping socket denied at create; success = ICMP tunnel) |
+| `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM, 132)'` | `PermissionError` (SCTP denied at create; success = egress outside the connect hooks) |
+| `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 136)'` | `PermissionError` (UDP-Lite denied at create; success = egress outside the sendmsg hook) |
+| `getent hosts clawker-controlplane` | resolves to the CP static IP (A record only; a non-A query gets an empty answer) |
+| (operator, host) `clawker exec -u root --agent X -- getent hosts <domain not on the allow list>` | no answer (an answer = the uid-0 exemption is back). |
+
+Host-side e2e counterparts (`test/e2e/firewall_test.go`): `TestFirewall_IntraSubnetAllowlist`, `TestFirewall_HostActionsBehindCP`, `TestFirewall_DockerInternalDNS`, `TestFirewall_DockerDNSDirectPortDenied`, `TestFirewall_ICMPBlocked`, `TestFirewall_SocketTypeAllowlist`, `TestFirewall_RootEnforced`, `TestFirewall_CPNameResolves`.
 
 **SSH routing is special — banner is the only proof.** Any real SSH server
 completes a valid handshake, so a misroute ("everything funneled to host X")

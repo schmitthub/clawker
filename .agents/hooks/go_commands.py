@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 from pathlib import PurePosixPath
 import re
 import shlex
@@ -12,6 +13,21 @@ SEPARATORS = {";", "&", "&&", "||", "|", "(", ")", "{", "}"}
 PREFIXES = {"env", "command", "exec", "sudo", "time", "!", "then", "do", "else",
             "if", "elif", "while", "until"}
 SHELLS = {"sh", "bash", "zsh", "dash"}
+# Make targets that run test/e2e: directly, through test-e2e, or with ./... (Makefile).
+E2E_MAKE_TARGETS = {"test-e2e", "test-all", "test-coverage", "clawker-test-coverage",
+                    "clawker-test-short"}
+MODULE = "github.com/schmitthub/clawker/"
+
+
+def in_agent():
+    return bool(os.environ.get("CLAWKER_AGENT"))
+
+
+def e2e_path(argument):
+    """True for a package pattern that selects test/e2e."""
+    path = argument[len(MODULE):] if argument.startswith(MODULE) else argument
+    path = path[2:] if path.startswith("./") else path
+    return path in {"test", "test/..."} or path == "test/e2e" or path.startswith(("test/e2e/", "test/e2e."))
 
 
 def unquote(word):
@@ -100,7 +116,9 @@ def shell_lines(command):
 
 
 def blocked(command):
-    if not all(part in command for part in ("go", "test", "./...")):
+    agent = in_agent()
+    if not all(part in command for part in ("go", "test", "./...")) and not (
+            agent and ("test" in command and ("go" in command or "make" in command))):
         return False
     # Shell line continuations join words before argument parsing.
     command = command.replace("\\\n", "")
@@ -139,6 +157,13 @@ def blocked(command):
                 arguments.append(unquote(argument))
             if name == "go" and arguments[:1] == ["test"] and "./..." in arguments[1:]:
                 return True
+            # The e2e suite tears down the host CP; an agent must not run it.
+            if agent and name == "go" and arguments[:1] == ["test"] and any(
+                    e2e_path(argument) for argument in arguments[1:]):
+                return True
+            if agent and name in {"make", "gmake"} and any(
+                    argument in E2E_MAKE_TARGETS for argument in arguments):
+                return True
             if name == "eval" and blocked(" ".join(arguments)):
                 return True
             if name in SHELLS:
@@ -166,7 +191,8 @@ def main():
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": (
-                "The Go command guard blocked an unrestricted test invocation "
+                "The Go command guard blocked an unrestricted test invocation, "
+                "an e2e test run inside an agent container (CLAWKER_AGENT is set), "
                 "or shell text it could not parse. Use make test or targeted packages."
             ),
         }}))

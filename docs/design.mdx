@@ -58,11 +58,11 @@ An agent is a named container instance. One project can have multiple agents, ea
 
 ### Credential Handling
 
-API keys pass via environment variables; subscription auth (OAuth callback interception) and Git HTTPS credentials are brokered through the host proxy, and SSH keys are forwarded via the agent socket rather than copied. See [Credential Forwarding](/credentials).
+API keys pass via environment variables; subscription auth (OAuth callback interception) and Git HTTPS credentials are brokered through the host proxy. The container does not reach the host proxy directly: the git credential helper and the OAuth scripts call the clawkerd loopback relay, clawkerd sends each request to the control plane `AgentService` over mTLS, and the control plane authorizes it and sends it to the host proxy on its outbound stream. SSH keys are forwarded via the agent socket rather than copied. See [Credential Forwarding](/credentials).
 
 ### Firewall
 
-Deny-by-default egress: eBPF cgroup programs (attached from outside each agent container by the control plane) redirect outbound TCP to an Envoy proxy, while agent containers point their resolver at a custom CoreDNS that returns NXDOMAIN for anything unlisted. Allowed domains compose the selected harness's minimal egress floor with your per-project `security.firewall` rules. See the [Firewall](/firewall) guide for the full design.
+Deny-by-default egress: eBPF cgroup programs (attached from outside each agent container by the control plane) redirect outbound TCP to an Envoy proxy, and rewrite every port 53 connect to a custom CoreDNS that returns NXDOMAIN for anything unlisted. The container resolver stays Docker's embedded DNS (`127.0.0.11`); the eBPF rewrite sends its queries to CoreDNS. Allowed domains compose the selected harness's minimal egress floor with your per-project `security.firewall` rules. See the [Firewall](/firewall) guide for the full design.
 
 ### Control Plane
 

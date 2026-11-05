@@ -49,13 +49,14 @@ const agentMaxConcurrentStreams = 16
 // process: the identity gate runs a Docker container list and inspect for
 // each call on its own 5s timeout, so a peer that opens more connections
 // drives unbounded concurrent Docker scans. exportAdmissionUnary refuses
-// the excess before the identity gate with ResourceExhausted; the relay
-// maps it to a retryable status.
+// the excess before the identity gate with Unavailable, the code the
+// clawkerd relay maps to a retryable 503; ResourceExhausted would map to
+// 413 and make the SDK drop the batch.
 const maxConcurrentExports = 16
 
 // exportAdmissionUnary admits at most limit concurrent ExportTelemetry calls
 // and passes every other method through untouched. A full lane answers
-// ResourceExhausted at once; nothing queues.
+// Unavailable at once; nothing queues.
 func exportAdmissionUnary(limit int) grpc.UnaryServerInterceptor {
 	slots := make(chan struct{}, limit)
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -65,7 +66,7 @@ func exportAdmissionUnary(limit int) grpc.UnaryServerInterceptor {
 		select {
 		case slots <- struct{}{}:
 		default:
-			return nil, status.Error(codes.ResourceExhausted, "telemetry lane busy")
+			return nil, status.Error(codes.Unavailable, "telemetry lane busy")
 		}
 		defer func() { <-slots }()
 		return handler(ctx, req)

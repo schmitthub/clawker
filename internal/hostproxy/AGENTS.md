@@ -115,7 +115,7 @@ Each action is one `HostActionRequest` oneof (the AgentService request messages)
 | Action | Result / codes |
 |--------|----------------|
 | `open_url` | `OpenURLResult`; `InvalidArgument` (empty, unparseable, not http/https), `PermissionDenied` (egress deny), `Internal` (broken rules file, browser failure) |
-| `git_credential` | `GitCredentialResult` (credentials for get); `InvalidArgument` (bad action, missing field, injection characters), `FailedPrecondition` (the host `git credential` command failed) |
+| `git_credential` | `GitCredentialResult` (credentials for get; empty for store and erase, which are answered locally and never touch the host store); `InvalidArgument` (bad action, missing field, protocol not http/https, injection characters), `FailedPrecondition` (the host `git credential` command failed) |
 | `register_callback` | `RegisterCallbackResult` (session, port, expiry); `InvalidArgument` (auth URL not http/https, redirect check), `PermissionDenied` (egress deny), `Internal` (session, listener, or browser failure) |
 | `get_callback_data` | `GetCallbackDataResult`; `NotFound` (unknown or expired session) |
 | `delete_callback` | `DeleteCallbackResult` (idempotent) |
@@ -124,10 +124,10 @@ Each action is one `HostActionRequest` oneof (the AgentService request messages)
 
 The `open_url` action enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector: a container agent could otherwise encode stolen secrets in URL query params and use the host browser as an out-of-band channel, bypassing the Envoy+CoreDNS firewall entirely.
 
-`Actions.openURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching). The firewall daemon writes the rules file atomically (temp+fsync+rename), so no locking is needed for concurrent reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
+`Actions.openURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. `Actions.gitCredential` runs no egress check: `forward_https` is the user's choice to hand the host credential store to the container, and Envoy enforces where a credential can go on the wire. `store` and `erase` never run git; they get an empty success so the host credential store cannot be changed or emptied from a container (`event=git_credential_local_noop`). The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching). The firewall daemon writes the rules file atomically (temp+fsync+rename), so no locking is needed for concurrent reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
 
 **Design constraints:**
-- **Leaf package**: does NOT import `internal/controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `egressRulesFile`/`egressRule`/`pathRule` are unexported intentional copies.
+- **Leaf package**: does NOT import `controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `egressRulesFile`/`egressRule`/`pathRule` are unexported intentional copies.
 - **Fail-closed, two tiers**: a *policy* deny (URL not in the allow list) → `log.Warn` + `PermissionDenied` `blocked by egress policy`. A *broken rules file* (missing, unreadable, unparseable, or an uncompilable `~` regex) is `errEgressRulesInvalid` — an infrastructure fault, not a policy decision → `log.Error` + `Internal` `egress rules unavailable`, never a silent skip. Action validation uses `!strings.EqualFold(action, "allow")` so typos fail closed.
 - **Regex lockstep**: `compilePathRegex` (shared by `pathRuleMatches` and load-time validation) compiles a `~`-path to the same full-string-anchored RE2 form Envoy's `safe_regex` uses; a pattern that fails to compile makes `readEgressRules` reject the whole file, mirroring Envoy refusing a config with a bad `safe_regex`.
 - **Userinfo rejection**: URLs with `user:pass@host` are rejected — no legitimate browser URL uses this and it enables smuggling.
@@ -142,7 +142,7 @@ The control plane and firewall stack boot **before** the host proxy in container
 2. **Envoy healthy** — GET the host-published health listener (`EnvoyHealthHostPort`, reached by port — no firewall-package import). Budget: `consts.HostProxyEnvoyHealthTimeout` (= `FirewallStackHealthTimeout`).
 3. **Rules file readable + valid** — re-read `egress-rules.yaml` each tick so an in-flight atomic write settles; an unreadable/unparseable/bad-regex file is `errEgressRulesInvalid`. Budget: `consts.HostProxyRulesReadTimeout` (10s, ~"10 tries every second").
 
-All stages poll at `consts.HostProxyReadyPollInterval` (1s); budgets derive from the firewall's own bringup/health timeouts so the host proxy never gives up before the firewall could plausibly be up. On exhaustion the gate goroutine signals `Run`, which logs `Error` and shuts the daemon down — until then, request-time `open_url` enforcement already fails closed. `firewallRunningProbe`/`envoyHealthProbe` are injectable fields for tests; `readyTimeout` overrides every stage's budget uniformly (tests only). `NewDaemon` likewise returns an error when the firewall is enabled but the egress rules path cannot be resolved — never a silently unchecked `open_url`.
+All stages poll at `consts.HostProxyReadyPollInterval` (1s); budgets derive from the firewall's own bringup/health timeouts so the host proxy never gives up before the firewall could plausibly be up. On exhaustion the gate goroutine signals `Run`, which logs `Error` and shuts the daemon down — until then, request-time `open_url` enforcement already fails closed. `firewallRunningProbe`/`envoyHealthProbe` are injectable fields for tests; The per-stage budget fields `firewallRunningTimeout`, `envoyHealthTimeout`, `rulesReadTimeout` and the poll interval `readyInterval` are set by `NewDaemon` from the `consts.HostProxy*` values; tests set them directly. `NewDaemon` likewise returns an error when the firewall is enabled but the egress rules path cannot be resolved — never a silently unchecked `open_url`.
 
 **Git credential injection protection**: `Actions.gitCredential` rejects requests where any field (`Protocol`/`Host`/`Path`/`Username`/`Password`) contains `\n`, `\r`, or `\0` (`InvalidArgument`). `formatGitCredentialInput` sanitizes as defense-in-depth.
 
@@ -152,7 +152,7 @@ One action: `register_callback {auth_url, ttl_seconds}`. The host proxy requires
 
 ## Git Credential Forwarding
 
-- **HTTPS**: `git-credential-clawker` → clawkerd relay → CP `GitCredential` (needs the `dev.clawker.git_https` grant) → `git_credential` on the stream → host `git credential fill|approve|reject` → OS Keychain
+- **HTTPS**: `git-credential-clawker` → clawkerd relay → CP `GitCredential` (needs the `dev.clawker.git_https` grant) → `git_credential` on the stream → host `git credential fill` → OS Keychain. `approve` and `reject` are answered locally and never reach the host store.
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
 - **SSH/GPG**: Handled by `internal/socketbridge` package (muxrpc over `docker exec`, not via host proxy)
 
@@ -172,6 +172,6 @@ mock := hostproxytest.NewFailingMockManager(err) // EnsureRunning returns error
 | Script | Purpose |
 |--------|---------|
 | `host-open` | Opens URLs; for a localhost `redirect_uri`, one `/callback/register` call, then spawns `callback-forwarder` |
-| `callback-forwarder` | Polls proxy, forwards callbacks to local server |
+| `callback-forwarder` | Polls the clawkerd relay (`CLAWKER_HOST_PROXY`, `http://127.0.0.1:18374`), which sends the call through the CP to the host proxy; forwards callbacks to the local server |
 | `git-credential-clawker` | Git credential helper |
 | `clawker-socket-server` | Unix socket server for SSH/GPG agent forwarding (muxrpc protocol) |

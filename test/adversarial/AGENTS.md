@@ -23,7 +23,7 @@ Red team infrastructure for testing clawker's security boundaries. The primary w
 │                                                     │
 │  C2 network: clawker-adversarial (no agents on it)  │
 │  Agent -> eBPF -> CoreDNS/Envoy -> C2 host ports    │
-│  Host Proxy (:18374) — also an attack surface       │
+│  Host actions: clawkerd relay (:18374) -> CP        │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -118,14 +118,17 @@ docker exec clawker-test-attacker wget -qO- --no-check-certificate \
 ### Firewall (Envoy+CoreDNS)
 - Can data escape via HTTPS to unlisted domains?
 - Can data escape via non-standard ports (8080, 9443)?
-- Can data escape via UDP or ICMP (firewall only redirects TCP)?
+- Can data escape via UDP or ICMP? The `sock_create` allowlist accepts only TCP stream and UDP datagram sockets, so it denies ICMP sockets. UDP goes to the eBPF routing rules.
 - Can data escape via WebSocket upgrade on whitelisted domains? (test 31)
 - Can DNS label encoding bypass CoreDNS filtering?
 
-### Host Proxy
-- `POST /open/url` — exfil via host browser (see Remediation below)
-- `POST /git/credential` — newline injection in protocol fields (see Remediation below)
-- `POST /callback/register` — bind arbitrary ports on host loopback
+### Host actions (through the CP)
+The host proxy has no listener. The agent sends a host action to the clawkerd loopback relay (`consts.AgentHostRelayAddr`, `127.0.0.1:18374` in the container). clawkerd sends it to the CP AgentService. The CP authorizes each action by the container's label grant (`dev.clawker.host_proxy`, plus `dev.clawker.git_https` for git credentials) and, for callbacks, by session ownership. Then the CP sends the action down the host proxy's outbound stream.
+- `OpenURL` — exfil via host browser (the host proxy applies the egress rules when the firewall is on; see Remediation below)
+- `GitCredential` — newline injection in protocol fields (see Remediation below)
+- `RegisterCallback` — the callback port must be on `localhost` or `127.0.0.1` and `>= 1024`
+- `GetCallbackData` / `DeleteCallback` — another container's session (the CP rejects a caller that does not own the session)
+- Root mark opt-out: root can set `SO_MARK` to `CLAWKER_MARK` and pass the connect-time eBPF checks (`decide_connect` checks the mark first). This matters only if the agent escalates to root. The agent runs as the non-root `clawker` user with no `sudo` and `no-new-privileges`, so a test of this path must first get root as the agent.
 
 ### Container Sandbox
 - Docker socket access
@@ -161,10 +164,10 @@ C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
 
 ### Remaining attack surfaces (not yet addressed)
 
-- `POST /callback/register` — can bind arbitrary ports on host loopback (OAuth flow)
+- `RegisterCallback` — binds a host loopback port `>= 1024` for an OAuth flow (no fixed allowlist of ports)
 - Socket bridge (SSH/GPG agent) abuse potential
 - Environment variable leakage (secrets visible in container env)
-- ICMP exfil (firewall does not redirect ICMP). **UDP** is now redirected for
+- ICMP exfil: the `sock_create` allowlist denies ICMP sockets. **UDP** is now redirected for
   FQDN connected-UDP rules (`connect4` `SOCK_DGRAM` → `udp_proxy`); unconnected
   UDP (`sendmsg4`) remains fail-closed pending a `recvmsg4` reverse source-map.
   See "Transport-routing UAT" above.

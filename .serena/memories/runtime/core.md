@@ -4,7 +4,8 @@
 - CLI startup uses the CP manager and host-service interfaces. Keep diagnostics in the logger; the command owns terminal output.
 - `internal/workspace/` owns bind/snapshot workspace handling; `internal/project/` owns worktree identity and lifecycle.
 - Bind mode exposes the mounted project. Snapshot mode changes remain in the container copy.
-- `internal/hostproxy/` owns browser callbacks and host-side credential services. `internal/socketbridge/` owns socket forwarding. Preserve their interfaces and test helpers.
+- `internal/hostproxy/` owns browser callbacks and host-side credential services. `internal/socketbridge/` owns socket forwarding. Preserve their interfaces and test helpers. The git credential action answers `store`/`erase` locally (`get` has no egress check: `forward_https` is the user's choice, Envoy enforces the wire); the host credential store is never written from a container (2026-11-02).
+- `container exec` without `--user` runs as the image USER (root, for clawkerd); the host user is the privileged principal and picks. Agent containers get `consts.DefaultPidsLimit` unless `--pids-limit` is set (`-1` lifts it).
 
 ## Agent process
 
@@ -13,7 +14,7 @@
 - `clawkerd/spawn_unix.go` owns child startup, process groups, reaping, and exit state.
 - Repeated `AgentReady` must not start a second child or hide a failed first start.
 - Initialization state and child-running state are distinct. Session reconnects must preserve both.
-- clawkerd serves the agent's OTLP/HTTP endpoint on loopback (`consts.AgentOTLPRelayAddr`, `clawkerd/otlp_relay.go`) and carries each batch to `AgentService.ExportTelemetry` over its leaf. The relay is optional: it degrades to nil (`event=otlp_relay_unavailable`) and maps CP verdicts to HTTP (503+Retry-After retryable, 403 identity, 400/413 client fault, 500 other). Design and deviations: `mem:plans/sandbox-hardening/cp-otlp-gateway/design`.
+- clawkerd serves the agent's OTLP/HTTP endpoint on loopback (`consts.AgentOTLPRelayAddr`, `clawkerd/otlp_relay.go`) and carries each batch to `AgentService.ExportTelemetry` over its leaf. The relay is optional: it degrades to nil (`event=otlp_relay_unavailable`) and maps CP verdicts to HTTP (503+Retry-After retryable, 403 identity, 400/413 client fault, 500 other).
 - clawkerd also serves the host relay on loopback (`consts.AgentHostRelayAddr` 127.0.0.1:18374, `clawkerd/host_relay.go`); `CLAWKER_HOST_PROXY` points at it (set only with the host proxy grant). Each container-script request becomes one AgentService host action; the relay holds no policy. Same degrade contract (`event=host_relay_unavailable`). `host-open` starts an OAuth flow with one `/callback/register {authUrl, ttlSeconds}` call; the host proxy opens the browser. The host proxy daemon has no listener for actions: it dials out to the CP admin listener and serves actions on its `HostProxyService.Connect` stream (`internal/hostproxy/AGENTS.md`).
 - For CP identity and session trust: `mem:controlplane/agent/core`.
 

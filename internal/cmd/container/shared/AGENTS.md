@@ -209,6 +209,12 @@ Nil providers safely skipped (debug logged). Required: `Config`, and `IOStreams`
 | `NewListOpts` / `NewListOptsRef` / `NewMapOpts` / `NewPortOpts` | pflag.Value constructors |
 | `NewCopyToContainerFn(client)` | Wraps `docker.Client.CopyToContainer` |
 
+## Security Defaults and Grant Labels (`container_create.go`)
+
+- **no-new-privileges**: the host config adds `no-new-privileges` to `SecurityOpt` by default. Setuid binaries in the image then cannot raise the privileges of the agent. When the user passes `--security-opt no-new-privileges` (true or false), the user value replaces the default.
+- **Process limit**: `--pids-limit` defaults to `consts.DefaultPidsLimit` (4096). `-1` sets no limit. `0` leaves `HostConfig.PidsLimit` unset (Docker default).
+- **Host-action grant labels**: `createAndBootstrapContainer` stamps `dev.clawker.host_proxy` (`consts.LabelHostProxy`, from `security.enable_host_proxy`) and `dev.clawker.git_https` (`consts.LabelGitHTTPS`, from `security.git_credentials.forward_https`) as bool strings. The CP reads these labels to authorize the AgentService host actions, because the CP cannot read the project config. A config change takes effect at the next create.
+
 ## Worktree Resolution (`resolveWorkDir`)
 
 Resolves host path for container workspace mount when `--worktree` is set:

@@ -20,7 +20,7 @@
 //   4.  cgroup/sendmsg6     — IPv6 UDP: IPv4-mapped DNS redirect + native deny
 //   4b. cgroup/recvmsg6     — IPv6 UDP: rewrite IPv4-mapped DNS response source
 //   4c. cgroup/getpeername6 — IPv6 UDP: report original dst (IPv4-mapped)
-//   5.  cgroup/sock_create  — Raw socket blocking (ICMP prevention)
+//   5.  cgroup/sock_create  — Socket allowlist: TCP stream and UDP datagram only
 //
 // Routing DRY: the IPv4 and IPv4-mapped-over-IPv6 code paths share the same
 // routing decisions. All of that logic lives in decide_connect/decide_sendmsg
@@ -384,7 +384,7 @@ int clawker_getpeername6(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 5: cgroup/sock_create — raw and ping socket blocking
+// Program 5: cgroup/sock_create — socket type allowlist
 // ---------------------------------------------------------------------------
 // sock_create uses struct bpf_sock, not bpf_sock_addr. It can't share the
 // routing helpers but it still uses enter_enforced — bpf_get_current_* calls
@@ -396,7 +396,7 @@ int clawker_sock_create(struct bpf_sock *ctx)
 	struct container_config *cfg;
 	__u64 cgroup_id;
 	// bpf_sock_addr* vs bpf_sock* — enter_enforced doesn't touch ctx, only
-	// bpf_get_current_uid_gid/bpf_get_current_cgroup_id, so the cast-free
+	// bpf_get_current_cgroup_id, so the cast-free
 	// reuse is safe.
 	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
 	if (st == ENTER_NOT_MANAGED)
@@ -408,12 +408,10 @@ int clawker_sock_create(struct bpf_sock *ctx)
 		return 1;
 	}
 
-	// Ping sockets (SOCK_DGRAM + ICMP; ping_group_range lets any uid open
-	// one) send with sendto() through ping_v4_sendmsg, which no sendmsg
-	// hook sees, so an unconnected one is an ICMP tunnel. Deny at create.
-	if (ctx->type == SOCK_RAW ||
-	    (ctx->type == SOCK_DGRAM &&
-	     (ctx->protocol == IPPROTO_ICMP || ctx->protocol == IPPROTO_ICMPV6))) {
+	// Allowlist (sock_type_allowed in common.h): a socket type the connect
+	// and sendmsg hooks never see is denied at create. The netlogger
+	// record carries the type.
+	if (!sock_type_allowed(ctx->type, ctx->protocol)) {
 		metric_inc(cgroup_id, 0, 0, ACTION_DENY);
 		submit_event_nodst(cgroup_id, (__u8)ctx->type,
 				   EGRESS_VERDICT_DENIED);

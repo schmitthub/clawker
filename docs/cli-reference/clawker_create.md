@@ -116,7 +116,7 @@ clawker create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
       --oom-kill-disable                    Disable OOM Killer
       --oom-score-adj int                   Tune host's OOM preferences (-1000 to 1000)
       --pid string                          PID namespace to use
-      --pids-limit int                      Tune container pids limit (set -1 for unlimited)
+      --pids-limit int                      Tune container pids limit (set -1 for unlimited) (default 4096)
       --privileged                          Give extended privileges to this container
   -p, --publish port                        Publish container port(s) to host
   -P, --publish-all                         Publish all exposed ports to random ports
