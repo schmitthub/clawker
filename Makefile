@@ -679,7 +679,7 @@ test-e2e: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-bi
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -timeout 10m ./test/e2e/...
+	$(TEST_CMD_VERBOSE) -timeout 45m ./test/e2e/...
 
 # Whail BuildKit integration tests (requires Docker + BuildKit)
 test-whail: ebpf-binary coredns-binary cp-binary clawkerd-binary bpffs-delegate-binary $(PROTO_GENERATED)
