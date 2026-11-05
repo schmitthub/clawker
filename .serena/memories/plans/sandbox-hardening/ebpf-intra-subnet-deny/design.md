@@ -38,3 +38,10 @@ Denied: CP healthz 7080, SDS 7445, admin 7443, every other agent container, any 
 
 - Loopback filtering inside the container. The relay in item 2 relies on loopback.
 - Restricting the Envoy port set.
+
+## As built (Task 7, 2026-10-25)
+
+- `struct container_config` gained `cp_ip`, `cp_agent_port`, `cp_hydra_port` (appended; 36 bytes, `_Static_assert` + `TestContainerConfig_SizeMatchesABI`). `allowed_internal` is shared by `decide_connect` and `decide_sendmsg`; the in-subnet branch returns `V_DENY` + `ACTION_DENY`.
+- Deviation: the host-proxy bypass now runs BEFORE the subnet allowlist and the gateway-lockdown branch is deleted. `is_in_subnet` includes the gateway, so that branch was unreachable, and `host.docker.internal` can resolve inside the subnet (a daemon with `host-gateway-ip` set, some engine variants; Docker Desktop and a default Linux engine resolve it outside), which the allowlist would otherwise deny. Gateway traffic is now denied in the kernel instead of rewritten to Envoy. `gateway_ip` stays in the struct for dumps.
+- Go: `ebpf.NewContainerConfig(ebpf.ContainerConfigParams{...})` replaces the positional signature (CPIP required); `NetworkInfo.CPIP` from `consts.CPIPLastOctet`; `Handler.containerConfig` serves both enroll sites with range-checked `AgentPort`/`HydraPublicPort`; the break-glass `ebpf-manager enable` JSON keys are camelCase.
+- Checks: `bpftest` prog-run tests `TestProgRun_AllowedInternal` and `TestProgRun_DecideSendmsg_IntraSubnet` (passed under `docker run --privileged` with the compiled test binary); e2e `TestFirewall_IntraSubnetAllowlist` (bash `/dev/tcp` and `/dev/udp` probes; host only); firewall-uat skill probe table.

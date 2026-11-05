@@ -110,7 +110,10 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker. Shared
 preamble lives in `newFirewallHarness` / `newFirewallYAMLHarness(t, projectYAML,
 services...)` (real wiring + services invariant + isolated FS + register +
 build); pass `fwNoServices` for tests that deliberately end with the stack
-down. `fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
+down. `harness.New` fails when a running agent without the test label exists:
+the test CP shares the host's pinned BPF maps, and its cleanup `firewall down`
+would open that agent's egress. Stop live agents before an e2e run.
+`fwSetup` calls `EnsureNoControlPlane` after it creates the isolated
 filesystem. Each test must start a CP that uses its own CA; an existing CP
 can have a matching binary but certificates from another environment.
 Highlights (not exhaustive — see the file):
@@ -124,8 +127,9 @@ Highlights (not exhaustive — see the file):
 | `TestFirewall_PathRules*` / `_TLSPathRules*` | HTTP and TLS MITM path rule enforcement |
 | `TestFirewall_WildcardSANCerts` | `.clawker.dev` admits three project-owned Worker Custom Domains with deep hostnames; one request per host verifies TLS, reaches upstream, and returns HTTP 200 |
 | `TestFirewall_SSHTCPMapping` / `_HTTPDomainDetection` / `_ICMPBlocked` | Non-TLS protocol routing and blocking |
+| `TestFirewall_CPNameResolves` | An enrolled agent resolves `clawker-controlplane` to the CP static IP; a TXT query gets an empty answer and a subdomain NXDOMAIN |
 | `TestFirewall_Identity*` | Route identities stable across rule churn and CP restart |
-| `TestFirewall_HostProxyReachable` / `_HostProxyPerContainer` / `_IntraNetworkBypass` / `_FirewallDisabled` | Host-proxy carve-out; the carve-out follows each project's `enable_host_proxy` and survives a CP restart; intra-net bypass; disabled-firewall behavior (CP still boots — CP ≠ firewall) |
+| `TestFirewall_HostProxyReachable` / `_HostProxyPerContainer` / `_IntraSubnetAllowlist` / `_FirewallDisabled` | Host-proxy carve-out; the carve-out follows each project's `enable_host_proxy` and survives a CP restart; in-subnet allowlist (another container denied on TCP and UDP, CP agent + Hydra ports open, CP health port denied, DNS intact); disabled-firewall behavior (CP still boots — CP ≠ firewall) |
 
 Tests drive the full CLI pipeline via `h.Run()`. The CP AdminService is reached indirectly through the production CLI code path. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup removes firewall and CP containers by purpose label before removing test resources.
 

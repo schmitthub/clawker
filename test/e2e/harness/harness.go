@@ -68,6 +68,36 @@ type Harness struct {
 	Cleanup *CleanupReport
 }
 
+// docker ps arguments for requireNoLiveAgents.
+const (
+	liveAgentFilter = "label=" + consts.LabelPurpose + "=" + consts.PurposeAgent
+	liveAgentFormat = `{{.Names}}` + "\t" + `{{.Label "` + consts.LabelTestName + `"}}`
+)
+
+// requireNoLiveAgents fails the test when a running agent container without
+// the test label exists. The test's control plane shares the host's pinned
+// BPF maps, so its cleanup `firewall down` would flush the live agents'
+// container_map rows and open their egress until the host CP re-enrolls them.
+func requireNoLiveAgents(t *testing.T) {
+	t.Helper()
+	out, err := exec.CommandContext(context.Background(), "docker", "ps",
+		"--filter", liveAgentFilter, "--format", liveAgentFormat).Output()
+	if err != nil {
+		t.Fatalf("harness: list running agents: %v", err)
+	}
+	var live []string
+	for line := range strings.Lines(strings.TrimSpace(string(out))) {
+		name, testName, _ := strings.Cut(strings.TrimSpace(line), "\t")
+		if name != "" && testName == "" {
+			live = append(live, name)
+		}
+	}
+	if len(live) > 0 {
+		t.Fatalf("harness: live agents %v: e2e shares the host's BPF pins and "+
+			"its cleanup opens live agents; stop them first", live)
+	}
+}
+
 // New builds a Harness whose FactoryOptions start at the zero baseline —
 // every dependency mocked, no real CP or admin client. Each mutator opts
 // one dependency into its real production wiring. Cleanup is populated by
@@ -113,6 +143,9 @@ type FSOptions struct {
 // NewIsolatedFS creates an isolated test environment.
 func (h *Harness) NewIsolatedFS(opts *FSOptions) *SetupResult {
 	h.T.Helper()
+	// Guard here, not in New: tests that build a Harness literal still come
+	// through here before any env change or cleanup registration.
+	requireNoLiveAgents(h.T)
 
 	if opts == nil {
 		opts = &FSOptions{}

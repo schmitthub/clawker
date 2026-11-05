@@ -175,3 +175,22 @@ func TestGenerateCorefile_ResolverMissOmitsDnsbpf(t *testing.T) {
 	assert.Contains(t, githubZone, fmt.Sprintf("dnsbpf %d", githubID),
 		"resolvable domain must keep its dnsbpf directive")
 }
+
+// TestGenerateCorefile_CPZoneGuardCoversEveryClass pins the CP zone's
+// subdomain guard to class ANY. The acl in that zone filters by type only, so
+// an IN-only template would let `dig -c CH leak.clawker-controlplane A` fall
+// through to Docker's DNS, which forwards unknown names to the host resolvers.
+func TestGenerateCorefile_CPZoneGuardCoversEveryClass(t *testing.T) {
+	rules := []config.EgressRule{{
+		Dst: "example.com", Action: "allow",
+		Proto: "", Port: "", PathRules: nil, PathDefault: "", InsecureSkipTLSVerify: false,
+	}}
+	got, _, err := firewall.GenerateCorefile(rules, 18902, corefileTestIDs(rules))
+	require.NoError(t, err)
+
+	_, cpZone, found := strings.Cut(string(got), "clawker-controlplane {")
+	require.True(t, found, "Corefile has no clawker-controlplane zone:\n%s", got)
+	cpZone, _, _ = strings.Cut(cpZone, "\n}\n")
+	assert.Contains(t, cpZone, "template ANY"+" ANY . {", "CP zone guard must match every query class")
+	assert.NotContains(t, cpZone, "template IN", "an IN-only guard lets CH/HS queries reach Docker DNS")
+}

@@ -46,6 +46,7 @@ func testNetInfo() *NetworkInfo {
 		Gateway:   netip.MustParseAddr("172.20.0.1"),
 		EnvoyIP:   "172.20.0.2",
 		CoreDNSIP: "172.20.0.3",
+		CPIP:      "172.20.0.202",
 		CIDR:      "172.20.0.0/16",
 	}
 }

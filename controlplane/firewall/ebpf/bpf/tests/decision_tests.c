@@ -33,10 +33,24 @@ struct test_scratch {
 	__u32 in_backend_ip;    // network byte order, udp_flow_map key part
 	__u16 in_backend_port;  // host byte order, udp_flow_map key part
 	__u16 _pad1;
+	// container_config inputs for the decision wrappers. Only the fields
+	// decide_sendmsg and allowed_internal read; the harness builds the
+	// struct from them so the wrapper exercises the production helper
+	// against a config shaped exactly like an enrolled container's.
+	__u32 in_envoy_ip;      // network byte order
+	__u32 in_coredns_ip;    // network byte order
+	__u32 in_gateway_ip;    // network byte order
+	__u32 in_net_addr;      // network byte order
+	__u32 in_net_mask;      // network byte order
+	__u32 in_cp_ip;         // network byte order
+	__u16 in_cp_agent_port; // host byte order
+	__u16 in_cp_hydra_port; // host byte order
 	// Outputs.
 	__u32 out_identity;     // lookup_identity_for_ip result
 	__u16 out_envoy_port;   // lookup_route result (0 = miss)
-	__u16 _pad2;
+	__u8  out_verdict;      // decide_sendmsg route_result.verdict
+	__u8  out_allowed;      // allowed_internal result
+	__u32 out_new_ip;       // decide_sendmsg route_result.new_ip
 };
 
 struct {
@@ -107,6 +121,61 @@ int test_record_udp_flow(void *ctx)
 		return 1;
 	record_udp_flow(s->in_cookie, s->in_backend_ip, s->in_backend_port,
 			s->in_dst_ip, s->in_dst_port);
+	return 0;
+}
+
+// scratch_config builds the container_config the decision wrappers run
+// against. Host proxy and egress port stay zero: decide_sendmsg never
+// reads them, and a zero host_proxy_ip is the lane-off shape. gateway_ip
+// is set so a gateway row cannot pass by accident against a zero field.
+static __always_inline void scratch_config(const struct test_scratch *s,
+					   struct container_config *cfg)
+{
+	__builtin_memset(cfg, 0, sizeof(*cfg));
+	cfg->envoy_ip      = s->in_envoy_ip;
+	cfg->coredns_ip    = s->in_coredns_ip;
+	cfg->gateway_ip    = s->in_gateway_ip;
+	cfg->net_addr      = s->in_net_addr;
+	cfg->net_mask      = s->in_net_mask;
+	cfg->cp_ip         = s->in_cp_ip;
+	cfg->cp_agent_port = s->in_cp_agent_port;
+	cfg->cp_hydra_port = s->in_cp_hydra_port;
+}
+
+// test_allowed_internal: {config inputs, in_dst_ip, in_dst_port} →
+// out_allowed. The intra-subnet allowlist shared by decide_connect and
+// decide_sendmsg: Envoy on any port, CoreDNS on 53, the CP on its agent
+// and Hydra ports, nothing else.
+SEC("syscall")
+int test_allowed_internal(void *ctx)
+{
+	struct test_scratch *s = scratch();
+	if (!s)
+		return 1;
+	struct container_config cfg;
+	scratch_config(s, &cfg);
+	s->out_allowed = allowed_internal(&cfg, s->in_dst_ip, s->in_dst_port) ? 1 : 0;
+	return 0;
+}
+
+// test_decide_sendmsg: the full unconnected-UDP decision for
+// {config inputs, in_dst_ip, in_dst_port, in_cookie} → out_verdict +
+// out_new_ip. Runs the production decide_sendmsg against the real
+// dns_cache/route_map/udp_flow_map, so an in-subnet destination that is
+// not on the allowlist must come back V_DENY and never reach the
+// per-domain route lookup.
+SEC("syscall")
+int test_decide_sendmsg(void *ctx)
+{
+	struct test_scratch *s = scratch();
+	if (!s)
+		return 1;
+	struct container_config cfg;
+	scratch_config(s, &cfg);
+	struct route_result r = decide_sendmsg(&cfg, 1, s->in_dst_ip,
+					       s->in_dst_port, s->in_cookie);
+	s->out_verdict = r.verdict;
+	s->out_new_ip  = r.new_ip;
 	return 0;
 }
 
