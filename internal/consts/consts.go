@@ -300,6 +300,10 @@ const (
 	// RouteIdentitiesFile persists the firewall's sticky dst→identity
 	// allocation table. CP-owned state, never user-edited.
 	RouteIdentitiesFile = "route-identities.yaml"
+	// FirewallEnrollmentsFile persists the per-container enrollment records
+	// (host-proxy bypass) the CLI pushes on FirewallEnable. CP-owned state,
+	// never user-edited.
+	FirewallEnrollmentsFile = "enrollments.yaml"
 	EnvoyConfigFile     = "envoy.yaml"
 	Corefile            = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
