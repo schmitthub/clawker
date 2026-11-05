@@ -34,14 +34,13 @@ jobs:
   # Path filters from .github/filters.yml (the codeql_* keys), one output per
   # language. In a stacked pull request every output is 'true' on the top
   # layer and on the lowest unmerged layer (the same two layers pr.yml
-  # tests in full, for the same reasons) and 'false' on the rest. A layer
-  # with every output 'false' uploads no results, so the main ruleset must
-  # not require CodeQL results per pull request (the bare `CodeQL` status
-  # context or CodeQL in the code-scanning rule): a stack merge is atomic
-  # and a gated layer would block it with "waiting for results". The alert
-  # threshold is enforced by the step after the analysis instead. The stack
-  # object is logged because the webhook docs only list it on the
-  # `stacked` action.
+  # tests in full, for the same reasons). On every other layer only
+  # `actions` is 'true': the main ruleset's code-scanning rule needs a
+  # CodeQL upload on every pull request in the stack (each layer is
+  # evaluated against the stack base, and a stack merge is atomic), and
+  # the actions analysis is the one that needs no build. The stack object
+  # is logged because the webhook docs only list it on the `stacked`
+  # action.
   changes:
     name: Changed paths
     if: github.event_name == 'pull_request'
@@ -78,7 +77,8 @@ jobs:
         run: |
           echo "stack=$STACK"
           # none: not in a stack, use the path filter. full: the top layer
-          # or the lowest unmerged layer, force on. below: force off.
+          # or the lowest unmerged layer, force on. below: force off,
+          # except actions, which every layer uploads for the ruleset.
           pos=$(jq -nr --argjson s "$STACK" --arg base "$BASE" \
             'if $s == null then "none" elif $s.position == $s.size or $s.base.ref == $base then "full" else "below" end')
           echo "stack_position=$pos"
@@ -90,7 +90,7 @@ jobs:
             esac
           }
           {
-            gate actions "$F_ACTIONS"
+            case "$pos" in none) gate actions "$F_ACTIONS" ;; *) echo "actions=true" ;; esac
             gate c-cpp "$F_C_CPP"
             gate go "$F_GO"
             gate python "$F_PYTHON"
@@ -168,20 +168,3 @@ jobs:
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
-
-      # The threshold the code-scanning ruleset rule would apply (errors,
-      # security severity high or higher), enforced where an upload exists.
-      # The analyze step waits for SARIF processing, so the alerts are
-      # queryable here. Dismissed alerts do not count. An open alert that
-      # already exists on main fails every pull request until it is fixed
-      # or dismissed; main has none.
-      - name: Fail on open high-severity alerts
-        if: github.event_name == 'pull_request' && needs.changes.outputs[matrix.language] != 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REF: ${{ github.ref }}
-        run: |
-          n=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=open&tool_name=CodeQL&ref=$REF&per_page=100" \
-            --jq '[.[] | select(.rule.severity == "error" or ((.rule.security_severity_level // "") | IN("high", "critical")))] | length')
-          echo "open_high_alerts=$n"
-          [ "$n" -eq 0 ]
