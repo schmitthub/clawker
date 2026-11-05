@@ -186,12 +186,9 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 }
 
 func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
-	// Container is wired with OTEL_EXPORTER_OTLP_ENDPOINT only — the
-	// OTel SDK derives /v1/{metrics,logs,traces} per signal. Override
-	// otel_collector_port to a sentinel value and assert the rendered
-	// env var carries it; that proves the port override flows through
-	// the Dockerfile renderer, not just that the assertion echoes
-	// cfg.OtelCollectorURL() back to itself.
+	// The agent endpoint is clawkerd's loopback relay, never the
+	// collector: a custom otel_collector_port must not leak into the
+	// container env (the agent has no path to the collector).
 	cfg := testConfig(t, `
 version: "1"
 monitoring:
@@ -202,15 +199,10 @@ monitoring:
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	endpoint := cfg.OtelCollectorURL()
-	assert.Contains(
-		t,
-		content,
-		"OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
-		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal",
-	)
-	assert.Contains(t, endpoint, ":9999",
-		"otel endpoint must carry the overridden otel_collector_port — proves the port override reaches the renderer")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+consts.AgentOTLPRelayURL+"\n",
+		"otel base endpoint must be the loopback relay regardless of the collector port")
+	assert.NotContains(t, content, ":9999",
+		"collector port must not reach the agent container env")
 	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
 		"per-signal metrics endpoint must be absent — base-endpoint refactor removed it")
 	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
@@ -226,18 +218,6 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(
-		t,
-		content,
-		"OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
-		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal",
-	)
-	assert.Contains(
-		t,
-		content,
-		"OTEL_EXPORTER_OTLP_ENDPOINT=http://",
-		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)",
-	)
 	assert.Contains(
 		t,
 		content,

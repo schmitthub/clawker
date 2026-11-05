@@ -645,6 +645,15 @@ const (
 	// port to dispatch commands; the listener pins peer CN to
 	// ContainerCP.
 	DefaultClawkerdPort = 7700
+	// AgentOTLPRelayAddr is the loopback address clawkerd's OTLP/HTTP
+	// relay listens on inside the agent container. The agent SDK
+	// exports there; clawkerd carries each batch to
+	// AgentService.ExportTelemetry over its mTLS leaf. Port 4318 is the
+	// OTLP/HTTP default so an SDK with no endpoint env still finds it.
+	AgentOTLPRelayAddr = Localhost + ":4318"
+	// AgentOTLPRelayURL is the OTEL_EXPORTER_OTLP_ENDPOINT value baked
+	// into harness images (base URL; the SDK appends /v1/<signal>).
+	AgentOTLPRelayURL = "http://" + AgentOTLPRelayAddr
 )
 
 // gRPC keepalive parameters for the CP↔clawkerd Session channel.

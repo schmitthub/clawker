@@ -242,8 +242,8 @@ You can inspect your container environment via environment variables to diagnose
 ### Monitoring and telemetry
 
 If `OTEL_*` variables are set, this container is reporting metrics and logs to an OpenTelemetry collector that fans out to Prometheus (metrics) and OpenSearch (logs). The monitoring stack is preconfigured on `clawker monitor up` — a one-shot `clawker-opensearch-bootstrap` container applies index templates, ISM retention, and OpenSearch Dashboards index patterns for `claude-code`, `clawker-cli`, `clawkercp`, `clawker-envoy`, and `clawker-coredns` before the collector starts. The user can check stack health via `clawker monitor status` and open Discover at the Dashboards URL it prints. If telemetry issues arise, check:
-- `OTEL_EXPORTER_OTLP_ENDPOINT` — collector base URL (SDK appends `/v1/{metrics,logs,traces}` per signal)
-- `OTEL_RESOURCE_ATTRIBUTES` — should contain `project=` and `agent=` tags
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — `http://127.0.0.1:4318`, a loopback relay served by the container daemon; it carries each batch to the control plane, which stamps the container's verified identity and forwards to the collector (SDK appends `/v1/{metrics,logs,traces}` per signal)
+- `OTEL_RESOURCE_ATTRIBUTES` — should contain `project=` and `agent=` tags (the stored values are set by the control plane, not from this env)
 - `CLAUDE_CODE_ENABLE_TELEMETRY` — must be `1` for Claude Code to emit telemetry
 
 ### Common issues
