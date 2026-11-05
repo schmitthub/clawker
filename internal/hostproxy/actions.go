@@ -526,15 +526,19 @@ func (s *Actions) closeDynamicListenerLocked(ctx context.Context, port int) {
 
 	for i, server := range dl.servers {
 		if err := server.Shutdown(ctx); err != nil {
-			// Timeout during cleanup is expected - just force close
+			// Timeout during cleanup is expected - the listener is closed below
 			s.log.Debug().Int("port", port).Int("listener_index", i).Msg("force closing dynamic listener")
-			if closeErr := dl.listeners[i].Close(); closeErr != nil {
-				s.log.Debug().
-					Err(closeErr).
-					Int("port", port).
-					Int("listener_index", i).
-					Msg("dynamic listener close returned error")
-			}
+		}
+		// Shutdown closes only the listeners that Serve has registered. A
+		// Serve goroutine that has not run yet still holds its socket, so
+		// the port stays bound after Shutdown returns. Close it here;
+		// a listener Serve already closed returns net.ErrClosed.
+		if closeErr := dl.listeners[i].Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			s.log.Debug().
+				Err(closeErr).
+				Int("port", port).
+				Int("listener_index", i).
+				Msg("dynamic listener close returned error")
 		}
 	}
 
