@@ -32,9 +32,11 @@ permissions:
 
 jobs:
   # Path filters from .github/filters.yml (the codeql_* keys), one output per
-  # language. In a stacked pull request below the top, every output is
-  # 'false'; at the top every output is 'true', because the path filter only
-  # sees that layer's files and merging the top lands every lower layer.
+  # language. In a stacked pull request every output is 'true' on every
+  # layer: the path filter only sees that layer's files, merging the top
+  # lands every lower layer, and the main ruleset's code-scanning rule needs
+  # CodeQL results on the head of every PR in the atomic stack merge (a
+  # layer with no results blocks the merge with "waiting for results").
   # The stack object is logged because the webhook docs only list it on the
   # `stacked` action.
   changes:
@@ -71,16 +73,14 @@ jobs:
           F_JS: ${{ steps.filter.outputs.codeql_js }}
         run: |
           echo "stack=$STACK"
-          # none: not in a stack, use the path filter. top: force on, the
-          # path filter only sees this layer and the merge lands every lower
-          # layer. below: force off.
-          pos=$(jq -nr --argjson s "$STACK" \
-            'if $s == null then "none" elif $s.position == $s.size then "top" else "below" end')
+          # none: not in a stack, use the path filter. stack: force on, the
+          # path filter only sees this layer, the merge lands every lower
+          # layer, and the code-scanning rule needs results on every layer.
+          pos=$(jq -nr --argjson s "$STACK" 'if $s == null then "none" else "stack" end')
           echo "stack_position=$pos"
           gate() {
             case "$pos" in
-              top) echo "$1=true" ;;
-              below) echo "$1=false" ;;
+              stack) echo "$1=true" ;;
               *) echo "$1=$2" ;;
             esac
           }
