@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/monitor/reload"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -24,7 +25,7 @@ func TestNewCmdReload(t *testing.T) {
 		Version:         "",
 		IOStreams:       ios,
 		TUI:             tui.NewTUI(ios),
-		Client:          nil,
+		Client:          func(context.Context) (*docker.Client, error) { return new(docker.Client), nil },
 		Config:          nil,
 		Logger:          func() (*logger.Logger, error) { return logger.Nop(), nil },
 		CLIState:        nil,
@@ -53,4 +54,5 @@ func TestNewCmdReload(t *testing.T) {
 	assert.Equal(t, ios, gotOpts.IOStreams, "IOStreams wired from factory")
 	assert.NotNil(t, gotOpts.BundleManager, "BundleManager wired from factory")
 	assert.NotNil(t, gotOpts.Logger, "Logger wired from factory")
+	assert.NotNil(t, gotOpts.Client, "Client wired from factory: reload ensures the telemetry network")
 }

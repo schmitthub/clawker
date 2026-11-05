@@ -479,26 +479,20 @@ type OtelConfig struct {
 // [consts.MonitoringServiceOpenSearchNode],
 // [consts.MonitoringServiceOpenSearchDashboards]) — they are not
 // knobs here because the compose template renders all four directly,
-// and the firewall plane (CoreDNS internalHosts via the
-// [consts.MonitoringServiceHostnames] slice) shares the same names.
-// The CoreDNS slice contains only otel-collector + prometheus — the
-// agent-dialable subset. OpenSearch + OpenSearch Dashboards are
-// intentionally excluded: agents push telemetry through the collector
-// and never dial the indices directly, so widening CoreDNS forwarding
-// to those hostnames would broaden the agent's egress surface for no
-// functional gain. Rename a service in [consts] and both surfaces
-// follow by construction.
+// and the CLI's stack detection shares the collector name. The stack
+// runs on its own compose network, off the agent network: no service
+// name is forwarded by CoreDNS, agent telemetry reaches the collector
+// through the control plane, and trusted senders dial the collector's
+// host-loopback publish.
 type MonitoringConfig struct {
 	OtelCollectorPort        int             `yaml:"otel_collector_port,omitempty"        label:"OTEL Collector Port"        desc:"Host port for the OTEL HTTP receiver"                                                                                                                                                                                                          default:"4318"`
 	OtelCollectorHost        string          `yaml:"otel_collector_host,omitempty"        label:"OTEL Collector Host"        desc:"Hostname for reaching the collector from the host"                                                                                                                                                                                             default:"localhost"`
 	OtelGRPCPort             int             `yaml:"otel_grpc_port,omitempty"             label:"OTEL gRPC Port"             desc:"Host port for the OTEL gRPC receiver"                                                                                                                                                                                                          default:"4317"`
-	OtelInfraPort            Port            `yaml:"otel_infra_port,omitempty"            label:"OTEL Infra Port"            desc:"Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS)"                                                                                                                                                                default:"4319"`
-	OtelAgentIngestPort      Port            `yaml:"otel_agent_ingest_port,omitempty"     label:"OTEL Agent Ingest Port"     desc:"Port the OTel collector listens on for agent telemetry forwarded by the control plane"                                                                                                                                                         default:"4320"`
 	OpenSearchPort           int             `yaml:"opensearch_port,omitempty"            label:"OpenSearch Port"            desc:"Host port for the OpenSearch REST API (logs + traces backend)"                                                                                                                                                                                 default:"9200"`
 	OpenSearchDashboardsPort int             `yaml:"opensearch_dashboards_port,omitempty" label:"OpenSearch Dashboards Port" desc:"Host port for the OpenSearch Dashboards UI"                                                                                                                                                                                                    default:"5601"`
 	OpenSearchHeapMB         int             `yaml:"opensearch_heap_mb,omitempty"         label:"OpenSearch Heap (MB)"       desc:"JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads"                                                                                                                                                                       default:"512"`
 	PrometheusPort           int             `yaml:"prometheus_port,omitempty"            label:"Prometheus Port"            desc:"Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)"                                                                         default:"9090"`
-	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty"    label:"Prometheus Metrics Port"    desc:"In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)" default:"8889"`
+	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty"    label:"Prometheus Metrics Port"    desc:"In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over the monitoring stack's compose network; not host-published — no localhost binding, no host port-conflict check needed)" default:"8889"`
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 

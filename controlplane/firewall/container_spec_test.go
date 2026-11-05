@@ -1,8 +1,10 @@
 package firewall
 
 import (
+	"net"
 	"net/netip"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -230,4 +232,29 @@ func assertNoBindTarget(t *testing.T, mounts []mount.Mount, target string) {
 			t.Fatalf("unexpected bind mount target %s from %s", target, m.Source)
 		}
 	}
+}
+
+// TestContainerSpecs_InfraTelemetryTargetsCollector pins the trusted
+// telemetry path: the CoreDNS otel plugin dials the collector's infra
+// receiver by its service name, which resolves on the telemetry network
+// both siblings join. A host-gateway address would not work on a native
+// Linux daemon, where host-gateway is the bridge IP and the collector
+// publishes nothing there.
+func TestContainerSpecs_InfraTelemetryTargetsCollector(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	overrideHostPathsForTest(t, consts.DataDir())
+
+	s, err := NewStack(nil, cfg, logger.Nop(), nil, nil, nil, nil, newTestCAStore(t, consts.FirewallCertSubdir))
+	require.NoError(t, err)
+	s.infraCertsReady = true
+	var netInfo NetworkInfo
+	netInfo.NetworkID = "net-test"
+	netInfo.CoreDNSIP = "172.20.0.3"
+
+	coredns := s.corednsContainerSpec(&netInfo)
+	wantEndpoint := net.JoinHostPort(
+		consts.MonitoringServiceOtelCollector,
+		strconv.Itoa(consts.MonitoringOtelInfraPort),
+	)
+	require.Contains(t, coredns.env, consts.EnvCoreDNSOtelEndpoint+"="+wantEndpoint)
 }

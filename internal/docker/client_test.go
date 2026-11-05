@@ -10,11 +10,14 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/stretchr/testify/require"
 )
 
 func TestParseContainers(t *testing.T) {
@@ -380,4 +383,75 @@ func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
 		t.Errorf("expected BuildKit builder to NOT be called when ContextDir is empty, got %d calls", capture.CallCount)
 	}
 	whailtest.AssertCalled(t, fake, "ImageBuild")
+}
+
+// TestIsMonitoringActive pins the detection contract: a running
+// otel-collector container means the stack is up, whatever network it
+// joins. The stack lives off the agent network, so a network check would
+// report an active stack as down.
+func TestIsMonitoringActive(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
+	fake := whailtest.NewFakeAPIClient()
+	client := new(Client)
+	client.Engine = clawkerEngine(cfg, fake)
+	client.log = logger.Nop()
+	ctx := context.Background()
+
+	// The daemon applies the filters, so the fake cannot model a stopped
+	// or differently named container: the request itself must carry the
+	// name and running-state filters.
+	var collector container.Summary
+	collector.Names = []string{"/otel-collector"}
+	collector.State = container.StateRunning
+	var listOpts moby.ContainerListOptions
+	fake.ContainerListFn = func(_ context.Context, opts moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		listOpts = opts
+		return moby.ContainerListResult{Items: []container.Summary{collector}}, nil
+	}
+	require.True(t, client.IsMonitoringActive(ctx), "running collector with no agent-network membership is active")
+	require.False(t, listOpts.All, "only running containers are listed")
+	require.True(t, listOpts.Filters["name"]["otel-collector"], "name filter carries the collector service name")
+	require.True(t, listOpts.Filters["status"]["running"], "status filter carries running")
+
+	fake.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		return moby.ContainerListResult{}, nil
+	}
+	require.False(t, client.IsMonitoringActive(ctx), "no collector container means the stack is down")
+
+	fake.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		return moby.ContainerListResult{}, errors.New("daemon unreachable")
+	}
+	require.False(t, client.IsMonitoringActive(ctx), "a list failure reports the stack as down")
+}
+
+// TestEnsureTelemetryNetwork pins the shape of the trusted telemetry
+// network: a managed, internal network with the fixed name the monitoring
+// compose file joins as external. Internal keeps it free of an outbound
+// route, so joining it adds no egress path to the control plane, Envoy,
+// or CoreDNS.
+func TestEnsureTelemetryNetwork(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
+	fake := whailtest.NewFakeAPIClient()
+	client := new(Client)
+	client.Engine = clawkerEngine(cfg, fake)
+	client.log = logger.Nop()
+
+	fake.NetworkInspectFn = func(_ context.Context, _ string, _ moby.NetworkInspectOptions) (moby.NetworkInspectResult, error) {
+		return moby.NetworkInspectResult{}, nil // no managed label: absent
+	}
+	var gotName string
+	var gotOpts moby.NetworkCreateOptions
+	fake.NetworkCreateFn = func(_ context.Context, name string, opts moby.NetworkCreateOptions) (moby.NetworkCreateResult, error) {
+		gotName, gotOpts = name, opts
+		var res moby.NetworkCreateResult
+		res.ID = "telemetry-id"
+		return res, nil
+	}
+
+	id, err := client.EnsureTelemetryNetwork(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "telemetry-id", id)
+	assert.Equal(t, consts.TelemetryNetwork, gotName)
+	assert.True(t, gotOpts.Internal, "telemetry network must be internal")
+	assert.Equal(t, "true", gotOpts.Labels["dev.clawker.managed"])
 }

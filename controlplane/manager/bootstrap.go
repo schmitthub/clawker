@@ -252,8 +252,9 @@ func ensureRunning(ctx context.Context, opts EnsureOpts) error {
 }
 
 // placeCPOnNetwork settles where a new CP container will live: it ensures the
-// clawker network exists, reads back its topology, and derives the CP's static
-// address from the gateway plus the configured last octet. The subnet check is
+// clawker and telemetry networks exist, reads back the clawker network's
+// topology, and derives the CP's static address from the gateway plus the
+// configured last octet. The subnet check is
 // the reason this is computed rather than configured — an address outside the
 // network would fail at container create with a Docker error that names
 // neither the setting nor the subnet.
@@ -263,6 +264,9 @@ func placeCPOnNetwork(
 	//nolint:exhaustruct // Name is the only required field; the embedded moby NetworkCreateOptions is optional and omitted at every EnsureNetwork call site.
 	if _, netErr := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); netErr != nil {
 		return "", netip.Addr{}, fmt.Errorf("controlplane: ensure clawker-net: %w", netErr)
+	}
+	if _, netErr := dc.EnsureTelemetryNetwork(ctx); netErr != nil {
+		return "", netip.Addr{}, fmt.Errorf("controlplane: %w", netErr)
 	}
 
 	netInfo, err := fwcp.DiscoverNetwork(ctx, dc, cfg)
@@ -492,6 +496,10 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 				NetworkID:  networkID,
 				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: ip},
 			},
+			// The trusted telemetry lane to the collector's mTLS
+			// receivers (placeCPOnNetwork ensures it). Dynamic address:
+			// nothing dials the CP on this network.
+			consts.TelemetryNetwork: new(network.EndpointSettings),
 		},
 	}
 

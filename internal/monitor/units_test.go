@@ -382,7 +382,6 @@ func TestGeneration_Golden(t *testing.T) {
 monitoring:
   otel_collector_port: 4318
   otel_grpc_port: 4317
-  otel_infra_port: 4319
   prometheus_port: 9090
   prometheus_metrics_port: 8889
   opensearch_port: 9200
