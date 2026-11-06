@@ -210,7 +210,9 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return cmdutil.FlagErrorf("malformed --label %q — use format KEY=VALUE", invalidLabels[0])
 	}
 
-	builder := docker.NewBuilder(client, buildCfg, wd, projectName)
+	// Global-scope projects (user-level config only) share the global image.
+	imageProject := docker.ImageProject(cfgGateway, projectName)
+	builder := docker.NewBuilder(client, buildCfg, wd, imageProject)
 
 	// -t selects the harness: a bare NAME names a known harness; a full
 	// REF's tag part must equal one (strict tag=harness). No -t builds the
@@ -230,9 +232,9 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// The canonical tag is harness-keyed; the default harness also gets the
 	// :default alias so run/create resolve it without naming a harness.
-	imageTag := docker.HarnessImageTag(projectName, harnessName)
+	imageTag := docker.HarnessImageTag(imageProject, harnessName)
 	if isDefaultHarness(cfgGateway, harnessName) {
-		extraTags = append(extraTags, docker.DefaultAliasImageTag(projectName))
+		extraTags = append(extraTags, docker.DefaultAliasImageTag(imageProject))
 	}
 
 	// Resolve the harness's floating version to a concrete one once per

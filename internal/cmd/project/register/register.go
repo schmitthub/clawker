@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
@@ -93,9 +94,31 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("initializing project manager: %w", err)
 	}
 
-	// Require a project config in the current directory.
+	// A directory without a project config registers with the user-level
+	// config file as its configuration.
 	if !shared.HasLocalProjectConfig(cfgGateway, wd) {
-		return fmt.Errorf("no project config found in %s — run 'clawker project init' first to create one", wd)
+		userPath, pathErr := consts.UserProjectConfigFilePath()
+		if pathErr != nil {
+			return fmt.Errorf("resolving user-level config path: %w", pathErr)
+		}
+		if _, statErr := os.Stat(userPath); statErr != nil {
+			return fmt.Errorf(
+				"no project config found in %s and no user-level config at %s"+
+					" — run 'clawker project init' first to create one",
+				wd, userPath,
+			)
+		}
+		fmt.Fprintf(ios.ErrOut, "%s No project config in %s; the user-level config %s applies\n",
+			cs.WarningIcon(), wd, userPath)
+		if !opts.Yes {
+			proceed, confirmErr := opts.Prompter().Confirm("Register with the user-level config?", true)
+			if confirmErr != nil {
+				return fmt.Errorf("confirming registration: %w", confirmErr)
+			}
+			if !proceed {
+				return cmdutil.ErrAborted
+			}
+		}
 	}
 
 	// Determine project name. Hierarchy (highest priority first):

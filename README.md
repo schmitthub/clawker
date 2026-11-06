@@ -118,7 +118,7 @@ clawker go dev
 > - `-it` — interactive mode with a terminal attached
 > - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 > - `--agent dev` — names this container `clawker.<project>.dev`
-> - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; outside a project it resolves to the global image from a global `clawker build`). Use `@:codex` to pick a specific harness instead
+> - `@` — shortcut that resolves to your built default-harness image (`clawker-<project>:default`; a project without its own config resolves to the shared global image `clawker:default`). Use `@:codex` to pick a specific harness instead
 >
 > Anything after the `@` is passed straight to the harness CLI, and arguments after an alias are appended — with the out-of-box claude default, `clawker go dev -c` continues your previous Claude Code session and `clawker go dev --dangerously-skip-permissions` hands it the infamous yolo flag, safe inside the container's isolation.
 >
@@ -158,7 +158,7 @@ clawker init            # Guided setup: pick a language preset → creates .claw
 > ```
 > You can also customize your image using `clawker project edit` or point your agent at the LLM-friendly [docs site](https://docs.clawker.dev/configuration) for the full config reference. I dogfood clawker to build clawker, so also check out my `clawker.yaml` to see how I customized the build config for golang development.
 
-> **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precedence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A global clawker.yaml can also be created in `$CLAWKER_CONFIG_DIR` for system wide defaults. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
+> **Tip** You can alternatively use `.clawker/clawker.yaml` (which takes precedence). You can also split the configs up into multiple files through your repository for merging, good for monorepos. A user-level `clawker.yaml` in `$CLAWKER_CONFIG_DIR` (`~/.config/clawker` by default) supplies defaults for every project and is the whole configuration for a project that has no config file of its own: run `clawker project register` in such a directory (it asks once, `--yes` skips the prompt), and `clawker build` then produces the shared `clawker:<harness>` image instead of a per-project one. Every command except host-level ones (`init`, `project`, `settings`, `controlplane`, `firewall`, `monitor`, `bundle`, `alias`, `plugin`, `auth`, `version`) needs a registered project. You can also create an uncomitted `.clawker.local.yaml|.clawker/clawker.local.yaml` for local-only overrides.
 
 ```bash
 clawker build           # Builds your project's default-harness image (referenced as "@" when within a project directory)

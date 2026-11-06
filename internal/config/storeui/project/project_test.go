@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -106,6 +107,9 @@ func TestLayerTargets_InProjectOffersProject(t *testing.T) {
 	projectDir := filepath.Join(env.Dirs.Base, "proj")
 	require.NoError(t, os.MkdirAll(projectDir, 0o755))
 	t.Chdir(projectDir)
+	userPath, err := consts.UserProjectConfigFilePath()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(userPath, []byte("{}\n"), 0o644))
 
 	cfg, err := config.NewConfig(config.WithProjectRoot(projectDir))
 	require.NoError(t, err)

@@ -110,7 +110,11 @@ func TestExportRun(t *testing.T) {
 	})
 
 	t.Run("no project config errors", func(t *testing.T) {
-		t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())
+		configDir := t.TempDir()
+		t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+		// The user-level file keeps the load valid; export still needs a
+		// project file.
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte("{}\n"), 0o644))
 		empty := t.TempDir()
 		t.Chdir(empty)
 		cfg, err := config.NewConfig(config.WithProjectRoot(empty))

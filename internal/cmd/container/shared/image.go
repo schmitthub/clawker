@@ -41,7 +41,8 @@ func ResolvePlaceholderImage(
 		return "", err
 	}
 
-	resolvedImage, err := client.ResolveImageWithSource(ctx, projectName, harnessTag)
+	// Global-scope projects (user-level config only) run the global image.
+	resolvedImage, err := client.ResolveImageWithSource(ctx, docker.ImageProject(cfg, projectName), harnessTag)
 	if err != nil {
 		return "", fmt.Errorf("resolving image: %w", err)
 	}

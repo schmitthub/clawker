@@ -20,6 +20,8 @@ Both stores also pass `storage.WithHeader(schemaHeader(...))`, so every write st
 
 **Precedence** (highest to lowest): project `clawker.yaml` (walk-up: closest to CWD wins) > user `clawker.yaml` in config dir > defaults YAML string.
 
+**Config floor**: with a project root set, `NewConfig` requires at least one file layer — a project file under the root or the user-level file — and otherwise returns `ErrNoConfigFound` naming both paths. Daemons load without a root and keep the defaults-only behavior. `ScopeOf(cfg)` reports `ScopeProject` when a layer sits under `cfg.ProjectRoot()`, else `ScopeGlobal`; `internal/docker.ImageProject` keys image names on it.
+
 Config dir resolution: `CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
 Data dir: `CLAWKER_DATA_DIR` > `$XDG_DATA_HOME/clawker` > `~/.local/share/clawker`
 State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/clawker`
@@ -58,7 +60,8 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 ### Constructors & Package Functions
 
 ```go
-func NewConfig(opts ...NewConfigOption) (Config, error)          // Full production loading (defaults + discovery + merge)
+func NewConfig(opts ...NewConfigOption) (Config, error)          // Full production loading (defaults + discovery + merge); ErrNoConfigFound when a root is set and no file layer exists
+func ScopeOf(cfg Config) Scope                                   // ScopeProject (a layer under ProjectRoot) or ScopeGlobal
 func WithProjectRoot(root string) NewConfigOption                // Bounds project-config walk-up at root (caller resolves it, e.g. project.Registry.ResolveRoot). Empty root → walk-up disabled (config-dir only; correct for CP/host-proxy/bridge daemons).
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)

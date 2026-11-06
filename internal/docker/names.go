@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -249,6 +250,18 @@ func HarnessVolumeName(project, agent, harness, volume string) (string, error) {
 		return "", fmt.Errorf("invalid harness volume name: %w", err)
 	}
 	return VolumeName(project, agent, consts.JoinIdentity(harness, volume))
+}
+
+// ImageProject returns the project segment for image names: the project
+// name when the project has its own config, or "" for a global-scope
+// project (configured only by the user-level clawker.yaml), so every such
+// project shares the global clawker:<tag> images instead of building a
+// duplicate per project.
+func ImageProject(cfg config.Config, project string) string {
+	if config.ScopeOf(cfg) == config.ScopeGlobal {
+		return ""
+	}
+	return project
 }
 
 // ImageTag generates the legacy image tag: clawker-project:latest. New

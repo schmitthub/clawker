@@ -83,6 +83,10 @@ func setupIsolatedProjectDir(t *testing.T, placement string, registered bool) (c
 	if err != nil && !errors.Is(err, project.ErrNotInProject) {
 		t.Fatalf("resolving project root: %v", err)
 	}
+	// A registered project without a config file loads the user-level file.
+	userPath, err := consts.UserProjectConfigFilePath()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(userPath, []byte("{}\n"), 0o644))
 	cfg, err = config.NewConfig(config.WithProjectRoot(root))
 	require.NoError(t, err)
 
