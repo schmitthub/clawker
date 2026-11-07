@@ -20,6 +20,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 ## Naming Convention
 
 - **3-segment** (project-scoped agent): `clawker.project.agent` — **2-segment** (global-scope agent, no project namespace): `clawker.agent`
+- **Images**: `clawker-<project>:<tag>` for a project with its own config; `clawker:<tag>` (no project label) for a global-scope project, one configured only by the user-level `clawker.yaml`. `ImageProject(cfg, project)` picks the segment from `config.ScopeOf(cfg)`; `build` and `ResolvePlaceholderImage` call it, so every global-scope project shares one base and one harness image.
 - **Volumes**: infrastructure volumes `clawker.project.agent-purpose` (workspace, history); harness-scoped volumes `clawker.project.agent-harness.name` (bundle-declared persisted dirs + the clawker lifecycle volume) — the harness segment is the harness's exact selection spelling (bare name, or the qualified `namespace.bundle.component` address for an installed-bundle harness) and keeps two harnesses that declare the same volume name (both shipped harnesses declare `config`) from ever landing on one volume
 - **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 

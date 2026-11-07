@@ -795,3 +795,36 @@ func TestProjectInit_WritesOnlyWhatItSet(t *testing.T) {
 	assert.Equal(t, "vim", agent.Visual,
 		"the user-level value survives — not overridden by an empty string")
 }
+
+func TestNewConfig_configFloor(t *testing.T) {
+	t.Run("no project file and no user file fails inside a project", func(t *testing.T) {
+		e := newProjectEnv(t)
+		_, err := NewConfig(WithProjectRoot(e.root))
+		require.ErrorIs(t, err, ErrNoConfigFound)
+		require.Contains(t, err.Error(), e.userPath())
+	})
+
+	t.Run("user file alone gives global scope", func(t *testing.T) {
+		e := newProjectEnv(t)
+		e.writeUser(t, "workspace:\n  default_mode: snapshot\n")
+		cfg := e.load(t)
+		require.Equal(t, ScopeGlobal, ScopeOf(cfg))
+		require.Equal(t, ModeSnapshot, cfg.WorkspaceDefaultMode())
+	})
+
+	t.Run("project file gives project scope", func(t *testing.T) {
+		e := newProjectEnv(t)
+		e.writeUser(t, "workspace:\n  default_mode: snapshot\n")
+		e.writeProject(t, "workspace:\n  default_mode: bind\n")
+		cfg := e.load(t)
+		require.Equal(t, ScopeProject, ScopeOf(cfg))
+		require.Equal(t, ModeBind, cfg.WorkspaceDefaultMode())
+	})
+
+	t.Run("no anchor skips the floor", func(t *testing.T) {
+		newProjectEnv(t)
+		cfg, err := NewConfig()
+		require.NoError(t, err)
+		require.Equal(t, ScopeGlobal, ScopeOf(cfg))
+	})
+}

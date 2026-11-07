@@ -80,6 +80,8 @@ func newUserAliasCmd(name, expansion string) *cobra.Command {
 		Short: fmt.Sprintf("Alias for %q", expansion),
 		Annotations: map[string]string{
 			AnnotationAliasExpansion: expansion,
+			// The expanded command decides whether a project is required.
+			cmdutil.AnnotationRunsAnywhere: "true",
 		},
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

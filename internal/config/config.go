@@ -268,6 +268,17 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
+	// Inside a project, at least one file must supply the configuration: a
+	// project file under the root, or the user-level file in the config dir.
+	// Daemons load with no anchor and keep their defaults-only behavior.
+	if options.projectRoot != "" && !hasFileLayer(projectStore.Layers()) {
+		userPath, pathErr := consts.UserProjectConfigFilePath()
+		if pathErr != nil {
+			return nil, fmt.Errorf("config: resolving user-level config path: %w", pathErr)
+		}
+		return nil, fmt.Errorf("config: %w: no %s under %s and no user-level %s",
+			ErrNoConfigFound, consts.ProjectConfigFile, options.projectRoot, userPath)
+	}
 
 	settingsOpts := []storage.Option{
 		storage.WithFilenames(consts.SettingsFile),
@@ -309,6 +320,48 @@ func WithDefaultSettingsYAML(yaml string) NewConfigOption {
 	return func(o *newConfigOptions) {
 		o.settingsYAML = yaml
 	}
+}
+
+// ErrNoConfigFound is returned by NewConfig when a project root is set but
+// neither a project config file nor the user-level config file exists.
+var ErrNoConfigFound = errors.New("no clawker configuration found")
+
+// Scope tells which files supplied a loaded project configuration.
+type Scope string
+
+const (
+	// ScopeProject: a config file under the project root is loaded.
+	ScopeProject Scope = "project"
+	// ScopeGlobal: only the user-level file in the config dir is loaded (or
+	// no file at all: daemons and in-memory test doubles).
+	ScopeGlobal Scope = "global"
+)
+
+// ScopeOf reports whether cfg carries a project config layer under its
+// project root. Global-scope projects share the global agent image.
+func ScopeOf(cfg Config) Scope {
+	root := cfg.ProjectRoot()
+	if root == "" {
+		return ScopeGlobal
+	}
+	prefix := filepath.Clean(root) + string(filepath.Separator)
+	for _, l := range cfg.ProjectStore().Layers() {
+		if strings.HasPrefix(l.Path, prefix) {
+			return ScopeProject
+		}
+	}
+	return ScopeGlobal
+}
+
+// hasFileLayer reports whether any layer is backed by a file (the defaults
+// layer has an empty path).
+func hasFileLayer(layers []storage.LayerInfo) bool {
+	for _, l := range layers {
+		if l.Path != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // WithProjectRoot bounds project-config walk-up discovery at the project root:

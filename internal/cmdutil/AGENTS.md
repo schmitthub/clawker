@@ -16,7 +16,7 @@ Heavy command helpers have been extracted to dedicated packages:
 | `output.go` | Deprecated: `HandleError`, `PrintNextSteps`, `PrintErrorf`, `OutputJSON`, `PrintHelpHint` |
 | `errors.go` | `ExitError`, `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
-| `project.go` | `ErrAborted` sentinel (stdlib only) |
+| `project.go` | `ErrAborted` sentinel; the project gate: `AnnotationRunsAnywhere`, `MarkRunsAnywhere`, `RunsAnywhere`, `RequireProject` |
 | `format.go` | `Format`, `ParseFormat`, `FormatFlags`, `AddFormatFlags` -- reusable `--format`/`--json`/`--quiet` flag handling |
 | `json.go` | `WriteJSON` -- compact JSON output (replaces deprecated `OutputJSON`) |
 | `filter.go` | `Filter`, `ParseFilters`, `ValidateFilterKeys`, `FilterFlags`, `AddFilterFlags` -- reusable `--filter key=value` flag handling |
@@ -172,9 +172,18 @@ filters, err := opts.Filter.Parse()
 cmdutil.ValidateFilterKeys(filters, []string{"reference"})
 ```
 
-## Sentinels (`project.go`)
+## Sentinels and project gate (`project.go`)
 
 `ErrAborted` -- returned when user cancels an interactive operation
+
+```go
+const AnnotationRunsAnywhere = "runsAnywhere"
+func MarkRunsAnywhere(cmds ...*cobra.Command)                      // set the annotation
+func RunsAnywhere(cmd *cobra.Command) bool                        // cmd or an ancestor carries it; cobra help/completion always do
+func RequireProject(registry func() (project.Registry, error)) error // ErrNotInProject → user-facing error naming `clawker init` / `clawker project register`
+```
+
+The root command's `PersistentPreRunE` calls `RequireProject` for every command that does not `RunsAnywhere`. Commands that act on host state or create a registration are marked in `internal/cmd/root/root.go` (`runsAnywhere`).
 
 ## Worktree Flag Parsing (`worktree.go`)
 

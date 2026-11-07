@@ -22,7 +22,7 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 
 ## PersistentPreRunE
 
-Currently a no-op (`return nil`). Cobra error/usage output is silenced globally via `SilenceErrors`/`SilenceUsage`; error rendering is handled in `Main`.
+The project gate: a command runs only inside a registered project (`cmdutil.RequireProject(f.ProjectRegistry)`) unless it or an ancestor carries `cmdutil.AnnotationRunsAnywhere`. `markRunsAnywhere` marks the top-level commands in the `runsAnywhere` list after registration: `init`, `project`, `settings`, `controlplane`, `firewall`, `monitor`, `bundle`, `alias`, `plugin`, `auth`, `licenses`, `hostproxy`, `bridge`, `version`. User alias commands carry the mark too; the expanded command decides. `gate_internal_test.go` covers both sides. Cobra error/usage output is silenced globally via `SilenceErrors`/`SilenceUsage`; error rendering is handled in `Main`.
 
 ## Registered Commands
 
@@ -33,7 +33,7 @@ Currently a no-op (`return nil`). Cobra error/usage output is silenced globally 
 
 ## Testing
 
-No unit tests for `root.go` — it is straightforward wiring and regressions surface via downstream command tests and `make test`. Tests that need `NewCmdRoot` (e.g., `aliases_test.go`, `useraliases_test.go`) should pass empty strings for version and date.
+`gate_internal_test.go` covers the project gate through `NewCmdRoot`; other root wiring is covered by downstream command tests and `make test`. Tests that need `NewCmdRoot` (e.g., `aliases_test.go`, `useraliases_test.go`) should pass empty strings for version and date.
 
 ## Builtin Aliases (`aliases.go`)
 

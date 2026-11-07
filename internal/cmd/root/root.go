@@ -1,6 +1,8 @@
 package root
 
 import (
+	"slices"
+
 	"github.com/spf13/cobra"
 
 	aliascmd "github.com/schmitthub/clawker/internal/cmd/alias"
@@ -50,8 +52,14 @@ Workspace modes:
 		Annotations: map[string]string{
 			"versionInfo": versioncmd.Format(version, buildDate),
 		},
+		// Every command runs inside a registered project unless it, or an
+		// ancestor, carries cmdutil.AnnotationRunsAnywhere (see
+		// markRunsAnywhere below).
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return nil
+			if cmdutil.RunsAnywhere(cmd) {
+				return nil
+			}
+			return cmdutil.RequireProject(f.ProjectRegistry)
 		},
 		Version: f.Version,
 	}
@@ -99,5 +107,23 @@ Workspace modes:
 	// Register user-configured aliases last — existing commands win collisions
 	registerUserAliases(cmd, f)
 
+	markRunsAnywhere(cmd)
+
 	return cmd, nil
+}
+
+// markRunsAnywhere marks the top-level commands that work on host state or
+// create a project registration, so they run outside a registered project.
+// Every other command needs a registered project.
+func markRunsAnywhere(root *cobra.Command) {
+	runsAnywhere := []string{
+		"init", "project", "settings", "controlplane", "firewall", "monitor",
+		"bundle", "alias", "plugin", "auth", "licenses", "hostproxy", "bridge",
+		"version",
+	}
+	for _, c := range root.Commands() {
+		if slices.Contains(runsAnywhere, c.Name()) {
+			cmdutil.MarkRunsAnywhere(c)
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -247,6 +248,9 @@ func TestRegistry_CurrentRoot_ConfigWalkUpSeam(t *testing.T) {
 		assert.Equal(t, link, root, "root must be in cwd's own (symlinked) path form")
 
 		// The anchor must be accepted by storage's walk-up ancestor guard.
+		userPath, err := consts.UserProjectConfigFilePath()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(userPath, []byte("{}\n"), 0o644))
 		cfg, err := config.NewConfig(config.WithProjectRoot(root))
 		require.NoError(t, err)
 		require.NotNil(t, cfg)

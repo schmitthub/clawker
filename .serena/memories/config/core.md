@@ -5,6 +5,7 @@
 - The Factory resolves the root through `project.Registry`, then passes `config.WithProjectRoot(root)`. Config must not import project.
 - Config composes separate `Store[Project]` and `Store[Settings]` values. Project defaults and host infrastructure settings do not merge into one schema.
 - Project config discovery is bounded by the registered root. At each level the directory form takes precedence over the flat dotfile form.
+- Config floor (2026-11-06): inside a registered project, `NewConfig` needs a project file or the user-level `clawker.yaml`; neither gives `config.ErrNoConfigFound`. The user-level file always merges under project files. `config.ScopeOf` tells project scope from global scope (user-level file only); global-scope projects share the `clawker:<tag>` images through `docker.ImageProject`.
 - An empty project-root anchor disables walk-up. This is suitable for CP and host-service processes.
 - Project configuration includes build, harness, workspace, and project egress rules. Host settings include `firewall.enable`; this flag does not disable CP.
 - Use specific `config.Config` getters. There is no whole-project or whole-settings snapshot getter.
