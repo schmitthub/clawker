@@ -20,6 +20,11 @@ allow-dependencies-licenses:
   - pkg:golang/github.com/opencontainers/go-digest
   - pkg:golang/github.com/dnstap/golang-dnstap
   - pkg:golang/github.com/mattn/go-localereader
+  # BSD-3-Clause. GitHub also reports the PATENTS file (an additional Google
+  # patent grant) as a second license. LICENSE and PATENTS are unchanged
+  # between versions that passed and versions that fail.
+  - pkg:golang/golang.org/x/net
+  - pkg:golang/golang.org/x/sys
 
 comment-summary-in-pr: on-failure
 show-patched-versions: true
