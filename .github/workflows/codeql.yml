@@ -35,10 +35,11 @@ jobs:
   # language. In a stacked pull request every output is 'true' on the top
   # layer and on the lowest unmerged layer (the same two layers pr.yml
   # tests in full, for the same reasons). On every other layer only
-  # `actions` is 'true': the main ruleset's code-scanning rule needs a
-  # CodeQL upload on every pull request in the stack (each layer is
-  # evaluated against the stack base, and a stack merge is atomic), and
-  # the actions analysis is the one that needs no build. The stack object
+  # `actions` is 'true'. `actions` is 'true' on every pull request, stacked
+  # or not: the main ruleset's code-scanning rule needs a CodeQL actions
+  # upload on every pull request (in a stack, each layer is evaluated
+  # against the stack base, and a stack merge is atomic), and the actions
+  # analysis is the one that needs no build. The stack object
   # is logged because the webhook docs only list it on the `stacked`
   # action.
   changes:
@@ -69,7 +70,6 @@ jobs:
         env:
           STACK: ${{ toJSON(github.event.pull_request.stack) }}
           BASE: ${{ github.event.pull_request.base.ref }}
-          F_ACTIONS: ${{ steps.filter.outputs.codeql_actions }}
           F_C_CPP: ${{ steps.filter.outputs.codeql_c_cpp }}
           F_GO: ${{ steps.filter.outputs.codeql_go }}
           F_PYTHON: ${{ steps.filter.outputs.codeql_python }}
@@ -77,8 +77,9 @@ jobs:
         run: |
           echo "stack=$STACK"
           # none: not in a stack, use the path filter. full: the top layer
-          # or the lowest unmerged layer, force on. below: force off,
-          # except actions, which every layer uploads for the ruleset.
+          # or the lowest unmerged layer, force on. below: force off.
+          # actions is always on: every pull request uploads it for the
+          # ruleset.
           pos=$(jq -nr --argjson s "$STACK" --arg base "$BASE" \
             'if $s == null then "none" elif $s.position == $s.size or $s.base.ref == $base then "full" else "below" end')
           echo "stack_position=$pos"
@@ -90,7 +91,7 @@ jobs:
             esac
           }
           {
-            case "$pos" in none) gate actions "$F_ACTIONS" ;; *) echo "actions=true" ;; esac
+            echo "actions=true"
             gate c-cpp "$F_C_CPP"
             gate go "$F_GO"
             gate python "$F_PYTHON"
